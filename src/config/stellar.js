@@ -1,8 +1,32 @@
-require('dotenv').config();
+/**
+ * Stellar Configuration
+ * Handles both real and mock Stellar service initialization
+ */
+
+const StellarService = require('../services/StellarService');
+const MockStellarService = require('../services/MockStellarService');
+
+const useMockStellar = process.env.MOCK_STELLAR === 'true';
+
+/**
+ * Get Stellar service instance
+ * Returns mock service if MOCK_STELLAR=true, otherwise real service
+ */
+const getStellarService = () => {
+  if (useMockStellar) {
+    console.log('[Stellar Config] Using MOCK Stellar service');
+    return new MockStellarService();
+  }
+  
+  console.log('[Stellar Config] Using REAL Stellar service');
+  return new StellarService({
+    network: process.env.STELLAR_NETWORK || 'testnet',
+    horizonUrl: process.env.HORIZON_URL || 'https://horizon-testnet.stellar.org',
+    serviceSecretKey: process.env.SERVICE_SECRET_KEY,
+  });
+};
 
 module.exports = {
-  network: process.env.STELLAR_NETWORK || 'testnet',
-  secret: process.env.STELLAR_SECRET,
-  port: process.env.PORT || 3000,
-  dbPath: process.env.DB_PATH || './data/donations.json'
+  getStellarService,
+  useMockStellar,
 };
