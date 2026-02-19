@@ -1,0 +1,21 @@
+I've created a comprehensive API flow diagram that shows how 
+requests move through your system from the client to the Stellar 
+network and back. 
+
+The diagram features:
+
+Main Components:
+
+Clean SVG diagram showing 5 key stages: Client → API → Database → Stellar Network → Response
+Color-coded boxes with icons for each layer
+Directional arrows showing the request flow forward and response flow back
+Detailed step descriptions explaining what happens at each stage
+
+
+Clear labels and descriptions perfect for new contributors
+A helpful note section explaining the flow
+High-quality vector format (SVG) that will be added to document folder.
+
+I also included the figma link to the design 
+
+https://www.figma.com/design/9SmQhPfEbkRNqGgyK9Wqsa/API-Request-Flow-Diagram?node-id=2-56&t=TOmyEsHxS8MnikGS-0
