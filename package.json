@@ -6,7 +6,8 @@
   "scripts": {
     "start": "node src/routes/app.js",
     "init-db": "node src/scripts/initDB.js",
-    "dev": "nodemon src/routes/app.js"
+    "dev": "nodemon src/routes/app.js",
+    "lint": "eslint ."
   },
   "dependencies": {
     "express": "^4.18.2",
@@ -14,6 +15,7 @@
     "stellar-sdk": "^11.0.0"
   },
   "devDependencies": {
+    "eslint": "^8.57.0",
     "nodemon": "^2.0.20"
   }
 }

@@ -19,6 +19,11 @@ This creates sample donation data spanning two weeks with various donors and rec
 npm start
 ```
 
+### 4. Lint the Code
+```bash
+npm run lint
+```
+
 The API will be available at `http://localhost:3000`
 
 ## Testing the Stats API
