@@ -127,6 +127,53 @@ router.get('/', (req, res) => {
 });
 
 /**
+ * GET /donations/recent
+ * Get recent donations (read-only, no sensitive data)
+ * Query params:
+ *   - limit: number of recent donations to return (default: 10, max: 100)
+ */
+router.get('/recent', (req, res) => {
+  try {
+    const limit = Math.min(parseInt(req.query.limit) || 10, 100);
+
+    if (isNaN(limit) || limit < 1) {
+      return res.status(400).json({
+        error: 'Invalid limit parameter. Must be a positive number.'
+      });
+    }
+
+    const transactions = Transaction.getAll();
+    
+    // Sort by timestamp descending (most recent first)
+    const sortedTransactions = transactions
+      .sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp))
+      .slice(0, limit);
+
+    // Remove sensitive data: stellarTxId is not exposed
+    const sanitizedTransactions = sortedTransactions.map(tx => ({
+      id: tx.id,
+      amount: tx.amount,
+      donor: tx.donor,
+      recipient: tx.recipient,
+      timestamp: tx.timestamp,
+      status: tx.status
+    }));
+
+    res.json({
+      success: true,
+      data: sanitizedTransactions,
+      count: sanitizedTransactions.length,
+      limit: limit
+    });
+  } catch (error) {
+    res.status(500).json({
+      error: 'Failed to retrieve recent donations',
+      message: error.message
+    });
+  }
+});
+
+/**
  * GET /donations/:id
  * Get a specific donation
  */

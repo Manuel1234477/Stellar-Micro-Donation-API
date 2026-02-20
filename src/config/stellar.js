@@ -33,5 +33,4 @@ module.exports = {
   useMockStellar,
   port: process.env.PORT || 3000,
   network: process.env.STELLAR_NETWORK || 'testnet',
-  dbPath: process.env.DB_PATH || './data/donations.json'
 };
