@@ -10,8 +10,9 @@
     "lint": "eslint ."
   },
   "dependencies": {
-    "express": "^4.18.2",
     "dotenv": "^16.0.3",
+    "express": "^4.18.2",
+    "sqlite3": "^5.1.7",
     "stellar-sdk": "^11.0.0"
   },
   "devDependencies": {
