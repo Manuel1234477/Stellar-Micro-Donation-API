@@ -228,6 +228,58 @@ class StatsService {
       weekEnd: weekEndDate.toISOString().split('T')[0]
     };
   }
+
+  /**
+   * Get analytics fee summary
+   * @param {Date} startDate - Start date for aggregation
+   * @param {Date} endDate - End date for aggregation
+   * @returns {Object} Analytics fee summary
+   */
+  static getAnalyticsFeeStats(startDate, endDate) {
+    const transactions = Transaction.getByDateRange(startDate, endDate);
+    
+    const feeStats = {
+      totalFeesCalculated: 0,
+      totalDonationVolume: 0,
+      transactionCount: transactions.length,
+      averageFeePerTransaction: 0,
+      feesByRecipient: {},
+      dateRange: {
+        start: startDate.toISOString(),
+        end: endDate.toISOString()
+      }
+    };
+
+    if (transactions.length === 0) {
+      return feeStats;
+    }
+
+    transactions.forEach(tx => {
+      const amount = parseFloat(tx.amount) || 0;
+      const fee = parseFloat(tx.analyticsFee) || 0;
+      
+      feeStats.totalFeesCalculated += fee;
+      feeStats.totalDonationVolume += amount;
+
+      const recipient = tx.recipient || 'Unknown';
+      if (!feeStats.feesByRecipient[recipient]) {
+        feeStats.feesByRecipient[recipient] = {
+          totalFees: 0,
+          donationCount: 0,
+          totalVolume: 0
+        };
+      }
+      
+      feeStats.feesByRecipient[recipient].totalFees += fee;
+      feeStats.feesByRecipient[recipient].donationCount += 1;
+      feeStats.feesByRecipient[recipient].totalVolume += amount;
+    });
+
+    feeStats.averageFeePerTransaction = feeStats.totalFeesCalculated / transactions.length;
+    feeStats.effectiveFeePercentage = (feeStats.totalFeesCalculated / feeStats.totalDonationVolume) * 100;
+
+    return feeStats;
+  }
 }
 
 module.exports = StatsService;

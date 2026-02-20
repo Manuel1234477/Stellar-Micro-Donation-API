@@ -126,11 +126,17 @@ router.post('/', (req, res) => {
       });
     }
 
+    // Calculate analytics fee (not deducted on-chain)
+    const donationAmount = parseFloat(amount);
+    const feeCalculation = calculateAnalyticsFee(donationAmount);
+
     const transaction = Transaction.create({
-      amount: parseFloat(amount),
+      amount: donationAmount,
       donor: donor || 'Anonymous',
       recipient,
-      idempotencyKey
+      idempotencyKey,
+      analyticsFee: feeCalculation.fee,
+      analyticsFeePercentage: feeCalculation.feePercentage
     });
 
     res.status(201).json({
