@@ -319,6 +319,69 @@ class MockStellarService {
   }
 
   /**
+   * Send a mock payment (simplified version for recurring donations)
+   * @param {string} sourcePublicKey - Source public key
+   * @param {string} destinationPublic - Destination public key
+   * @param {number} amount - Amount in XLM
+   * @param {string} memo - Transaction memo
+   * @returns {Promise<{hash: string, ledger: number}>}
+   */
+  async sendPayment(sourcePublicKey, destinationPublic, amount, memo = '') {
+    const sourceWallet = this.wallets.get(sourcePublicKey);
+    
+    if (!sourceWallet) {
+      // For simulation purposes, create a mock wallet if it doesn't exist
+      this.wallets.set(sourcePublicKey, {
+        publicKey: sourcePublicKey,
+        secretKey: 'S' + crypto.randomBytes(32).toString('hex').substring(0, 55).toUpperCase(),
+        balance: '10000.0000000', // Give it a balance for testing
+        createdAt: new Date().toISOString(),
+      });
+    }
+
+    const destWallet = this.wallets.get(destinationPublic);
+    if (!destWallet) {
+      // Create destination wallet if it doesn't exist
+      this.wallets.set(destinationPublic, {
+        publicKey: destinationPublic,
+        secretKey: 'S' + crypto.randomBytes(32).toString('hex').substring(0, 55).toUpperCase(),
+        balance: '1.0000000', // Minimum funded balance
+        createdAt: new Date().toISOString(),
+      });
+    }
+
+    // Create transaction record
+    const transaction = {
+      hash: 'mock_' + crypto.randomBytes(16).toString('hex'),
+      source: sourcePublicKey,
+      destination: destinationPublic,
+      amount: amount.toString(),
+      memo,
+      timestamp: new Date().toISOString(),
+      ledger: Math.floor(Math.random() * 1000000) + 1000000,
+      status: 'success',
+    };
+
+    // Store transaction
+    if (!this.transactions.has(sourcePublicKey)) {
+      this.transactions.set(sourcePublicKey, []);
+    }
+    if (!this.transactions.has(destinationPublic)) {
+      this.transactions.set(destinationPublic, []);
+    }
+
+    this.transactions.get(sourcePublicKey).push(transaction);
+    this.transactions.get(destinationPublic).push(transaction);
+
+    console.log(`[MockStellarService] Payment simulated: ${amount} XLM from ${sourcePublicKey.substring(0, 8)}... to ${destinationPublic.substring(0, 8)}...`);
+
+    return {
+      hash: transaction.hash,
+      ledger: transaction.ledger,
+    };
+  }
+
+  /**
    * Clear all mock data (useful for testing)
    * @private
    */
