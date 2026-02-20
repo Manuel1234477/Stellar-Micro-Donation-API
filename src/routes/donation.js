@@ -43,8 +43,6 @@ router.post('/verify', async (req, res) => {
   }
 });
 
-const Transaction = require('./models/transaction');
-
 /**
  * POST /donations
  * Create a new donation
