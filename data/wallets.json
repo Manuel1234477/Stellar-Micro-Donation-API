@@ -1,0 +1,31 @@
+[
+  {
+    "id": "1",
+    "address": "GBRPYHIL2CI3WHZDTOOQFC6EB4KJJGUJMUC5XNODMZTQYBB5XYZXYUU",
+    "label": "Updated Personal Wallet",
+    "ownerName": "Alice Smith",
+    "createdAt": "2024-01-15T10:00:00.000Z",
+    "updatedAt": "2026-02-20T09:34:35.420Z"
+  },
+  {
+    "id": "2",
+    "address": "GBBD47UZQ5EYJYJMZXZYDUC77SAZXSQEA7XJJGTAY5XJJGUJMUC5XNOD",
+    "label": "Savings Account",
+    "ownerName": "Bob",
+    "createdAt": "2024-01-20T14:30:00.000Z"
+  },
+  {
+    "id": "3",
+    "address": "GCZST3XVCDTUJ76ZAV2HA72KYQM4YQQ5DUJTHIGQ5ESE3JNEZUAEUA7X",
+    "label": "Donation Receiver",
+    "ownerName": "Red Cross",
+    "createdAt": "2024-01-10T08:00:00.000Z"
+  },
+  {
+    "id": "1771580075439",
+    "address": "GNEWADDRESS123456789",
+    "label": "Test Wallet",
+    "ownerName": "Test User",
+    "createdAt": "2026-02-20T09:34:35.439Z"
+  }
+]
