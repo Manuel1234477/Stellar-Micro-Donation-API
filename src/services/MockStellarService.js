@@ -166,10 +166,10 @@ class MockStellarService {
 
     // Update balances
     sourceWallet.balance = (sourceBalance - amountNum).toFixed(7);
-    destWallet.balance = (parseFloat(destWallet.balance) + amountNum).toFixed(7);
+    destWallet.balance = (destBalance + amountNum).toFixed(7);
 
     // Create transaction record
-    const transaction = {
+    const txRecord = {
       transactionId: 'mock_' + crypto.randomBytes(16).toString('hex'),
       source: sourceWallet.publicKey,
       destination: destinationPublic,
@@ -181,22 +181,6 @@ class MockStellarService {
       confirmedAt: new Date().toISOString(),
     };
 
-      // Update balances
-      sourceWallet.balance = (sourceBalance - amountNum).toFixed(7);
-      destWallet.balance = (destBalance + amountNum).toFixed(7);
-
-      // Create transaction record
-      const transaction = {
-        transactionId: 'mock_' + crypto.randomBytes(16).toString('hex'),
-        source: sourceWallet.publicKey,
-        destination: destinationPublic,
-        amount,
-        memo,
-        timestamp: new Date().toISOString(),
-        ledger: Math.floor(Math.random() * 1000000) + 1000000,
-        status: 'success',
-      };
-
       // Store transaction for both accounts
       if (!this.transactions.has(sourceWallet.publicKey)) {
         this.transactions.set(sourceWallet.publicKey, []);
@@ -205,25 +189,19 @@ class MockStellarService {
         this.transactions.set(destinationPublic, []);
       }
 
-      this.transactions.get(sourceWallet.publicKey).push(transaction);
-      this.transactions.get(destinationPublic).push(transaction);
+      this.transactions.get(sourceWallet.publicKey).push(txRecord);
+      this.transactions.get(destinationPublic).push(txRecord);
 
       // Notify stream listeners
-      this._notifyStreamListeners(sourceWallet.publicKey, transaction);
-      this._notifyStreamListeners(destinationPublic, transaction);
+      this._notifyStreamListeners(sourceWallet.publicKey, txRecord);
+      this._notifyStreamListeners(destinationPublic, txRecord);
 
       return {
-        transactionId: transaction.transactionId,
-        ledger: transaction.ledger,
+        transactionId: txRecord.transactionId,
+        ledger: txRecord.ledger,
+        status: txRecord.status,
+        confirmedAt: txRecord.confirmedAt,
       };
-    }
-
-    return {
-      transactionId: transaction.transactionId,
-      ledger: transaction.ledger,
-      status: transaction.status,
-      confirmedAt: transaction.confirmedAt,
-    };
   }
 
   /**

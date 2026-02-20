@@ -63,7 +63,7 @@ async function testCreateWithInvalidData() {
   console.log('===============================================\n');
 
   try {
-    const response = await axios.post(`${BASE_URL}/stream/create`, {
+    await axios.post(`${BASE_URL}/stream/create`, {
       donorPublicKey: testData.donorPublicKey,
       recipientPublicKey: testData.recipientPublicKey,
       amount: -5, // Invalid amount
@@ -83,7 +83,7 @@ async function testCreateWithInvalidFrequency() {
   console.log('===================================================\n');
 
   try {
-    const response = await axios.post(`${BASE_URL}/stream/create`, {
+    await axios.post(`${BASE_URL}/stream/create`, {
       donorPublicKey: testData.donorPublicKey,
       recipientPublicKey: testData.recipientPublicKey,
       amount: 10,

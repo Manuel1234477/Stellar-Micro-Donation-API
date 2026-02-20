@@ -72,7 +72,7 @@ describe('Account Funding Verification', () => {
           amount: '100',
           memo: 'Test donation',
         });
-        fail('Should have thrown an error');
+        throw new Error('Should have thrown an error');
       } catch (error) {
         expect(error.message).toContain('Destination account is not funded');
         expect(error.message).toContain('Stellar');

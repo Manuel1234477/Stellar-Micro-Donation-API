@@ -4,11 +4,6 @@ const StellarService = require('../services/StellarService');
 const Transaction = require('./models/transaction');
 const donationValidator = require('../utils/donationValidator');
 
-const stellarService = new StellarService({
-  network: process.env.STELLAR_NETWORK || 'testnet',
-  horizonUrl: process.env.HORIZON_URL || 'https://horizon-testnet.stellar.org'
-});
-
 /**
  * POST /api/v1/donation/verify
  * Verify a donation transaction by hash

@@ -3,7 +3,6 @@ const config = require('../config/stellar');
 const donationRoutes = require('./donation');
 const walletRoutes = require('./wallet');
 const statsRoutes = require('./stats');
-const walletRoutes = require('./wallet');
 const streamRoutes = require('./stream');
 const recurringDonationScheduler = require('../services/RecurringDonationScheduler');
 
@@ -22,7 +21,6 @@ app.use((req, res, next) => {
 app.use('/donations', donationRoutes);
 app.use('/wallets', walletRoutes);
 app.use('/stats', statsRoutes);
-app.use('/wallets', walletRoutes);
 app.use('/stream', streamRoutes);
 
 // Health check endpoint
@@ -44,6 +42,7 @@ app.use((req, res) => {
 });
 
 // Error handler
+// eslint-disable-next-line no-unused-vars
 app.use((err, req, res, next) => {
   console.error('Error:', err);
   res.status(500).json({
