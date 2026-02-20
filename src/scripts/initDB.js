@@ -1,9 +1,9 @@
+const sqlite3 = require('sqlite3').verbose();
 const fs = require('fs');
 const path = require('path');
 
 const DATA_DIR = './data';
-const DONATIONS_DB = path.join(DATA_DIR, 'donations.json');
-const USERS_DB = path.join(DATA_DIR, 'users.json');
+const DB_PATH = path.join(DATA_DIR, 'stellar_donations.db');
 
 function ensureDataDir() {
   if (!fs.existsSync(DATA_DIR)) {
@@ -12,192 +12,162 @@ function ensureDataDir() {
   }
 }
 
-function initDonationsDB() {
-  // Sample donation data spanning multiple days and weeks
-  const sampleDonations = [
-    // Week 1 - Monday to Sunday
-    {
-      id: '1',
-      amount: 50,
-      donor: 'Alice',
-      recipient: 'Red Cross',
-      timestamp: new Date('2024-02-12T10:30:00Z').toISOString(),
-      status: 'completed',
-      stellarTxId: 'tx_001'
-    },
-    {
-      id: '2',
-      amount: 75,
-      donor: 'Bob',
-      recipient: 'UNICEF',
-      timestamp: new Date('2024-02-12T14:15:00Z').toISOString(),
-      status: 'completed',
-      stellarTxId: 'tx_002'
-    },
-    {
-      id: '3',
-      amount: 100,
-      donor: 'Charlie',
-      recipient: 'Red Cross',
-      timestamp: new Date('2024-02-13T09:00:00Z').toISOString(),
-      status: 'completed',
-      stellarTxId: 'tx_003'
-    },
-    {
-      id: '4',
-      amount: 25,
-      donor: 'Diana',
-      recipient: 'WHO',
-      timestamp: new Date('2024-02-13T16:45:00Z').toISOString(),
-      status: 'completed',
-      stellarTxId: 'tx_004'
-    },
-    {
-      id: '5',
-      amount: 150,
-      donor: 'Eve',
-      recipient: 'UNICEF',
-      timestamp: new Date('2024-02-14T11:20:00Z').toISOString(),
-      status: 'completed',
-      stellarTxId: 'tx_005'
-    },
-    {
-      id: '6',
-      amount: 60,
-      donor: 'Frank',
-      recipient: 'Red Cross',
-      timestamp: new Date('2024-02-14T13:30:00Z').toISOString(),
-      status: 'completed',
-      stellarTxId: 'tx_006'
-    },
-    {
-      id: '7',
-      amount: 90,
-      donor: 'Grace',
-      recipient: 'WHO',
-      timestamp: new Date('2024-02-15T08:15:00Z').toISOString(),
-      status: 'completed',
-      stellarTxId: 'tx_007'
-    },
-    // Week 2 - Monday to Sunday
-    {
-      id: '8',
-      amount: 120,
-      donor: 'Henry',
-      recipient: 'Red Cross',
-      timestamp: new Date('2024-02-19T10:00:00Z').toISOString(),
-      status: 'completed',
-      stellarTxId: 'tx_008'
-    },
-    {
-      id: '9',
-      amount: 45,
-      donor: 'Iris',
-      recipient: 'UNICEF',
-      timestamp: new Date('2024-02-19T15:30:00Z').toISOString(),
-      status: 'completed',
-      stellarTxId: 'tx_009'
-    },
-    {
-      id: '10',
-      amount: 200,
-      donor: 'Jack',
-      recipient: 'WHO',
-      timestamp: new Date('2024-02-20T12:00:00Z').toISOString(),
-      status: 'completed',
-      stellarTxId: 'tx_010'
-    },
-    {
-      id: '11',
-      amount: 85,
-      donor: 'Karen',
-      recipient: 'Red Cross',
-      timestamp: new Date('2024-02-20T14:45:00Z').toISOString(),
-      status: 'completed',
-      stellarTxId: 'tx_011'
-    },
-    {
-      id: '12',
-      amount: 110,
-      donor: 'Leo',
-      recipient: 'UNICEF',
-      timestamp: new Date('2024-02-21T09:30:00Z').toISOString(),
-      status: 'completed',
-      stellarTxId: 'tx_012'
-    },
-    {
-      id: '13',
-      amount: 55,
-      donor: 'Mia',
-      recipient: 'WHO',
-      timestamp: new Date('2024-02-21T16:00:00Z').toISOString(),
-      status: 'completed',
-      stellarTxId: 'tx_013'
-    },
-    {
-      id: '14',
-      amount: 175,
-      donor: 'Noah',
-      recipient: 'Red Cross',
-      timestamp: new Date('2024-02-22T11:15:00Z').toISOString(),
-      status: 'completed',
-      stellarTxId: 'tx_014'
-    }
-  ];
-
-  if (!fs.existsSync(DONATIONS_DB)) {
-    fs.writeFileSync(DONATIONS_DB, JSON.stringify(sampleDonations, null, 2));
-    console.log(`✓ Initialized donations database with ${sampleDonations.length} sample records`);
-  } else {
-    console.log('✓ Donations database already exists');
-  }
+function createDatabase() {
+  return new Promise((resolve, reject) => {
+    const db = new sqlite3.Database(DB_PATH, (err) => {
+      if (err) {
+        reject(err);
+      } else {
+        console.log(`✓ Connected to SQLite database: ${DB_PATH}`);
+        resolve(db);
+      }
+    });
+  });
 }
 
-function initUsersDB() {
-  const sampleUsers = [
-    {
-      id: '1',
-      name: 'Alice',
-      walletAddress: 'GBRPYHIL2CI3WHZDTOOQFC6EB4KJJGUJMUC5XNODMZTQYBB5XYZXYUU',
-      createdAt: new Date('2024-01-15T10:00:00Z').toISOString()
-    },
-    {
-      id: '2',
-      name: 'Bob',
-      walletAddress: 'GBBD47UZQ5EYJYJMZXZYDUC77SAZXSQEA7XJJGTAY5XJJGUJMUC5XNOD',
-      createdAt: new Date('2024-01-20T14:30:00Z').toISOString()
-    },
-    {
-      id: '3',
-      name: 'Red Cross',
-      walletAddress: 'GCZST3XVCDTUJ76ZAV2HA72KYQM4YQQ5DUJTHIGQ5ESE3JNEZUAEUA7X',
-      createdAt: new Date('2024-01-10T08:00:00Z').toISOString()
-    }
-  ];
-
-  if (!fs.existsSync(USERS_DB)) {
-    fs.writeFileSync(USERS_DB, JSON.stringify(sampleUsers, null, 2));
-    console.log(`✓ Initialized users database with ${sampleUsers.length} sample records`);
-  } else {
-    console.log('✓ Users database already exists');
-  }
+function createUsersTable(db) {
+  return new Promise((resolve, reject) => {
+    const createTableSQL = `
+      CREATE TABLE IF NOT EXISTS users (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        publicKey TEXT NOT NULL UNIQUE,
+        createdAt DATETIME DEFAULT CURRENT_TIMESTAMP
+      )
+    `;
+    
+    db.run(createTableSQL, (err) => {
+      if (err) {
+        reject(err);
+      } else {
+        console.log('✓ Created users table');
+        resolve();
+      }
+    });
+  });
 }
 
-function main() {
+function createTransactionsTable(db) {
+  return new Promise((resolve, reject) => {
+    const createTableSQL = `
+      CREATE TABLE IF NOT EXISTS transactions (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        senderId INTEGER NOT NULL,
+        receiverId INTEGER NOT NULL,
+        amount REAL NOT NULL,
+        memo TEXT,
+        timestamp DATETIME DEFAULT CURRENT_TIMESTAMP,
+        FOREIGN KEY (senderId) REFERENCES users(id),
+        FOREIGN KEY (receiverId) REFERENCES users(id)
+      )
+    `;
+    
+    db.run(createTableSQL, (err) => {
+      if (err) {
+        reject(err);
+      } else {
+        console.log('✓ Created transactions table (with memo column)');
+        resolve();
+      }
+    });
+  });
+}
+
+function insertSampleUsers(db) {
+  return new Promise((resolve, reject) => {
+    const sampleUsers = [
+      'GBRPYHIL2CI3WHZDTOOQFC6EB4KJJGUJMUC5XNODMZTQYBB5XYZXYUU',
+      'GBBD47UZQ5EYJYJMZXZYDUC77SAZXSQEA7XJJGTAY5XJJGUJMUC5XNOD',
+      'GCZST3XVCDTUJ76ZAV2HA72KYQM4YQQ5DUJTHIGQ5ESE3JNEZUAEUA7X'
+    ];
+
+    const insertSQL = 'INSERT OR IGNORE INTO users (publicKey) VALUES (?)';
+    let completed = 0;
+
+    sampleUsers.forEach((publicKey) => {
+      db.run(insertSQL, [publicKey], (err) => {
+        if (err) {
+          reject(err);
+        } else {
+          completed++;
+          if (completed === sampleUsers.length) {
+            console.log(`✓ Inserted ${sampleUsers.length} sample users`);
+            resolve();
+          }
+        }
+      });
+    });
+  });
+}
+
+function insertSampleTransactions(db) {
+  return new Promise((resolve, reject) => {
+    const sampleTransactions = [
+      { senderId: 1, receiverId: 3, amount: 50.0, memo: 'Donation to Red Cross' },
+      { senderId: 2, receiverId: 3, amount: 75.0, memo: 'Support for humanitarian work' },
+      { senderId: 1, receiverId: 2, amount: 25.5, memo: 'Test transaction' }
+    ];
+
+    const insertSQL = 'INSERT INTO transactions (senderId, receiverId, amount, memo) VALUES (?, ?, ?, ?)';
+    let completed = 0;
+
+    sampleTransactions.forEach((tx) => {
+      db.run(insertSQL, [tx.senderId, tx.receiverId, tx.amount, tx.memo], (err) => {
+        if (err) {
+          reject(err);
+        } else {
+          completed++;
+          if (completed === sampleTransactions.length) {
+            console.log(`✓ Inserted ${sampleTransactions.length} sample transactions`);
+            resolve();
+          }
+        }
+      });
+    });
+  });
+}
+
+function verifyTables(db) {
+  return new Promise((resolve, reject) => {
+    db.all("SELECT name FROM sqlite_master WHERE type='table'", (err, tables) => {
+      if (err) {
+        reject(err);
+      } else {
+        console.log('\n✓ Database tables created:');
+        tables.forEach(table => {
+          console.log(`  - ${table.name}`);
+        });
+        resolve();
+      }
+    });
+  });
+}
+
+async function main() {
   console.log('Initializing Stellar Micro-Donation API Database...\n');
   
+  let db;
   try {
     ensureDataDir();
-    initDonationsDB();
-    initUsersDB();
+    db = await createDatabase();
+    await createUsersTable(db);
+    await createTransactionsTable(db);
+    await insertSampleUsers(db);
+    await insertSampleTransactions(db);
+    await verifyTables(db);
     
     console.log('\n✓ Database initialization complete!');
-    console.log(`\nDatabase files:`);
-    console.log(`  - ${DONATIONS_DB}`);
-    console.log(`  - ${USERS_DB}`);
+    console.log(`\nDatabase location: ${DB_PATH}`);
   } catch (error) {
     console.error('✗ Database initialization failed:', error.message);
     process.exit(1);
+  } finally {
+    if (db) {
+      db.close((err) => {
+        if (err) {
+          console.error('Error closing database:', err.message);
+        }
+      });
+    }
   }
 }
 

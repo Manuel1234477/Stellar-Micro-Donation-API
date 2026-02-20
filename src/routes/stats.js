@@ -252,4 +252,51 @@ router.get('/recipients', (req, res) => {
   }
 });
 
+/**
+ * GET /stats/analytics-fees
+ * Get analytics fee summary for reporting
+ * Query params: startDate, endDate (ISO format)
+ */
+router.get('/analytics-fees', (req, res) => {
+  try {
+    const { startDate, endDate } = req.query;
+
+    if (!startDate || !endDate) {
+      return res.status(400).json({
+        error: 'Missing required query parameters: startDate, endDate (ISO format)'
+      });
+    }
+
+    const start = new Date(startDate);
+    const end = new Date(endDate);
+
+    if (isNaN(start.getTime()) || isNaN(end.getTime())) {
+      return res.status(400).json({
+        error: 'Invalid date format. Use ISO format (YYYY-MM-DD or ISO 8601)'
+      });
+    }
+
+    if (start > end) {
+      return res.status(400).json({
+        error: 'startDate must be before endDate'
+      });
+    }
+
+    const stats = StatsService.getAnalyticsFeeStats(start, end);
+
+    res.json({
+      success: true,
+      data: stats,
+      metadata: {
+        note: 'Analytics fees are calculated but not deducted on-chain'
+      }
+    });
+  } catch (error) {
+    res.status(500).json({
+      error: 'Failed to retrieve analytics fee stats',
+      message: error.message
+    });
+  }
+});
+
 module.exports = router;

@@ -1,77 +1,191 @@
-const express = require("express");
-const StellarSdk = require("stellar-sdk");
-const fetch = require("node-fetch");
-const Wallet = require("../models/wallet");
-
+const express = require('express');
 const router = express.Router();
+const Wallet = require('./models/wallet');
+const Database = require('../utils/database');
 
-const server = new StellarSdk.Horizon.Server(
-  "https://horizon-testnet.stellar.org"
-);
-
-router.post("/wallets", async (req, res) => {
+/**
+ * POST /wallets
+ * Create a new wallet with metadata
+ */
+router.post('/', (req, res) => {
   try {
-    
-    const keypair = StellarSdk.Keypair.random();
-    const publicKey = keypair.publicKey();
+    const { address, label, ownerName } = req.body;
 
-    
-    await fetch(
-      `https://friendbot.stellar.org?addr=${encodeURIComponent(publicKey)}`
-    );
+    if (!address) {
+      return res.status(400).json({
+        error: 'Missing required field: address'
+      });
+    }
 
-    
-    const wallet = await Wallet.create({
-      publicKey,
-    });
+    const existingWallet = Wallet.getByAddress(address);
+    if (existingWallet) {
+      return res.status(409).json({
+        error: 'Wallet with this address already exists'
+      });
+    }
 
-    return res.status(201).json({
-      walletId: wallet.walletId,
-      publicKey: wallet.publicKey,
+    const wallet = Wallet.create({ address, label, ownerName });
+
+    res.status(201).json({
+      success: true,
+      data: wallet
     });
   } catch (error) {
-    return res.status(500).json({
-      message: "Failed to create wallet",
-      error: error.message,
+    res.status(500).json({
+      error: 'Failed to create wallet',
+      message: error.message
     });
   }
 });
 
-
-router.get("/wallet/:id", async (req, res) => {
+/**
+ * GET /wallets
+ * Get all wallets
+ */
+router.get('/', (req, res) => {
   try {
-    const { id } = req.params;
+    const wallets = Wallet.getAll();
+    res.json({
+      success: true,
+      data: wallets,
+      count: wallets.length
+    });
+  } catch (error) {
+    res.status(500).json({
+      error: 'Failed to retrieve wallets',
+      message: error.message
+    });
+  }
+});
 
+/**
+ * GET /wallets/:id
+ * Get a specific wallet
+ */
+router.get('/:id', (req, res) => {
+  try {
+    const wallet = Wallet.getById(req.params.id);
     
-    const wallet = Wallet.getById(id);
-
     if (!wallet) {
       return res.status(404).json({
-        message: "Wallet not found",
+        error: 'Wallet not found'
       });
     }
 
+    res.json({
+      success: true,
+      data: wallet
+    });
+  } catch (error) {
+    res.status(500).json({
+      error: 'Failed to retrieve wallet',
+      message: error.message
+    });
+  }
+});
+
+/**
+ * PATCH /wallets/:id
+ * Update wallet metadata
+ */
+router.patch('/:id', (req, res) => {
+  try {
+    const { label, ownerName } = req.body;
+
+    if (!label && !ownerName) {
+      return res.status(400).json({
+        error: 'At least one field (label or ownerName) is required'
+      });
+    }
+
+    const updates = {};
+    if (label !== undefined) updates.label = label;
+    if (ownerName !== undefined) updates.ownerName = ownerName;
+
+    const wallet = Wallet.update(req.params.id, updates);
     
-    const account = await server.loadAccount(wallet.publicKey);
+    if (!wallet) {
+      return res.status(404).json({
+        error: 'Wallet not found'
+      });
+    }
 
+    res.json({
+      success: true,
+      data: wallet
+    });
+  } catch (error) {
+    res.status(500).json({
+      error: 'Failed to update wallet',
+      message: error.message
+    });
+  }
+});
 
-    const nativeBalance = account.balances.find(
-      (balance) => balance.asset_type === "native"
+/**
+ * GET /wallets/:publicKey/transactions
+ * Get all transactions (sent and received) for a wallet
+ */
+router.get('/:publicKey/transactions', async (req, res) => {
+  try {
+    const { publicKey } = req.params;
+
+    // First, check if user exists with this publicKey
+    const user = await Database.get(
+      'SELECT id, publicKey, createdAt FROM users WHERE publicKey = ?',
+      [publicKey]
     );
 
-    return res.status(200).json({
-      walletId: wallet.walletId,
-      balance: nativeBalance.balance,
-      asset: "XLM",
-    });
+    if (!user) {
+      // Return empty array if wallet doesn't exist (as per acceptance criteria)
+      return res.json({
+        success: true,
+        data: [],
+        count: 0,
+        message: 'No user found with this public key'
+      });
+    }
 
+    // Get all transactions where user is sender or receiver
+    const transactions = await Database.query(
+      `SELECT 
+        t.id,
+        t.senderId,
+        t.receiverId,
+        t.amount,
+        t.memo,
+        t.timestamp,
+        sender.publicKey as senderPublicKey,
+        receiver.publicKey as receiverPublicKey
+      FROM transactions t
+      LEFT JOIN users sender ON t.senderId = sender.id
+      LEFT JOIN users receiver ON t.receiverId = receiver.id
+      WHERE t.senderId = ? OR t.receiverId = ?
+      ORDER BY t.timestamp DESC`,
+      [user.id, user.id]
+    );
+
+    // Format the response
+    const formattedTransactions = transactions.map(tx => ({
+      id: tx.id,
+      sender: tx.senderPublicKey,
+      receiver: tx.receiverPublicKey,
+      amount: tx.amount,
+      memo: tx.memo,
+      timestamp: tx.timestamp
+    }));
+
+    res.json({
+      success: true,
+      data: formattedTransactions,
+      count: formattedTransactions.length
+    });
   } catch (error) {
-    return res.status(500).json({
-      message: "Failed to fetch wallet balance",
-      error: error.message,
+    res.status(500).json({
+      error: 'Failed to retrieve transactions',
+      message: error.message
     });
   }
 });
 
 module.exports = router;
-

@@ -1,0 +1,156 @@
+[
+  {
+    "id": "1",
+    "amount": 50,
+    "donor": "Alice",
+    "recipient": "Red Cross",
+    "timestamp": "2024-02-12T10:30:00.000Z",
+    "status": "completed",
+    "stellarTxId": "tx_001",
+    "analyticsFee": 1.00,
+    "analyticsFeePercentage": 0.02
+  },
+  {
+    "id": "2",
+    "amount": 75,
+    "donor": "Bob",
+    "recipient": "UNICEF",
+    "timestamp": "2024-02-12T14:15:00.000Z",
+    "status": "completed",
+    "stellarTxId": "tx_002",
+    "analyticsFee": 1.50,
+    "analyticsFeePercentage": 0.02
+  },
+  {
+    "id": "3",
+    "amount": 100,
+    "donor": "Charlie",
+    "recipient": "Red Cross",
+    "timestamp": "2024-02-13T09:00:00.000Z",
+    "status": "completed",
+    "stellarTxId": "tx_003",
+    "analyticsFee": 2.00,
+    "analyticsFeePercentage": 0.02
+  },
+  {
+    "id": "4",
+    "amount": 25,
+    "donor": "Diana",
+    "recipient": "WHO",
+    "timestamp": "2024-02-13T16:45:00.000Z",
+    "status": "completed",
+    "stellarTxId": "tx_004",
+    "analyticsFee": 0.50,
+    "analyticsFeePercentage": 0.02
+  },
+  {
+    "id": "5",
+    "amount": 150,
+    "donor": "Eve",
+    "recipient": "UNICEF",
+    "timestamp": "2024-02-14T11:20:00.000Z",
+    "status": "completed",
+    "stellarTxId": "tx_005",
+    "analyticsFee": 3.00,
+    "analyticsFeePercentage": 0.02
+  },
+  {
+    "id": "6",
+    "amount": 60,
+    "donor": "Frank",
+    "recipient": "Red Cross",
+    "timestamp": "2024-02-14T13:30:00.000Z",
+    "status": "completed",
+    "stellarTxId": "tx_006",
+    "analyticsFee": 1.20,
+    "analyticsFeePercentage": 0.02
+  },
+  {
+    "id": "7",
+    "amount": 90,
+    "donor": "Grace",
+    "recipient": "WHO",
+    "timestamp": "2024-02-15T08:15:00.000Z",
+    "status": "completed",
+    "stellarTxId": "tx_007",
+    "analyticsFee": 1.80,
+    "analyticsFeePercentage": 0.02
+  },
+  {
+    "id": "8",
+    "amount": 120,
+    "donor": "Henry",
+    "recipient": "Red Cross",
+    "timestamp": "2024-02-19T10:00:00.000Z",
+    "status": "completed",
+    "stellarTxId": "tx_008",
+    "analyticsFee": 2.40,
+    "analyticsFeePercentage": 0.02
+  },
+  {
+    "id": "9",
+    "amount": 45,
+    "donor": "Iris",
+    "recipient": "UNICEF",
+    "timestamp": "2024-02-19T15:30:00.000Z",
+    "status": "completed",
+    "stellarTxId": "tx_009",
+    "analyticsFee": 0.90,
+    "analyticsFeePercentage": 0.02
+  },
+  {
+    "id": "10",
+    "amount": 200,
+    "donor": "Jack",
+    "recipient": "WHO",
+    "timestamp": "2024-02-20T12:00:00.000Z",
+    "status": "completed",
+    "stellarTxId": "tx_010",
+    "analyticsFee": 4.00,
+    "analyticsFeePercentage": 0.02
+  },
+  {
+    "id": "11",
+    "amount": 85,
+    "donor": "Karen",
+    "recipient": "Red Cross",
+    "timestamp": "2024-02-20T14:45:00.000Z",
+    "status": "completed",
+    "stellarTxId": "tx_011",
+    "analyticsFee": 1.70,
+    "analyticsFeePercentage": 0.02
+  },
+  {
+    "id": "12",
+    "amount": 110,
+    "donor": "Leo",
+    "recipient": "UNICEF",
+    "timestamp": "2024-02-21T09:30:00.000Z",
+    "status": "completed",
+    "stellarTxId": "tx_012",
+    "analyticsFee": 2.20,
+    "analyticsFeePercentage": 0.02
+  },
+  {
+    "id": "13",
+    "amount": 55,
+    "donor": "Mia",
+    "recipient": "WHO",
+    "timestamp": "2024-02-21T16:00:00.000Z",
+    "status": "completed",
+    "stellarTxId": "tx_013",
+    "analyticsFee": 1.10,
+    "analyticsFeePercentage": 0.02
+  },
+  {
+    "id": "14",
+    "amount": 175,
+    "donor": "Noah",
+    "recipient": "Red Cross",
+    "timestamp": "2024-02-22T11:15:00.000Z",
+    "status": "completed",
+    "stellarTxId": "tx_014",
+    "analyticsFee": 3.50,
+    "analyticsFeePercentage": 0.02
+  }
+]

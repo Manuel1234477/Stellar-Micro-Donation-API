@@ -27,6 +27,7 @@ class StellarService {
    * @param {string} publicKey - Stellar public key
    * @returns {Promise<{balance: string, asset: string}>}
    */
+  // eslint-disable-next-line no-unused-vars
   async getBalance(publicKey) {
     throw new Error('StellarService.getBalance() not yet implemented');
   }
@@ -36,8 +37,19 @@ class StellarService {
    * @param {string} publicKey - Stellar public key
    * @returns {Promise<{balance: string}>}
    */
+  // eslint-disable-next-line no-unused-vars
   async fundTestnetWallet(publicKey) {
     throw new Error('StellarService.fundTestnetWallet() not yet implemented');
+  }
+
+  /**
+   * Check if an account is funded on Stellar
+   * @param {string} publicKey - Stellar public key
+   * @returns {Promise<{funded: boolean, balance: string, exists: boolean}>}
+   */
+  // eslint-disable-next-line no-unused-vars
+  async isAccountFunded(publicKey) {
+    throw new Error('StellarService.isAccountFunded() not yet implemented');
   }
 
   /**
@@ -46,10 +58,11 @@ class StellarService {
    * @param {string} params.sourceSecret - Source account secret key
    * @param {string} params.destinationPublic - Destination public key
    * @param {string} params.amount - Amount in XLM
-   * @param {string} params.memo - Transaction memo
+   * @param {string} [params.memo] - Optional transaction memo (max 28 bytes)
    * @returns {Promise<{transactionId: string, ledger: number}>}
    */
-  async sendDonation({ sourceSecret, destinationPublic, amount, memo }) {
+  // eslint-disable-next-line no-unused-vars
+  async sendDonation({ sourceSecret, destinationPublic, amount, memo = '' }) {
     throw new Error('StellarService.sendDonation() not yet implemented');
   }
 
@@ -59,6 +72,7 @@ class StellarService {
    * @param {number} limit - Number of transactions to retrieve
    * @returns {Promise<Array>}
    */
+  // eslint-disable-next-line no-unused-vars
   async getTransactionHistory(publicKey, limit = 10) {
     throw new Error('StellarService.getTransactionHistory() not yet implemented');
   }
@@ -69,6 +83,7 @@ class StellarService {
    * @param {Function} onTransaction - Callback for each transaction
    * @returns {Function} Unsubscribe function
    */
+  // eslint-disable-next-line no-unused-vars
   streamTransactions(publicKey, onTransaction) {
     throw new Error('StellarService.streamTransactions() not yet implemented');
   }
@@ -78,6 +93,7 @@ class StellarService {
    * @param {string} transactionHash - Transaction hash to verify
    * @returns {Promise<{verified: boolean, transaction: Object}>}
    */
+  // eslint-disable-next-line no-unused-vars
   async verifyTransaction(transactionHash) {
     throw new Error('StellarService.verifyTransaction() not yet implemented');
   }

@@ -1,0 +1,20 @@
+[
+  {
+    "id": "1",
+    "name": "Alice",
+    "walletAddress": "GBRPYHIL2CI3WHZDTOOQFC6EB4KJJGUJMUC5XNODMZTQYBB5XYZXYUU",
+    "createdAt": "2024-01-15T10:00:00.000Z"
+  },
+  {
+    "id": "2",
+    "name": "Bob",
+    "walletAddress": "GBBD47UZQ5EYJYJMZXZYDUC77SAZXSQEA7XJJGTAY5XJJGUJMUC5XNOD",
+    "createdAt": "2024-01-20T14:30:00.000Z"
+  },
+  {
+    "id": "3",
+    "name": "Red Cross",
+    "walletAddress": "GCZST3XVCDTUJ76ZAV2HA72KYQM4YQQ5DUJTHIGQ5ESE3JNEZUAEUA7X",
+    "createdAt": "2024-01-10T08:00:00.000Z"
+  }
+]
