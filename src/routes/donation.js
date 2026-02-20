@@ -2,7 +2,7 @@ const express = require('express');
 const router = express.Router();
 const StellarService = require('../services/StellarService');
 const Transaction = require('./models/transaction');
-const { calculateAnalyticsFee } = require('../utils/feeCalculator');
+const Wallet = require('./models/wallet');
 
 const stellarService = new StellarService({
   network: process.env.STELLAR_NETWORK || 'testnet',
@@ -44,7 +44,45 @@ router.post('/verify', async (req, res) => {
   }
 });
 
-const Transaction = require('./models/transaction');
+const stellarService = new StellarService({
+  network: process.env.STELLAR_NETWORK || 'testnet',
+  horizonUrl: process.env.HORIZON_URL || 'https://horizon-testnet.stellar.org'
+});
+
+/**
+ * POST /api/v1/donation/verify
+ * Verify a donation transaction by hash
+ */
+router.post('/verify', async (req, res) => {
+  try {
+    const { transactionHash } = req.body;
+
+    if (!transactionHash) {
+      return res.status(400).json({
+        success: false,
+        error: {
+          code: 'INVALID_REQUEST',
+          message: 'Transaction hash is required'
+        }
+      });
+    }
+
+    const result = await stellarService.verifyTransaction(transactionHash);
+
+    res.json({
+      success: true,
+      data: result
+    });
+  } catch (error) {
+    res.status(500).json({
+      success: false,
+      error: {
+        code: 'VERIFICATION_FAILED',
+        message: error.message
+      }
+    });
+  }
+});
 
 /**
  * POST /donations
@@ -201,6 +239,52 @@ router.get('/:id', (req, res) => {
   } catch (error) {
     res.status(500).json({
       error: 'Failed to retrieve donation',
+      message: error.message
+    });
+  }
+});
+
+/**
+ * PATCH /donations/:id/status
+ * Update donation transaction status
+ */
+router.patch('/:id/status', async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { status, stellarTxId, ledger } = req.body;
+
+    if (!status) {
+      return res.status(400).json({
+        error: 'Missing required field: status'
+      });
+    }
+
+    const validStatuses = ['pending', 'confirmed', 'failed', 'cancelled'];
+    if (!validStatuses.includes(status)) {
+      return res.status(400).json({
+        error: `Invalid status. Must be one of: ${validStatuses.join(', ')}`
+      });
+    }
+
+    const stellarData = {};
+    if (stellarTxId) stellarData.transactionId = stellarTxId;
+    if (ledger) stellarData.ledger = ledger;
+    if (status === 'confirmed') stellarData.confirmedAt = new Date().toISOString();
+
+    const updatedTransaction = Transaction.updateStatus(id, status, stellarData);
+
+    res.json({
+      success: true,
+      data: updatedTransaction
+    });
+  } catch (error) {
+    if (error.message.includes('not found')) {
+      return res.status(404).json({
+        error: error.message
+      });
+    }
+    res.status(500).json({
+      error: 'Failed to update transaction status',
       message: error.message
     });
   }

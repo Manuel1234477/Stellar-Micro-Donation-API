@@ -164,9 +164,22 @@ class MockStellarService {
       const amountNum = parseFloat(amount);
       const sourceBalance = parseFloat(sourceWallet.balance);
 
-      if (sourceBalance < amountNum) {
-        throw new Error('Insufficient balance');
-      }
+    // Update balances
+    sourceWallet.balance = (sourceBalance - amountNum).toFixed(7);
+    destWallet.balance = (parseFloat(destWallet.balance) + amountNum).toFixed(7);
+
+    // Create transaction record
+    const transaction = {
+      transactionId: 'mock_' + crypto.randomBytes(16).toString('hex'),
+      source: sourceWallet.publicKey,
+      destination: destinationPublic,
+      amount,
+      memo,
+      timestamp: new Date().toISOString(),
+      ledger: Math.floor(Math.random() * 1000000) + 1000000,
+      status: 'confirmed',
+      confirmedAt: new Date().toISOString(),
+    };
 
       // Update balances
       sourceWallet.balance = (sourceBalance - amountNum).toFixed(7);
@@ -205,6 +218,13 @@ class MockStellarService {
       };
     }
 
+    return {
+      transactionId: transaction.transactionId,
+      ledger: transaction.ledger,
+      status: transaction.status,
+      confirmedAt: transaction.confirmedAt,
+    };
+  }
 
   /**
    * Get mock transaction history
@@ -221,6 +241,37 @@ class MockStellarService {
 
     const transactions = this.transactions.get(publicKey) || [];
     return transactions.slice(-limit).reverse();
+  }
+
+  /**
+   * Verify a mock transaction by hash
+   * @param {string} transactionHash - Transaction hash to verify
+   * @returns {Promise<{verified: boolean, transaction: Object}>}
+   */
+  async verifyTransaction(transactionHash) {
+    // Search all transactions for the given hash
+    for (const txList of this.transactions.values()) {
+      const transaction = txList.find(tx => tx.transactionId === transactionHash);
+      if (transaction) {
+        return {
+          verified: true,
+          status: transaction.status,
+          transaction: {
+            id: transaction.transactionId,
+            source: transaction.source,
+            destination: transaction.destination,
+            amount: transaction.amount,
+            memo: transaction.memo,
+            timestamp: transaction.timestamp,
+            ledger: transaction.ledger,
+            status: transaction.status,
+            confirmedAt: transaction.confirmedAt,
+          },
+        };
+      }
+    }
+
+    throw new Error(`Transaction not found: ${transactionHash}`);
   }
 
   /**

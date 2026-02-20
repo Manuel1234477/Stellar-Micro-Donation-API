@@ -52,9 +52,10 @@ class Transaction {
       donor: transactionData.donor,
       recipient: transactionData.recipient,
       timestamp: new Date().toISOString(),
-      status: 'completed',
+      status: transactionData.status || 'pending',
       stellarTxId: transactionData.stellarTxId || null,
-      idempotencyKey: transactionData.idempotencyKey || null,
+      stellarLedger: transactionData.stellarLedger || null,
+      statusUpdatedAt: new Date().toISOString(),
       ...transactionData
     };
     transactions.push(newTransaction);
@@ -96,6 +97,41 @@ class Transaction {
       const txDate = new Date(t.timestamp);
       return txDate >= startDate && txDate <= endDate;
     });
+  }
+
+  static updateStatus(id, status, stellarData = {}) {
+    const transactions = this.loadTransactions();
+    const index = transactions.findIndex(t => t.id === id);
+    
+    if (index === -1) {
+      throw new Error(`Transaction not found: ${id}`);
+    }
+
+    transactions[index].status = status;
+    transactions[index].statusUpdatedAt = new Date().toISOString();
+    
+    if (stellarData.transactionId) {
+      transactions[index].stellarTxId = stellarData.transactionId;
+    }
+    if (stellarData.ledger) {
+      transactions[index].stellarLedger = stellarData.ledger;
+    }
+    if (stellarData.confirmedAt) {
+      transactions[index].confirmedAt = stellarData.confirmedAt;
+    }
+
+    this.saveTransactions(transactions);
+    return transactions[index];
+  }
+
+  static getByStatus(status) {
+    const transactions = this.loadTransactions();
+    return transactions.filter(t => t.status === status);
+  }
+
+  static getByStellarTxId(stellarTxId) {
+    const transactions = this.loadTransactions();
+    return transactions.find(t => t.stellarTxId === stellarTxId);
   }
 }
 
