@@ -4,6 +4,9 @@ const Database = require('../utils/database');
 const Transaction = require('./models/transaction');
 const getStellarService = require('../config/stellar').getStellarService;
 const encryption = require('../utils/encryption');
+const donationValidator = require('../utils/donationValidator');
+const memoValidator = require('../utils/memoValidator');
+const { calculateAnalyticsFee } = require('../utils/feeCalculator');
 
 const stellarService = getStellarService();
 
@@ -150,7 +153,7 @@ router.post('/', (req, res) => {
       });
     }
 
-    const { amount, donor, recipient } = req.body;
+    const { amount, donor, recipient, memo } = req.body;
 
     if (!amount || !recipient) {
       return res.status(400).json({
@@ -158,10 +161,64 @@ router.post('/', (req, res) => {
       });
     }
 
-    if (isNaN(parseFloat(amount)) || parseFloat(amount) <= 0) {
+    // Validate memo if provided
+    if (memo !== undefined && memo !== null) {
+      const memoValidation = memoValidator.validate(memo);
+      if (!memoValidation.valid) {
+        return res.status(400).json({
+          success: false,
+          error: {
+            code: memoValidation.code,
+            message: memoValidation.error,
+            maxLength: memoValidation.maxLength,
+            currentLength: memoValidation.currentLength
+          }
+        });
+      }
+    }
+
+    const parsedAmount = parseFloat(amount);
+
+    // Validate amount type and basic checks
+    if (isNaN(parsedAmount) || parsedAmount <= 0) {
       return res.status(400).json({
         error: 'Amount must be a positive number'
       });
+    }
+
+    // Validate amount against configured limits
+    const amountValidation = donationValidator.validateAmount(parsedAmount);
+    if (!amountValidation.valid) {
+      return res.status(400).json({
+        success: false,
+        error: {
+          code: amountValidation.code,
+          message: amountValidation.error,
+          limits: {
+            min: amountValidation.minAmount,
+            max: amountValidation.maxAmount,
+          },
+        },
+      });
+    }
+
+    // Validate daily limit if donor is specified
+    if (donor && donor !== 'Anonymous') {
+      const dailyTotal = Transaction.getDailyTotalByDonor(donor);
+      const dailyValidation = donationValidator.validateDailyLimit(parsedAmount, dailyTotal);
+
+      if (!dailyValidation.valid) {
+        return res.status(400).json({
+          success: false,
+          error: {
+            code: dailyValidation.code,
+            message: dailyValidation.error,
+            dailyLimit: dailyValidation.maxDailyAmount,
+            currentDailyTotal: dailyValidation.currentDailyTotal,
+            remainingDaily: dailyValidation.remainingDaily,
+          },
+        });
+      }
     }
 
     const normalizedDonor = typeof donor === 'string' ? donor.trim() : '';
@@ -173,11 +230,21 @@ router.post('/', (req, res) => {
       });
     }
 
+    // Calculate analytics fee (not deducted on-chain)
+    const donationAmount = parseFloat(amount);
+    const feeCalculation = calculateAnalyticsFee(donationAmount);
+
+    // Sanitize memo for storage
+    const sanitizedMemo = memo ? memoValidator.sanitize(memo) : '';
+
     const transaction = Transaction.create({
-      amount: parseFloat(amount),
+      amount: parsedAmount,
       donor: donor || 'Anonymous',
       recipient,
-      idempotencyKey
+      memo: sanitizedMemo,
+      idempotencyKey,
+      analyticsFee: feeCalculation.fee,
+      analyticsFeePercentage: feeCalculation.feePercentage
     });
 
     res.status(201).json({
@@ -207,6 +274,30 @@ router.get('/', (req, res) => {
   } catch (error) {
     res.status(500).json({
       error: 'Failed to retrieve donations',
+      message: error.message
+    });
+  }
+});
+
+/**
+ * GET /donations/limits
+ * Get current donation amount limits
+ */
+router.get('/limits', (req, res) => {
+  try {
+    const limits = donationValidator.getLimits();
+    res.json({
+      success: true,
+      data: {
+        minAmount: limits.minAmount,
+        maxAmount: limits.maxAmount,
+        maxDailyPerDonor: limits.maxDailyPerDonor,
+        currency: 'XLM',
+      },
+    });
+  } catch (error) {
+    res.status(500).json({
+      error: 'Failed to retrieve limits',
       message: error.message
     });
   }
@@ -280,6 +371,52 @@ router.get('/:id', (req, res) => {
   } catch (error) {
     res.status(500).json({
       error: 'Failed to retrieve donation',
+      message: error.message
+    });
+  }
+});
+
+/**
+ * PATCH /donations/:id/status
+ * Update donation transaction status
+ */
+router.patch('/:id/status', async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { status, stellarTxId, ledger } = req.body;
+
+    if (!status) {
+      return res.status(400).json({
+        error: 'Missing required field: status'
+      });
+    }
+
+    const validStatuses = ['pending', 'confirmed', 'failed', 'cancelled'];
+    if (!validStatuses.includes(status)) {
+      return res.status(400).json({
+        error: `Invalid status. Must be one of: ${validStatuses.join(', ')}`
+      });
+    }
+
+    const stellarData = {};
+    if (stellarTxId) stellarData.transactionId = stellarTxId;
+    if (ledger) stellarData.ledger = ledger;
+    if (status === 'confirmed') stellarData.confirmedAt = new Date().toISOString();
+
+    const updatedTransaction = Transaction.updateStatus(id, status, stellarData);
+
+    res.json({
+      success: true,
+      data: updatedTransaction
+    });
+  } catch (error) {
+    if (error.message.includes('not found')) {
+      return res.status(404).json({
+        error: error.message
+      });
+    }
+    res.status(500).json({
+      error: 'Failed to update transaction status',
       message: error.message
     });
   }

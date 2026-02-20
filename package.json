@@ -6,6 +6,9 @@
   "scripts": {
     "start": "node src/routes/app.js",
     "init-db": "node src/scripts/initDB.js",
+    "migrate:memo": "node src/scripts/addMemoColumn.js",
+    "test": "jest",
+    "test:memo": "node test-memo-feature.js",
     "dev": "nodemon src/routes/app.js",
     "lint": "eslint ."
   },
@@ -17,6 +20,8 @@
   },
   "devDependencies": {
     "eslint": "^8.57.0",
-    "nodemon": "^2.0.20"
+    "jest": "^29.7.0",
+    "nodemon": "^2.0.20",
+    "supertest": "^6.3.3"
   }
 }

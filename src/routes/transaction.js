@@ -1,6 +1,7 @@
 const express = require('express');
 const router = express.Router();
 const Transaction = require('../models/transaction');
+const TransactionSyncService = require('../../services/TransactionSyncService');
 
 
 
@@ -48,6 +49,32 @@ router.get('/', async (req, res) => {
         code: 'SERVER_ERROR',
         message: 'Failed to fetch transactions'
       }
+    });
+  }
+});
+
+router.post('/sync', async (req, res) => {
+  try {
+    const { publicKey } = req.body;
+
+    if (!publicKey) {
+      return res.status(400).json({
+        success: false,
+        error: { code: 'MISSING_PUBLIC_KEY', message: 'publicKey is required' }
+      });
+    }
+
+    const syncService = new TransactionSyncService();
+    const result = await syncService.syncWalletTransactions(publicKey);
+
+    return res.status(200).json({
+      success: true,
+      data: result
+    });
+  } catch (error) {
+    return res.status(500).json({
+      success: false,
+      error: { code: 'SYNC_FAILED', message: error.message }
     });
   }
 });
