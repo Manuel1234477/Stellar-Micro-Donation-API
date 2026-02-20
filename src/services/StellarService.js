@@ -3,6 +3,8 @@
  * Handles actual blockchain interactions with Stellar network
  */
 
+const { validateStellarAddress, validateStellarSecretKey } = require('../utils/stellarValidation');
+
 class StellarService {
   constructor(config = {}) {
     this.network = config.network || 'testnet';
@@ -28,6 +30,12 @@ class StellarService {
    * @returns {Promise<{balance: string, asset: string}>}
    */
   async getBalance(publicKey) {
+    // Validate address format
+    const validation = validateStellarAddress(publicKey);
+    if (!validation.valid) {
+      throw new Error(validation.error);
+    }
+
     throw new Error('StellarService.getBalance() not yet implemented');
   }
 
@@ -37,6 +45,12 @@ class StellarService {
    * @returns {Promise<{balance: string}>}
    */
   async fundTestnetWallet(publicKey) {
+    // Validate address format
+    const validation = validateStellarAddress(publicKey);
+    if (!validation.valid) {
+      throw new Error(validation.error);
+    }
+
     throw new Error('StellarService.fundTestnetWallet() not yet implemented');
   }
 
@@ -46,6 +60,12 @@ class StellarService {
    * @returns {Promise<{funded: boolean, balance: string, exists: boolean}>}
    */
   async isAccountFunded(publicKey) {
+    // Validate address format
+    const validation = validateStellarAddress(publicKey);
+    if (!validation.valid) {
+      throw new Error(validation.error);
+    }
+
     throw new Error('StellarService.isAccountFunded() not yet implemented');
   }
 
@@ -59,6 +79,18 @@ class StellarService {
    * @returns {Promise<{transactionId: string, ledger: number}>}
    */
   async sendDonation({ sourceSecret, destinationPublic, amount, memo }) {
+    // Validate destination address format early
+    const destValidation = validateStellarAddress(destinationPublic);
+    if (!destValidation.valid) {
+      throw new Error(`Invalid destination address: ${destValidation.error}`);
+    }
+
+    // Validate source secret key format
+    const secretValidation = validateStellarSecretKey(sourceSecret);
+    if (!secretValidation.valid) {
+      throw new Error(`Invalid source secret key: ${secretValidation.error}`);
+    }
+
     throw new Error('StellarService.sendDonation() not yet implemented');
   }
 
@@ -69,6 +101,12 @@ class StellarService {
    * @returns {Promise<Array>}
    */
   async getTransactionHistory(publicKey, limit = 10) {
+    // Validate address format
+    const validation = validateStellarAddress(publicKey);
+    if (!validation.valid) {
+      throw new Error(validation.error);
+    }
+
     throw new Error('StellarService.getTransactionHistory() not yet implemented');
   }
 
@@ -79,6 +117,12 @@ class StellarService {
    * @returns {Function} Unsubscribe function
    */
   streamTransactions(publicKey, onTransaction) {
+    // Validate address format
+    const validation = validateStellarAddress(publicKey);
+    if (!validation.valid) {
+      throw new Error(validation.error);
+    }
+
     throw new Error('StellarService.streamTransactions() not yet implemented');
   }
 

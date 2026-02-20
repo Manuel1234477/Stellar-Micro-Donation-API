@@ -2,6 +2,7 @@ const express = require('express');
 const router = express.Router();
 const StellarService = require('../services/StellarService');
 const Transaction = require('./models/transaction');
+const { validateStellarAddress } = require('../utils/stellarValidation');
 
 const stellarService = new StellarService({
   network: process.env.STELLAR_NETWORK || 'testnet',
@@ -76,6 +77,32 @@ router.post('/', (req, res) => {
       return res.status(400).json({
         error: 'Amount must be a positive number'
       });
+    }
+
+    // Validate recipient Stellar address
+    const recipientValidation = validateStellarAddress(recipient);
+    if (!recipientValidation.valid) {
+      return res.status(400).json({
+        success: false,
+        error: {
+          code: 'INVALID_RECIPIENT_ADDRESS',
+          message: recipientValidation.error
+        }
+      });
+    }
+
+    // Validate donor address if provided
+    if (donor && typeof donor === 'string' && donor.trim() !== '' && donor !== 'Anonymous') {
+      const donorValidation = validateStellarAddress(donor);
+      if (!donorValidation.valid) {
+        return res.status(400).json({
+          success: false,
+          error: {
+            code: 'INVALID_DONOR_ADDRESS',
+            message: donorValidation.error
+          }
+        });
+      }
     }
 
     const normalizedDonor = typeof donor === 'string' ? donor.trim() : '';

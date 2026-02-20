@@ -5,6 +5,8 @@
  */
 
 const crypto = require('crypto');
+const { validateStellarAddress, validateStellarSecretKey } = require('../utils/stellarValidation');
+const { Keypair } = require('stellar-sdk');
 
 class MockStellarService {
   constructor() {
@@ -21,9 +23,11 @@ class MockStellarService {
    * @private
    */
   _generateKeypair() {
-    const publicKey = 'G' + crypto.randomBytes(32).toString('hex').substring(0, 55).toUpperCase();
-    const secretKey = 'S' + crypto.randomBytes(32).toString('hex').substring(0, 55).toUpperCase();
-    return { publicKey, secretKey };
+    const keypair = Keypair.random();
+    return {
+      publicKey: keypair.publicKey(),
+      secretKey: keypair.secret()
+    };
   }
 
   /**
@@ -54,6 +58,12 @@ class MockStellarService {
    * @returns {Promise<{balance: string, asset: string}>}
    */
   async getBalance(publicKey) {
+    // Validate address format
+    const validation = validateStellarAddress(publicKey);
+    if (!validation.valid) {
+      throw new Error(validation.error);
+    }
+
     const wallet = this.wallets.get(publicKey);
     
     if (!wallet) {
@@ -72,6 +82,12 @@ class MockStellarService {
    * @returns {Promise<{balance: string}>}
    */
   async fundTestnetWallet(publicKey) {
+    // Validate address format
+    const validation = validateStellarAddress(publicKey);
+    if (!validation.valid) {
+      throw new Error(validation.error);
+    }
+
     const wallet = this.wallets.get(publicKey);
     
     if (!wallet) {
@@ -93,6 +109,12 @@ class MockStellarService {
    * @returns {Promise<{funded: boolean, balance: string}>}
    */
   async isAccountFunded(publicKey) {
+    // Validate address format
+    const validation = validateStellarAddress(publicKey);
+    if (!validation.valid) {
+      throw new Error(validation.error);
+    }
+
     const wallet = this.wallets.get(publicKey);
     
     if (!wallet) {
@@ -130,80 +152,92 @@ class MockStellarService {
      * @returns {Promise<{transactionId: string, ledger: number}>}
      */
     async sendDonation({ sourceSecret, destinationPublic, amount, memo }) {
-      // Find source wallet by secret key
-      let sourceWallet = null;
-      for (const wallet of this.wallets.values()) {
-        if (wallet.secretKey === sourceSecret) {
-          sourceWallet = wallet;
-          break;
+        // Validate destination address format early
+        const destValidation = validateStellarAddress(destinationPublic);
+        if (!destValidation.valid) {
+          throw new Error(`Invalid destination address: ${destValidation.error}`);
         }
+
+        // Validate source secret key format
+        const secretValidation = validateStellarSecretKey(sourceSecret);
+        if (!secretValidation.valid) {
+          throw new Error(`Invalid source secret key: ${secretValidation.error}`);
+        }
+
+        // Find source wallet by secret key
+        let sourceWallet = null;
+        for (const wallet of this.wallets.values()) {
+          if (wallet.secretKey === sourceSecret) {
+            sourceWallet = wallet;
+            break;
+          }
+        }
+
+        if (!sourceWallet) {
+          throw new Error('Invalid source secret key');
+        }
+
+        if (sourceWallet.publicKey === destinationPublic) {
+          throw new Error('Sender and recipient wallets must be different');
+        }
+
+        const destWallet = this.wallets.get(destinationPublic);
+        if (!destWallet) {
+          throw new Error(`Destination wallet not found: ${destinationPublic}`);
+        }
+
+        // Check if destination account is funded (Stellar requirement)
+        const destBalance = parseFloat(destWallet.balance);
+        if (destBalance === 0) {
+          throw new Error(
+            'Destination account is not funded. On Stellar, accounts must be funded with at least 1 XLM before they can receive payments. ' +
+            'Please fund the account first using the Friendbot (testnet) or send an initial funding transaction.'
+          );
+        }
+
+        const amountNum = parseFloat(amount);
+        const sourceBalance = parseFloat(sourceWallet.balance);
+
+        if (sourceBalance < amountNum) {
+          throw new Error('Insufficient balance');
+        }
+
+        // Update balances
+        sourceWallet.balance = (sourceBalance - amountNum).toFixed(7);
+        destWallet.balance = (destBalance + amountNum).toFixed(7);
+
+        // Create transaction record
+        const transaction = {
+          transactionId: 'mock_' + crypto.randomBytes(16).toString('hex'),
+          source: sourceWallet.publicKey,
+          destination: destinationPublic,
+          amount,
+          memo,
+          timestamp: new Date().toISOString(),
+          ledger: Math.floor(Math.random() * 1000000) + 1000000,
+          status: 'success',
+        };
+
+        // Store transaction for both accounts
+        if (!this.transactions.has(sourceWallet.publicKey)) {
+          this.transactions.set(sourceWallet.publicKey, []);
+        }
+        if (!this.transactions.has(destinationPublic)) {
+          this.transactions.set(destinationPublic, []);
+        }
+
+        this.transactions.get(sourceWallet.publicKey).push(transaction);
+        this.transactions.get(destinationPublic).push(transaction);
+
+        // Notify stream listeners
+        this._notifyStreamListeners(sourceWallet.publicKey, transaction);
+        this._notifyStreamListeners(destinationPublic, transaction);
+
+        return {
+          transactionId: transaction.transactionId,
+          ledger: transaction.ledger,
+        };
       }
-
-      if (!sourceWallet) {
-        throw new Error('Invalid source secret key');
-      }
-
-      if (sourceWallet.publicKey === destinationPublic) {
-        throw new Error('Sender and recipient wallets must be different');
-      }
-
-      const destWallet = this.wallets.get(destinationPublic);
-      if (!destWallet) {
-        throw new Error(`Destination wallet not found: ${destinationPublic}`);
-      }
-
-      // Check if destination account is funded (Stellar requirement)
-      const destBalance = parseFloat(destWallet.balance);
-      if (destBalance === 0) {
-        throw new Error(
-          'Destination account is not funded. On Stellar, accounts must be funded with at least 1 XLM before they can receive payments. ' +
-          'Please fund the account first using the Friendbot (testnet) or send an initial funding transaction.'
-        );
-      }
-
-      const amountNum = parseFloat(amount);
-      const sourceBalance = parseFloat(sourceWallet.balance);
-
-      if (sourceBalance < amountNum) {
-        throw new Error('Insufficient balance');
-      }
-
-      // Update balances
-      sourceWallet.balance = (sourceBalance - amountNum).toFixed(7);
-      destWallet.balance = (destBalance + amountNum).toFixed(7);
-
-      // Create transaction record
-      const transaction = {
-        transactionId: 'mock_' + crypto.randomBytes(16).toString('hex'),
-        source: sourceWallet.publicKey,
-        destination: destinationPublic,
-        amount,
-        memo,
-        timestamp: new Date().toISOString(),
-        ledger: Math.floor(Math.random() * 1000000) + 1000000,
-        status: 'success',
-      };
-
-      // Store transaction for both accounts
-      if (!this.transactions.has(sourceWallet.publicKey)) {
-        this.transactions.set(sourceWallet.publicKey, []);
-      }
-      if (!this.transactions.has(destinationPublic)) {
-        this.transactions.set(destinationPublic, []);
-      }
-
-      this.transactions.get(sourceWallet.publicKey).push(transaction);
-      this.transactions.get(destinationPublic).push(transaction);
-
-      // Notify stream listeners
-      this._notifyStreamListeners(sourceWallet.publicKey, transaction);
-      this._notifyStreamListeners(destinationPublic, transaction);
-
-      return {
-        transactionId: transaction.transactionId,
-        ledger: transaction.ledger,
-      };
-    }
 
 
   /**
@@ -213,6 +247,12 @@ class MockStellarService {
    * @returns {Promise<Array>}
    */
   async getTransactionHistory(publicKey, limit = 10) {
+    // Validate address format
+    const validation = validateStellarAddress(publicKey);
+    if (!validation.valid) {
+      throw new Error(validation.error);
+    }
+
     const wallet = this.wallets.get(publicKey);
     
     if (!wallet) {
@@ -230,6 +270,12 @@ class MockStellarService {
    * @returns {Function} Unsubscribe function
    */
   streamTransactions(publicKey, onTransaction) {
+    // Validate address format
+    const validation = validateStellarAddress(publicKey);
+    if (!validation.valid) {
+      throw new Error(validation.error);
+    }
+
     const wallet = this.wallets.get(publicKey);
     
     if (!wallet) {
