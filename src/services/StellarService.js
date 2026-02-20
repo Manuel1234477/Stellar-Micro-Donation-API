@@ -41,6 +41,15 @@ class StellarService {
   }
 
   /**
+   * Check if an account is funded on Stellar
+   * @param {string} publicKey - Stellar public key
+   * @returns {Promise<{funded: boolean, balance: string, exists: boolean}>}
+   */
+  async isAccountFunded(publicKey) {
+    throw new Error('StellarService.isAccountFunded() not yet implemented');
+  }
+
+  /**
    * Send a donation transaction
    * @param {Object} params
    * @param {string} params.sourceSecret - Source account secret key
