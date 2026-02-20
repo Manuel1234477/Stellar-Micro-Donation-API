@@ -133,6 +133,26 @@ class Transaction {
     const transactions = this.loadTransactions();
     return transactions.find(t => t.stellarTxId === stellarTxId);
   }
+
+  static getDailyTotalByDonor(donor, date = new Date()) {
+    const transactions = this.loadTransactions();
+    const startOfDay = new Date(date);
+    startOfDay.setHours(0, 0, 0, 0);
+    
+    const endOfDay = new Date(date);
+    endOfDay.setHours(23, 59, 59, 999);
+
+    return transactions
+      .filter(t => {
+        const txDate = new Date(t.timestamp);
+        return t.donor === donor && 
+               txDate >= startOfDay && 
+               txDate <= endOfDay &&
+               t.status !== 'failed' &&
+               t.status !== 'cancelled';
+      })
+      .reduce((total, t) => total + t.amount, 0);
+  }
 }
 
 module.exports = Transaction;

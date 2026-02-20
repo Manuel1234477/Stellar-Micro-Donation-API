@@ -2,47 +2,7 @@ const express = require('express');
 const router = express.Router();
 const StellarService = require('../services/StellarService');
 const Transaction = require('./models/transaction');
-const { calculateAnalyticsFee } = require('../utils/feeCalculator');
-
-const stellarService = new StellarService({
-  network: process.env.STELLAR_NETWORK || 'testnet',
-  horizonUrl: process.env.HORIZON_URL || 'https://horizon-testnet.stellar.org'
-});
-
-/**
- * POST /api/v1/donation/verify
- * Verify a donation transaction by hash
- */
-router.post('/verify', async (req, res) => {
-  try {
-    const { transactionHash } = req.body;
-
-    if (!transactionHash) {
-      return res.status(400).json({
-        success: false,
-        error: {
-          code: 'INVALID_REQUEST',
-          message: 'Transaction hash is required'
-        }
-      });
-    }
-
-    const result = await stellarService.verifyTransaction(transactionHash);
-
-    res.json({
-      success: true,
-      data: result
-    });
-  } catch (error) {
-    res.status(500).json({
-      success: false,
-      error: {
-        code: 'VERIFICATION_FAILED',
-        message: error.message
-      }
-    });
-  }
-});
+const donationValidator = require('../utils/donationValidator');
 
 /**
  * POST /api/v1/donation/verify
@@ -106,10 +66,48 @@ router.post('/', (req, res) => {
       });
     }
 
-    if (isNaN(parseFloat(amount)) || parseFloat(amount) <= 0) {
+    const parsedAmount = parseFloat(amount);
+
+    // Validate amount type and basic checks
+    if (isNaN(parsedAmount) || parsedAmount <= 0) {
       return res.status(400).json({
         error: 'Amount must be a positive number'
       });
+    }
+
+    // Validate amount against configured limits
+    const amountValidation = donationValidator.validateAmount(parsedAmount);
+    if (!amountValidation.valid) {
+      return res.status(400).json({
+        success: false,
+        error: {
+          code: amountValidation.code,
+          message: amountValidation.error,
+          limits: {
+            min: amountValidation.minAmount,
+            max: amountValidation.maxAmount,
+          },
+        },
+      });
+    }
+
+    // Validate daily limit if donor is specified
+    if (donor && donor !== 'Anonymous') {
+      const dailyTotal = Transaction.getDailyTotalByDonor(donor);
+      const dailyValidation = donationValidator.validateDailyLimit(parsedAmount, dailyTotal);
+      
+      if (!dailyValidation.valid) {
+        return res.status(400).json({
+          success: false,
+          error: {
+            code: dailyValidation.code,
+            message: dailyValidation.error,
+            dailyLimit: dailyValidation.maxDailyAmount,
+            currentDailyTotal: dailyValidation.currentDailyTotal,
+            remainingDaily: dailyValidation.remainingDaily,
+          },
+        });
+      }
     }
 
     const normalizedDonor = typeof donor === 'string' ? donor.trim() : '';
@@ -126,7 +124,7 @@ router.post('/', (req, res) => {
     const feeCalculation = calculateAnalyticsFee(donationAmount);
 
     const transaction = Transaction.create({
-      amount: donationAmount,
+      amount: parsedAmount,
       donor: donor || 'Anonymous',
       recipient,
       idempotencyKey,
@@ -161,6 +159,30 @@ router.get('/', (req, res) => {
   } catch (error) {
     res.status(500).json({
       error: 'Failed to retrieve donations',
+      message: error.message
+    });
+  }
+});
+
+/**
+ * GET /donations/limits
+ * Get current donation amount limits
+ */
+router.get('/limits', (req, res) => {
+  try {
+    const limits = donationValidator.getLimits();
+    res.json({
+      success: true,
+      data: {
+        minAmount: limits.minAmount,
+        maxAmount: limits.maxAmount,
+        maxDailyPerDonor: limits.maxDailyPerDonor,
+        currency: 'XLM',
+      },
+    });
+  } catch (error) {
+    res.status(500).json({
+      error: 'Failed to retrieve limits',
       message: error.message
     });
   }
