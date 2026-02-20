@@ -1,6 +1,7 @@
 /**
  * Stellar Configuration
  * Handles both real and mock Stellar service initialization
+ * Supports easy network switching via STELLAR_NETWORK environment variable
  */
 
 const path = require('path');
@@ -9,7 +10,42 @@ require('dotenv').config({ path: path.join(__dirname, '../.env') });
 const StellarService = require('../services/StellarService');
 const MockStellarService = require('../services/MockStellarService');
 
+// Network presets for easy switching
+const NETWORK_PRESETS = {
+  testnet: {
+    network: 'testnet',
+    horizonUrl: 'https://horizon-testnet.stellar.org',
+  },
+  mainnet: {
+    network: 'mainnet',
+    horizonUrl: 'https://horizon.stellar.org',
+  },
+  futurenet: {
+    network: 'futurenet',
+    horizonUrl: 'https://horizon-futurenet.stellar.org',
+  },
+};
+
 const useMockStellar = process.env.MOCK_STELLAR === 'true';
+
+/**
+ * Get network configuration based on STELLAR_NETWORK env variable
+ * Defaults to testnet if not specified or invalid
+ */
+const getNetworkConfig = () => {
+  const networkName = (process.env.STELLAR_NETWORK || 'testnet').toLowerCase();
+
+  // If custom HORIZON_URL is provided, use it with the specified network
+  if (process.env.HORIZON_URL) {
+    return {
+      network: networkName,
+      horizonUrl: process.env.HORIZON_URL,
+    };
+  }
+
+  // Use preset or default to testnet
+  return NETWORK_PRESETS[networkName] || NETWORK_PRESETS.testnet;
+};
 
 /**
  * Get Stellar service instance
@@ -20,11 +56,13 @@ const getStellarService = () => {
     console.log('[Stellar Config] Using MOCK Stellar service');
     return new MockStellarService();
   }
+  const networkConfig = getNetworkConfig();
+  console.log(`[Stellar Config] Using REAL Stellar service on ${networkConfig.network.toUpperCase()}`);
+  console.log(`[Stellar Config] Horizon URL: ${networkConfig.horizonUrl}`);
 
-  console.log('[Stellar Config] Using REAL Stellar service');
   return new StellarService({
-    network: process.env.STELLAR_NETWORK || 'testnet',
-    horizonUrl: process.env.HORIZON_URL || 'https://horizon-testnet.stellar.org',
+    network: networkConfig.network,
+    horizonUrl: networkConfig.horizonUrl,
     serviceSecretKey: process.env.SERVICE_SECRET_KEY,
   });
 };
@@ -33,6 +71,7 @@ module.exports = {
   getStellarService,
   useMockStellar,
   port: process.env.PORT || 3000,
-  network: process.env.STELLAR_NETWORK || 'testnet',
+  network: getNetworkConfig().network,
+  horizonUrl: getNetworkConfig().horizonUrl,
   dbPath: process.env.DB_JSON_PATH || path.join(__dirname, '../../data/donations.json'),
 };

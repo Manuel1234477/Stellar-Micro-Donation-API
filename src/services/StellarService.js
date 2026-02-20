@@ -31,6 +31,7 @@ class StellarService {
    * @param {string} publicKey - Stellar public key
    * @returns {Promise<{balance: string, asset: string}>}
    */
+  // eslint-disable-next-line no-unused-vars
   async getBalance(publicKey) {
     try {
       const account = await this.server.loadAccount(publicKey);
@@ -52,6 +53,7 @@ class StellarService {
    * @param {string} publicKey - Stellar public key
    * @returns {Promise<{balance: string}>}
    */
+  // eslint-disable-next-line no-unused-vars
   async fundTestnetWallet(publicKey) {
     try {
       await this.server.friendbot(publicKey).call();
@@ -67,6 +69,7 @@ class StellarService {
    * @param {string} publicKey - Stellar public key
    * @returns {Promise<{funded: boolean, balance: string, exists: boolean}>}
    */
+  // eslint-disable-next-line no-unused-vars
   async isAccountFunded(publicKey) {
     try {
       const balance = await this.getBalance(publicKey);
@@ -91,10 +94,10 @@ class StellarService {
    * @param {string} params.sourceSecret - Source account secret key
    * @param {string} params.destinationPublic - Destination public key
    * @param {string} params.amount - Amount in XLM
-   * @param {string} params.memo - Transaction memo
+   * @param {string} [params.memo] - Optional transaction memo (max 28 bytes)
    * @returns {Promise<{transactionId: string, ledger: number}>}
    */
-  async sendDonation({ sourceSecret, destinationPublic, amount, memo }) {
+  async sendDonation({ sourceSecret, destinationPublic, amount, memo = '' }) {
     try {
       const sourceKeypair = StellarSdk.Keypair.fromSecret(sourceSecret);
       const sourceAccount = await this.server.loadAccount(sourceKeypair.publicKey());
@@ -135,6 +138,7 @@ class StellarService {
    * @param {number} limit - Number of transactions to retrieve
    * @returns {Promise<Array>}
    */
+  // eslint-disable-next-line no-unused-vars
   async getTransactionHistory(publicKey, limit = 10) {
     try {
       const result = await this.server.transactions()
@@ -154,6 +158,7 @@ class StellarService {
    * @param {Function} onTransaction - Callback for each transaction
    * @returns {Function} Unsubscribe function
    */
+  // eslint-disable-next-line no-unused-vars
   streamTransactions(publicKey, onTransaction) {
     return this.server.transactions()
       .forAccount(publicKey)
@@ -169,6 +174,7 @@ class StellarService {
    * @param {string} transactionHash - Transaction hash to verify
    * @returns {Promise<{verified: boolean, transaction: Object}>}
    */
+  // eslint-disable-next-line no-unused-vars
   async verifyTransaction(transactionHash) {
     try {
       const tx = await this.server.transaction(transactionHash).call();
