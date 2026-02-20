@@ -65,7 +65,7 @@ function createTransactionsTable(db) {
       if (err) {
         reject(err);
       } else {
-        console.log('✓ Created transactions table');
+        console.log('✓ Created transactions table (with memo column)');
         resolve();
       }
     });

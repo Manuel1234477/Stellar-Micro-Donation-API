@@ -51,6 +51,7 @@ class Transaction {
       amount: transactionData.amount,
       donor: transactionData.donor,
       recipient: transactionData.recipient,
+      memo: transactionData.memo || '',
       timestamp: new Date().toISOString(),
       status: transactionData.status || 'pending',
       stellarTxId: transactionData.stellarTxId || null,

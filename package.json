@@ -6,6 +6,8 @@
   "scripts": {
     "start": "node src/routes/app.js",
     "init-db": "node src/scripts/initDB.js",
+    "migrate:memo": "node src/scripts/addMemoColumn.js",
+    "test:memo": "node test-memo-feature.js",
     "dev": "nodemon src/routes/app.js",
     "lint": "eslint ."
   },

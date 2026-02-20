@@ -1,8 +1,13 @@
 const express = require('express');
 const router = express.Router();
-const StellarService = require('../services/StellarService');
 const Transaction = require('./models/transaction');
 const donationValidator = require('../utils/donationValidator');
+const memoValidator = require('../utils/memoValidator');
+const { calculateAnalyticsFee } = require('../utils/feeCalculator');
+const MockStellarService = require('../services/MockStellarService');
+
+// Initialize Stellar service (using Mock for now)
+const stellarService = new MockStellarService();
 
 /**
  * POST /api/v1/donation/verify
@@ -58,12 +63,28 @@ router.post('/', (req, res) => {
       });
     }
 
-    const { amount, donor, recipient } = req.body;
+    const { amount, donor, recipient, memo } = req.body;
 
     if (!amount || !recipient) {
       return res.status(400).json({
         error: 'Missing required fields: amount, recipient'
       });
+    }
+
+    // Validate memo if provided
+    if (memo !== undefined && memo !== null) {
+      const memoValidation = memoValidator.validate(memo);
+      if (!memoValidation.valid) {
+        return res.status(400).json({
+          success: false,
+          error: {
+            code: memoValidation.code,
+            message: memoValidation.error,
+            maxLength: memoValidation.maxLength,
+            currentLength: memoValidation.currentLength
+          }
+        });
+      }
     }
 
     const parsedAmount = parseFloat(amount);
@@ -123,10 +144,14 @@ router.post('/', (req, res) => {
     const donationAmount = parseFloat(amount);
     const feeCalculation = calculateAnalyticsFee(donationAmount);
 
+    // Sanitize memo for storage
+    const sanitizedMemo = memo ? memoValidator.sanitize(memo) : '';
+
     const transaction = Transaction.create({
       amount: parsedAmount,
       donor: donor || 'Anonymous',
       recipient,
+      memo: sanitizedMemo,
       idempotencyKey,
       analyticsFee: feeCalculation.fee,
       analyticsFeePercentage: feeCalculation.feePercentage

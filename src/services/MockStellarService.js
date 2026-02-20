@@ -126,10 +126,10 @@ class MockStellarService {
      * @param {string} params.sourceSecret - Source account secret key
      * @param {string} params.destinationPublic - Destination public key
      * @param {string} params.amount - Amount in XLM
-     * @param {string} params.memo - Transaction memo
+     * @param {string} [params.memo] - Optional transaction memo (max 28 bytes)
      * @returns {Promise<{transactionId: string, ledger: number}>}
      */
-    async sendDonation({ sourceSecret, destinationPublic, amount, memo }) {
+    async sendDonation({ sourceSecret, destinationPublic, amount, memo = '' }) {
       // Find source wallet by secret key
       let sourceWallet = null;
       for (const wallet of this.wallets.values()) {
@@ -174,7 +174,7 @@ class MockStellarService {
       source: sourceWallet.publicKey,
       destination: destinationPublic,
       amount,
-      memo,
+      memo: memo || '',
       timestamp: new Date().toISOString(),
       ledger: Math.floor(Math.random() * 1000000) + 1000000,
       status: 'confirmed',
