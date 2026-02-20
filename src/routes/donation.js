@@ -39,7 +39,11 @@ router.post('/verify', async (req, res) => {
         code: 'VERIFICATION_FAILED',
         message: error.message
       }
+    });
+  }
+});
 
+const Transaction = require('./models/transaction');
 
 /**
  * POST /donations

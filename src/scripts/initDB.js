@@ -4,6 +4,7 @@ const path = require('path');
 const DATA_DIR = './data';
 const DONATIONS_DB = path.join(DATA_DIR, 'donations.json');
 const USERS_DB = path.join(DATA_DIR, 'users.json');
+const WALLETS_DB = path.join(DATA_DIR, 'wallets.json');
 
 function ensureDataDir() {
   if (!fs.existsSync(DATA_DIR)) {
@@ -183,6 +184,39 @@ function initUsersDB() {
   }
 }
 
+function initWalletsDB() {
+  const sampleWallets = [
+    {
+      id: '1',
+      address: 'GBRPYHIL2CI3WHZDTOOQFC6EB4KJJGUJMUC5XNODMZTQYBB5XYZXYUU',
+      label: 'Personal Wallet',
+      ownerName: 'Alice',
+      createdAt: new Date('2024-01-15T10:00:00Z').toISOString()
+    },
+    {
+      id: '2',
+      address: 'GBBD47UZQ5EYJYJMZXZYDUC77SAZXSQEA7XJJGTAY5XJJGUJMUC5XNOD',
+      label: 'Savings Account',
+      ownerName: 'Bob',
+      createdAt: new Date('2024-01-20T14:30:00Z').toISOString()
+    },
+    {
+      id: '3',
+      address: 'GCZST3XVCDTUJ76ZAV2HA72KYQM4YQQ5DUJTHIGQ5ESE3JNEZUAEUA7X',
+      label: 'Donation Receiver',
+      ownerName: 'Red Cross',
+      createdAt: new Date('2024-01-10T08:00:00Z').toISOString()
+    }
+  ];
+
+  if (!fs.existsSync(WALLETS_DB)) {
+    fs.writeFileSync(WALLETS_DB, JSON.stringify(sampleWallets, null, 2));
+    console.log(`✓ Initialized wallets database with ${sampleWallets.length} sample records`);
+  } else {
+    console.log('✓ Wallets database already exists');
+  }
+}
+
 function main() {
   console.log('Initializing Stellar Micro-Donation API Database...\n');
   
@@ -190,11 +224,13 @@ function main() {
     ensureDataDir();
     initDonationsDB();
     initUsersDB();
+    initWalletsDB();
     
     console.log('\n✓ Database initialization complete!');
     console.log(`\nDatabase files:`);
     console.log(`  - ${DONATIONS_DB}`);
     console.log(`  - ${USERS_DB}`);
+    console.log(`  - ${WALLETS_DB}`);
   } catch (error) {
     console.error('✗ Database initialization failed:', error.message);
     process.exit(1);

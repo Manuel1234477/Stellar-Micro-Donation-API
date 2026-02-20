@@ -3,6 +3,8 @@
  * Handles both real and mock Stellar service initialization
  */
 
+require('dotenv').config({ path: require('path').join(__dirname, '../.env') });
+
 const StellarService = require('../services/StellarService');
 const MockStellarService = require('../services/MockStellarService');
 
@@ -29,4 +31,7 @@ const getStellarService = () => {
 module.exports = {
   getStellarService,
   useMockStellar,
+  port: process.env.PORT || 3000,
+  network: process.env.STELLAR_NETWORK || 'testnet',
+  dbPath: process.env.DB_PATH || './data/donations.json'
 };
