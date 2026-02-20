@@ -3,6 +3,8 @@
  * Handles actual blockchain interactions with Stellar network
  */
 
+const StellarErrorHandler = require('../utils/stellarErrorHandler');
+
 class StellarService {
   constructor(config = {}) {
     this.network = config.network || 'testnet';
@@ -58,11 +60,11 @@ class StellarService {
    * @param {string} params.sourceSecret - Source account secret key
    * @param {string} params.destinationPublic - Destination public key
    * @param {string} params.amount - Amount in XLM
-   * @param {string} params.memo - Transaction memo
+   * @param {string} [params.memo] - Optional transaction memo (max 28 bytes)
    * @returns {Promise<{transactionId: string, ledger: number}>}
    */
   // eslint-disable-next-line no-unused-vars
-  async sendDonation({ sourceSecret, destinationPublic, amount, memo }) {
+  async sendDonation({ sourceSecret, destinationPublic, amount, memo = '' }) {
     throw new Error('StellarService.sendDonation() not yet implemented');
   }
 
