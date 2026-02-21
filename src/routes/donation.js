@@ -22,12 +22,12 @@ router.post('/verify', requireApiKey, async (req, res) => {
   try {
     const { transactionHash } = req.body;
 
-    if (!transactionHash) {
+    if (!transactionHash || typeof transactionHash !== 'string') {
       return res.status(400).json({
         success: false,
         error: {
           code: 'INVALID_REQUEST',
-          message: 'Transaction hash is required'
+          message: 'Transaction hash is required and must be a string'
         }
       });
     }
