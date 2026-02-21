@@ -5,6 +5,7 @@
  */
 
 require('dotenv').config({ path: require('path').join(__dirname, '../../.env') });
+const path = require('path');
 
 const StellarService = require('../services/StellarService');
 const MockStellarService = require('../services/MockStellarService');

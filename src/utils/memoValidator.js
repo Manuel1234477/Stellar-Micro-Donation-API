@@ -63,6 +63,16 @@ class MemoValidator {
       };
     }
 
+    // Check for non-printable characters (only allow printable ASCII + common UTF-8)
+    // Here we reject control characters entirely
+    if (/[\x00-\x1F\x7F]/.test(sanitized)) {
+      return {
+        valid: false,
+        error: 'Memo contains invalid control characters',
+        code: 'INVALID_MEMO_FORMAT'
+      };
+    }
+
     return {
       valid: true,
       sanitized,
@@ -113,7 +123,7 @@ class MemoValidator {
 
     const sanitized = memo.trim();
     let truncated = sanitized;
-    
+
     while (Buffer.byteLength(truncated, 'utf8') > MAX_MEMO_LENGTH) {
       truncated = truncated.slice(0, -1);
     }
