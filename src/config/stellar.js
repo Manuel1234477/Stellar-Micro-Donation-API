@@ -63,7 +63,8 @@ const getStellarService = () => {
   return new StellarService({
     network: networkConfig.network,
     horizonUrl: networkConfig.horizonUrl,
-    serviceSecretKey: process.env.SERVICE_SECRET_KEY,
+    // Support both STELLAR_SECRET and SERVICE_SECRET_KEY for flexibility
+    serviceSecretKey: process.env.STELLAR_SECRET || process.env.SERVICE_SECRET_KEY,
   });
 };
 

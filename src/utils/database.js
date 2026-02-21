@@ -1,61 +1,91 @@
-const sqlite3 = require('sqlite3').verbose();
-const path = require('path');
+require('dotenv').config({ path: require('path').join(__dirname, '../../src/.env') });
 
-const DB_PATH = path.join(__dirname, '../../data/stellar_donations.db');
+const initSqlJs = require('sql.js');
+const path = require('path');
+const fs = require('fs');
+
+// Use DB_PATH from environment or default to ./db.sqlite
+const DB_PATH = process.env.DB_PATH 
+  ? path.resolve(process.cwd(), process.env.DB_PATH)
+  : path.join(__dirname, '../../db.sqlite');
+
+// Ensure directory exists
+const dbDir = path.dirname(DB_PATH);
+if (!fs.existsSync(dbDir)) {
+  fs.mkdirSync(dbDir, { recursive: true });
+}
+
+// Initialize SQL.js
+let db = null;
+let SQL = null;
+let initPromise = null;
+
+async function initDB() {
+  if (initPromise) {
+    return initPromise;
+  }
+  
+  initPromise = (async () => {
+    if (!SQL) {
+      SQL = await initSqlJs();
+      
+      // Try to load existing database
+      if (fs.existsSync(DB_PATH)) {
+        const fileBuffer = fs.readFileSync(DB_PATH);
+        db = new SQL.Database(fileBuffer);
+      } else {
+        db = new SQL.Database();
+      }
+    }
+    return db;
+  })();
+  
+  return initPromise;
+}
+
+// Save database to file
+function saveDB() {
+  if (db) {
+    const data = db.export();
+    const buffer = Buffer.from(data);
+    fs.writeFileSync(DB_PATH, buffer);
+  }
+}
 
 class Database {
-  static getConnection() {
-    return new Promise((resolve, reject) => {
-      const db = new sqlite3.Database(DB_PATH, (err) => {
-        if (err) {
-          reject(err);
-        } else {
-          resolve(db);
-        }
-      });
-    });
+  static async getConnection() {
+    return initDB();
   }
 
   static async query(sql, params = []) {
-    const db = await this.getConnection();
-    return new Promise((resolve, reject) => {
-      db.all(sql, params, (err, rows) => {
-        db.close();
-        if (err) {
-          reject(err);
-        } else {
-          resolve(rows);
-        }
-      });
-    });
+    const database = await this.getConnection();
+    const stmt = database.prepare(sql);
+    stmt.bind(params);
+    const results = [];
+    while (stmt.step()) {
+      results.push(stmt.getAsObject());
+    }
+    stmt.free();
+    return results;
   }
 
   static async run(sql, params = []) {
-    const db = await this.getConnection();
-    return new Promise((resolve, reject) => {
-      db.run(sql, params, function(err) {
-        db.close();
-        if (err) {
-          reject(err);
-        } else {
-          resolve({ id: this.lastID, changes: this.changes });
-        }
-      });
-    });
+    const database = await this.getConnection();
+    database.run(sql, params);
+    saveDB();
+    return { id: database.getRowsModified(), changes: database.getRowsModified() };
   }
 
   static async get(sql, params = []) {
-    const db = await this.getConnection();
-    return new Promise((resolve, reject) => {
-      db.get(sql, params, (err, row) => {
-        db.close();
-        if (err) {
-          reject(err);
-        } else {
-          resolve(row);
-        }
-      });
-    });
+    const database = await this.getConnection();
+    const stmt = database.prepare(sql);
+    stmt.bind(params);
+    let result = null;
+    if (stmt.step()) {
+      result = stmt.getAsObject();
+    }
+    stmt.free();
+    return result;
   }
 }
 

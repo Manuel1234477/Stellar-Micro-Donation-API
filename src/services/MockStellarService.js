@@ -122,19 +122,11 @@ class MockStellarService {
    * @param {string} params.sourceSecret - Source account secret key
    * @param {string} params.destinationPublic - Destination public key
    * @param {string} params.amount - Amount in XLM
-   * @param {string} params.memo - Transaction memo
+   * @param {string} [params.memo] - Optional transaction memo (max 28 bytes)
    * @returns {Promise<{transactionId: string, ledger: number}>}
    */
-  /**
-     * Send a mock donation transaction
-     * @param {Object} params
-     * @param {string} params.sourceSecret - Source account secret key
-     * @param {string} params.destinationPublic - Destination public key
-     * @param {string} params.amount - Amount in XLM
-     * @param {string} [params.memo] - Optional transaction memo (max 28 bytes)
-     * @returns {Promise<{transactionId: string, ledger: number}>}
-     */
-    async sendDonation({ sourceSecret, destinationPublic, amount, memo = '' }) {
+  async sendDonation({ sourceSecret, destinationPublic, amount, memo = '' }) {
+    return StellarErrorHandler.wrap(async () => {
       // Find source wallet by secret key
       let sourceWallet = null;
       for (const wallet of this.wallets.values()) {
@@ -142,72 +134,73 @@ class MockStellarService {
           sourceWallet = wallet;
           break;
         }
+      }
 
-        if (!sourceWallet) {
-          throw new Error('Invalid source secret key');
-        }
+      if (!sourceWallet) {
+        throw new Error('Invalid source secret key');
+      }
 
-        if (sourceWallet.publicKey === destinationPublic) {
-          throw new Error('Sender and recipient wallets must be different');
-        }
+      if (sourceWallet.publicKey === destinationPublic) {
+        throw new Error('Sender and recipient wallets must be different');
+      }
 
-        const destWallet = this.wallets.get(destinationPublic);
-        if (!destWallet) {
-          throw new Error(`Destination wallet not found: ${destinationPublic}`);
-        }
+      const destWallet = this.wallets.get(destinationPublic);
+      if (!destWallet) {
+        throw new Error(`Destination wallet not found: ${destinationPublic}`);
+      }
 
-        // Check if destination account is funded (Stellar requirement)
-        const destBalance = parseFloat(destWallet.balance);
-        if (destBalance === 0) {
-          throw new Error(
-            'Destination account is not funded. On Stellar, accounts must be funded with at least 1 XLM before they can receive payments. ' +
-            'Please fund the account first using the Friendbot (testnet) or send an initial funding transaction.'
-          );
-        }
+      // Check if destination account is funded (Stellar requirement)
+      const destBalance = parseFloat(destWallet.balance);
+      if (destBalance === 0) {
+        throw new Error(
+          'Destination account is not funded. On Stellar, accounts must be funded with at least 1 XLM before they can receive payments. ' +
+          'Please fund the account first using the Friendbot (testnet) or send an initial funding transaction.'
+        );
+      }
 
-        const amountNum = parseFloat(amount);
-        const sourceBalance = parseFloat(sourceWallet.balance);
+      const amountNum = parseFloat(amount);
+      const sourceBalance = parseFloat(sourceWallet.balance);
 
-        // Check insufficient balance
-        if (sourceBalance < amountNum) {
-          throw new Error('Insufficient balance to complete this transaction');
-        }
+      // Check insufficient balance
+      if (sourceBalance < amountNum) {
+        throw new Error('Insufficient balance to complete this transaction');
+      }
 
-    // Create transaction record
-    const txRecord = {
-      transactionId: 'mock_' + crypto.randomBytes(16).toString('hex'),
-      source: sourceWallet.publicKey,
-      destination: destinationPublic,
-      amount,
-      memo: memo || '',
-      timestamp: new Date().toISOString(),
-      ledger: Math.floor(Math.random() * 1000000) + 1000000,
-      status: 'confirmed',
-      confirmedAt: new Date().toISOString(),
-    };
+      // Create transaction record
+      const txRecord = {
+        transactionId: 'mock_' + crypto.randomBytes(16).toString('hex'),
+        source: sourceWallet.publicKey,
+        destination: destinationPublic,
+        amount,
+        memo: memo || '',
+        timestamp: new Date().toISOString(),
+        ledger: Math.floor(Math.random() * 1000000) + 1000000,
+        status: 'confirmed',
+        confirmedAt: new Date().toISOString(),
+      };
 
-        // Store transaction for both accounts
-        if (!this.transactions.has(sourceWallet.publicKey)) {
-          this.transactions.set(sourceWallet.publicKey, []);
-        }
-        if (!this.transactions.has(destinationPublic)) {
-          this.transactions.set(destinationPublic, []);
-        }
+      // Store transaction for both accounts
+      if (!this.transactions.has(sourceWallet.publicKey)) {
+        this.transactions.set(sourceWallet.publicKey, []);
+      }
+      if (!this.transactions.has(destinationPublic)) {
+        this.transactions.set(destinationPublic, []);
+      }
 
-        this.transactions.get(sourceWallet.publicKey).push(txRecord);
-        this.transactions.get(destinationPublic).push(txRecord);
+      this.transactions.get(sourceWallet.publicKey).push(txRecord);
+      this.transactions.get(destinationPublic).push(txRecord);
 
-        // Notify stream listeners
-        this._notifyStreamListeners(sourceWallet.publicKey, txRecord);
-        this._notifyStreamListeners(destinationPublic, txRecord);
+      // Notify stream listeners
+      this._notifyStreamListeners(sourceWallet.publicKey, txRecord);
+      this._notifyStreamListeners(destinationPublic, txRecord);
 
-        return {
-          transactionId: txRecord.transactionId,
-          ledger: txRecord.ledger,
-          status: txRecord.status,
-          confirmedAt: txRecord.confirmedAt,
-        };
-      }, 'sendDonation');
+      return {
+        transactionId: txRecord.transactionId,
+        ledger: txRecord.ledger,
+        status: txRecord.status,
+        confirmedAt: txRecord.confirmedAt,
+      };
+    }, 'sendDonation');
   }
 
   /**

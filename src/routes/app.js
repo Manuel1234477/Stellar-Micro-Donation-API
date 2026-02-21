@@ -6,6 +6,7 @@ const statsRoutes = require('./stats');
 const streamRoutes = require('./stream');
 const recurringDonationScheduler = require('../services/RecurringDonationScheduler');
 const logger = require('../middleware/logger');
+const errorHandler = require('../middleware/errorHandler');
 
 const app = express();
 
