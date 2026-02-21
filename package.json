@@ -10,7 +10,8 @@
     "test": "jest",
     "test:memo": "node test-memo-feature.js",
     "dev": "nodemon src/routes/app.js",
-    "lint": "eslint ."
+    "lint": "eslint .",
+    "test": "jest"
   },
   "dependencies": {
     "dotenv": "^16.0.3",
