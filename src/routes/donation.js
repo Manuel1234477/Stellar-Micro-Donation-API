@@ -1,73 +1,18 @@
 const express = require('express');
 const router = express.Router();
-const StellarService = require('../services/StellarService');
-
-const stellarService = new StellarService({
-  network: process.env.STELLAR_NETWORK || 'testnet',
-  horizonUrl: process.env.HORIZON_URL || 'https://horizon-testnet.stellar.org'
-});
-
-/**
- * POST /api/v1/donation/verify
- * Verify a donation transaction by hash
- */
-router.post('/verify', async (req, res) => {
-  try {
-    const { transactionHash } = req.body;
-
-    if (!transactionHash) {
-      return res.status(400).json({
-        success: false,
-        error: {
-          code: 'INVALID_REQUEST',
-          message: 'Transaction hash is required'
-        }
-      });
-    }
-
-    const result = await stellarService.verifyTransaction(transactionHash);
-
-    res.json({
-      success: true,
-      data: result
-    });
-  } catch (error) {
-    res.status(500).json({
-      success: false,
-      error: {
-        code: 'VERIFICATION_FAILED',
-        message: error.message
-      }
 const Transaction = require('./models/transaction');
+const {
+  validateDonationCreate,
+  validateTransactionVerify
+} = require('../middleware/validation');
 
 /**
  * POST /donations
  * Create a new donation
  */
-router.post('/', (req, res) => {
+router.post('/', validateDonationCreate, (req, res) => {
   try {
     const { amount, donor, recipient } = req.body;
-
-    if (!amount || !recipient) {
-      return res.status(400).json({
-        error: 'Missing required fields: amount, recipient'
-      });
-    }
-
-    if (isNaN(parseFloat(amount)) || parseFloat(amount) <= 0) {
-      return res.status(400).json({
-        error: 'Amount must be a positive number'
-      });
-    }
-
-    const normalizedDonor = typeof donor === 'string' ? donor.trim() : '';
-    const normalizedRecipient = typeof recipient === 'string' ? recipient.trim() : '';
-
-    if (normalizedDonor && normalizedRecipient && normalizedDonor === normalizedRecipient) {
-      return res.status(400).json({
-        error: 'Sender and recipient wallets must be different'
-      });
-    }
 
     const transaction = Transaction.create({
       amount: parseFloat(amount),
@@ -81,8 +26,38 @@ router.post('/', (req, res) => {
     });
   } catch (error) {
     res.status(500).json({
-      error: 'Failed to create donation',
-      message: error.message
+      success: false,
+      error: {
+        code: 'DONATION_FAILED',
+        message: error.message
+      }
+    });
+  }
+});
+
+/**
+ * POST /donations/verify
+ * Verify a donation transaction by hash
+ */
+router.post('/verify', validateTransactionVerify, async (req, res) => {
+  try {
+    const { transactionHash } = req.body;
+    
+    // TODO: Implement actual verification with Stellar service
+    res.json({
+      success: true,
+      data: {
+        verified: true,
+        transactionHash
+      }
+    });
+  } catch (error) {
+    res.status(500).json({
+      success: false,
+      error: {
+        code: 'VERIFICATION_FAILED',
+        message: error.message
+      }
     });
   }
 });
@@ -101,8 +76,11 @@ router.get('/', (req, res) => {
     });
   } catch (error) {
     res.status(500).json({
-      error: 'Failed to retrieve donations',
-      message: error.message
+      success: false,
+      error: {
+        code: 'RETRIEVAL_FAILED',
+        message: error.message
+      }
     });
   }
 });
@@ -113,11 +91,27 @@ router.get('/', (req, res) => {
  */
 router.get('/:id', (req, res) => {
   try {
-    const transaction = Transaction.getById(req.params.id);
+    const { id } = req.params;
+    
+    if (!id) {
+      return res.status(400).json({
+        success: false,
+        error: {
+          code: 'MISSING_PARAMETER',
+          message: 'Donation ID is required'
+        }
+      });
+    }
+
+    const transaction = Transaction.getById(id);
     
     if (!transaction) {
       return res.status(404).json({
-        error: 'Donation not found'
+        success: false,
+        error: {
+          code: 'DONATION_NOT_FOUND',
+          message: 'Donation not found'
+        }
       });
     }
 
@@ -127,8 +121,11 @@ router.get('/:id', (req, res) => {
     });
   } catch (error) {
     res.status(500).json({
-      error: 'Failed to retrieve donation',
-      message: error.message
+      success: false,
+      error: {
+        code: 'RETRIEVAL_FAILED',
+        message: error.message
+      }
     });
   }
 });

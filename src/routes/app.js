@@ -2,6 +2,7 @@ const express = require('express');
 const config = require('../config/stellar');
 const donationRoutes = require('./donation');
 const statsRoutes = require('./stats');
+const walletRoutes = require('./wallet');
 
 const app = express();
 
@@ -17,6 +18,7 @@ app.use((req, res, next) => {
 // Routes
 app.use('/donations', donationRoutes);
 app.use('/stats', statsRoutes);
+app.use('/wallets', walletRoutes);
 
 // Health check endpoint
 app.get('/health', (req, res) => {

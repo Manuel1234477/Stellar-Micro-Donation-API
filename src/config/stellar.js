@@ -29,4 +29,7 @@ const getStellarService = () => {
 module.exports = {
   getStellarService,
   useMockStellar,
+  dbPath: process.env.DB_PATH || './data/transactions.json',
+  network: process.env.STELLAR_NETWORK || 'testnet',
+  port: process.env.PORT || 3000
 };
