@@ -3,6 +3,7 @@ const router = express.Router();
 const Database = require('../utils/database');
 const Transaction = require('./models/transaction');
 const requireApiKey = require('../middleware/apiKeyMiddleware');
+const { requireIdempotency, storeIdempotencyResponse } = require('../middleware/idempotencyMiddleware');
 
 const { getStellarService } = require('../config/stellar');
 const donationValidator = require('../utils/donationValidator');
@@ -53,8 +54,9 @@ router.post('/verify', requireApiKey, async (req, res) => {
 /**
  * POST /donations/send
  * Send XLM from one wallet to another and record it
+ * Requires idempotency key to prevent duplicate transactions
  */
-router.post('/send', async (req, res) => {
+router.post('/send', requireIdempotency, async (req, res) => {
   try {
     const { senderId, receiverId, amount, memo } = req.body;
 
@@ -124,7 +126,7 @@ router.post('/send', async (req, res) => {
       status: 'completed'
     });
 
-    res.status(201).json({
+    const response = {
       success: true,
       data: {
         id: dbResult.id,
@@ -135,7 +137,12 @@ router.post('/send', async (req, res) => {
         receiver: receiver.publicKey,
         timestamp: new Date().toISOString()
       }
-    });
+    };
+
+    // Store idempotency response
+    await storeIdempotencyResponse(req, response);
+
+    res.status(201).json(response);
   } catch (error) {
     console.error('Send donation error:', error);
     res.status(500).json({
@@ -147,22 +154,17 @@ router.post('/send', async (req, res) => {
 });
 
 /**
+<<<<<<< feature/idempotency-donations
+ * POST /donations
+ * Create a new donation
+ * Requires idempotency key to prevent duplicate processing
+=======
  * POST /donations/verify
  * Verify a donation transaction by hash
+>>>>>>> main
  */
-router.post('/', requireApiKey, (req, res) => {
+router.post('/', requireApiKey, requireIdempotency, async (req, res, next) => {
   try {
-    const idempotencyKey = req.headers['idempotency-key'];
-
-    if (!idempotencyKey) {
-      return res.status(400).json({
-        success: false,
-        error: {
-          code: 'IDEMPOTENCY_KEY_REQUIRED',
-          message: 'Idempotency key is required'
-        }
-      });
-    }
 
     const { amount, donor, recipient, memo } = req.body;
 
@@ -255,18 +257,33 @@ router.post('/', requireApiKey, (req, res) => {
       donor: donor || 'Anonymous',
       recipient,
       memo: sanitizedMemo,
-      idempotencyKey,
+      idempotencyKey: req.idempotency.key,
       analyticsFee: feeCalculation.fee,
       analyticsFeePercentage: feeCalculation.feePercentage
     });
 
-    res.status(201).json({
+    const response = {
       success: true,
+<<<<<<< feature/idempotency-donations
+      data: transaction
+    };
+
+    // Store idempotency response for future duplicate requests
+    await storeIdempotencyResponse(req, response);
+
+    // Add warning if duplicate request was detected
+    if (req.idempotencyWarning) {
+      response.warning = req.idempotencyWarning;
+    }
+
+    res.status(201).json(response);
+=======
       data: {
         verified: true,
         transactionHash
       }
     });
+>>>>>>> main
   } catch (error) {
     next(error);
   }
