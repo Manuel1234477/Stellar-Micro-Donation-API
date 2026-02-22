@@ -8,12 +8,16 @@ const recurringDonationScheduler = require('../services/RecurringDonationSchedul
 const { errorHandler, notFoundHandler } = require('../middleware/errorHandler');
 const logger = require('../middleware/logger');
 const { attachUserRole } = require('../middleware/rbacMiddleware');
+const { requestIdMiddleware } = require('../middleware/requestId');
 const Database = require('../utils/database');
 const log = require('../utils/log');
 
 const app = express();
 
 // Middleware
+// Request ID must be first for proper request tracing
+app.use(requestIdMiddleware());
+
 app.use(express.json());
 
 // Request/Response logging middleware

@@ -5,6 +5,7 @@
 
 const { AppError } = require('../utils/errors');
 const log = require('../utils/log');
+const { getRequestId } = require('./requestId');
 
 /**
  * Error handler middleware
@@ -12,8 +13,11 @@ const log = require('../utils/log');
  */
 function errorHandler(err, req, res, next) {
   void next;
-  // Log error for debugging
+  const requestId = getRequestId(req);
+  
+  // Log error for debugging with request ID for tracing
   log.error('ERROR_HANDLER', 'Error occurred', {
+    requestId,
     path: req.path,
     method: req.method,
     error: err.message,
@@ -32,6 +36,7 @@ function errorHandler(err, req, res, next) {
       error: {
         code: 'VALIDATION_ERROR',
         message: err.message,
+        requestId,
         timestamp: new Date().toISOString()
       }
     });
@@ -44,6 +49,7 @@ function errorHandler(err, req, res, next) {
       error: {
         code: 'INVALID_JSON',
         message: 'Invalid JSON in request body',
+        requestId,
         timestamp: new Date().toISOString()
       }
     });
@@ -58,6 +64,7 @@ function errorHandler(err, req, res, next) {
       message: process.env.NODE_ENV === 'production' 
         ? 'An unexpected error occurred' 
         : err.message,
+      requestId,
       timestamp: new Date().toISOString()
     }
   });
@@ -67,11 +74,13 @@ function errorHandler(err, req, res, next) {
  * 404 Not Found handler
  */
 function notFoundHandler(req, res) {
+  const requestId = getRequestId(req);
   res.status(404).json({
     success: false,
     error: {
       code: 'ENDPOINT_NOT_FOUND',
       message: `Endpoint not found: ${req.method} ${req.path}`,
+      requestId,
       timestamp: new Date().toISOString()
     }
   });
