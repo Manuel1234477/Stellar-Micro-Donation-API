@@ -9,6 +9,7 @@ const { PERMISSIONS } = require('../utils/permissions');
 const { ValidationError, NotFoundError, ERROR_CODES } = require('../utils/errors');
 const encryption = require('../utils/encryption');
 const log = require('../utils/log');
+const { sendSuccess, sendError } = require('../utils/responseHelper');
 
 const { getStellarService } = require('../config/stellar');
 const donationValidator = require('../utils/donationValidator');
@@ -32,23 +33,15 @@ router.post('/verify', verificationRateLimiter, checkPermission(PERMISSIONS.DONA
 
     const verification = await stellarService.verifyTransaction(transactionHash);
 
-    res.status(200).json({
-      success: true,
-      data: verification
-    });
+    // Use standardized success response
+    return sendSuccess(res, verification);
   } catch (error) {
-    // Handle Stellar errors with proper status codes
+    // Handle Stellar errors with proper status codes using standardized error response
     const status = error.status || 500;
     const code = error.code || 'VERIFICATION_FAILED';
     const message = error.message || 'Failed to verify transaction';
 
-    res.status(status).json({
-      success: false,
-      error: {
-        code,
-        message
-      }
-    });
+    return sendError(res, code, message, status);
   }
 });
 
@@ -63,26 +56,32 @@ router.post('/send', donationRateLimiter, requireIdempotency, async (req, res) =
   try {
     const { senderId, receiverId, amount, memo } = req.body;
 
-    // 1. Validation
+    // 1. Validation - using standardized error responses
     if (!senderId || !receiverId || !amount) {
-      return res.status(400).json({
-        success: false,
-        error: 'Missing required fields: senderId, receiverId, amount'
-      });
+      return sendError(
+        res,
+        'MISSING_FIELDS',
+        'Missing required fields: senderId, receiverId, amount',
+        400
+      );
     }
 
     if (typeof senderId === 'object' || typeof receiverId === 'object') {
-      return res.status(400).json({
-        success: false,
-        error: 'Malformed request: senderId and receiverId must be valid IDs'
-      });
+      return sendError(
+        res,
+        'MALFORMED_REQUEST',
+        'senderId and receiverId must be valid IDs',
+        400
+      );
     }
 
     if (isNaN(parseFloat(amount)) || parseFloat(amount) <= 0) {
-      return res.status(400).json({
-        success: false,
-        error: 'Amount must be a positive number'
-      });
+      return sendError(
+        res,
+        'INVALID_AMOUNT',
+        'Amount must be a positive number',
+        400
+      );
     }
 
     // 2. Database Lookup
@@ -90,14 +89,18 @@ router.post('/send', donationRateLimiter, requireIdempotency, async (req, res) =
     const receiver = await Database.get('SELECT * FROM users WHERE id = ?', [receiverId]);
 
     if (!sender || !receiver) {
-      return res.status(404).json({
-        success: false,
-        error: 'Sender or receiver not found'
-      });
+      return sendError(
+        res,
+        'NOT_FOUND',
+        'Sender or receiver not found',
+        404
+      );
     }
 
     if (!sender.encryptedSecret) {
-      return res.status(400).json({
+      return sendError(
+        res,
+        'MISSING_SECRET',
         success: false,
         error: 'Sender has no secret key configured'
       });
