@@ -4,6 +4,10 @@ const Database = require('../utils/database');
 const Transaction = require('./models/transaction');
 const requireApiKey = require('../middleware/apiKeyMiddleware');
 const { requireIdempotency, storeIdempotencyResponse } = require('../middleware/idempotencyMiddleware');
+const { checkPermission } = require('../middleware/rbacMiddleware');
+const { PERMISSIONS } = require('../utils/permissions');
+const { ValidationError, NotFoundError, ERROR_CODES } = require('../utils/errors');
+const encryption = require('../utils/encryption');
 
 const { getStellarService } = require('../config/stellar');
 const donationValidator = require('../utils/donationValidator');
@@ -24,15 +28,11 @@ router.post('/verify', checkPermission(PERMISSIONS.DONATIONS_VERIFY), async (req
       throw new ValidationError('Transaction hash is required', null, ERROR_CODES.INVALID_REQUEST);
     }
 
-    const transaction = Transaction.create({
-      amount: parseFloat(amount),
-      donor: donor || 'Anonymous',
-      recipient
-    });
+    const verification = await stellarService.verifyTransaction(transactionHash);
 
-    res.status(201).json({
+    res.status(200).json({
       success: true,
-      data: transaction
+      data: verification
     });
   } catch (error) {
     // Handle Stellar errors with proper status codes
@@ -260,9 +260,12 @@ router.post('/', requireApiKey, requireIdempotency, async (req, res, next) => {
       success: true,
       data: {
         verified: true,
-        transactionHash
+        transactionHash: transaction.stellarTxId || transaction.id
       }
-    });
+    };
+
+    await storeIdempotencyResponse(req, response);
+    res.status(201).json(response);
   } catch (error) {
     next(error);
   }

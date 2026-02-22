@@ -1,7 +1,6 @@
 const express = require('express');
 const router = express.Router();
 const Wallet = require('./models/wallet');
-const requireApiKey = require('../middleware/apiKeyMiddleware');
 const Database = require('../utils/database');
 const { checkPermission } = require('../middleware/rbacMiddleware');
 const { PERMISSIONS } = require('../utils/permissions');
