@@ -8,13 +8,18 @@ const recurringDonationScheduler = require('../services/RecurringDonationSchedul
 const { errorHandler, notFoundHandler } = require('../middleware/errorHandler');
 const logger = require('../middleware/logger');
 const { attachUserRole } = require('../middleware/rbacMiddleware');
+const { getJsonParserWithLimit, validatePayloadSize } = require('../middleware/payloadSizeValidator');
 const Database = require('../utils/database');
 const log = require('../utils/log');
 
 const app = express();
 
 // Middleware
-app.use(express.json());
+// Payload size validation (must be before body parsers)
+app.use(validatePayloadSize());
+
+// JSON body parser with size limit
+app.use(express.json(getJsonParserWithLimit()));
 
 // Request/Response logging middleware
 app.use(logger.middleware());
