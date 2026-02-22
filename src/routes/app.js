@@ -7,7 +7,7 @@ const streamRoutes = require('./stream');
 const recurringDonationScheduler = require('../services/RecurringDonationScheduler');
 const { errorHandler, notFoundHandler } = require('../middleware/errorHandler');
 const logger = require('../middleware/logger');
-const errorHandler = require('../middleware/errorHandler');
+const { attachUserRole } = require('../middleware/rbacMiddleware');
 
 const app = express();
 
@@ -16,6 +16,9 @@ app.use(express.json());
 
 // Request/Response logging middleware
 app.use(logger.middleware());
+
+// Attach user role from authentication (must be before routes)
+app.use(attachUserRole());
 
 // Routes
 app.use('/donations', donationRoutes);

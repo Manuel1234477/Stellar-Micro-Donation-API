@@ -3,6 +3,8 @@ const router = express.Router();
 const Database = require('../utils/database');
 const Transaction = require('./models/transaction');
 const requireApiKey = require('../middleware/apiKeyMiddleware');
+const { checkPermission } = require('../middleware/rbacMiddleware');
+const { PERMISSIONS } = require('../utils/permissions');
 
 const { getStellarService } = require('../config/stellar');
 const donationValidator = require('../utils/donationValidator');
@@ -15,7 +17,7 @@ const stellarService = getStellarService();
  * POST /api/v1/donation/verify
  * Verify a donation transaction by hash
  */
-router.post('/verify', requireApiKey, async (req, res) => {
+router.post('/verify', checkPermission(PERMISSIONS.DONATIONS_VERIFY), async (req, res) => {
   try {
     const { transactionHash } = req.body;
 
@@ -50,7 +52,7 @@ router.post('/verify', requireApiKey, async (req, res) => {
  * POST /donations/send
  * Send XLM from one wallet to another and record it
  */
-router.post('/send', async (req, res) => {
+router.post('/send', checkPermission(PERMISSIONS.DONATIONS_CREATE), async (req, res) => {
   try {
     const { senderId, receiverId, amount, memo } = req.body;
 
@@ -146,7 +148,7 @@ router.post('/send', async (req, res) => {
  * POST /donations
  * Create a new donation
  */
-router.post('/', requireApiKey, (req, res) => {
+router.post('/', checkPermission(PERMISSIONS.DONATIONS_CREATE), (req, res) => {
   try {
     const idempotencyKey = req.headers['idempotency-key'];
 
@@ -269,7 +271,7 @@ router.post('/', requireApiKey, (req, res) => {
  * GET /donations
  * Get all donations
  */
-router.get('/', (req, res, next) => {
+router.get('/', checkPermission(PERMISSIONS.DONATIONS_READ), (req, res, next) => {
   try {
     const transactions = Transaction.getAll();
     res.json({
@@ -286,7 +288,7 @@ router.get('/', (req, res, next) => {
  * GET /donations/limits
  * Get current donation amount limits
  */
-router.get('/limits', (req, res) => {
+router.get('/limits', checkPermission(PERMISSIONS.DONATIONS_READ), (req, res) => {
   try {
     const limits = donationValidator.getLimits();
     res.json({
@@ -312,7 +314,7 @@ router.get('/limits', (req, res) => {
  * Query params:
  *   - limit: number of recent donations to return (default: 10, max: 100)
  */
-router.get('/recent', (req, res, next) => {
+router.get('/recent', checkPermission(PERMISSIONS.DONATIONS_READ), (req, res, next) => {
   try {
     const limit = Math.min(parseInt(req.query.limit) || 10, 100);
 
@@ -352,7 +354,7 @@ router.get('/recent', (req, res, next) => {
  * GET /donations/:id
  * Get a specific donation
  */
-router.get('/:id', (req, res, next) => {
+router.get('/:id', checkPermission(PERMISSIONS.DONATIONS_READ), (req, res, next) => {
   try {
     const transaction = Transaction.getById(req.params.id);
 
@@ -373,7 +375,7 @@ router.get('/:id', (req, res, next) => {
  * PATCH /donations/:id/status
  * Update donation transaction status
  */
-router.patch('/:id/status', async (req, res, next) => {
+router.patch('/:id/status', checkPermission(PERMISSIONS.DONATIONS_UPDATE), async (req, res, next) => {
   try {
     const { id } = req.params;
     const { status, stellarTxId, ledger } = req.body;

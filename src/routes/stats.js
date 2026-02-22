@@ -1,13 +1,15 @@
 const express = require('express');
 const router = express.Router();
 const StatsService = require('./services/StatsService');
+const { checkPermission } = require('../middleware/rbacMiddleware');
+const { PERMISSIONS } = require('../utils/permissions');
 
 /**
  * GET /stats/daily
  * Get daily aggregated donation volume
  * Query params: startDate, endDate (ISO format)
  */
-router.get('/daily', (req, res) => {
+router.get('/daily', checkPermission(PERMISSIONS.STATS_READ), (req, res) => {
   try {
     const { startDate, endDate } = req.query;
 
@@ -59,7 +61,7 @@ router.get('/daily', (req, res) => {
  * Get weekly aggregated donation volume
  * Query params: startDate, endDate (ISO format)
  */
-router.get('/weekly', (req, res) => {
+router.get('/weekly', checkPermission(PERMISSIONS.STATS_READ), (req, res) => {
   try {
     const { startDate, endDate } = req.query;
 
@@ -111,7 +113,7 @@ router.get('/weekly', (req, res) => {
  * Get overall summary statistics
  * Query params: startDate, endDate (ISO format)
  */
-router.get('/summary', (req, res) => {
+router.get('/summary', checkPermission(PERMISSIONS.STATS_READ), (req, res) => {
   try {
     const { startDate, endDate } = req.query;
 
@@ -155,7 +157,7 @@ router.get('/summary', (req, res) => {
  * Get aggregated stats by donor
  * Query params: startDate, endDate (ISO format)
  */
-router.get('/donors', (req, res) => {
+router.get('/donors', checkPermission(PERMISSIONS.STATS_READ), (req, res) => {
   try {
     const { startDate, endDate } = req.query;
 
@@ -206,7 +208,7 @@ router.get('/donors', (req, res) => {
  * Get aggregated stats by recipient
  * Query params: startDate, endDate (ISO format)
  */
-router.get('/recipients', (req, res) => {
+router.get('/recipients', checkPermission(PERMISSIONS.STATS_READ), (req, res) => {
   try {
     const { startDate, endDate } = req.query;
 
@@ -257,7 +259,7 @@ router.get('/recipients', (req, res) => {
  * Get analytics fee summary for reporting
  * Query params: startDate, endDate (ISO format)
  */
-router.get('/analytics-fees', (req, res) => {
+router.get('/analytics-fees', checkPermission(PERMISSIONS.STATS_READ), (req, res) => {
   try {
     const { startDate, endDate } = req.query;
 
@@ -304,7 +306,7 @@ router.get('/analytics-fees', (req, res) => {
  * Get donation analytics for a specific wallet
  * Query params: startDate, endDate (optional, ISO format)
  */
-router.get('/wallet/:walletAddress/analytics', (req, res) => {
+router.get('/wallet/:walletAddress/analytics', checkPermission(PERMISSIONS.STATS_READ), (req, res) => {
   try {
     const { walletAddress } = req.params;
     const { startDate, endDate } = req.query;

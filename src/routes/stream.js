@@ -1,12 +1,14 @@
 const express = require('express');
 const router = express.Router();
 const Database = require('../utils/database');
+const { checkPermission } = require('../middleware/rbacMiddleware');
+const { PERMISSIONS } = require('../utils/permissions');
 
 /**
  * POST /stream/create
  * Create a recurring donation schedule
  */
-router.post('/create', async (req, res) => {
+router.post('/create', checkPermission(PERMISSIONS.STREAM_CREATE), async (req, res) => {
   try {
     const { donorPublicKey, recipientPublicKey, amount, frequency } = req.body;
 
@@ -140,7 +142,7 @@ router.post('/create', async (req, res) => {
  * GET /stream/schedules
  * Get all recurring donation schedules
  */
-router.get('/schedules', async (req, res) => {
+router.get('/schedules', checkPermission(PERMISSIONS.STREAM_READ), async (req, res) => {
   try {
     const schedules = await Database.query(
       `SELECT 
@@ -179,7 +181,7 @@ router.get('/schedules', async (req, res) => {
  * GET /stream/schedules/:id
  * Get a specific recurring donation schedule
  */
-router.get('/schedules/:id', async (req, res) => {
+router.get('/schedules/:id', checkPermission(PERMISSIONS.STREAM_READ), async (req, res) => {
   try {
     const schedule = await Database.get(
       `SELECT 
@@ -225,7 +227,7 @@ router.get('/schedules/:id', async (req, res) => {
  * DELETE /stream/schedules/:id
  * Cancel a recurring donation schedule
  */
-router.delete('/schedules/:id', async (req, res) => {
+router.delete('/schedules/:id', checkPermission(PERMISSIONS.STREAM_DELETE), async (req, res) => {
   try {
     const schedule = await Database.get(
       'SELECT id, status FROM recurring_donations WHERE id = ?',
