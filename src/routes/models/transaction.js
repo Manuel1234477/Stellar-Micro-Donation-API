@@ -1,6 +1,12 @@
 const fs = require('fs');
 const path = require('path');
 const config = require('../../config/stellar');
+const {
+  TRANSACTION_STATES,
+  normalizeState,
+  assertValidState,
+  assertValidTransition,
+} = require('../../utils/transactionStateMachine');
 
 class Transaction {
   static getDbPath() {
@@ -46,18 +52,22 @@ class Transaction {
       }
     }
 
+    const normalizedStatus = normalizeState(transactionData.status || TRANSACTION_STATES.PENDING);
+    assertValidState(normalizedStatus, 'status');
+
+    const nowIso = new Date().toISOString();
     const newTransaction = {
-      id: Date.now().toString(),
+      ...transactionData,
+      id: transactionData.id || Date.now().toString(),
       amount: transactionData.amount,
       donor: transactionData.donor,
       recipient: transactionData.recipient,
       memo: transactionData.memo || '',
-      timestamp: new Date().toISOString(),
-      status: transactionData.status || 'pending',
+      timestamp: transactionData.timestamp || nowIso,
+      status: normalizedStatus,
       stellarTxId: transactionData.stellarTxId || null,
       stellarLedger: transactionData.stellarLedger || null,
-      statusUpdatedAt: new Date().toISOString(),
-      ...transactionData
+      statusUpdatedAt: transactionData.statusUpdatedAt || nowIso,
     };
     transactions.push(newTransaction);
     this.saveTransactions(transactions);
@@ -112,8 +122,18 @@ class Transaction {
       throw new Error(`Transaction not found: ${id}`);
     }
 
-    transactions[index].status = status;
-    transactions[index].statusUpdatedAt = new Date().toISOString();
+    const currentStatus = normalizeState(transactions[index].status);
+    const nextStatus = normalizeState(status);
+
+    assertValidState(currentStatus, 'current status');
+    assertValidState(nextStatus, 'target status');
+    assertValidTransition(currentStatus, nextStatus);
+
+    const previousStatusTimestamp = new Date(transactions[index].statusUpdatedAt || transactions[index].timestamp || 0).getTime();
+    const nextStatusTimestamp = new Date(Math.max(Date.now(), previousStatusTimestamp + 1)).toISOString();
+
+    transactions[index].status = nextStatus;
+    transactions[index].statusUpdatedAt = nextStatusTimestamp;
 
     if (stellarData.transactionId) {
       transactions[index].stellarTxId = stellarData.transactionId;
