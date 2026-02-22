@@ -4,7 +4,7 @@
  * Run with: npm test -- integration.test.js
  */
 
-const { getStellarService, useMockStellar } = require('../src/config/stellar');
+const { getStellarService } = require('../src/config/stellar');
 
 describe('Integration Tests with Mock Stellar', () => {
   let stellarService;
