@@ -1,5 +1,6 @@
 const Database = require('../utils/database');
 const MockStellarService = require('./MockStellarService');
+const log = require('../utils/log');
 
 class RecurringDonationScheduler {
   constructor() {
@@ -23,11 +24,11 @@ class RecurringDonationScheduler {
    */
   start() {
     if (this.isRunning) {
-      console.log('Scheduler is already running');
+      log.info('RECURRING_SCHEDULER', 'Scheduler is already running');
       return;
     }
 
-    console.log('Starting recurring donation scheduler...');
+    log.info('RECURRING_SCHEDULER', 'Starting recurring donation scheduler');
     this.isRunning = true;
     
     // Run immediately on start
@@ -38,7 +39,7 @@ class RecurringDonationScheduler {
       this.processSchedules();
     }, this.checkInterval);
 
-    console.log(`Scheduler started. Checking every ${this.checkInterval / 1000} seconds.`);
+    log.info('RECURRING_SCHEDULER', 'Scheduler started', { checkIntervalSeconds: this.checkInterval / 1000 });
   }
 
   /**
@@ -46,14 +47,14 @@ class RecurringDonationScheduler {
    */
   stop() {
     if (!this.isRunning) {
-      console.log('Scheduler is not running');
+      log.info('RECURRING_SCHEDULER', 'Scheduler is not running');
       return;
     }
 
-    console.log('Stopping recurring donation scheduler...');
+    log.info('RECURRING_SCHEDULER', 'Stopping recurring donation scheduler');
     clearInterval(this.intervalId);
     this.isRunning = false;
-    console.log('Scheduler stopped.');
+    log.info('RECURRING_SCHEDULER', 'Scheduler stopped');
   }
 
   /**
@@ -89,7 +90,7 @@ class RecurringDonationScheduler {
       );
 
       if (dueSchedules.length > 0) {
-        console.log(`[Scheduler] Found ${dueSchedules.length} schedule(s) due for execution`);
+        log.info('RECURRING_SCHEDULER', 'Found due schedules for execution', { count: dueSchedules.length });
       }
 
       // Process schedules concurrently but with duplicate prevention
@@ -99,7 +100,7 @@ class RecurringDonationScheduler {
 
       await Promise.allSettled(promises);
     } catch (error) {
-      console.error('[Scheduler] Error processing schedules:', error.message);
+      log.error('RECURRING_SCHEDULER', 'Error processing schedules', { error: error.message });
       this.logFailure('PROCESS_SCHEDULES', null, error.message);
     }
   }
@@ -110,7 +111,7 @@ class RecurringDonationScheduler {
   async executeScheduleWithRetry(schedule) {
     // Prevent duplicate execution
     if (this.executingSchedules.has(schedule.id)) {
-      console.log(`[Scheduler] Schedule ${schedule.id} is already being executed, skipping`);
+      log.info('RECURRING_SCHEDULER', 'Schedule is already being executed, skipping', { scheduleId: schedule.id });
       return;
     }
 
@@ -121,28 +122,43 @@ class RecurringDonationScheduler {
       
       for (let attempt = 1; attempt <= this.maxRetries; attempt++) {
         try {
-          console.log(`[Scheduler] Executing schedule ${schedule.id} (attempt ${attempt}/${this.maxRetries})`);
+          log.info('RECURRING_SCHEDULER', 'Executing schedule', {
+            scheduleId: schedule.id,
+            attempt,
+            maxRetries: this.maxRetries,
+          });
           
           await this.executeSchedule(schedule);
           
           // Success - clear any previous failures
-          console.log(`[Scheduler] ✓ Schedule ${schedule.id} executed successfully`);
+          log.info('RECURRING_SCHEDULER', 'Schedule executed successfully', { scheduleId: schedule.id });
           return;
         } catch (error) {
           lastError = error;
-          console.error(`[Scheduler] ✗ Attempt ${attempt}/${this.maxRetries} failed for schedule ${schedule.id}: ${error.message}`);
+          log.error('RECURRING_SCHEDULER', 'Schedule execution attempt failed', {
+            scheduleId: schedule.id,
+            attempt,
+            maxRetries: this.maxRetries,
+            error: error.message,
+          });
           
           // If this isn't the last attempt, wait before retrying
           if (attempt < this.maxRetries) {
             const backoffTime = this.calculateBackoff(attempt);
-            console.log(`[Scheduler] Retrying in ${backoffTime}ms...`);
+            log.info('RECURRING_SCHEDULER', 'Retrying schedule execution after backoff', {
+              scheduleId: schedule.id,
+              backoffMs: backoffTime,
+            });
             await this.sleep(backoffTime);
           }
         }
       }
 
       // All retries failed
-      console.error(`[Scheduler] ✗ All ${this.maxRetries} attempts failed for schedule ${schedule.id}`);
+      log.error('RECURRING_SCHEDULER', 'All retry attempts failed', {
+        scheduleId: schedule.id,
+        maxRetries: this.maxRetries,
+      });
       await this.handleFailedExecution(schedule, lastError);
     } finally {
       this.executingSchedules.delete(schedule.id);
@@ -153,16 +169,19 @@ class RecurringDonationScheduler {
    * Execute a single schedule
    */
   async executeSchedule(schedule) {
-    const executionId = `${schedule.id}-${Date.now()}`;
-    
     try {
       // Check if this schedule was already executed recently (duplicate prevention)
       if (await this.wasRecentlyExecuted(schedule)) {
-        console.log(`[Scheduler] Schedule ${schedule.id} was recently executed, skipping to prevent duplicate`);
+        log.info('RECURRING_SCHEDULER', 'Schedule was recently executed, skipping duplicate', { scheduleId: schedule.id });
         return;
       }
 
-      console.log(`[Scheduler] Sending ${schedule.amount} from ${schedule.donorPublicKey} to ${schedule.recipientPublicKey}`);
+      log.info('RECURRING_SCHEDULER', 'Sending recurring donation transaction', {
+        scheduleId: schedule.id,
+        amount: schedule.amount,
+        donorPublicKey: schedule.donorPublicKey,
+        recipientPublicKey: schedule.recipientPublicKey,
+      });
 
       // Simulate sending donation on testnet using MockStellarService
       const transactionResult = await this.stellarService.sendPayment(
@@ -201,8 +220,11 @@ class RecurringDonationScheduler {
         [new Date().toISOString(), nextExecutionDate.toISOString(), schedule.id]
       );
 
-      console.log(`[Scheduler] Transaction hash: ${transactionResult.hash}`);
-      console.log(`[Scheduler] Next execution: ${nextExecutionDate.toISOString()}`);
+      log.info('RECURRING_SCHEDULER', 'Recurring donation executed', {
+        scheduleId: schedule.id,
+        transactionHash: transactionResult.hash,
+        nextExecution: nextExecutionDate.toISOString(),
+      });
       
       // Log successful execution
       await this.logExecution(schedule.id, 'SUCCESS', transactionResult.hash);
@@ -241,9 +263,9 @@ class RecurringDonationScheduler {
       
       // Optionally pause the schedule after repeated failures
       // For now, we'll just log and let it retry on the next cycle
-      console.error(`[Scheduler] Schedule ${schedule.id} will be retried on next cycle`);
+      log.error('RECURRING_SCHEDULER', 'Schedule will be retried on next cycle', { scheduleId: schedule.id });
     } catch (logError) {
-      console.error(`[Scheduler] Failed to log execution failure:`, logError.message);
+      log.error('RECURRING_SCHEDULER', 'Failed to log execution failure', { error: logError.message });
     }
   }
 
@@ -271,7 +293,7 @@ class RecurringDonationScheduler {
         [scheduleId, status, transactionHash, errorMessage, new Date().toISOString()]
       );
     } catch (error) {
-      console.error(`[Scheduler] Failed to log execution:`, error.message);
+      log.error('RECURRING_SCHEDULER', 'Failed to write execution log', { error: error.message });
     }
   }
 
@@ -284,7 +306,7 @@ class RecurringDonationScheduler {
       ? `Failed to execute schedule ${scheduleId}: ${errorMessage}`
       : `Scheduler error in ${context}: ${errorMessage}`;
     
-    console.error(`[Scheduler] ${logMessage}`);
+    log.error('RECURRING_SCHEDULER', logMessage);
     
     if (scheduleId) {
       await this.logExecution(scheduleId, 'FAILED', null, errorMessage);
@@ -361,7 +383,7 @@ class RecurringDonationScheduler {
       );
       return logs;
     } catch (error) {
-      console.error(`[Scheduler] Failed to get execution logs:`, error.message);
+      log.error('RECURRING_SCHEDULER', 'Failed to get execution logs', { error: error.message });
       return [];
     }
   }
@@ -382,7 +404,7 @@ class RecurringDonationScheduler {
       );
       return failures;
     } catch (error) {
-      console.error(`[Scheduler] Failed to get recent failures:`, error.message);
+      log.error('RECURRING_SCHEDULER', 'Failed to get recent failures', { error: error.message });
       return [];
     }
   }

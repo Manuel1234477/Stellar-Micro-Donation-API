@@ -9,6 +9,7 @@ const { errorHandler, notFoundHandler } = require('../middleware/errorHandler');
 const logger = require('../middleware/logger');
 const { attachUserRole } = require('../middleware/rbacMiddleware');
 const Database = require('../utils/database');
+const log = require('../utils/log');
 
 const app = express();
 
@@ -58,7 +59,7 @@ app.use(errorHandler);
 
 // Handle unhandled promise rejections
 process.on('unhandledRejection', (reason, promise) => {
-  console.error('[UnhandledRejection]', {
+  log.error('APP', 'Unhandled promise rejection', {
     reason,
     promise,
     timestamp: new Date().toISOString()
@@ -67,9 +68,9 @@ process.on('unhandledRejection', (reason, promise) => {
 
 const PORT = config.port;
 app.listen(PORT, () => {
-  console.log(`Stellar Micro-Donation API running on port ${PORT}`);
-  console.log(`Network: ${config.network}`);
-  console.log(`Health check: http://localhost:${PORT}/health`);
+  log.info('APP', 'Stellar Micro-Donation API running', { port: PORT });
+  log.info('APP', 'Active network configured', { network: config.network });
+  log.info('APP', 'Health check endpoint ready', { url: `http://localhost:${PORT}/health` });
 
   // Start the recurring donation scheduler
   recurringDonationScheduler.start();

@@ -2,6 +2,7 @@
  * Stellar Error Handler
  * Catches and transforms Stellar SDK errors into user-friendly responses
  */
+const log = require('./log');
 
 class StellarErrorHandler {
   /**
@@ -12,7 +13,7 @@ class StellarErrorHandler {
    */
   static handle(error, context = 'operation') {
     // Log detailed error internally
-    console.error(`[StellarError:${context}]`, {
+    log.error('STELLAR_ERROR_HANDLER', `Stellar operation failed in ${context}`, {
       message: error.message,
       stack: error.stack,
       response: error.response?.data,

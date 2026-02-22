@@ -1,5 +1,6 @@
 const fs = require('fs');
 const path = require('path');
+const log = require('../utils/log');
 
 /**
  * Logger Middleware for Request/Response Logging
@@ -97,7 +98,7 @@ class Logger {
 
     fs.appendFile(logFile, logEntry, (err) => {
       if (err) {
-        console.error('Failed to write to log file:', err);
+        log.error('REQUEST_LOGGER', 'Failed to write to log file', { error: err.message });
       }
     });
   }
@@ -118,14 +119,14 @@ class Logger {
     }
     const resetColor = '\x1b[0m';
 
-    console.log(
-      `[${timestamp}] ${method} ${endpoint} ${statusColor}${statusCode}${resetColor} - ${duration}ms`
-    );
+    log.info('REQUEST_LOGGER', `${method} ${endpoint} ${statusColor}${statusCode}${resetColor} - ${duration}ms`, {
+      timestamp,
+    });
 
     // Log request/response details in verbose mode
     if (process.env.LOG_VERBOSE === 'true') {
-      console.log('Request:', this.formatLog(logData.request));
-      console.log('Response:', this.formatLog(logData.response));
+      log.info('REQUEST_LOGGER', 'Request payload', logData.request);
+      log.info('REQUEST_LOGGER', 'Response payload', logData.response);
     }
   }
 

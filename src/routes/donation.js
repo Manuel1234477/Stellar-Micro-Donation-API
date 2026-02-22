@@ -8,6 +8,7 @@ const { checkPermission } = require('../middleware/rbacMiddleware');
 const { PERMISSIONS } = require('../utils/permissions');
 const { ValidationError, NotFoundError, ERROR_CODES } = require('../utils/errors');
 const encryption = require('../utils/encryption');
+const log = require('../utils/log');
 
 const { getStellarService } = require('../config/stellar');
 const donationValidator = require('../utils/donationValidator');
@@ -144,7 +145,7 @@ router.post('/send', requireIdempotency, async (req, res) => {
 
     res.status(201).json(response);
   } catch (error) {
-    console.error('Send donation error:', error);
+    log.error('DONATION_ROUTE', 'Failed to send donation', { error: error.message });
     res.status(500).json({
       success: false,
       error: 'Failed to send donation',

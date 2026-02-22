@@ -4,14 +4,16 @@
  */
 
 const { AppError } = require('../utils/errors');
+const log = require('../utils/log');
 
 /**
  * Error handler middleware
  * Should be registered last in the middleware chain
  */
 function errorHandler(err, req, res, next) {
+  void next;
   // Log error for debugging
-  console.error('Error occurred:', {
+  log.error('ERROR_HANDLER', 'Error occurred', {
     path: req.path,
     method: req.method,
     error: err.message,

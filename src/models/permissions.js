@@ -1,5 +1,6 @@
 const fs = require('fs');
 const path = require('path');
+const log = require('../utils/log');
 
 const ROLES_CONFIG_PATH = path.join(__dirname, '../config/roles.json');
 
@@ -12,7 +13,7 @@ function loadRolesConfig() {
     const data = fs.readFileSync(ROLES_CONFIG_PATH, 'utf8');
     return JSON.parse(data);
   } catch (error) {
-    console.error('Error loading roles configuration:', error);
+    log.error('PERMISSIONS', 'Failed to load roles configuration, using defaults', { error: error.message });
     // Return default configuration if file doesn't exist
     return {
       roles: [
@@ -54,7 +55,7 @@ function getPermissionsByRole(roleName) {
   const role = config.roles.find(r => r.name === roleName);
   
   if (!role) {
-    console.warn(`Role "${roleName}" not found, returning empty permissions`);
+    log.warn('PERMISSIONS', 'Role not found, returning empty permissions', { roleName });
     return [];
   }
   
@@ -81,7 +82,7 @@ function hasPermission(roleName, permission) {
   }
   
   // Wildcard permission check (e.g., 'donations:*' matches 'donations:create')
-  const [resource, action] = permission.split(':');
+  const [resource] = permission.split(':');
   const wildcardPermission = `${resource}:*`;
   
   return permissions.includes(wildcardPermission);

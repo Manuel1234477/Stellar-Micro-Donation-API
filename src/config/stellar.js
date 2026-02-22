@@ -7,6 +7,7 @@
 require('dotenv').config({ path: require('path').join(__dirname, '../../.env') });
 const path = require('path');
 const { validateEnvironment } = require('./envValidation');
+const log = require('../utils/log');
 
 validateEnvironment();
 
@@ -56,12 +57,12 @@ const getNetworkConfig = () => {
  */
 const getStellarService = () => {
   if (useMockStellar) {
-    console.log('[Stellar Config] Using MOCK Stellar service');
+    log.info('STELLAR_CONFIG', 'Using mock Stellar service');
     return new MockStellarService();
   }
   const networkConfig = getNetworkConfig();
-  console.log(`[Stellar Config] Using REAL Stellar service on ${networkConfig.network.toUpperCase()}`);
-  console.log(`[Stellar Config] Horizon URL: ${networkConfig.horizonUrl}`);
+  log.info('STELLAR_CONFIG', 'Using real Stellar service', { network: networkConfig.network.toUpperCase() });
+  log.info('STELLAR_CONFIG', 'Resolved Horizon URL', { horizonUrl: networkConfig.horizonUrl });
 
   return new StellarService({
     network: networkConfig.network,

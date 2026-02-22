@@ -10,6 +10,7 @@
 
 const IdempotencyService = require('../services/IdempotencyService');
 const { ValidationError } = require('../utils/errors');
+const log = require('../utils/log');
 
 /**
  * Middleware to require and validate idempotency key
@@ -46,7 +47,7 @@ async function requireIdempotency(req, res, next) {
     
     if (existing) {
       // Return cached response (idempotent behavior)
-      console.log(`[Idempotency] Returning cached response for key: ${idempotencyKey}`);
+      log.info('IDEMPOTENCY', 'Returning cached response', { idempotencyKey });
       
       return res.status(200).json({
         ...existing.response,
@@ -62,9 +63,10 @@ async function requireIdempotency(req, res, next) {
     const duplicate = await IdempotencyService.findByHash(requestHash, idempotencyKey);
     
     if (duplicate) {
-      console.warn(`[Idempotency] Duplicate request detected with different key`);
-      console.warn(`  Original key: ${duplicate.idempotencyKey}`);
-      console.warn(`  New key: ${idempotencyKey}`);
+      log.warn('IDEMPOTENCY', 'Duplicate request payload detected with different key', {
+        originalKey: duplicate.idempotencyKey,
+        newKey: idempotencyKey,
+      });
       
       // Return warning but allow processing (different key = different intent)
       req.idempotencyWarning = {
@@ -108,10 +110,10 @@ async function storeIdempotencyResponse(req, response) {
       req.user?.id
     );
 
-    console.log(`[Idempotency] Stored response for key: ${req.idempotency.key}`);
+    log.info('IDEMPOTENCY', 'Stored idempotent response', { idempotencyKey: req.idempotency.key });
   } catch (error) {
     // Log error but don't fail the request
-    console.error('[Idempotency] Failed to store response:', error.message);
+    log.error('IDEMPOTENCY', 'Failed to store idempotent response', { error: error.message });
   }
 }
 
@@ -140,10 +142,10 @@ async function optionalIdempotency(req, res, next) {
 async function cleanupExpiredKeys() {
   try {
     const deleted = await IdempotencyService.cleanupExpired();
-    console.log(`[Idempotency] Cleaned up ${deleted} expired keys`);
+    log.info('IDEMPOTENCY', 'Cleaned up expired keys', { deleted });
     return deleted;
   } catch (error) {
-    console.error('[Idempotency] Cleanup failed:', error.message);
+    log.error('IDEMPOTENCY', 'Cleanup failed', { error: error.message });
     return 0;
   }
 }

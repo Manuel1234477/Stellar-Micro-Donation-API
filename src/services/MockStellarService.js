@@ -6,6 +6,8 @@
 
 const crypto = require('crypto');
 const StellarErrorHandler = require('../utils/stellarErrorHandler');
+const log = require('../utils/log');
+const { ValidationError, BusinessLogicError, NotFoundError, ERROR_CODES } = require('../utils/errors');
 
 class MockStellarService {
   constructor() {
@@ -14,7 +16,7 @@ class MockStellarService {
     this.transactions = new Map(); // publicKey -> [transactions]
     this.streamListeners = new Map(); // publicKey -> [callbacks]
 
-    console.log('[MockStellarService] Initialized');
+    log.info('MOCK_STELLAR_SERVICE', 'Initialized');
   }
 
   /**
@@ -312,7 +314,7 @@ class MockStellarService {
       try {
         callback(transaction);
       } catch (error) {
-        console.error('[MockStellarService] Stream listener error:', error);
+        log.error('MOCK_STELLAR_SERVICE', 'Stream listener callback failed', { error: error.message });
       }
     });
   }
@@ -372,7 +374,11 @@ class MockStellarService {
     this.transactions.get(sourcePublicKey).push(transaction);
     this.transactions.get(destinationPublic).push(transaction);
 
-    console.log(`[MockStellarService] Payment simulated: ${amount} XLM from ${sourcePublicKey.substring(0, 8)}... to ${destinationPublic.substring(0, 8)}...`);
+    log.info('MOCK_STELLAR_SERVICE', 'Payment simulated', {
+      amount,
+      source: `${sourcePublicKey.substring(0, 8)}...`,
+      destination: `${destinationPublic.substring(0, 8)}...`,
+    });
 
     return {
       hash: transaction.hash,

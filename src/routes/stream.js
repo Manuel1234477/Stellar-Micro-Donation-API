@@ -3,6 +3,7 @@ const router = express.Router();
 const Database = require('../utils/database');
 const { checkPermission } = require('../middleware/rbacMiddleware');
 const { PERMISSIONS } = require('../utils/permissions');
+const log = require('../utils/log');
 
 /**
  * POST /stream/create
@@ -129,7 +130,7 @@ router.post('/create', checkPermission(PERMISSIONS.STREAM_CREATE), async (req, r
       }
     });
   } catch (error) {
-    console.error('Error creating recurring donation:', error);
+    log.error('STREAM_ROUTE', 'Failed to create recurring donation', { error: error.message });
     res.status(500).json({
       success: false,
       error: 'Failed to create recurring donation schedule',
@@ -168,7 +169,7 @@ router.get('/schedules', checkPermission(PERMISSIONS.STREAM_READ), async (req, r
       count: schedules.length
     });
   } catch (error) {
-    console.error('Error fetching schedules:', error);
+    log.error('STREAM_ROUTE', 'Failed to fetch recurring donation schedules', { error: error.message });
     res.status(500).json({
       success: false,
       error: 'Failed to fetch recurring donation schedules',
@@ -214,7 +215,7 @@ router.get('/schedules/:id', checkPermission(PERMISSIONS.STREAM_READ), async (re
       data: schedule
     });
   } catch (error) {
-    console.error('Error fetching schedule:', error);
+    log.error('STREAM_ROUTE', 'Failed to fetch recurring donation schedule', { error: error.message });
     res.status(500).json({
       success: false,
       error: 'Failed to fetch schedule',
@@ -251,7 +252,7 @@ router.delete('/schedules/:id', checkPermission(PERMISSIONS.STREAM_DELETE), asyn
       message: 'Recurring donation schedule cancelled successfully'
     });
   } catch (error) {
-    console.error('Error cancelling schedule:', error);
+    log.error('STREAM_ROUTE', 'Failed to cancel recurring donation schedule', { error: error.message });
     res.status(500).json({
       success: false,
       error: 'Failed to cancel schedule',
