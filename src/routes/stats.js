@@ -1,38 +1,18 @@
 const express = require('express');
 const router = express.Router();
 const StatsService = require('./services/StatsService');
-const { checkPermission } = require('../middleware/rbacMiddleware');
-const { PERMISSIONS } = require('../utils/permissions');
+const { validateDateRange } = require('../middleware/validation');
 
 /**
  * GET /stats/daily
  * Get daily aggregated donation volume
  * Query params: startDate, endDate (ISO format)
  */
-router.get('/daily', checkPermission(PERMISSIONS.STATS_READ), (req, res) => {
+router.get('/daily', validateDateRange, (req, res) => {
   try {
     const { startDate, endDate } = req.query;
-
-    if (!startDate || !endDate) {
-      return res.status(400).json({
-        error: 'Missing required query parameters: startDate, endDate (ISO format)'
-      });
-    }
-
     const start = new Date(startDate);
     const end = new Date(endDate);
-
-    if (isNaN(start.getTime()) || isNaN(end.getTime())) {
-      return res.status(400).json({
-        error: 'Invalid date format. Use ISO format (YYYY-MM-DD or ISO 8601)'
-      });
-    }
-
-    if (start > end) {
-      return res.status(400).json({
-        error: 'startDate must be before endDate'
-      });
-    }
 
     const stats = StatsService.getDailyStats(start, end);
 
@@ -50,8 +30,11 @@ router.get('/daily', checkPermission(PERMISSIONS.STATS_READ), (req, res) => {
     });
   } catch (error) {
     res.status(500).json({
-      error: 'Failed to retrieve daily stats',
-      message: error.message
+      success: false,
+      error: {
+        code: 'STATS_FAILED',
+        message: error.message
+      }
     });
   }
 });
@@ -61,30 +44,11 @@ router.get('/daily', checkPermission(PERMISSIONS.STATS_READ), (req, res) => {
  * Get weekly aggregated donation volume
  * Query params: startDate, endDate (ISO format)
  */
-router.get('/weekly', checkPermission(PERMISSIONS.STATS_READ), (req, res) => {
+router.get('/weekly', validateDateRange, (req, res) => {
   try {
     const { startDate, endDate } = req.query;
-
-    if (!startDate || !endDate) {
-      return res.status(400).json({
-        error: 'Missing required query parameters: startDate, endDate (ISO format)'
-      });
-    }
-
     const start = new Date(startDate);
     const end = new Date(endDate);
-
-    if (isNaN(start.getTime()) || isNaN(end.getTime())) {
-      return res.status(400).json({
-        error: 'Invalid date format. Use ISO format (YYYY-MM-DD or ISO 8601)'
-      });
-    }
-
-    if (start > end) {
-      return res.status(400).json({
-        error: 'startDate must be before endDate'
-      });
-    }
 
     const stats = StatsService.getWeeklyStats(start, end);
 
@@ -102,8 +66,11 @@ router.get('/weekly', checkPermission(PERMISSIONS.STATS_READ), (req, res) => {
     });
   } catch (error) {
     res.status(500).json({
-      error: 'Failed to retrieve weekly stats',
-      message: error.message
+      success: false,
+      error: {
+        code: 'STATS_FAILED',
+        message: error.message
+      }
     });
   }
 });
@@ -113,30 +80,11 @@ router.get('/weekly', checkPermission(PERMISSIONS.STATS_READ), (req, res) => {
  * Get overall summary statistics
  * Query params: startDate, endDate (ISO format)
  */
-router.get('/summary', checkPermission(PERMISSIONS.STATS_READ), (req, res) => {
+router.get('/summary', validateDateRange, (req, res) => {
   try {
     const { startDate, endDate } = req.query;
-
-    if (!startDate || !endDate) {
-      return res.status(400).json({
-        error: 'Missing required query parameters: startDate, endDate (ISO format)'
-      });
-    }
-
     const start = new Date(startDate);
     const end = new Date(endDate);
-
-    if (isNaN(start.getTime()) || isNaN(end.getTime())) {
-      return res.status(400).json({
-        error: 'Invalid date format. Use ISO format (YYYY-MM-DD or ISO 8601)'
-      });
-    }
-
-    if (start > end) {
-      return res.status(400).json({
-        error: 'startDate must be before endDate'
-      });
-    }
 
     const stats = StatsService.getSummaryStats(start, end);
 
@@ -146,8 +94,11 @@ router.get('/summary', checkPermission(PERMISSIONS.STATS_READ), (req, res) => {
     });
   } catch (error) {
     res.status(500).json({
-      error: 'Failed to retrieve summary stats',
-      message: error.message
+      success: false,
+      error: {
+        code: 'STATS_FAILED',
+        message: error.message
+      }
     });
   }
 });
@@ -157,30 +108,11 @@ router.get('/summary', checkPermission(PERMISSIONS.STATS_READ), (req, res) => {
  * Get aggregated stats by donor
  * Query params: startDate, endDate (ISO format)
  */
-router.get('/donors', checkPermission(PERMISSIONS.STATS_READ), (req, res) => {
+router.get('/donors', validateDateRange, (req, res) => {
   try {
     const { startDate, endDate } = req.query;
-
-    if (!startDate || !endDate) {
-      return res.status(400).json({
-        error: 'Missing required query parameters: startDate, endDate (ISO format)'
-      });
-    }
-
     const start = new Date(startDate);
     const end = new Date(endDate);
-
-    if (isNaN(start.getTime()) || isNaN(end.getTime())) {
-      return res.status(400).json({
-        error: 'Invalid date format. Use ISO format (YYYY-MM-DD or ISO 8601)'
-      });
-    }
-
-    if (start > end) {
-      return res.status(400).json({
-        error: 'startDate must be before endDate'
-      });
-    }
 
     const stats = StatsService.getDonorStats(start, end);
 
@@ -197,8 +129,11 @@ router.get('/donors', checkPermission(PERMISSIONS.STATS_READ), (req, res) => {
     });
   } catch (error) {
     res.status(500).json({
-      error: 'Failed to retrieve donor stats',
-      message: error.message
+      success: false,
+      error: {
+        code: 'STATS_FAILED',
+        message: error.message
+      }
     });
   }
 });
@@ -208,30 +143,11 @@ router.get('/donors', checkPermission(PERMISSIONS.STATS_READ), (req, res) => {
  * Get aggregated stats by recipient
  * Query params: startDate, endDate (ISO format)
  */
-router.get('/recipients', checkPermission(PERMISSIONS.STATS_READ), (req, res) => {
+router.get('/recipients', validateDateRange, (req, res) => {
   try {
     const { startDate, endDate } = req.query;
-
-    if (!startDate || !endDate) {
-      return res.status(400).json({
-        error: 'Missing required query parameters: startDate, endDate (ISO format)'
-      });
-    }
-
     const start = new Date(startDate);
     const end = new Date(endDate);
-
-    if (isNaN(start.getTime()) || isNaN(end.getTime())) {
-      return res.status(400).json({
-        error: 'Invalid date format. Use ISO format (YYYY-MM-DD or ISO 8601)'
-      });
-    }
-
-    if (start > end) {
-      return res.status(400).json({
-        error: 'startDate must be before endDate'
-      });
-    }
 
     const stats = StatsService.getRecipientStats(start, end);
 
@@ -248,8 +164,11 @@ router.get('/recipients', checkPermission(PERMISSIONS.STATS_READ), (req, res) =>
     });
   } catch (error) {
     res.status(500).json({
-      error: 'Failed to retrieve recipient stats',
-      message: error.message
+      success: false,
+      error: {
+        code: 'STATS_FAILED',
+        message: error.message
+      }
     });
   }
 });

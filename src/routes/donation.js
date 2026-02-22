@@ -3,8 +3,7 @@ const router = express.Router();
 const Database = require('../utils/database');
 const Transaction = require('./models/transaction');
 const requireApiKey = require('../middleware/apiKeyMiddleware');
-const { checkPermission } = require('../middleware/rbacMiddleware');
-const { PERMISSIONS } = require('../utils/permissions');
+const { requireIdempotency, storeIdempotencyResponse } = require('../middleware/idempotencyMiddleware');
 
 const { getStellarService } = require('../config/stellar');
 const donationValidator = require('../utils/donationValidator');
@@ -14,8 +13,8 @@ const { calculateAnalyticsFee } = require('../utils/feeCalculator');
 const stellarService = getStellarService();
 
 /**
- * POST /api/v1/donation/verify
- * Verify a donation transaction by hash
+ * POST /donations
+ * Create a new donation
  */
 router.post('/verify', checkPermission(PERMISSIONS.DONATIONS_VERIFY), async (req, res) => {
   try {
@@ -25,11 +24,15 @@ router.post('/verify', checkPermission(PERMISSIONS.DONATIONS_VERIFY), async (req
       throw new ValidationError('Transaction hash is required', null, ERROR_CODES.INVALID_REQUEST);
     }
 
-    const result = await stellarService.verifyTransaction(transactionHash);
+    const transaction = Transaction.create({
+      amount: parseFloat(amount),
+      donor: donor || 'Anonymous',
+      recipient
+    });
 
-    res.json({
+    res.status(201).json({
       success: true,
-      data: result
+      data: transaction
     });
   } catch (error) {
     // Handle Stellar errors with proper status codes
@@ -51,8 +54,9 @@ router.post('/verify', checkPermission(PERMISSIONS.DONATIONS_VERIFY), async (req
 /**
  * POST /donations/send
  * Send XLM from one wallet to another and record it
+ * Requires idempotency key to prevent duplicate transactions
  */
-router.post('/send', checkPermission(PERMISSIONS.DONATIONS_CREATE), async (req, res) => {
+router.post('/send', requireIdempotency, async (req, res) => {
   try {
     const { senderId, receiverId, amount, memo } = req.body;
 
@@ -122,7 +126,7 @@ router.post('/send', checkPermission(PERMISSIONS.DONATIONS_CREATE), async (req, 
       status: 'completed'
     });
 
-    res.status(201).json({
+    const response = {
       success: true,
       data: {
         id: dbResult.id,
@@ -133,7 +137,12 @@ router.post('/send', checkPermission(PERMISSIONS.DONATIONS_CREATE), async (req, 
         receiver: receiver.publicKey,
         timestamp: new Date().toISOString()
       }
-    });
+    };
+
+    // Store idempotency response
+    await storeIdempotencyResponse(req, response);
+
+    res.status(201).json(response);
   } catch (error) {
     console.error('Send donation error:', error);
     res.status(500).json({
@@ -145,22 +154,11 @@ router.post('/send', checkPermission(PERMISSIONS.DONATIONS_CREATE), async (req, 
 });
 
 /**
- * POST /donations
- * Create a new donation
+ * POST /donations/verify
+ * Verify a donation transaction by hash
  */
-router.post('/', checkPermission(PERMISSIONS.DONATIONS_CREATE), (req, res) => {
+router.post('/', requireApiKey, requireIdempotency, async (req, res, next) => {
   try {
-    const idempotencyKey = req.headers['idempotency-key'];
-
-    if (!idempotencyKey) {
-      return res.status(400).json({
-        success: false,
-        error: {
-          code: 'IDEMPOTENCY_KEY_REQUIRED',
-          message: 'Idempotency key is required'
-        }
-      });
-    }
 
     const { amount, donor, recipient, memo } = req.body;
 
@@ -253,14 +251,17 @@ router.post('/', checkPermission(PERMISSIONS.DONATIONS_CREATE), (req, res) => {
       donor: donor || 'Anonymous',
       recipient,
       memo: sanitizedMemo,
-      idempotencyKey,
+      idempotencyKey: req.idempotency.key,
       analyticsFee: feeCalculation.fee,
       analyticsFeePercentage: feeCalculation.feePercentage
     });
 
-    res.status(201).json({
+    const response = {
       success: true,
-      data: transaction
+      data: {
+        verified: true,
+        transactionHash
+      }
     });
   } catch (error) {
     next(error);
