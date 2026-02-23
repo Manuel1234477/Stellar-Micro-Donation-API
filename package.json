@@ -4,10 +4,11 @@
   "description": "Micro-donation API using Stellar blockchain",
   "main": "src/routes/app.js",
   "scripts": {
-    "start": "node src/routes/app.js",
+    "start": "npm run validate-env && node src/routes/app.js",
+    "validate-env": "node -e \"require('./src/config/envValidator').validateEnvironment()\"",
     "init-db": "node src/scripts/initDB.js",
     "migrate:memo": "node src/scripts/addMemoColumn.js",
-    "test": "jest",
+    "test": "npm run validate-env && jest",
     "test:memo": "node test-memo-feature.js",
     "test:rate-limit": "node test-rate-limit.js",
     "dev": "nodemon src/routes/app.js",

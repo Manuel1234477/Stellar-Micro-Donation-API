@@ -1,0 +1,37 @@
+name: Continuous Integration
+
+on:
+  push:
+    branches: [ main, develop ]
+  pull_request:
+    branches: [ main, develop ]
+
+jobs:
+  validate-and-test:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Install Dependencies
+        run: npm install
+
+      - name: Run Environment Validation
+        # This triggers your npm script which calls envValidator.js
+        run: npm run validate-env
+        env:
+          # CI needs these 'fake' values to pass the validation check
+          API_KEYS: "ci_bypass_key_123"
+          STELLAR_NETWORK: "testnet"
+          PORT: "3000"
+
+      - name: Run Tests
+        run: npm test
+        env:
+          API_KEYS: "ci_bypass_key_123"
