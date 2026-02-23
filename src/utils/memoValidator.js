@@ -65,6 +65,7 @@ class MemoValidator {
 
     // Check for non-printable characters (only allow printable ASCII + common UTF-8)
     // Here we reject control characters entirely
+    // eslint-disable-next-line no-control-regex -- Intentionally checking for control characters
     if (/[\x00-\x1F\x7F]/.test(sanitized)) {
       return {
         valid: false,

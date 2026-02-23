@@ -1,0 +1,22 @@
+Title: Document end-to-end API workflow and usage
+
+Description:
+While individual endpoints are documented, there is no single guide explaining how the API is used from start to finish. This issue adds a clear, step-by-step workflow description for typical usage scenarios.
+
+Tasks:
+
+Describe the donation flow from request to confirmation
+
+Explain required headers, authentication, and metadata
+
+Provide example request/response sequences
+
+Add common failure scenarios and how to handle them
+
+Acceptance Criteria:
+
+A reader can understand how to use the API without reading the code
+
+Examples are accurate and up to date
+
+Documentation lives in README or /docs
