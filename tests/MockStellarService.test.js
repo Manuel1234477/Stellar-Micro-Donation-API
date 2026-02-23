@@ -317,4 +317,253 @@ describe('MockStellarService', () => {
       expect(results[1]).toHaveProperty('transactionId');
     });
   });
+
+  describe('Realistic Error Simulation', () => {
+    test('should simulate network delays', async () => {
+      const delayedService = new MockStellarService({ networkDelay: 100 });
+      
+      const startTime = Date.now();
+      await delayedService.createWallet();
+      const endTime = Date.now();
+      
+      expect(endTime - startTime).toBeGreaterThanOrEqual(100);
+    });
+
+    test('should enforce rate limiting', async () => {
+      const limitedService = new MockStellarService({ rateLimit: 2 });
+      const wallet = await limitedService.createWallet();
+      
+      // First two requests should succeed
+      await limitedService.getBalance(wallet.publicKey);
+      await limitedService.getBalance(wallet.publicKey);
+      
+      // Third request should fail
+      await expect(
+        limitedService.getBalance(wallet.publicKey)
+      ).rejects.toThrow('Rate limit exceeded');
+    });
+
+    test('should simulate random transaction failures', async () => {
+      const failingService = new MockStellarService({ failureRate: 1.0 }); // 100% failure
+      const source = await failingService.createWallet();
+      const destination = await failingService.createWallet();
+      
+      await failingService.fundTestnetWallet(source.publicKey);
+      
+      await expect(
+        failingService.fundTestnetWallet(destination.publicKey)
+      ).rejects.toThrow();
+    });
+
+    test('should prevent duplicate funding', async () => {
+      const wallet = await service.createWallet();
+      await service.fundTestnetWallet(wallet.publicKey);
+      
+      await expect(
+        service.fundTestnetWallet(wallet.publicKey)
+      ).rejects.toThrow('Account is already funded');
+    });
+  });
+
+  describe('Stellar-Specific Validation', () => {
+    test('should validate public key format', async () => {
+      await expect(
+        service.getBalance('INVALID_KEY')
+      ).rejects.toThrow('Invalid Stellar public key format');
+    });
+
+    test('should validate secret key format', async () => {
+      const destination = await service.createWallet();
+      await service.fundTestnetWallet(destination.publicKey);
+      
+      await expect(
+        service.sendDonation({
+          sourceSecret: 'INVALID_SECRET',
+          destinationPublic: destination.publicKey,
+          amount: '10',
+          memo: 'Test',
+        })
+      ).rejects.toThrow('Invalid Stellar secret key format');
+    });
+
+    test('should validate amount precision', async () => {
+      const source = await service.createWallet();
+      const destination = await service.createWallet();
+      
+      await service.fundTestnetWallet(source.publicKey);
+      await service.fundTestnetWallet(destination.publicKey);
+      
+      await expect(
+        service.sendDonation({
+          sourceSecret: source.secretKey,
+          destinationPublic: destination.publicKey,
+          amount: '10.12345678', // 8 decimal places
+          memo: 'Test',
+        })
+      ).rejects.toThrow('Amount cannot have more than 7 decimal places');
+    });
+
+    test('should validate maximum amount', async () => {
+      const source = await service.createWallet();
+      const destination = await service.createWallet();
+      
+      await service.fundTestnetWallet(source.publicKey);
+      await service.fundTestnetWallet(destination.publicKey);
+      
+      await expect(
+        service.sendDonation({
+          sourceSecret: source.secretKey,
+          destinationPublic: destination.publicKey,
+          amount: '999999999999.0', // Exceeds max
+          memo: 'Test',
+        })
+      ).rejects.toThrow('Amount exceeds maximum allowed value');
+    });
+
+    test('should enforce base reserve requirement', async () => {
+      const source = await service.createWallet();
+      const destination = await service.createWallet();
+      
+      await service.fundTestnetWallet(source.publicKey);
+      await service.fundTestnetWallet(destination.publicKey);
+      
+      // Try to send all but 0.5 XLM (below 1 XLM reserve)
+      await expect(
+        service.sendDonation({
+          sourceSecret: source.secretKey,
+          destinationPublic: destination.publicKey,
+          amount: '9999.5',
+          memo: 'Test',
+        })
+      ).rejects.toThrow('Account must maintain minimum balance');
+    });
+
+    test('should reject same source and destination', async () => {
+      const wallet = await service.createWallet();
+      await service.fundTestnetWallet(wallet.publicKey);
+      
+      await expect(
+        service.sendDonation({
+          sourceSecret: wallet.secretKey,
+          destinationPublic: wallet.publicKey,
+          amount: '10',
+          memo: 'Test',
+        })
+      ).rejects.toThrow('Source and destination accounts cannot be the same');
+    });
+
+    test('should generate valid Stellar keypairs', async () => {
+      const wallet = await service.createWallet();
+      
+      // Check format: G/S followed by 55 base32 characters
+      expect(wallet.publicKey).toMatch(/^G[A-Z2-7]{55}$/);
+      expect(wallet.secretKey).toMatch(/^S[A-Z2-7]{55}$/);
+      expect(wallet.publicKey.length).toBe(56);
+      expect(wallet.secretKey.length).toBe(56);
+    });
+  });
+
+  describe('Transaction Details', () => {
+    test('should include sequence numbers in transactions', async () => {
+      const source = await service.createWallet();
+      const destination = await service.createWallet();
+      
+      await service.fundTestnetWallet(source.publicKey);
+      await service.fundTestnetWallet(destination.publicKey);
+      
+      const result = await service.sendDonation({
+        sourceSecret: source.secretKey,
+        destinationPublic: destination.publicKey,
+        amount: '50',
+        memo: 'Test',
+      });
+      
+      const verification = await service.verifyTransaction(result.transactionId);
+      expect(verification.transaction).toHaveProperty('sequence');
+      expect(verification.transaction).toHaveProperty('fee');
+      expect(verification.transaction.fee).toBe('0.0000100');
+    });
+
+    test('should format amounts with 7 decimal places', async () => {
+      const source = await service.createWallet();
+      const destination = await service.createWallet();
+      
+      await service.fundTestnetWallet(source.publicKey);
+      await service.fundTestnetWallet(destination.publicKey);
+      
+      await service.sendDonation({
+        sourceSecret: source.secretKey,
+        destinationPublic: destination.publicKey,
+        amount: '100.5',
+        memo: 'Test',
+      });
+      
+      const history = await service.getTransactionHistory(source.publicKey);
+      expect(history[0].amount).toBe('100.5000000');
+    });
+
+    test('should include confirmation timestamp', async () => {
+      const source = await service.createWallet();
+      const destination = await service.createWallet();
+      
+      await service.fundTestnetWallet(source.publicKey);
+      await service.fundTestnetWallet(destination.publicKey);
+      
+      const result = await service.sendDonation({
+        sourceSecret: source.secretKey,
+        destinationPublic: destination.publicKey,
+        amount: '50',
+        memo: 'Test',
+      });
+      
+      expect(result).toHaveProperty('confirmedAt');
+      expect(result.status).toBe('confirmed');
+    });
+  });
+
+  describe('Configuration Options', () => {
+    test('should respect custom minimum balance', async () => {
+      const customService = new MockStellarService({
+        minAccountBalance: '5.0000000',
+      });
+      
+      const wallet = await customService.createWallet();
+      await customService.fundTestnetWallet(wallet.publicKey);
+      
+      const status = await customService.isAccountFunded(wallet.publicKey);
+      expect(status.funded).toBe(true);
+    });
+
+    test('should respect custom base reserve', async () => {
+      const customService = new MockStellarService({
+        baseReserve: '2.0000000',
+      });
+      
+      const source = await customService.createWallet();
+      const destination = await customService.createWallet();
+      
+      await customService.fundTestnetWallet(source.publicKey);
+      await customService.fundTestnetWallet(destination.publicKey);
+      
+      // Should fail if trying to go below 2 XLM reserve
+      await expect(
+        customService.sendDonation({
+          sourceSecret: source.secretKey,
+          destinationPublic: destination.publicKey,
+          amount: '9999',
+          memo: 'Test',
+        })
+      ).rejects.toThrow('Account must maintain minimum balance of 2.0000000 XLM');
+    });
+
+    test('should allow disabling strict validation', async () => {
+      const lenientService = new MockStellarService({
+        strictValidation: false,
+      });
+      
+      // Should not throw validation errors with lenient mode
+      const wallet = await lenientService.createWallet();
+      expect(wallet).toHaveProperty('publicKey');
+    });
+  });
 });
