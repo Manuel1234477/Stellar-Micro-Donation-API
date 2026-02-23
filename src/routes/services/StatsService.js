@@ -351,6 +351,47 @@ class StatsService {
 
     return analytics;
   }
+
+  /**
+   * Task: Implement donation analytics aggregation service
+   * Fetches live data from Stellar and persists it for performance.
+   */
+  static async aggregateFromNetwork(walletAddress) {
+    const server = new Horizon.Server(config.horizonUrl || 'https://horizon-testnet.stellar.org');
+    
+    try {
+      // 1. Aggregation Logic: Fetch live payments
+      const operations = await server.operations()
+        .forAccount(walletAddress)
+        .limit(100)
+        .order('desc')
+        .call();
+
+      const aggregation = operations.records.reduce((acc, op) => {
+        if (op.type === 'payment' && op.asset_type === 'native') {
+          acc.totalXlm += parseFloat(op.amount);
+          acc.count += 1;
+        }
+        return acc;
+      }, { totalXlm: 0, count: 0 });
+
+      // 2. Store summary data: Persist to DB
+      const lastUpdated = new Date().toISOString();
+      await Database.run(
+        `INSERT OR REPLACE INTO wallet_analytics (address, total_xlm, tx_count, last_updated)
+         VALUES (?, ?, ?, ?)`,
+        [walletAddress, aggregation.totalXlm, aggregation.count, lastUpdated]
+      );
+
+      return {
+        ...aggregation,
+        lastUpdated
+      };
+    } catch (error) {
+      console.error('Aggregation failed:', error);
+      throw error;
+    }
+  }
 }
 
 module.exports = StatsService;

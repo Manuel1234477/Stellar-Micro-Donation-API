@@ -279,4 +279,29 @@ router.get('/wallet/:walletAddress/analytics', checkPermission(PERMISSIONS.STATS
   }
 });
 
+router.get('/wallet/:walletAddress/analytics', checkPermission(PERMISSIONS.STATS_READ), async (req, res) => {
+  try {
+    const { walletAddress } = req.params;
+
+    // Trigger the new aggregation logic
+    const liveStats = await StatsService.aggregateFromNetwork(walletAddress);
+
+    // Combine with your existing local transaction analytics
+    const localAnalytics = StatsService.getWalletAnalytics(walletAddress);
+
+    res.json({
+      success: true,
+      data: {
+        blockchain: liveStats,
+        local: localAnalytics
+      }
+    });
+  } catch (error) {
+    res.status(500).json({
+      error: 'Failed to retrieve wallet analytics',
+      message: error.message
+    });
+  }
+});
+
 module.exports = router;
