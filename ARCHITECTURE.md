@@ -67,3 +67,6 @@ The lifecycle of a typical request (e.g., sending a micro-donation) follows thes
 - **Statelessness:** The API does not store private keys. It acts as a transactional pass-through for the user's keys.
 - **Error Abstraction:** Low-level Stellar errors (Horizon codes) are caught in the service layer and translated into user-friendly messages by the controller.
 - **Environment Driven:** All sensitive URLs and network settings are managed via `.env` files.
+
+## Language 
+JAVASCRIPT
