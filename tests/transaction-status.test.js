@@ -313,7 +313,7 @@ describe('Transaction Status Management', () => {
   });
 
   describe('Status Validation', () => {
-    test('should handle multiple status transitions', () => {
+    test('should handle lifecycle transitions', () => {
       const transaction = Transaction.create({
         amount: 100,
         donor: 'Alice',
@@ -321,15 +321,45 @@ describe('Transaction Status Management', () => {
         status: 'pending',
       });
 
-      // Pending -> Confirmed
-      let updated = Transaction.updateStatus(transaction.id, 'confirmed', {
+      // Pending -> Submitted
+      let updated = Transaction.updateStatus(transaction.id, 'submitted', {
+        transactionId: 'tx_123',
+      });
+      expect(updated.status).toBe('submitted');
+
+      // Submitted -> Confirmed
+      updated = Transaction.updateStatus(transaction.id, 'confirmed', {
         transactionId: 'tx_123',
       });
       expect(updated.status).toBe('confirmed');
 
-      // Cannot test Confirmed -> Failed in real scenario, but model allows it
+      // Confirmed -> Failed (supported for reconciliation scenarios)
       updated = Transaction.updateStatus(transaction.id, 'failed');
       expect(updated.status).toBe('failed');
+    });
+
+    test('should block invalid transitions', () => {
+      const transaction = Transaction.create({
+        amount: 100,
+        donor: 'Alice',
+        recipient: 'Bob',
+        status: 'failed',
+      });
+
+      expect(() => {
+        Transaction.updateStatus(transaction.id, 'confirmed');
+      }).toThrow('Invalid transaction state transition');
+    });
+
+    test('should normalize legacy statuses', () => {
+      const transaction = Transaction.create({
+        amount: 100,
+        donor: 'Alice',
+        recipient: 'Bob',
+        status: 'completed',
+      });
+
+      expect(transaction.status).toBe('confirmed');
     });
   });
 });

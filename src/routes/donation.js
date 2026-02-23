@@ -9,6 +9,7 @@ const { PERMISSIONS } = require('../utils/permissions');
 const { ValidationError, NotFoundError, ERROR_CODES } = require('../utils/errors');
 const encryption = require('../utils/encryption');
 const log = require('../utils/log');
+const { TRANSACTION_STATES } = require('../utils/transactionStateMachine');
 
 const { getStellarService } = require('../config/stellar');
 const donationValidator = require('../utils/donationValidator');
@@ -119,14 +120,24 @@ router.post('/send', donationRateLimiter, requireIdempotency, async (req, res) =
       [senderId, receiverId, amount, memo]
     );
 
-    // 5. Record in JSON for stats backward compatibility
-    Transaction.create({
+    // 5. Record in JSON with explicit lifecycle transitions
+    const transaction = Transaction.create({
       id: dbResult.id.toString(),
       amount: parseFloat(amount),
       donor: sender.publicKey,
       recipient: receiver.publicKey,
-      stellarTxId: stellarResult.transactionId,
-      status: 'completed'
+      status: TRANSACTION_STATES.PENDING
+    });
+
+    Transaction.updateStatus(transaction.id, TRANSACTION_STATES.SUBMITTED, {
+      transactionId: stellarResult.transactionId,
+      ledger: stellarResult.ledger,
+    });
+
+    Transaction.updateStatus(transaction.id, TRANSACTION_STATES.CONFIRMED, {
+      transactionId: stellarResult.transactionId,
+      ledger: stellarResult.ledger,
+      confirmedAt: new Date().toISOString(),
     });
 
     const response = {
@@ -391,7 +402,7 @@ router.patch('/:id/status', checkPermission(PERMISSIONS.DONATIONS_UPDATE), async
       throw new ValidationError('Missing required field: status', null, ERROR_CODES.MISSING_REQUIRED_FIELD);
     }
 
-    const validStatuses = ['pending', 'confirmed', 'failed', 'cancelled'];
+    const validStatuses = Object.values(TRANSACTION_STATES);
     if (!validStatuses.includes(status)) {
       throw new ValidationError(`Invalid status. Must be one of: ${validStatuses.join(', ')}`);
     }
