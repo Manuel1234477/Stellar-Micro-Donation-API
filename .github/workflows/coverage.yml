@@ -25,15 +25,23 @@ jobs:
         run: npm ci
       
       - name: Run tests with coverage
-        run: npm run test:coverage
+        run: npm run test:coverage:ci
         env:
           CI: true
+          MOCK_STELLAR: true
+          API_KEYS: test-key-1,test-key-2
       
-      - name: Check coverage thresholds
+      - name: Verify coverage thresholds
         run: |
-          echo "✅ Coverage thresholds met!"
-          echo "Minimum required: 30% for branches, functions, lines, and statements"
-          echo "Current coverage prevents quality regression"
+          if [ $? -eq 0 ]; then
+            echo "✅ Coverage thresholds met!"
+            echo "Minimum required: 30% for branches, functions, lines, and statements"
+            echo "Current coverage prevents quality regression"
+          else
+            echo "❌ Coverage thresholds not met!"
+            echo "Please add tests to meet the minimum 30% threshold"
+            exit 1
+          fi
       
       - name: Upload coverage report
         if: always()
@@ -42,3 +50,12 @@ jobs:
           name: coverage-report
           path: coverage/
           retention-days: 30
+      
+      - name: Generate coverage summary
+        if: always()
+        run: |
+          echo "## Coverage Report" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          if [ -f coverage/coverage-summary.json ]; then
+            echo "Coverage summary generated successfully" >> $GITHUB_STEP_SUMMARY
+          fi
