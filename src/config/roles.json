@@ -2,18 +2,34 @@
   "roles": [
     {
       "name": "admin",
+      "description": "Full system access",
       "permissions": [
-        "create_record",
-        "read_record",
-        "update_record",
-        "delete_record"
+        "*"
       ]
     },
     {
       "name": "user",
+      "description": "Regular authenticated user",
       "permissions": [
-        "create_record",
-        "read_record"
+        "donations:create",
+        "donations:read",
+        "donations:verify",
+        "wallets:create",
+        "wallets:read",
+        "wallets:update",
+        "stream:create",
+        "stream:read",
+        "stream:update",
+        "stream:delete",
+        "stats:read"
+      ]
+    },
+    {
+      "name": "guest",
+      "description": "Unauthenticated or read-only access",
+      "permissions": [
+        "donations:read",
+        "stats:read"
       ]
     }
   ]

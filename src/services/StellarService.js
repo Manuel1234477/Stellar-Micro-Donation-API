@@ -5,6 +5,7 @@
 
 const StellarSdk = require('stellar-sdk');
 const StellarErrorHandler = require('../utils/stellarErrorHandler');
+const log = require('../utils/log');
 
 class StellarService {
   constructor(config = {}) {
@@ -13,6 +14,101 @@ class StellarService {
     this.serviceSecretKey = config.serviceSecretKey;
 
     this.server = new StellarSdk.Horizon.Server(this.horizonUrl);
+  }
+
+  _isTransientNetworkError(error) {
+    const message = error && error.message ? error.message : '';
+    const code = error && error.code ? error.code : '';
+    const status = error && error.response && error.response.status ? error.response.status : null;
+
+    if (status === 503 || status === 504) {
+      return true;
+    }
+
+    const messageTokens = [
+      'ENOTFOUND',
+      'ECONNREFUSED',
+      'ETIMEDOUT',
+      'EHOSTUNREACH',
+      'ECONNRESET',
+      'socket hang up',
+      'Network Error',
+      'network timeout'
+    ];
+
+    if (messageTokens.some(token => message.includes(token))) {
+      return true;
+    }
+
+    const codeTokens = [
+      'ENOTFOUND',
+      'ECONNREFUSED',
+      'ETIMEDOUT',
+      'EHOSTUNREACH',
+      'ECONNRESET'
+    ];
+
+    return codeTokens.includes(code);
+  }
+
+  _getBackoffDelay(attempt) {
+    const base = 200;
+    const max = 2000;
+    const delay = base * Math.pow(2, attempt - 1);
+    return Math.min(delay, max);
+  }
+
+  async _executeWithRetry(operation) {
+    const maxAttempts = 3;
+    let lastError = null;
+
+    for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+      try {
+        return await operation();
+      } catch (error) {
+        lastError = error;
+
+        if (!this._isTransientNetworkError(error) || attempt === maxAttempts) {
+          throw error;
+        }
+
+        const delay = this._getBackoffDelay(attempt);
+        await new Promise(resolve => setTimeout(resolve, delay));
+      }
+    }
+
+    throw lastError;
+  }
+
+  async _submitTransactionWithNetworkSafety(builtTx) {
+    const txHash = builtTx.hash().toString('hex');
+
+    try {
+      const result = await this.server.submitTransaction(builtTx);
+      return {
+        hash: result.hash,
+        ledger: result.ledger
+      };
+    } catch (error) {
+      if (this._isTransientNetworkError(error)) {
+        try {
+          const existingTx = await this._executeWithRetry(() =>
+            this.server.transaction(txHash).call()
+          );
+
+          if (existingTx && existingTx.hash === txHash) {
+            return {
+              hash: existingTx.hash,
+              ledger: existingTx.ledger
+            };
+          }
+        } catch (checkError) {
+          // Best-effort network safety check; original transient error will be thrown below.
+        }
+      }
+
+      throw error;
+    }
   }
 
   /**
@@ -34,19 +130,14 @@ class StellarService {
    */
   // eslint-disable-next-line no-unused-vars
   async getBalance(publicKey) {
-    try {
-      const account = await this.server.loadAccount(publicKey);
+    return StellarErrorHandler.wrap(async () => {
+      const account = await this._executeWithRetry(() => this.server.loadAccount(publicKey));
       const nativeBalance = account.balances.find(b => b.asset_type === 'native');
       return {
         balance: nativeBalance ? nativeBalance.balance : '0',
         asset: 'XLM',
       };
-    } catch (error) {
-      if (error.response && error.response.status === 404) {
-        return { balance: '0', asset: 'XLM' };
-      }
-      throw error;
-    }
+    }, 'getBalance');
   }
 
   /**
@@ -56,13 +147,11 @@ class StellarService {
    */
   // eslint-disable-next-line no-unused-vars
   async fundTestnetWallet(publicKey) {
-    try {
-      await this.server.friendbot(publicKey).call();
+    return StellarErrorHandler.wrap(async () => {
+      await this._executeWithRetry(() => this.server.friendbot(publicKey).call());
       const balance = await this.getBalance(publicKey);
       return balance;
-    } catch (error) {
-      throw new Error(`Failed to fund wallet: ${error.message}`);
-    }
+    }, 'fundTestnetWallet');
   }
 
   /**
@@ -72,7 +161,7 @@ class StellarService {
    */
   // eslint-disable-next-line no-unused-vars
   async isAccountFunded(publicKey) {
-    try {
+    return StellarErrorHandler.wrap(async () => {
       const balance = await this.getBalance(publicKey);
       const funded = parseFloat(balance.balance) > 0;
       return {
@@ -80,13 +169,7 @@ class StellarService {
         balance: balance.balance,
         exists: true,
       };
-    } catch (error) {
-      return {
-        funded: false,
-        balance: '0',
-        exists: false,
-      };
-    }
+    }, 'isAccountFunded');
   }
 
   /**
@@ -99,9 +182,11 @@ class StellarService {
    * @returns {Promise<{transactionId: string, ledger: number}>}
    */
   async sendDonation({ sourceSecret, destinationPublic, amount, memo = '' }) {
-    try {
+    return StellarErrorHandler.wrap(async () => {
       const sourceKeypair = StellarSdk.Keypair.fromSecret(sourceSecret);
-      const sourceAccount = await this.server.loadAccount(sourceKeypair.publicKey());
+      const sourceAccount = await this._executeWithRetry(() =>
+        this.server.loadAccount(sourceKeypair.publicKey())
+      );
 
       const transaction = new StellarSdk.TransactionBuilder(sourceAccount, {
         fee: StellarSdk.BASE_FEE,
@@ -121,16 +206,12 @@ class StellarService {
       const builtTx = transaction.build();
       builtTx.sign(sourceKeypair);
 
-      const result = await this.server.submitTransaction(builtTx);
+      const result = await this._submitTransactionWithNetworkSafety(builtTx);
       return {
         transactionId: result.hash,
         ledger: result.ledger,
       };
-    } catch (error) {
-      console.error('Stellar transaction error:', error);
-      const message = error.response?.data?.extras?.result_codes?.operations?.[0] || error.message;
-      throw new Error(`Stellar transaction failed: ${message}`);
-    }
+    }, 'sendDonation');
   }
 
   /**
@@ -141,16 +222,16 @@ class StellarService {
    */
   // eslint-disable-next-line no-unused-vars
   async getTransactionHistory(publicKey, limit = 10) {
-    try {
-      const result = await this.server.transactions()
-        .forAccount(publicKey)
-        .limit(limit)
-        .order('desc')
-        .call();
+    return StellarErrorHandler.wrap(async () => {
+      const result = await this._executeWithRetry(() =>
+        this.server.transactions()
+          .forAccount(publicKey)
+          .limit(limit)
+          .order('desc')
+          .call()
+      );
       return result.records;
-    } catch (error) {
-      throw new Error(`Failed to fetch transactions: ${error.message}`);
-    }
+    }, 'getTransactionHistory');
   }
 
   /**
@@ -166,7 +247,7 @@ class StellarService {
       .cursor('now')
       .stream({
         onmessage: (tx) => onTransaction(tx),
-        onerror: (error) => console.error('Stream error:', error),
+        onerror: (error) => log.error('STELLAR_SERVICE', 'Transaction stream error', { error: error.message }),
       });
   }
 
@@ -177,18 +258,15 @@ class StellarService {
    */
   // eslint-disable-next-line no-unused-vars
   async verifyTransaction(transactionHash) {
-    try {
-      const tx = await this.server.transaction(transactionHash).call();
+    return StellarErrorHandler.wrap(async () => {
+      const tx = await this._executeWithRetry(() =>
+        this.server.transaction(transactionHash).call()
+      );
       return {
         verified: true,
         transaction: tx,
       };
-    } catch (error) {
-      return {
-        verified: false,
-        error: error.message,
-      };
-    }
+    }, 'verifyTransaction');
   }
 }
 

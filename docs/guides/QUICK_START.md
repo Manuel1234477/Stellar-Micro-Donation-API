@@ -95,9 +95,21 @@ data/
 ## API Endpoints
 
 ### Donations
-- `POST /donations` - Create a new donation
+- `POST /donations` - Create a new donation (Rate limited: 10 req/min)
+- `POST /donations/send` - Send XLM and record donation (Rate limited: 10 req/min)
+- `POST /donations/verify` - Verify a transaction (Rate limited: 30 req/min)
 - `GET /donations` - Get all donations
 - `GET /donations/:id` - Get a specific donation
+- `GET /donations/recent` - Get recent donations
+- `GET /donations/limits` - Get donation amount limits
+- `PATCH /donations/:id/status` - Update donation status
+
+### Rate Limiting
+Donation creation and verification endpoints are rate limited to prevent abuse:
+- Creation endpoints: 10 requests per minute per IP
+- Verification endpoint: 30 requests per minute per IP
+- Exceeded requests return HTTP 429 with retry information
+- See [Rate Limiting Documentation](../features/RATE_LIMITING.md) for details
 
 ### Stats
 - `GET /stats/daily` - Daily aggregated volume

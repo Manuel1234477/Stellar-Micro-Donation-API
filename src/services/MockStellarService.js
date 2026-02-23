@@ -27,6 +27,7 @@
 const crypto = require('crypto');
 const { NotFoundError, ValidationError, BusinessLogicError, ERROR_CODES } = require('../utils/errors');
 const StellarErrorHandler = require('../utils/stellarErrorHandler');
+const log = require('../utils/log');
 
 class MockStellarService {
   constructor(config = {}) {
@@ -54,7 +55,7 @@ class MockStellarService {
     // Rate limiting state
     this.requestTimestamps = [];
     
-    console.log('[MockStellarService] Initialized with config:', this.config);
+    log.info('MOCK_STELLAR_SERVICE', 'Initialized with config', this.config);
   }
 
   /**
@@ -544,7 +545,7 @@ class MockStellarService {
       try {
         callback(transaction);
       } catch (error) {
-        console.error('[MockStellarService] Stream listener error:', error);
+        log.error('MOCK_STELLAR_SERVICE', 'Stream listener callback failed', { error: error.message });
       }
     });
   }
@@ -634,7 +635,11 @@ class MockStellarService {
     this.transactions.get(sourcePublicKey).push(transaction);
     this.transactions.get(destinationPublic).push(transaction);
 
-    console.log(`[MockStellarService] Payment simulated: ${amountNum.toFixed(7)} XLM from ${sourcePublicKey.substring(0, 8)}... to ${destinationPublic.substring(0, 8)}...`);
+    log.info('MOCK_STELLAR_SERVICE', 'Payment simulated', {
+      amount: amountNum.toFixed(7),
+      source: `${sourcePublicKey.substring(0, 8)}...`,
+      destination: `${destinationPublic.substring(0, 8)}...`,
+    });
 
     return {
       hash: transaction.hash,

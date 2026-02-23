@@ -49,8 +49,6 @@ const service = new MockStellarService({
 });
 ```
 
-
-
 ## Limitations
 
 ### What the Mock Does NOT Simulate

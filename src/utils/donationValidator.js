@@ -18,12 +18,22 @@ class DonationValidator {
    * @returns {{valid: boolean, error?: string}}
    */
   validateAmount(amount) {
-    // Check if amount is a valid number
-    if (typeof amount !== 'number' || isNaN(amount)) {
+    // Check if amount is a valid finite number
+    if (typeof amount !== 'number' || !Number.isFinite(amount)) {
       return {
         valid: false,
-        error: 'Amount must be a valid number',
+        error: 'Amount must be a valid finite number',
         code: 'INVALID_AMOUNT_TYPE',
+      };
+    }
+
+    // Check for excessive decimal places (Stellar maximum precision is 7)
+    const decimals = amount.toString().split('.')[1];
+    if (decimals && decimals.length > 7) {
+      return {
+        valid: false,
+        error: 'Amount cannot have more than 7 decimal places (Stellar precision limit)',
+        code: 'INVALID_AMOUNT_PRECISION',
       };
     }
 
