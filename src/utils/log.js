@@ -1,6 +1,10 @@
+const { sanitizeForLogging } = require('./sanitizer');
+
 function safeStringify(value) {
   try {
-    return JSON.stringify(value);
+    // Sanitize before stringifying to prevent log injection
+    const sanitized = sanitizeForLogging(value);
+    return JSON.stringify(sanitized);
   } catch (error) {
     return JSON.stringify({ serializationError: error.message });
   }
@@ -8,7 +12,10 @@ function safeStringify(value) {
 
 function formatMessage(level, scope, message, meta) {
   const timestamp = new Date().toISOString();
-  const base = `[${timestamp}] [${level}] [${scope}] ${message}`;
+  // Sanitize scope and message to prevent log injection
+  const sanitizedScope = typeof scope === 'string' ? scope.replace(/[\x00-\x1F\x7F]/g, '') : scope;
+  const sanitizedMessage = typeof message === 'string' ? message.replace(/[\x00-\x1F\x7F]/g, '') : message;
+  const base = `[${timestamp}] [${level}] [${sanitizedScope}] ${sanitizedMessage}`;
 
   if (meta === undefined) {
     return base;

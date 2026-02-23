@@ -15,6 +15,7 @@ const { getStellarService } = require('../config/stellar');
 const donationValidator = require('../utils/donationValidator');
 const memoValidator = require('../utils/memoValidator');
 const { calculateAnalyticsFee } = require('../utils/feeCalculator');
+const { sanitizeIdentifier } = require('../utils/sanitizer');
 
 const stellarService = getStellarService();
 
@@ -227,9 +228,13 @@ router.post('/', donationRateLimiter, requireApiKey, requireIdempotency, async (
       });
     }
 
+    // Sanitize user-provided identifiers
+    const sanitizedDonor = donor ? sanitizeIdentifier(donor) : '';
+    const sanitizedRecipient = sanitizeIdentifier(recipient);
+
     // Validate daily limit if donor is specified
-    if (donor && donor !== 'Anonymous') {
-      const dailyTotal = Transaction.getDailyTotalByDonor(donor);
+    if (sanitizedDonor && sanitizedDonor !== 'Anonymous') {
+      const dailyTotal = Transaction.getDailyTotalByDonor(sanitizedDonor);
       const dailyValidation = donationValidator.validateDailyLimit(parsedAmount, dailyTotal);
 
       if (!dailyValidation.valid) {
@@ -246,10 +251,7 @@ router.post('/', donationRateLimiter, requireApiKey, requireIdempotency, async (
       }
     }
 
-    const normalizedDonor = typeof donor === 'string' ? donor.trim() : '';
-    const normalizedRecipient = typeof recipient === 'string' ? recipient.trim() : '';
-
-    if (normalizedDonor && normalizedRecipient && normalizedDonor === normalizedRecipient) {
+    if (sanitizedDonor && sanitizedRecipient && sanitizedDonor === sanitizedRecipient) {
       throw new ValidationError('Sender and recipient wallets must be different');
     }
 
@@ -262,8 +264,8 @@ router.post('/', donationRateLimiter, requireApiKey, requireIdempotency, async (
 
     const transaction = Transaction.create({
       amount: parsedAmount,
-      donor: donor || 'Anonymous',
-      recipient,
+      donor: sanitizedDonor || 'Anonymous',
+      recipient: sanitizedRecipient,
       memo: sanitizedMemo,
       idempotencyKey: req.idempotency.key,
       analyticsFee: feeCalculation.fee,
