@@ -1,3 +1,18 @@
+# Dependencies
 node_modules/
-coverage/
+
+# Data and logs
 data/
+logs/
+*.db
+
+# Coverage
+coverage/
+
+# Test files - allow test keys
+tests/
+test-*.js
+
+# Build output
+dist/
+build/

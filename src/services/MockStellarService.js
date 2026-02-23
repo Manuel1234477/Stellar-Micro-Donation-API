@@ -26,6 +26,7 @@
 
 const crypto = require('crypto');
 const { NotFoundError, ValidationError, BusinessLogicError, ERROR_CODES } = require('../utils/errors');
+// eslint-disable-next-line no-unused-vars -- Imported for future error handling
 const StellarErrorHandler = require('../utils/stellarErrorHandler');
 const log = require('../utils/log');
 
@@ -166,6 +167,7 @@ class MockStellarService {
       throw new ValidationError('Amount must be greater than zero');
     }
     
+    // eslint-disable-next-line no-loss-of-precision -- Stellar's maximum XLM amount
     if (amountNum > 922337203685.4775807) {
       throw new ValidationError('Amount exceeds maximum allowed value (922337203685.4775807 XLM)');
     }
@@ -183,6 +185,7 @@ class MockStellarService {
    */
   _generateKeypair() {
     // Generate more realistic Stellar-like keys using base32 alphabet
+    // eslint-disable-next-line no-secrets/no-secrets -- Base32 alphabet constant, not a secret
     const base32Chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ234567';
     const generateKey = (prefix) => {
       let key = prefix;

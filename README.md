@@ -289,9 +289,12 @@ The scheduler runs automatically when the server starts and checks for due donat
 
 1. Fork the repository
 2. Create a feature branch (`git checkout -b feature/amazing-feature`)
-3. Commit your changes (`git commit -m 'Add amazing feature'`)
-4. Push to the branch (`git push origin feature/amazing-feature`)
-5. Open a Pull Request
+3. Run tests locally (`npm test && npm run test:coverage`)
+4. Commit your changes (`git commit -m 'Add amazing feature'`)
+5. Push to the branch (`git push origin feature/amazing-feature`)
+6. Open a Pull Request
+
+**Note:** All CI checks must pass before merge. See [Branch Protection](docs/BRANCH_PROTECTION.md) for details.
 
 ## 📝 License
 

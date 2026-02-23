@@ -77,6 +77,8 @@ function createTransactionsTable(db) {
 function insertSampleUsers(db) {
   const encryption = require('../utils/encryption');
   return new Promise((resolve, reject) => {
+    /* eslint-disable no-secrets/no-secrets */
+    // Test keys for development only - not real secrets
     const sampleUsers = [
       {
         publicKey: 'GBRPYHIL2CI3WHZDTOOQFC6EB4KJJGUJMUC5XNODMZTQYBB5XYZXYUU',
@@ -91,6 +93,7 @@ function insertSampleUsers(db) {
         secret: 'SCZST3XVCDTUJ76ZAV2HA72KYQM4YQQ5DUJTHIGQ5ESE3JNEZUAEUA7X'
       }
     ];
+    /* eslint-enable no-secrets/no-secrets */
 
     const insertSQL = 'INSERT OR IGNORE INTO users (publicKey, encryptedSecret) VALUES (?, ?)';
     let completed = 0;
