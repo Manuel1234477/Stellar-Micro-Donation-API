@@ -27,6 +27,7 @@ module.exports = {
     '!src/scripts/**',
     '!src/config/**',
   ],
+  coverageReporters: ['text', 'text-summary', 'lcov', 'html', 'json-summary'],
   coverageThreshold: {
     global: {
       branches: 30,
@@ -35,6 +36,7 @@ module.exports = {
       statements: 30,
     },
   },
+  coverageDirectory: 'coverage',
   verbose: true,
   testTimeout: 10000,
   setupFiles: ['<rootDir>/tests/setup.js'],

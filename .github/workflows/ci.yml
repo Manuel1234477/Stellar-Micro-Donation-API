@@ -47,9 +47,11 @@ jobs:
         run: npm ci
       
       - name: Run tests with coverage
-        run: npm run test:coverage
+        run: npm run test:coverage:ci
         env:
           CI: true
+          MOCK_STELLAR: true
+          API_KEYS: test-key-1,test-key-2
       
       - name: Upload coverage report
         if: always()

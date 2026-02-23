@@ -248,12 +248,62 @@ Validated at startup (if provided):
 
 ## 🧪 Testing
 
-Run tests:
+### Run Tests
+
 ```bash
 npm test
 ```
 
-Run specific test file:
+### Run Tests with Coverage
+
+```bash
+npm run test:coverage
+```
+
+This generates:
+- Terminal coverage summary
+- HTML report at `coverage/lcov-report/index.html`
+- LCOV report for CI/CD integration
+- JSON summary for programmatic access
+
+### Check Coverage Thresholds
+
+```bash
+npm run check-coverage
+```
+
+Validates that coverage meets minimum thresholds:
+- **Branches**: 30%
+- **Functions**: 30%
+- **Lines**: 30%
+- **Statements**: 30%
+
+### View Coverage Report
+
+After running coverage, open the HTML report:
+
+```bash
+# macOS
+open coverage/lcov-report/index.html
+
+# Windows
+start coverage/lcov-report/index.html
+
+# Linux
+xdg-open coverage/lcov-report/index.html
+```
+
+### Coverage Enforcement
+
+Coverage is automatically enforced in CI/CD:
+- ✅ PRs must meet minimum 30% coverage thresholds
+- ❌ Builds fail if coverage drops below thresholds
+- 📊 Coverage reports uploaded as artifacts (30-day retention)
+
+For detailed coverage documentation, see [Coverage Guide](docs/COVERAGE_GUIDE.md).
+
+### Run Specific Tests
+
 ```bash
 npm test -- tests/integration.test.js
 ```
@@ -289,12 +339,21 @@ The scheduler runs automatically when the server starts and checks for due donat
 
 1. Fork the repository
 2. Create a feature branch (`git checkout -b feature/amazing-feature`)
-3. Run tests locally (`npm test && npm run test:coverage`)
-4. Commit your changes (`git commit -m 'Add amazing feature'`)
-5. Push to the branch (`git push origin feature/amazing-feature`)
-6. Open a Pull Request
+3. Make your changes and add tests
+4. Run tests locally (`npm test`)
+5. Check coverage (`npm run test:coverage`)
+6. Ensure coverage thresholds are met (`npm run check-coverage`)
+7. Commit your changes (`git commit -m 'Add amazing feature'`)
+8. Push to the branch (`git push origin feature/amazing-feature`)
+9. Open a Pull Request
 
-**Note:** All CI checks must pass before merge. See [Branch Protection](docs/BRANCH_PROTECTION.md) for details.
+**Note:** All CI checks must pass before merge, including:
+- ✅ All tests passing
+- ✅ Coverage thresholds met (30% minimum)
+- ✅ Linting checks passed
+- ✅ Security checks passed
+
+See [Branch Protection](docs/BRANCH_PROTECTION.md) and [Coverage Guide](docs/COVERAGE_GUIDE.md) for details.
 
 ## 📝 License
 
