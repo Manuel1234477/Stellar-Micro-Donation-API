@@ -309,6 +309,23 @@ For detailed coverage documentation, see [Coverage Guide](docs/COVERAGE_GUIDE.md
 npm test -- tests/integration.test.js
 ```
 
+### Run Integration Tests for Donation Routes
+
+Comprehensive end-to-end tests for all donation endpoints:
+
+```bash
+npm test tests/donation-routes-integration.test.js
+```
+
+**Coverage**: 60+ test cases covering:
+- All 7 donation endpoints
+- Success and failure scenarios
+- Validation, authentication, idempotency
+- Rate limiting and error handling
+- No live Stellar network required (uses MockStellarService)
+
+For detailed information, see [Donation Routes Integration Tests](DONATION_ROUTES_INTEGRATION_TESTS.md).
+
 ### Test Recurring Donations
 
 ```bash
