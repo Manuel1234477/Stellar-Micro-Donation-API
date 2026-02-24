@@ -1,0 +1,298 @@
+API Key Rotation Workflow - Visual Guide
+=========================================
+
+ZERO-DOWNTIME ROTATION PROCESS
+-------------------------------
+
+Day 0: Create New Key
+┌─────────────────────────────────────────────────────────┐
+│ $ npm run keys:create -- --name "v2" --role user       │
+│                                                         │
+│ ✓ Key created: a1b2c3d4e5f6...                        │
+│ ⚠️  Store securely - shown only once!                  │
+└─────────────────────────────────────────────────────────┘
+
+Current State:
+  Key v1 (old): ✅ ACTIVE   - All clients using
+  Key v2 (new): ✅ ACTIVE   - Ready to deploy
+
+
+Day 1-7: Deploy New Key to Clients
+┌─────────────────────────────────────────────────────────┐
+│ Client A: Deploy v2 key ✓                              │
+│ Client B: Deploy v2 key ✓                              │
+│ Client C: Deploy v2 key ✓                              │
+│ Client D: Still using v1 (deploying soon)              │
+└─────────────────────────────────────────────────────────┘
+
+Current State:
+  Key v1 (old): ✅ ACTIVE   - Client D still using
+  Key v2 (new): ✅ ACTIVE   - Clients A, B, C using
+
+  ⚡ Both keys work - no downtime!
+
+
+Day 7: Deprecate Old Key
+┌─────────────────────────────────────────────────────────┐
+│ $ npm run keys -- deprecate --id 1                     │
+│                                                         │
+│ ✓ Key deprecated - still works but warns clients       │
+└─────────────────────────────────────────────────────────┘
+
+Current State:
+  Key v1 (old): ⚠️  DEPRECATED - Client D gets warnings
+  Key v2 (new): ✅ ACTIVE      - Most clients using
+
+Client D receives:
+  HTTP/1.1 200 OK
+  X-API-Key-Deprecated: true
+  Warning: 299 - "API key is deprecated and will be revoked soon"
+
+
+Day 8-37: Grace Period
+┌─────────────────────────────────────────────────────────┐
+│ Monitor usage:                                          │
+│ $ npm run keys:list                                     │
+│                                                         │
+│ Key v1: last_used_at: 2024-02-25 (Client D)           │
+│ Key v2: last_used_at: 2024-03-01 (All others)         │
+│                                                         │
+│ Client D deploys v2 key on Day 15 ✓                   │
+└─────────────────────────────────────────────────────────┘
+
+Current State:
+  Key v1 (old): ⚠️  DEPRECATED - No longer used
+  Key v2 (new): ✅ ACTIVE      - All clients using
+
+
+Day 37: Revoke Old Key
+┌─────────────────────────────────────────────────────────┐
+│ $ npm run keys -- revoke --id 1                        │
+│                                                         │
+│ ✓ Key revoked - immediately invalid                    │
+└─────────────────────────────────────────────────────────┘
+
+Current State:
+  Key v1 (old): ❌ REVOKED  - Cannot be used
+  Key v2 (new): ✅ ACTIVE   - All clients using
+
+Any attempt to use v1:
+  HTTP/1.1 401 Unauthorized
+  {"error": "Invalid or expired API key"}
+
+
+Day 127: Cleanup Old Keys
+┌─────────────────────────────────────────────────────────┐
+│ $ npm run keys -- cleanup --retention 90               │
+│                                                         │
+│ ✓ Deleted 1 old key(s)                                 │
+└─────────────────────────────────────────────────────────┘
+
+Current State:
+  Key v1 (old): 🗑️  DELETED  - Removed from database
+  Key v2 (new): ✅ ACTIVE   - All clients using
+
+
+KEY LIFECYCLE STATES
+--------------------
+
+┌──────────┐
+│  CREATE  │
+└────┬─────┘
+     │
+     ▼
+┌──────────┐     Deprecate      ┌─────────────┐
+│  ACTIVE  │ ─────────────────> │ DEPRECATED  │
+│    ✅    │                    │     ⚠️      │
+└────┬─────┘                    └──────┬──────┘
+     │                                 │
+     │ Revoke                          │ Revoke
+     │                                 │
+     ▼                                 ▼
+┌──────────┐     Cleanup        ┌─────────────┐
+│ REVOKED  │ ─────────────────> │   DELETED   │
+│    ❌    │  (after retention) │     🗑️      │
+└──────────┘                    └─────────────┘
+
+
+AUTHENTICATION FLOW
+-------------------
+
+Client Request:
+┌─────────────────────────────────────────────────────────┐
+│ GET /api/endpoint                                       │
+│ x-api-key: a1b2c3d4e5f6...                            │
+└─────────────────────────────────────────────────────────┘
+                    │
+                    ▼
+┌─────────────────────────────────────────────────────────┐
+│ API Key Middleware                                      │
+│                                                         │
+│ 1. Extract key from header                             │
+│ 2. Check database (hash and validate)                  │
+│ 3. Check expiration                                    │
+│ 4. Check status (active/deprecated/revoked)            │
+│ 5. Update last_used_at                                 │
+│ 6. Attach key info to request                          │
+└─────────────────────────────────────────────────────────┘
+                    │
+        ┌───────────┴───────────┐
+        │                       │
+        ▼                       ▼
+┌──────────────┐        ┌──────────────┐
+│   ACTIVE     │        │  DEPRECATED  │
+│              │        │              │
+│ ✓ Allow      │        │ ✓ Allow      │
+│ ✓ Continue   │        │ ⚠️  Add header│
+└──────┬───────┘        └──────┬───────┘
+       │                       │
+       │                       │
+       ▼                       ▼
+┌─────────────────────────────────────────────────────────┐
+│ Response                                                │
+│                                                         │
+│ HTTP/1.1 200 OK                                        │
+│ X-API-Key-Deprecated: true (if deprecated)             │
+│ Warning: 299 - "..." (if deprecated)                   │
+└─────────────────────────────────────────────────────────┘
+
+        ┌───────────┐
+        │  REVOKED  │
+        │  EXPIRED  │
+        │  INVALID  │
+        └─────┬─────┘
+              │
+              ▼
+┌─────────────────────────────────────────────────────────┐
+│ HTTP/1.1 401 Unauthorized                              │
+│ {"error": "Invalid or expired API key"}                │
+└─────────────────────────────────────────────────────────┘
+
+
+MULTIPLE ACTIVE KEYS
+--------------------
+
+Scenario: Different clients with different keys
+
+┌─────────────────────────────────────────────────────────┐
+│ Database:                                               │
+│                                                         │
+│ ID  Name           Role   Status      Last Used        │
+│ ─────────────────────────────────────────────────────── │
+│ 1   Mobile App     user   ACTIVE      2024-03-01       │
+│ 2   Web Dashboard  user   ACTIVE      2024-03-01       │
+│ 3   Admin Panel    admin  ACTIVE      2024-02-28       │
+│ 4   Legacy Key     user   DEPRECATED  2024-02-15       │
+│ 5   Old Admin      admin  REVOKED     2024-01-01       │
+└─────────────────────────────────────────────────────────┘
+
+All ACTIVE keys work simultaneously:
+  Mobile App    → Uses key 1 ✅
+  Web Dashboard → Uses key 2 ✅
+  Admin Panel   → Uses key 3 ✅
+  Legacy Client → Uses key 4 ⚠️  (deprecated, still works)
+  Old Admin     → Uses key 5 ❌ (revoked, rejected)
+
+
+ROTATION TIMELINE EXAMPLE
+--------------------------
+
+Week 1: Preparation
+  Mon: Create new keys for all clients
+  Tue: Test new keys in development
+  Wed: Deploy to staging
+  Thu: Test in staging
+  Fri: Plan production deployment
+
+Week 2: Deployment
+  Mon: Deploy to 25% of production clients
+  Tue: Monitor, deploy to 50%
+  Wed: Monitor, deploy to 75%
+  Thu: Monitor, deploy to 100%
+  Fri: Verify all clients migrated
+
+Week 3: Deprecation
+  Mon: Deprecate old keys
+  Tue-Fri: Monitor for deprecated key usage
+
+Week 4-7: Grace Period
+  Monitor for any remaining deprecated key usage
+  Contact clients still using old keys
+
+Week 8: Revocation
+  Mon: Revoke old keys
+  Tue-Fri: Monitor for failed auth attempts
+
+Week 20: Cleanup
+  Remove old revoked keys from database
+
+
+EMERGENCY ROTATION
+------------------
+
+If a key is compromised:
+
+┌─────────────────────────────────────────────────────────┐
+│ IMMEDIATE ACTION (within 1 hour)                       │
+│                                                         │
+│ 1. Revoke compromised key:                             │
+│    $ npm run keys -- revoke --id COMPROMISED_ID        │
+│                                                         │
+│ 2. Create replacement:                                 │
+│    $ npm run keys:create -- --name "Emergency"         │
+│                                                         │
+│ 3. Deploy new key ASAP                                 │
+│                                                         │
+│ 4. Monitor for unauthorized access attempts            │
+└─────────────────────────────────────────────────────────┘
+
+Timeline:
+  Hour 0: Detect compromise
+  Hour 0: Revoke key (immediate)
+  Hour 1: Create new key
+  Hour 2: Deploy to critical clients
+  Hour 4: Deploy to all clients
+  Day 1: Review logs for suspicious activity
+
+
+MONITORING DASHBOARD
+--------------------
+
+$ npm run keys:list
+
+┌─────────────────────────────────────────────────────────┐
+│ API Key Status Dashboard                                │
+├─────────────────────────────────────────────────────────┤
+│                                                         │
+│ Active Keys:        5                                   │
+│ Deprecated Keys:    2  ⚠️  Action needed               │
+│ Revoked Keys:       3                                   │
+│                                                         │
+│ Keys expiring soon:                                     │
+│   - Key #7 expires in 15 days                          │
+│   - Key #9 expires in 28 days                          │
+│                                                         │
+│ Deprecated keys still in use:                           │
+│   - Key #4 last used 2 hours ago  ⚠️  Urgent          │
+│   - Key #6 last used 15 days ago                       │
+│                                                         │
+│ Recommended actions:                                    │
+│   1. Rotate keys #7 and #9 before expiration           │
+│   2. Contact client using key #4                       │
+│   3. Revoke key #6 (no recent usage)                   │
+└─────────────────────────────────────────────────────────┘
+
+
+BEST PRACTICES SUMMARY
+----------------------
+
+✓ Rotate keys every 90-180 days
+✓ Set expiration on all keys
+✓ Use descriptive names
+✓ Monitor usage regularly
+✓ Allow 30-60 day grace period
+✓ Clean up old keys after 90 days
+✓ Store keys securely
+✓ Never commit keys to git
+✓ Limit admin keys
+✓ Document key ownership

@@ -1,348 +1,69 @@
-# Architecture Overview
+# Project Architecture: Stellar-Micro-Donation-API
 
-## System Architecture
+This document provides a detailed overview of the system architecture, directory structure, and the responsibilities of each component within the Stellar-Micro-Donation-API.
 
-```
-┌─────────────────────────────────────────────────────────────┐
-│                     CLIENT LAYER                             │
-│              (REST API Consumers)                            │
-└────────────────────┬────────────────────────────────────────┘
-                     │
-                     ▼
-┌─────────────────────────────────────────────────────────────┐
-│                    EXPRESS APP                               │
-│              (src/routes/app.js)                            │
-│  - Middleware setup                                         │
-│  - Route registration                                       │
-│  - Error handling                                           │
-└────────────────────┬────────────────────────────────────────┘
-                     │
-        ┌────────────┼────────────┐
-        ▼            ▼            ▼
-┌──────────────┐ ┌──────────────┐ ┌──────────────┐
-│  Donation    │ │    Stats     │ │   Health     │
-│   Routes    │ │    Routes    │ │   Check      │
-│ (donation.js)│ │  (stats.js)  │ │              │
-└──────┬───────┘ └──────┬───────┘ └──────────────┘
-       │                │
-       ▼                ▼
-┌──────────────────────────────────────────────────┐
-│              SERVICE LAYER                        │
-│         (Business Logic)                         │
-│                                                  │
-│  ┌────────────────────────────────────────────┐ │
-│  │      StatsService.js                       │ │
-│  │  - getDailyStats()                         │ │
-│  │  - getWeeklyStats()                        │ │
-│  │  - getSummaryStats()                       │ │
-│  │  - getDonorStats()                         │ │
-│  │  - getRecipientStats()                     │ │
-│  └────────────────────────────────────────────┘ │
-└──────────────────┬───────────────────────────────┘
-                   │
-                   ▼
-┌──────────────────────────────────────────────────┐
-│              MODEL LAYER                         │
-│         (Data Access)                           │
-│                                                  │
-│  ┌──────────────────┐  ┌──────────────────┐    │
-│  │  Transaction     │  │      User        │    │
-│  │  Model           │  │      Model       │    │
-│  │  - create()      │  │  - create()      │    │
-│  │  - getAll()      │  │  - getAll()      │    │
-│  │  - getById()     │  │  - getById()     │    │
-│  │  - getByRange()  │  │  - getByWallet() │    │
-│  └──────────────────┘  └──────────────────┘    │
-└──────────────────┬───────────────────────────────┘
-                   │
-                   ▼
-┌──────────────────────────────────────────────────┐
-│              DATA LAYER                          │
-│         (JSON File Storage)                     │
-│                                                  │
-│  ┌──────────────────┐  ┌──────────────────┐    │
-│  │  donations.json  │  │   users.json     │    │
-│  │  - 14 records    │  │  - 3 records     │    │
-│  │  - 2 weeks data  │  │  - User profiles │    │
-│  └──────────────────┘  └──────────────────┘    │
-└──────────────────────────────────────────────────┘
+---
+
+## 1. Directory Structure
+
+The project follows a modular Service-Oriented Architecture (SOA) to ensure separation of concerns between the HTTP transport layer and the Stellar blockchain logic.
+
+```text
+Stellar-Micro-Donation-API/
+├── src/
+│   ├── api/
+│   │   ├── controllers/    # Handles incoming HTTP requests and outgoing responses
+│   │   ├── routes/         # Defines API endpoints and maps them to controllers
+│   │   └── middlewares/    # Authentication, validation, and error-handling logic
+│   ├── services/           # CORE: Contains all Stellar SDK and blockchain logic
+│   ├── config/             # System constants, Horizon URLs, and Network Passphrases
+│   ├── utils/              # Helper functions (Address validation, unit conversions)
+│   └── app.js              # Express application configuration
+├── tests/                  # Integration and unit test suites (Mocha/Chai/Supertest)
+├── .env.example            # Template for environment-specific variables
+└── server.js               # Entry point for the Node.js server
 ```
 
-## Data Flow
+---
 
-### Creating a Donation
-```
-POST /donations
-    │
-    ▼
-donation.js (Route Handler)
-    │
-    ├─ Validate input
-    ├─ Check required fields
-    │
-    ▼
-Transaction.create()
-    │
-    ├─ Load existing transactions
-    ├─ Create new transaction object
-    ├─ Add to array
-    │
-    ▼
-Save to donations.json
-    │
-    ▼
-Return 201 Created
-```
+## 2. Layer Responsibilities
 
-### Getting Daily Stats
-```
-GET /stats/daily?startDate=...&endDate=...
-    │
-    ▼
-stats.js (Route Handler)
-    │
-    ├─ Validate query parameters
-    ├─ Parse dates
-    ├─ Validate date range
-    │
-    ▼
-StatsService.getDailyStats()
-    │
-    ├─ Load transactions from JSON
-    ├─ Filter by date range
-    ├─ Group by calendar day
-    ├─ Calculate totals
-    │
-    ▼
-Return aggregated data
-    │
-    ▼
-Return 200 OK with JSON response
-```
+### API Layer (Routes & Controllers)
 
-## Request/Response Flow
+- **Routes:** Acts as the entry point for all external traffic. It defines the RESTful contract (e.g., `POST /api/donations`).
+- **Controllers:** Responsible for "thin" logic. They extract data from `req.body`, perform basic schema validation, and pass data to the appropriate service. They never interact with the Stellar SDK directly.
 
-### Daily Stats Request
-```
-Request:
-GET /stats/daily?startDate=2024-02-12&endDate=2024-02-22
+### Service Layer (Business Logic)
 
-Processing:
-1. Parse query parameters
-2. Validate dates
-3. Load transactions from JSON
-4. Filter transactions in date range
-5. Group by day (YYYY-MM-DD)
-6. Calculate daily totals
-7. Sort chronologically
+- **The Engine:** This is where the primary complexity resides.
+- **Stellar Integration:** Services use the `stellar-sdk` to:
+  - Load account states from Horizon.
+  - Construct and sign transactions.
+  - Handle transaction submission and error parsing (e.g., checking for `op_low_reserve`).
 
-Response:
-{
-  "success": true,
-  "data": [
-    {
-      "date": "2024-02-12",
-      "totalVolume": 125,
-      "transactionCount": 2,
-      "transactions": [...]
-    },
-    ...
-  ],
-  "metadata": {
-    "dateRange": {...},
-    "totalDays": 11,
-    "aggregationType": "daily"
-  }
-}
-```
+### Configuration & Utils
 
-### Weekly Stats Request
-```
-Request:
-GET /stats/weekly?startDate=2024-02-12&endDate=2024-02-22
+- **Config:** Ensures the app can switch between `TESTNET` and `PUBLIC` networks without code changes.
+- **Utils:** Provides shared logic, such as `isStellarAddress(address)` or `toStroops(amount)`, ensuring consistency across the codebase.
 
-Processing:
-1. Parse query parameters
-2. Validate dates
-3. Load transactions from JSON
-4. Filter transactions in date range
-5. Group by ISO 8601 week
-6. Calculate weekly totals
-7. Sort by year and week
+---
 
-Response:
-{
-  "success": true,
-  "data": [
-    {
-      "week": 7,
-      "year": 2024,
-      "weekStart": "2024-02-12",
-      "weekEnd": "2024-02-18",
-      "totalVolume": 550,
-      "transactionCount": 7,
-      "transactions": [...]
-    },
-    ...
-  ],
-  "metadata": {...}
-}
-```
+## 3. Data Flow (Request Lifecycle)
 
-## Configuration Flow
+The lifecycle of a typical request (e.g., sending a micro-donation) follows these steps:
 
-```
-.env (Environment Variables)
-    │
-    ├─ STELLAR_NETWORK
-    ├─ STELLAR_SECRET
-    ├─ PORT
-    └─ DB_PATH
-    │
-    ▼
-stellar.js (Config Module)
-    │
-    ├─ Load from .env
-    ├─ Set defaults
-    │
-    ▼
-Used by:
-├─ app.js (PORT)
-├─ Transaction Model (DB_PATH)
-└─ Other modules
-```
+1. **Request:** Client sends a JSON payload to the `/api/donations` endpoint.
+2. **Route/Middleware:** The request is routed; middlewares validate that the Stellar public key and secret formats are correct.
+3. **Controller:** `DonationController` receives the validated data and calls `DonationService.processDonation()`.
+4. **Service (Building):** The Service layer fetches the current sequence number for the sender's account from the Stellar Horizon server.
+5. **Service (Signing):** A transaction is built using `TransactionBuilder`, signed with the provided secret key, and converted to an XDR envelope.
+6. **Network Submission:** The transaction is submitted to the blockchain.
+7. **Response:** The service returns the transaction hash to the controller, which sends a `200 OK` response back to the user.
 
-## Error Handling Flow
+---
 
-```
-Request
-    │
-    ▼
-Route Handler
-    │
-    ├─ Validate input
-    │   ├─ Missing params? → 400 Bad Request
-    │   ├─ Invalid format? → 400 Bad Request
-    │   └─ Invalid range? → 400 Bad Request
-    │
-    ├─ Call Service
-    │   ├─ Service error? → 500 Internal Error
-    │   └─ Success? → Continue
-    │
-    ▼
-Return Response
-    ├─ Success: 200/201 with data
-    └─ Error: 400/404/500 with message
-```
+## 4. Design Principles
 
-## Aggregation Algorithm
-
-### Daily Aggregation
-```
-Input: transactions[], startDate, endDate
-
-1. Filter transactions by date range
-2. Create Map<dateKey, dailyStats>
-3. For each transaction:
-   - Extract date (YYYY-MM-DD)
-   - Add to corresponding day bucket
-   - Accumulate volume
-   - Increment count
-4. Convert Map to Array
-5. Sort by date
-6. Return results
-```
-
-### Weekly Aggregation
-```
-Input: transactions[], startDate, endDate
-
-1. Filter transactions by date range
-2. Create Map<weekKey, weeklyStats>
-3. For each transaction:
-   - Calculate ISO 8601 week number
-   - Add to corresponding week bucket
-   - Accumulate volume
-   - Increment count
-4. Convert Map to Array
-5. Sort by year, then week
-6. Return results
-```
-
-## Performance Characteristics
-
-### Time Complexity
-- Daily Stats: O(n) where n = transactions in range
-- Weekly Stats: O(n) where n = transactions in range
-- Summary Stats: O(n) where n = transactions in range
-- Donor Stats: O(n) where n = transactions in range
-- Recipient Stats: O(n) where n = transactions in range
-
-### Space Complexity
-- O(n) for storing results
-- O(d) for daily aggregation where d = days in range
-- O(w) for weekly aggregation where w = weeks in range
-
-### Scalability
-- Current: Suitable for up to 100k transactions
-- Bottleneck: File I/O and in-memory aggregation
-- Solution: Implement database indexing for larger datasets
-
-## Extension Points
-
-### Adding New Aggregation Types
-```javascript
-// In StatsService.js
-static getMonthlyStats(startDate, endDate) {
-  // Similar pattern to daily/weekly
-  // Group by month (YYYY-MM)
-  // Return monthly aggregation
-}
-```
-
-### Adding New Endpoints
-```javascript
-// In stats.js
-router.get('/monthly', (req, res) => {
-  // Similar pattern to existing endpoints
-  // Call StatsService.getMonthlyStats()
-  // Return response
-});
-```
-
-### Switching to Database
-```javascript
-// Replace Transaction.js with database queries
-// Update StatsService to use database
-// No changes needed to routes
-```
-
-## Security Considerations
-
-### Current Implementation
-- Input validation on all endpoints
-- Date range validation
-- Error messages don't expose internals
-- No authentication (can be added)
-
-### Future Enhancements
-- Add JWT authentication
-- Implement rate limiting
-- Add request logging
-- Implement CORS
-- Add input sanitization
-- Add request size limits
-
-## Monitoring & Logging
-
-### Current Implementation
-- Request logging middleware
-- Error logging
-- Console output
-
-### Future Enhancements
-- Structured logging (Winston, Bunyan)
-- Performance metrics
-- Error tracking (Sentry)
-- Health monitoring
-- Database query logging
+- **Statelessness:** The API does not store private keys. It acts as a transactional pass-through for the user's keys.
+- **Error Abstraction:** Low-level Stellar errors (Horizon codes) are caught in the service layer and translated into user-friendly messages by the controller.
+- **Environment Driven:** All sensitive URLs and network settings are managed via `.env` files.

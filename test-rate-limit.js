@@ -1,78 +1,198 @@
 /**
- * Manual test script for rate limiting
- * Run with: node test-rate-limit.js
+ * Simple test script to verify rate limiting functionality
+ * Tests that donation endpoints properly enforce rate limits
+ * 
+ * Usage: node test-rate-limit.js
  */
 
-const rateLimiter = require('./src/middleware/rateLimiter');
-const { rateLimitConfig } = require('./src/config/rateLimit');
-const RequestCounter = require('./src/middleware/RequestCounter');
+const http = require('http');
 
-console.log('=== Rate Limiting Manual Test ===\n');
+const BASE_URL = 'http://localhost:3000';
 
-// Test 1: Configuration
-console.log('Test 1: Configuration Loading');
-console.log('Config:', rateLimitConfig);
-console.log('✓ Configuration loaded\n');
-
-// Test 2: RequestCounter
-console.log('Test 2: RequestCounter');
-const counter = new RequestCounter(1000);
-
-counter.increment('test-key');
-counter.increment('test-key');
-const count = counter.getCount('test-key');
-console.log('Count after 2 increments:', count);
-console.log(count === 2 ? '✓ Counter works correctly' : '✗ Counter failed');
-
-const timeUntilReset = counter.getTimeUntilReset('test-key');
-console.log('Time until reset:', timeUntilReset, 'ms');
-console.log(timeUntilReset > 0 ? '✓ Time tracking works' : '✗ Time tracking failed');
-
-counter.reset();
-console.log('Count after reset:', counter.getCount('test-key'));
-console.log(counter.getCount('test-key') === 0 ? '✓ Reset works\n' : '✗ Reset failed\n');
-
-// Test 3: API Key Isolation
-console.log('Test 3: API Key Isolation');
-const counter2 = new RequestCounter(1000);
-counter2.increment('key1');
-counter2.increment('key1');
-counter2.increment('key2');
-
-const key1Count = counter2.getCount('key1');
-const key2Count = counter2.getCount('key2');
-console.log('Key1 count:', key1Count);
-console.log('Key2 count:', key2Count);
-console.log(key1Count === 2 && key2Count === 1 ? '✓ Keys are isolated\n' : '✗ Key isolation failed\n');
-
-// Test 4: Cleanup
-console.log('Test 4: Cleanup');
-const counter3 = new RequestCounter(100); // 100ms window
-counter3.increment('expired-key');
-console.log('Added entry, waiting for expiration...');
-
-setTimeout(() => {
-  const removed = counter3.cleanup();
-  console.log('Removed entries:', removed);
-  console.log(removed === 1 ? '✓ Cleanup works\n' : '✗ Cleanup failed\n');
-  
-  // Test 5: Middleware creation
-  console.log('Test 5: Middleware Creation');
-  try {
-    const middleware = rateLimiter({ limit: 10, windowMs: 1000 });
-    console.log('Middleware type:', typeof middleware);
-    console.log(typeof middleware === 'function' ? '✓ Middleware created\n' : '✗ Middleware creation failed\n');
+// Helper function to make HTTP POST request
+function makeRequest(path, data) {
+  return new Promise((resolve, reject) => {
+    const postData = JSON.stringify(data);
     
-    console.log('=== All Tests Complete ===');
-    console.log('\nRate limiting implementation is working correctly!');
-    console.log('\nTo test with the API:');
-    console.log('1. Start the server: npm start');
-    console.log('2. Make requests with X-API-Key header');
-    console.log('3. Monitor rate limit headers in responses');
-    
-    process.exit(0);
-  } catch (error) {
-    console.error('✗ Middleware creation failed:', error);
-    process.exit(1);
+    const options = {
+      hostname: 'localhost',
+      port: 3000,
+      path: path,
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Content-Length': Buffer.byteLength(postData),
+        'X-API-Key': 'test-api-key',
+        'Idempotency-Key': `test-${Date.now()}-${Math.random()}`
+      }
+    };
+
+    const req = http.request(options, (res) => {
+      let body = '';
+      
+      res.on('data', (chunk) => {
+        body += chunk;
+      });
+      
+      res.on('end', () => {
+        resolve({
+          statusCode: res.statusCode,
+          headers: res.headers,
+          body: body
+        });
+      });
+    });
+
+    req.on('error', (error) => {
+      reject(error);
+    });
+
+    req.write(postData);
+    req.end();
+  });
+}
+
+// Test rate limiting on donation creation endpoint
+async function testDonationRateLimit() {
+  console.log('Testing Rate Limiting on POST /donations');
+  console.log('Expected: First 10 requests succeed, 11th request gets 429\n');
+
+  const testData = {
+    amount: 10,
+    recipient: 'GXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX',
+    donor: 'Anonymous'
+  };
+
+  let successCount = 0;
+  let rateLimitedCount = 0;
+
+  for (let i = 1; i <= 12; i++) {
+    try {
+      const response = await makeRequest('/donations', testData);
+      
+      console.log(`Request ${i}: Status ${response.statusCode}`);
+      
+      if (response.statusCode === 201 || response.statusCode === 200) {
+        successCount++;
+        console.log(`  ✓ Success`);
+      } else if (response.statusCode === 429) {
+        rateLimitedCount++;
+        const body = JSON.parse(response.body);
+        console.log(`  ✗ Rate Limited: ${body.error.message}`);
+        console.log(`  Rate Limit Headers:`);
+        console.log(`    - Limit: ${response.headers['ratelimit-limit']}`);
+        console.log(`    - Remaining: ${response.headers['ratelimit-remaining']}`);
+        console.log(`    - Reset: ${response.headers['ratelimit-reset']}`);
+      } else {
+        console.log(`  ? Unexpected status: ${response.statusCode}`);
+        console.log(`  Body: ${response.body}`);
+      }
+      
+      // Small delay between requests
+      await new Promise(resolve => setTimeout(resolve, 100));
+    } catch (error) {
+      console.error(`Request ${i} failed:`, error.message);
+    }
   }
-}, 150);
+
+  console.log('\n--- Test Summary ---');
+  console.log(`Successful requests: ${successCount}`);
+  console.log(`Rate limited requests: ${rateLimitedCount}`);
+  
+  if (successCount === 10 && rateLimitedCount === 2) {
+    console.log('✓ Rate limiting is working correctly!');
+  } else {
+    console.log('✗ Rate limiting may not be configured correctly');
+    console.log('  Expected: 10 successful, 2 rate limited');
+  }
+}
+
+// Test verification endpoint rate limit (should be more lenient)
+async function testVerificationRateLimit() {
+  console.log('\n\nTesting Rate Limiting on POST /donations/verify');
+  console.log('Expected: First 30 requests succeed, 31st request gets 429\n');
+
+  const testData = {
+    transactionHash: 'test-hash-' + Date.now()
+  };
+
+  let successCount = 0;
+  let rateLimitedCount = 0;
+  let errorCount = 0;
+
+  // Test first 32 requests
+  for (let i = 1; i <= 32; i++) {
+    try {
+      const response = await makeRequest('/donations/verify', testData);
+      
+      if (i === 1 || i === 30 || i === 31 || i === 32) {
+        console.log(`Request ${i}: Status ${response.statusCode}`);
+      } else if (i === 2) {
+        console.log('... (requests 2-29) ...');
+      }
+      
+      if (response.statusCode === 200 || response.statusCode === 500) {
+        // 500 is expected since we're using fake data
+        successCount++;
+      } else if (response.statusCode === 429) {
+        rateLimitedCount++;
+        if (i >= 31) {
+          const body = JSON.parse(response.body);
+          console.log(`  ✗ Rate Limited: ${body.error.message}`);
+        }
+      }
+      
+      await new Promise(resolve => setTimeout(resolve, 50));
+    } catch (error) {
+      errorCount++;
+    }
+  }
+
+  console.log('\n--- Test Summary ---');
+  console.log(`Successful requests: ${successCount}`);
+  console.log(`Rate limited requests: ${rateLimitedCount}`);
+  
+  if (successCount === 30 && rateLimitedCount === 2) {
+    console.log('✓ Verification rate limiting is working correctly!');
+  } else {
+    console.log('✗ Verification rate limiting may not be configured correctly');
+    console.log('  Expected: 30 successful, 2 rate limited');
+  }
+}
+
+// Run tests
+async function runTests() {
+  console.log('='.repeat(60));
+  console.log('Rate Limiting Test Suite');
+  console.log('='.repeat(60));
+  console.log('\nMake sure the API server is running on http://localhost:3000\n');
+  
+  try {
+    await testDonationRateLimit();
+    
+    // Wait for rate limit to reset
+    console.log('\n\nWaiting 60 seconds for rate limit to reset...');
+    await new Promise(resolve => setTimeout(resolve, 60000));
+    
+    await testVerificationRateLimit();
+    
+    console.log('\n' + '='.repeat(60));
+    console.log('Tests completed!');
+    console.log('='.repeat(60));
+  } catch (error) {
+    console.error('\nTest suite failed:', error);
+  }
+}
+
+// Check if server is running before starting tests
+http.get('http://localhost:3000/health', (res) => {
+  if (res.statusCode === 200) {
+    runTests();
+  } else {
+    console.error('Server is not responding correctly. Please start the API server first.');
+  }
+}).on('error', (error) => {
+  console.error('Cannot connect to server. Please start the API server first:');
+  console.error('  npm start');
+  process.exit(1);
+});
