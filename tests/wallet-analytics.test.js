@@ -1,7 +1,7 @@
 const StatsService = require('../src/routes/services/StatsService');
 const Transaction = require('../src/routes/models/transaction');
 
-describe('Wallet Analytics', () => {
+describe('Wallet Analytics - Statistics Service Tests', () => {
   beforeEach(() => {
     // Mock Transaction.loadTransactions to return test data
     jest.spyOn(Transaction, 'loadTransactions').mockReturnValue([
@@ -61,8 +61,8 @@ describe('Wallet Analytics', () => {
     jest.restoreAllMocks();
   });
 
-  describe('getWalletAnalytics - Lifetime Totals', () => {
-    test('should calculate correct totals for wallet with both sent and received', () => {
+  describe('Lifetime Analytics Calculation', () => {
+    test('should calculate correct totals for wallet with sent and received transactions', () => {
       const analytics = StatsService.getWalletAnalytics('Alice');
 
       expect(analytics.walletAddress).toBe('Alice');
@@ -110,8 +110,8 @@ describe('Wallet Analytics', () => {
     });
   });
 
-  describe('getWalletAnalytics - Date Filtering', () => {
-    test('should filter transactions by date range', () => {
+  describe('Date Range Filtering', () => {
+    test('should filter transactions within specified date range', () => {
       const startDate = new Date('2024-02-11T00:00:00.000Z');
       const endDate = new Date('2024-02-13T23:59:59.999Z');
 
@@ -154,8 +154,8 @@ describe('Wallet Analytics', () => {
     });
   });
 
-  describe('getWalletAnalytics - Transaction Details', () => {
-    test('should include detailed sent transaction information', () => {
+  describe('Transaction Details', () => {
+    test('should include detailed information for sent transactions', () => {
       const analytics = StatsService.getWalletAnalytics('Alice');
 
       expect(analytics.sentTransactions).toHaveLength(3);
@@ -182,8 +182,8 @@ describe('Wallet Analytics', () => {
     });
   });
 
-  describe('getWalletAnalytics - Edge Cases', () => {
-    test('should handle empty transaction list', () => {
+  describe('Edge Cases and Error Handling', () => {
+    test('should handle empty transaction list gracefully', () => {
       Transaction.loadTransactions.mockReturnValue([]);
 
       const analytics = StatsService.getWalletAnalytics('Alice');

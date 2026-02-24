@@ -8,7 +8,7 @@ jest.mock('../src/utils/database');
 // Mock MockStellarService
 jest.mock('../src/services/MockStellarService');
 
-describe('Recurring Donation Scheduler Resilience', () => {
+describe('Recurring Donation Scheduler - Resilience Tests', () => {
   let scheduler;
   let mockStellarService;
 
@@ -44,8 +44,8 @@ describe('Recurring Donation Scheduler Resilience', () => {
     }
   });
 
-  describe('Retry Logic', () => {
-    test('should retry failed execution up to maxRetries times', async () => {
+  describe('Retry Mechanism with Exponential Backoff', () => {
+    test('should retry failed execution up to maximum retry limit', async () => {
       const schedule = {
         id: 1,
         donorId: 1,
@@ -72,7 +72,7 @@ describe('Recurring Donation Scheduler Resilience', () => {
       expect(scheduler.logExecution).toHaveBeenCalledWith(1, 'SUCCESS', 'tx123');
     });
 
-    test('should fail after maxRetries attempts', async () => {
+    test('should fail permanently after maxRetries attempts exhausted', async () => {
       const schedule = {
         id: 1,
         donorId: 1,
@@ -134,8 +134,8 @@ describe('Recurring Donation Scheduler Resilience', () => {
     });
   });
 
-  describe('Duplicate Prevention', () => {
-    test('should not execute schedule if already in progress', async () => {
+  describe('Concurrent Execution Prevention and Deduplication', () => {
+    test('should skip schedule already in progress to prevent duplicates', async () => {
       const schedule = {
         id: 1,
         donorId: 1,
@@ -247,8 +247,8 @@ describe('Recurring Donation Scheduler Resilience', () => {
     });
   });
 
-  describe('Execution Logging', () => {
-    test('should log successful execution', async () => {
+  describe('Execution Logging and Audit Trail', () => {
+    test('should log successful execution with transaction hash', async () => {
       const schedule = {
         id: 1,
         donorId: 1,
@@ -271,7 +271,7 @@ describe('Recurring Donation Scheduler Resilience', () => {
       );
     });
 
-    test('should log failed execution', async () => {
+    test('should log failed execution with error details', async () => {
       const schedule = {
         id: 1,
         donorId: 1,
@@ -321,8 +321,8 @@ describe('Recurring Donation Scheduler Resilience', () => {
     });
   });
 
-  describe('Backoff Calculation', () => {
-    test('should calculate exponential backoff correctly', () => {
+  describe('Backoff Calculation with Jitter', () => {
+    test('should calculate exponential backoff with proper timing', () => {
       const backoff1 = scheduler.calculateBackoff(1);
       const backoff2 = scheduler.calculateBackoff(2);
       const backoff3 = scheduler.calculateBackoff(3);
@@ -360,8 +360,8 @@ describe('Recurring Donation Scheduler Resilience', () => {
     });
   });
 
-  describe('Process Schedules', () => {
-    test('should process multiple schedules concurrently', async () => {
+  describe('Schedule Processing and Batch Execution', () => {
+    test('should process multiple schedules concurrently without blocking', async () => {
       const schedules = [
         {
           id: 1,
@@ -501,8 +501,8 @@ describe('Recurring Donation Scheduler Resilience', () => {
     });
   });
 
-  describe('Status and Monitoring', () => {
-    test('should return correct status', () => {
+  describe('Status Monitoring and Reporting', () => {
+    test('should return accurate scheduler status with metrics', () => {
       scheduler.isRunning = true;
       scheduler.executingSchedules.add(1);
       scheduler.executingSchedules.add(2);
