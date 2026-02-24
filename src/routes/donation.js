@@ -10,6 +10,7 @@ const { ValidationError, NotFoundError, ERROR_CODES } = require('../utils/errors
 const encryption = require('../utils/encryption');
 const log = require('../utils/log');
 const { TRANSACTION_STATES } = require('../utils/transactionStateMachine');
+const { donationRateLimiter, verificationRateLimiter } = require('../middleware/rateLimiter');
 
 const { getStellarService } = require('../config/stellar');
 const donationValidator = require('../utils/donationValidator');
