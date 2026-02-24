@@ -100,6 +100,29 @@ class MockStellarService {
     this.failureSimulation.maxConsecutiveFailures = max;
   }
 
+  _isRetryableError(error) {
+    return Boolean(error && error.details && error.details.retryable);
+  }
+
+  async _executeWithRetry(operation) {
+    const maxFailures = this.failureSimulation.maxConsecutiveFailures;
+    const maxAttempts = maxFailures > 0 ? maxFailures + 1 : 1;
+    let lastError;
+
+    for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+      try {
+        return await operation();
+      } catch (error) {
+        lastError = error;
+        if (!this._isRetryableError(error) || attempt === maxAttempts) {
+          throw error;
+        }
+      }
+    }
+
+    throw lastError;
+  }
+
   /**
    * Simulate various network and Stellar failures
    * @private
@@ -117,6 +140,7 @@ class MockStellarService {
     if (this.failureSimulation.maxConsecutiveFailures > 0 &&
         this.failureSimulation.consecutiveFailures >= this.failureSimulation.maxConsecutiveFailures) {
       this.failureSimulation.consecutiveFailures = 0;
+      this.failureSimulation.enabled = false;
       return;
     }
 
@@ -378,24 +402,26 @@ class MockStellarService {
    * @returns {Promise<{balance: string, asset: string}>}
    */
   async getBalance(publicKey) {
-    await this._simulateNetworkDelay();
-    this._checkRateLimit();
-    this._validatePublicKey(publicKey);
-    this._simulateFailure(); // New failure simulation
-    
-    const wallet = this.wallets.get(publicKey);
-    
-    if (!wallet) {
-      throw new NotFoundError(
-        `Account not found. The account ${publicKey} does not exist on the network.`,
-        ERROR_CODES.WALLET_NOT_FOUND
-      );
-    }
+    return this._executeWithRetry(async () => {
+      await this._simulateNetworkDelay();
+      this._checkRateLimit();
+      this._validatePublicKey(publicKey);
+      this._simulateFailure(); // New failure simulation
+      
+      const wallet = this.wallets.get(publicKey);
+      
+      if (!wallet) {
+        throw new NotFoundError(
+          `Account not found. The account ${publicKey} does not exist on the network.`,
+          ERROR_CODES.WALLET_NOT_FOUND
+        );
+      }
 
-    return {
-      balance: wallet.balance,
-      asset: 'XLM',
-    };
+      return {
+        balance: wallet.balance,
+        asset: 'XLM',
+      };
+    });
   }
 
   /**
@@ -404,37 +430,39 @@ class MockStellarService {
    * @returns {Promise<{balance: string}>}
    */
   async fundTestnetWallet(publicKey) {
-    await this._simulateNetworkDelay();
-    this._checkRateLimit();
-    this._validatePublicKey(publicKey);
-    this._simulateFailure(); // New failure simulation
-    this._simulateRandomFailure();
-    
-    const wallet = this.wallets.get(publicKey);
-    
-    if (!wallet) {
-      throw new NotFoundError(
-        `Account not found. The account ${publicKey} does not exist on the network.`,
-        ERROR_CODES.WALLET_NOT_FOUND
-      );
-    }
+    return this._executeWithRetry(async () => {
+      await this._simulateNetworkDelay();
+      this._checkRateLimit();
+      this._validatePublicKey(publicKey);
+      this._simulateFailure(); // New failure simulation
+      this._simulateRandomFailure();
+      
+      const wallet = this.wallets.get(publicKey);
+      
+      if (!wallet) {
+        throw new NotFoundError(
+          `Account not found. The account ${publicKey} does not exist on the network.`,
+          ERROR_CODES.WALLET_NOT_FOUND
+        );
+      }
 
-    // Check if already funded
-    if (parseFloat(wallet.balance) > 0) {
-      throw new BusinessLogicError(
-        ERROR_CODES.TRANSACTION_FAILED,
-        'Account is already funded. Friendbot can only fund accounts once.'
-      );
-    }
+      // Check if already funded
+      if (parseFloat(wallet.balance) > 0) {
+        throw new BusinessLogicError(
+          ERROR_CODES.TRANSACTION_FAILED,
+          'Account is already funded. Friendbot can only fund accounts once.'
+        );
+      }
 
-    // Simulate Friendbot funding with 10000 XLM
-    wallet.balance = '10000.0000000';
-    wallet.fundedAt = new Date().toISOString();
-    wallet.sequence = '1'; // Increment sequence after funding
+      // Simulate Friendbot funding with 10000 XLM
+      wallet.balance = '10000.0000000';
+      wallet.fundedAt = new Date().toISOString();
+      wallet.sequence = '1'; // Increment sequence after funding
 
-    return {
-      balance: wallet.balance,
-    };
+      return {
+        balance: wallet.balance,
+      };
+    });
   }
 
   /**
@@ -477,13 +505,14 @@ class MockStellarService {
    * @returns {Promise<{transactionId: string, ledger: number, status: string, confirmedAt: string}>}
    */
   async sendDonation({ sourceSecret, destinationPublic, amount, memo }) {
-    await this._simulateNetworkDelay();
-    this._checkRateLimit();
-    this._validateSecretKey(sourceSecret);
-    this._validatePublicKey(destinationPublic);
-    this._validateAmount(amount);
-    this._simulateFailure(); // New failure simulation
-    this._simulateRandomFailure();
+    return this._executeWithRetry(async () => {
+      await this._simulateNetworkDelay();
+      this._checkRateLimit();
+      this._validateSecretKey(sourceSecret);
+      this._validatePublicKey(destinationPublic);
+      this._validateAmount(amount);
+      this._simulateFailure(); // New failure simulation
+      this._simulateRandomFailure();
     
     // Find source wallet by secret key
     let sourceWallet = null;
@@ -571,12 +600,13 @@ class MockStellarService {
     this._notifyStreamListeners(sourceWallet.publicKey, transaction);
     this._notifyStreamListeners(destinationPublic, transaction);
 
-    return {
-      transactionId: transaction.transactionId,
-      ledger: transaction.ledger,
-      status: transaction.status,
-      confirmedAt: transaction.confirmedAt,
-    };
+      return {
+        transactionId: transaction.transactionId,
+        ledger: transaction.ledger,
+        status: transaction.status,
+        confirmedAt: transaction.confirmedAt,
+      };
+    });
   }
 
   /**
@@ -710,13 +740,14 @@ class MockStellarService {
    * @returns {Promise<{hash: string, ledger: number}>}
    */
   async sendPayment(sourcePublicKey, destinationPublic, amount, memo = '') {
-    await this._simulateNetworkDelay();
-    this._checkRateLimit();
-    this._validatePublicKey(sourcePublicKey);
-    this._validatePublicKey(destinationPublic);
-    this._validateAmount(amount.toString());
-    this._simulateFailure(); // New failure simulation
-    this._simulateRandomFailure();
+    return this._executeWithRetry(async () => {
+      await this._simulateNetworkDelay();
+      this._checkRateLimit();
+      this._validatePublicKey(sourcePublicKey);
+      this._validatePublicKey(destinationPublic);
+      this._validateAmount(amount.toString());
+      this._simulateFailure(); // New failure simulation
+      this._simulateRandomFailure();
     
     let sourceWallet = this.wallets.get(sourcePublicKey);
     
@@ -793,10 +824,11 @@ class MockStellarService {
       destination: `${destinationPublic.substring(0, 8)}...`,
     });
 
-    return {
-      hash: transaction.hash,
-      ledger: transaction.ledger,
-    };
+      return {
+        hash: transaction.hash,
+        ledger: transaction.ledger,
+      };
+    });
   }
 
   /**

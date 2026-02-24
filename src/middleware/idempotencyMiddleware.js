@@ -21,7 +21,7 @@ const log = require('../utils/log');
 async function requireIdempotency(req, res, next) {
   try {
     // Extract idempotency key from header
-    const idempotencyKey = req.headers['idempotency-key'];
+    const idempotencyKey = req.headers['idempotency-key'] || req.headers['x-idempotency-key'];
 
     // Validate key presence
     if (!idempotencyKey) {
@@ -124,7 +124,7 @@ async function storeIdempotencyResponse(req, response) {
  * @param {Function} next - Next middleware
  */
 async function optionalIdempotency(req, res, next) {
-  const idempotencyKey = req.headers['idempotency-key'];
+  const idempotencyKey = req.headers['idempotency-key'] || req.headers['x-idempotency-key'];
 
   if (!idempotencyKey) {
     // No idempotency key provided, continue without it

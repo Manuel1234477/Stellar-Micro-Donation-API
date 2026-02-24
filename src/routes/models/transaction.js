@@ -178,6 +178,11 @@ class Transaction {
       })
       .reduce((total, t) => total + t.amount, 0);
   }
+
+  // Test helper for integration suites.
+  static _clearAllData() {
+    this.saveTransactions([]);
+  }
 }
 
 module.exports = Transaction;

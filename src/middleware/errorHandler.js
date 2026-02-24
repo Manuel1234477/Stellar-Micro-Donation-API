@@ -31,11 +31,12 @@ function errorHandler(err, req, res, next) {
 
   // Handle default errors
   const statusCode = err.statusCode || err.status || 500;
+  const isValidationError = err.name === 'ValidationError';
   res.status(statusCode).json({
     success: false,
     error: {
-      code: err.name === 'ValidationError' ? 'VALIDATION_ERROR' : 'INTERNAL_ERROR',
-      message: process.env.NODE_ENV === 'production' && !err.name === 'ValidationError'
+      code: isValidationError ? 'VALIDATION_ERROR' : 'INTERNAL_ERROR',
+      message: process.env.NODE_ENV === 'production' && !isValidationError
         ? 'An unexpected error occurred' 
         : err.message,
       requestId: req.id, // <--- Task: Include in error responses

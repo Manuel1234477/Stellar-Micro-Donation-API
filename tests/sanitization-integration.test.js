@@ -26,7 +26,7 @@ jest.mock('../src/middleware/idempotencyMiddleware', () => ({
 // Mock rate limiters
 jest.mock('express-rate-limit', () => {
   return jest.fn(() => (req, res, next) => next());
-});
+}, { virtual: true });
 
 describe('Sanitization Integration Tests', () => {
   let app;
@@ -57,13 +57,12 @@ describe('Sanitization Integration Tests', () => {
         .send({
           amount: 100,
           recipient: 'GBRPYHIL2CI3FNQ4BXLFMNDLFJUNPU2HY3ZMFSHONUCEOASW7QC7OX2H',
-          memo: 'test\nmemo\x00'
+          memo: '  testmemo  '
         });
 
       expect(createSpy).toHaveBeenCalled();
       const callArgs = createSpy.mock.calls[0][0];
-      expect(callArgs.memo).not.toContain('\n');
-      expect(callArgs.memo).not.toContain('\x00');
+      expect(callArgs.memo).toBe('testmemo');
     });
 
     test('should reject memo with control characters', async () => {
@@ -206,7 +205,7 @@ describe('Sanitization Integration Tests', () => {
 
       const maliciousMemo = 'safe\n[2024-01-01] [ERROR] Fake log entry';
 
-      await request(app)
+      const response = await request(app)
         .post('/donations')
         .send({
           amount: 100,
@@ -214,8 +213,8 @@ describe('Sanitization Integration Tests', () => {
           memo: maliciousMemo
         });
 
-      const createCall = Transaction.create.mock.calls[0][0];
-      expect(createCall.memo).not.toContain('\n');
+      expect(response.status).toBe(400);
+      expect(Transaction.create).not.toHaveBeenCalled();
     });
 
     test('should prevent ANSI escape codes in labels', async () => {

@@ -18,6 +18,7 @@ const app = express();
 
 // Middleware
 app.use(express.json());
+app.use(requestId);
 
 // Request/Response logging middleware
 app.use(logger.middleware());
@@ -61,15 +62,6 @@ app.use(notFoundHandler);
 // Global error handler
 app.use(errorHandler);
 
-// Task: Generate ID per request (Must be first)
-app.use(requestId);
-
-// Update Logger to use the ID
-app.use((req, res, next) => {
-  log.info('HTTP', `${req.method} ${req.url}`, { requestId: req.id });
-  next();
-});
-
 // Handle unhandled promise rejections
 process.on('unhandledRejection', (reason, promise) => {
   log.error('APP', 'Unhandled promise rejection', {
@@ -82,7 +74,7 @@ process.on('unhandledRejection', (reason, promise) => {
 const PORT = config.port;
 
 // Initialize API keys table before starting server
-(async () => {
+async function startServer() {
   try {
     await initializeApiKeysTable();
     log.info('APP', 'API keys table initialized');
@@ -98,6 +90,10 @@ const PORT = config.port;
     // Start the recurring donation scheduler
     recurringDonationScheduler.start();
   });
-})();
+}
+
+if (require.main === module) {
+  startServer();
+}
 
 module.exports = app;

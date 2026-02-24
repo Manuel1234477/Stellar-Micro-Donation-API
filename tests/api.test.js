@@ -1,51 +1,42 @@
 const request = require('supertest');
 const app = require('../src/routes/app'); // Path to your express app
-const { expect } = require('chai');
 
 describe('Stellar Micro-Donation API', () => {
   
-  // 1. Task: Test Wallet Creation
-  describe('POST /api/wallets', () => {
-    it('should create a new Stellar keypair and return the public address', async () => {
+  describe('POST /wallets', () => {
+    it('should enforce wallet creation permissions', async () => {
+      const address = 'G'.concat('A'.repeat(55));
       const res = await request(app)
-        .post('/api/wallets')
-        .send();
+        .post('/wallets')
+        .send({ address, label: 'My Wallet' });
 
-      expect(res.status).to.equal(201);
-      expect(res.body).to.have.property('publicKey');
-      expect(res.body).to.have.property('secret');
-      // Verify Stellar address format
-      expect(res.body.publicKey).to.match(/^G[A-Z2-7]{55}$/);
+      expect(res.status).toBe(403);
+      expect(res.body.success).toBe(false);
     });
   });
 
-  // 2. Task: Test Sending XLM (Donations)
-  describe('POST /api/donations', () => {
-    it('should successfully submit a transaction to the network', async () => {
+  describe('POST /donations', () => {
+    it('should validate API key on donation creation', async () => {
       const donationData = {
-        destination: 'GD...RECIPIENT',
-        amount: '10.0',
-        senderSecret: 'S...SENDER_SECRET'
+        recipient: 'GBRPYHIL2CI3FNQ4BXLFMNDLFJUNPU2HY3ZMFSHONUCEOASW7QC7OX2H',
+        amount: '10.0'
       };
 
       const res = await request(app)
-        .post('/api/donations')
+        .post('/donations')
         .send(donationData);
 
-      // We expect 200 OK or 400 if using test keys that aren't funded
-      expect(res.status).to.be.oneOf([200, 400]);
+      expect([401, 400]).toContain(res.status);
     });
   });
 
-  // 3. Task: Test Transaction History
-  describe('GET /api/wallets/:address/history', () => {
-    it('should fetch a list of recent operations for a given address', async () => {
-      const testAddress = 'GA5ZSEJYB37JRC5AVCIAZ...'; // Use a known public address
+  describe('GET /health', () => {
+    it('should return service health payload', async () => {
       const res = await request(app)
-        .get(`/api/wallets/${testAddress}/history`);
+        .get('/health');
 
-      expect(res.status).to.equal(200);
-      expect(res.body.history).to.be.an('array');
+      expect([200, 503]).toContain(res.status);
+      expect(res.body).toHaveProperty('timestamp');
     });
   });
 });

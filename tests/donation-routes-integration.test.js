@@ -4,21 +4,26 @@
  * Tests do not require live Stellar network
  */
 
+process.env.MOCK_STELLAR = 'true';
+process.env.API_KEYS = 'test-key-1,test-key-2';
+
 const request = require('supertest');
 const express = require('express');
 const donationRouter = require('../src/routes/donation');
-const Database = require('../src/utils/database');
 const Transaction = require('../src/routes/models/transaction');
 const { getStellarService } = require('../src/config/stellar');
-const encryption = require('../src/utils/encryption');
+const { attachUserRole } = require('../src/middleware/rbacMiddleware');
 
 // Create test app
 function createTestApp() {
   const app = express();
   app.use(express.json());
-  
+  app.use(attachUserRole());
+  app.use('/donations', donationRouter);
+
   // Add error handler
   app.use((err, req, res, next) => {
+    void next;
     res.status(err.status || 500).json({
       success: false,
       error: {
@@ -27,8 +32,6 @@ function createTestApp() {
       }
     });
   });
-  
-  app.use('/donations', donationRouter);
   return app;
 }
 
@@ -39,10 +42,6 @@ describe('Donation Routes Integration Tests', () => {
   let testRecipient;
 
   beforeAll(async () => {
-    // Ensure mock mode
-    process.env.MOCK_STELLAR = 'true';
-    process.env.API_KEYS = 'test-key-1,test-key-2';
-    
     app = createTestApp();
     stellarService = getStellarService();
     

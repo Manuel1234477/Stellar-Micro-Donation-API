@@ -112,14 +112,14 @@ async function createApiKey({ name, role = 'user', expiresInDays, createdBy, met
     ]);
 
     log.info('API_KEYS', 'API key created', { 
-      id: result.lastID, 
+      id: result.id,
       name, 
       role, 
       prefix: keyPrefix 
     });
 
     return {
-      id: result.lastID,
+      id: result.id,
       key, // Return plain text key only once
       keyPrefix,
       name,

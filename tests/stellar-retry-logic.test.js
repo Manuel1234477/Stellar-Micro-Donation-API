@@ -157,18 +157,9 @@ describe('Stellar Retry Logic Tests', () => {
       stellarService.enableFailureSimulation('network_error', 1.0);
       stellarService.setMaxConsecutiveFailures(3);
 
-      let attempts = 0;
-      try {
-        for (let i = 0; i < 5; i++) {
-          attempts++;
-          await stellarService.getBalance(wallet.publicKey);
-          break; // Success
-        }
-      } catch (error) {
-        // Failed after retries
-      }
-
-      expect(attempts).toBeGreaterThan(1);
+      const balance = await stellarService.getBalance(wallet.publicKey);
+      expect(balance).toBeDefined();
+      expect(balance.balance).toBe('10000.0000000');
     });
   });
 

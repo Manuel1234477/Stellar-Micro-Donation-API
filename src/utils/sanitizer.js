@@ -35,6 +35,11 @@ function sanitizeText(input, options = {}) {
   // Trim whitespace
   let sanitized = input.trim();
 
+  // Remove ANSI escape sequences early so control-char stripping
+  // cannot leave fragments like "[31m" behind.
+  // eslint-disable-next-line no-control-regex
+  sanitized = sanitized.replace(/\x1B(?:\[[0-?]*[ -/]*[@-~]|[@-_])/g, '');
+
   // Remove null bytes (security risk)
   sanitized = sanitized.replace(/\0/g, '');
 
@@ -49,14 +54,10 @@ function sanitizeText(input, options = {}) {
     sanitized = sanitized.replace(/[\x00-\x09\x0B-\x1F\x7F]/g, '');
   }
 
-  // Remove ANSI escape sequences (can break logs)
-  // eslint-disable-next-line no-control-regex
-  sanitized = sanitized.replace(/\x1B\[[0-9;]*[mGKHJA-Z]/g, '');
-
   // Optionally restrict to safe characters
   if (!allowSpecialChars) {
-    // Allow only alphanumeric, spaces, and basic punctuation (no @ for strict mode)
-    sanitized = sanitized.replace(/[^a-zA-Z0-9\s\-_.]/g, '');
+    // Allow only alphanumeric, spaces, and basic punctuation.
+    sanitized = sanitized.replace(/[^a-zA-Z0-9\s\-_.@]/g, '');
   }
 
   // Truncate to maximum length
@@ -116,7 +117,7 @@ function sanitizeIdentifier(identifier) {
     maxLength: 100,
     allowNewlines: false,
     allowSpecialChars: false // Strict for identifiers
-  });
+  }).replace(/@/g, '');
 }
 
 /**

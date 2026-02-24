@@ -1,5 +1,11 @@
 const { UnauthorizedError, ForbiddenError } = require('../utils/errors');
 const { hasPermission } = require('../models/permissions');
+const { validateApiKey } = require('../models/apiKeys');
+
+const legacyKeys = (process.env.API_KEYS || '')
+  .split(',')
+  .map(k => k.trim())
+  .filter(Boolean);
 
 /**
  * Middleware to check if user has required permission
@@ -91,7 +97,7 @@ exports.checkAllPermissions = (permissions) => {
 exports.requireAdmin = () => {
   return (req, res, next) => {
     try {
-      if (!req.user) {
+      if (!req.user || req.user.role === 'guest') {
         throw new UnauthorizedError('Authentication required');
       }
 
@@ -112,24 +118,62 @@ exports.requireAdmin = () => {
  * @returns {Function} Express middleware function
  */
 exports.attachUserRole = () => {
-  return (req, res, next) => {
-    // If API key middleware already attached key info, use it
-    if (req.apiKey) {
-      const role = req.apiKey.role || 'user';
-      const keyId = req.apiKey.id || 'legacy';
-      
-      req.user = {
-        id: `apikey-${keyId}`,
-        role: role,
-        name: req.apiKey.name || `API Key User (${role})`,
-        apiKeyId: req.apiKey.id,
-        isLegacy: req.apiKey.isLegacy || false
-      };
-    } else {
-      // No API key, default to guest
-      req.user = { id: 'guest', role: 'guest', name: 'Guest' };
+  return async (req, res, next) => {
+    try {
+      // If API key middleware already attached key info, use it
+      if (req.apiKey) {
+        const role = req.apiKey.role || 'user';
+        const keyId = req.apiKey.id || 'legacy';
+        
+        req.user = {
+          id: `apikey-${keyId}`,
+          role: role,
+          name: req.apiKey.name || `API Key User (${role})`,
+          apiKeyId: req.apiKey.id,
+          isLegacy: req.apiKey.isLegacy || false
+        };
+      } else if (req.headers && req.headers['x-api-key']) {
+        const apiKey = req.headers['x-api-key'];
+        const keyInfo = await validateApiKey(apiKey);
+
+        if (keyInfo) {
+          req.apiKey = keyInfo;
+          req.user = {
+            id: `apikey-${keyInfo.id}`,
+            role: keyInfo.role || 'user',
+            name: keyInfo.name || `API Key User (${keyInfo.role || 'user'})`,
+            apiKeyId: keyInfo.id,
+            isLegacy: false
+          };
+
+          if (keyInfo.isDeprecated) {
+            res.setHeader('X-API-Key-Deprecated', 'true');
+            res.setHeader('Warning', '299 - "API key is deprecated and will be revoked soon"');
+          }
+        } else if (legacyKeys.includes(apiKey)) {
+          req.user = {
+            id: `apikey-${apiKey}`,
+            role: apiKey.startsWith('admin-') ? 'admin' : 'user',
+            name: 'Legacy API Key User',
+            isLegacy: true
+          };
+        } else {
+          return res.status(401).json({
+            success: false,
+            error: {
+              code: 'UNAUTHORIZED',
+              message: 'Invalid or expired API key.'
+            }
+          });
+        }
+      } else {
+        // No API key, default to guest
+        req.user = { id: 'guest', role: 'guest', name: 'Guest' };
+      }
+
+      next();
+    } catch (error) {
+      next(error);
     }
-    
-    next();
   };
 };
