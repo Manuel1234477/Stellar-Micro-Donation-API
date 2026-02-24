@@ -5,6 +5,10 @@ const {
   validateDonationCreate,
   validateTransactionVerify
 } = require('../middleware/validation');
+const rateLimiter = require('../middleware/rateLimiter');
+
+// Apply rate limiting to all donation routes
+router.use(rateLimiter());
 
 /**
  * POST /donations
