@@ -1,5 +1,5 @@
 const request = require('supertest');
-const app = require('../src/app'); // Path to your express app
+const app = require('../src/routes/app'); // Path to your express app
 const { expect } = require('chai');
 
 describe('Stellar Micro-Donation API', () => {

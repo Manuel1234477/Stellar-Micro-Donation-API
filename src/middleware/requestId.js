@@ -1,4 +1,16 @@
-const { v4: uuidv4 } = require('uuid'); // Or use crypto.randomUUID() if Node 16+
+let uuidv4;
+try {
+  // prefer native crypto.randomUUID when available (Node 16+)
+  const { randomUUID } = require('crypto');
+  uuidv4 = () => randomUUID();
+} catch (e) {
+  try {
+    uuidv4 = require('uuid').v4;
+  } catch (err) {
+    // last resort: simple pseudo-random fallback
+    uuidv4 = () => Math.random().toString(36).slice(2) + Date.now().toString(36);
+  }
+}
 
 /**
  * Middleware to generate and attach a unique ID to every request
