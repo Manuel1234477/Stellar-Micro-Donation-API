@@ -5,6 +5,7 @@ on:
     branches: [ main, develop ]
   push:
     branches: [ main, develop ]
+  workflow_dispatch:
 
 jobs:
   test:
@@ -24,10 +25,15 @@ jobs:
       - name: Install dependencies
         run: npm ci
       
+      - name: Initialize database
+        run: npm run init-db
+      
       - name: Run test suite
         run: npm test
         env:
           CI: true
+          MOCK_STELLAR: true
+          API_KEYS: test-key-1,test-key-2
 
   coverage:
     name: Test Coverage
@@ -46,10 +52,15 @@ jobs:
       - name: Install dependencies
         run: npm ci
       
+      - name: Initialize database
+        run: npm run init-db
+      
       - name: Run tests with coverage
         run: npm run test:coverage
         env:
           CI: true
+          MOCK_STELLAR: true
+          API_KEYS: test-key-1,test-key-2
       
       - name: Upload coverage report
         if: always()
