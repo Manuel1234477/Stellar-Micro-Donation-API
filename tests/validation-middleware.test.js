@@ -11,9 +11,9 @@ app.use('/donations', donationRouter);
 app.use('/stats', statsRouter);
 app.use('/wallets', walletRouter);
 
-describe('Validation Middleware Integration Tests', () => {
-  describe('POST /donations - Donation Creation Validation', () => {
-    test('should reject missing amount', async () => {
+describe('Validation Middleware - Integration Tests', () => {
+  describe('Donation Creation Validation', () => {
+    test('should reject request with missing amount field', async () => {
       const response = await request(app)
         .post('/donations')
         .send({ recipient: 'test-recipient' });
@@ -122,8 +122,8 @@ describe('Validation Middleware Integration Tests', () => {
     });
   });
 
-  describe('POST /donations/verify - Transaction Verification Validation', () => {
-    test('should reject missing transaction hash', async () => {
+  describe('Transaction Verification Validation', () => {
+    test('should reject request with missing transaction hash', async () => {
       const response = await request(app)
         .post('/donations/verify')
         .send({});
@@ -155,8 +155,8 @@ describe('Validation Middleware Integration Tests', () => {
     });
   });
 
-  describe('GET /stats/* - Date Range Validation', () => {
-    test('should reject missing startDate', async () => {
+  describe('Date Range Validation', () => {
+    test('should reject request with missing startDate parameter', async () => {
       const response = await request(app)
         .get('/stats/daily')
         .query({ endDate: '2024-12-31' });
@@ -206,8 +206,8 @@ describe('Validation Middleware Integration Tests', () => {
     });
   });
 
-  describe('POST /wallets - Wallet Creation Validation', () => {
-    test('should reject missing name', async () => {
+  describe('Wallet Creation Validation', () => {
+    test('should reject request with missing name field', async () => {
       const response = await request(app)
         .post('/wallets')
         .send({ walletAddress: 'GBRPYHIL2CI3FNQ4BXLFMNDLFJUNPU2HY3ZMFSHONUCEOASW7QC7OX2H' });
@@ -256,8 +256,8 @@ describe('Validation Middleware Integration Tests', () => {
     });
   });
 
-  describe('POST /wallets/lookup - Wallet Lookup Validation', () => {
-    test('should reject missing wallet address', async () => {
+  describe('Wallet Lookup Validation', () => {
+    test('should reject request with missing wallet address', async () => {
       const response = await request(app)
         .post('/wallets/lookup')
         .send({});
