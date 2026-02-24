@@ -41,9 +41,11 @@ function sanitizeText(input, options = {}) {
   // Remove or replace control characters
   if (!allowNewlines) {
     // Remove all control characters including newlines
+    // eslint-disable-next-line no-control-regex
     sanitized = sanitized.replace(/[\x00-\x1F\x7F]/g, '');
   } else {
     // Keep newlines but remove other control characters
+    // eslint-disable-next-line no-control-regex
     sanitized = sanitized.replace(/[\x00-\x09\x0B-\x1F\x7F]/g, '');
   }
 
