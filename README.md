@@ -20,6 +20,7 @@ A Node.js/Express API for managing micro-donations on the Stellar blockchain net
 - **Wallet Management**: Track wallets and query transaction history
 - **Analytics**: Get donation statistics and summaries
 - **Mock Mode**: Development mode with simulated Stellar operations
+- **Failure Simulation**: Comprehensive network failure testing for robust error handling
 - **Automated Scheduler**: Background service for executing recurring donations
 - **Rate Limiting**: Protection against abuse with configurable request limits on donation endpoints
 - **Idempotency**: Prevent duplicate transactions with idempotency key support
@@ -314,9 +315,31 @@ npm test -- tests/integration.test.js
 node test-recurring-donations.js
 ```
 
+### Test Failure Scenarios
+
+The project includes comprehensive failure simulation for testing network errors and retry logic:
+
+```bash
+# Run failure simulation tests
+npm test tests/stellar-network-failures.test.js
+
+# Run retry logic tests
+npm test tests/stellar-retry-logic.test.js
+```
+
+**Failure Types Tested**:
+- Timeouts and network errors
+- Service unavailability
+- Transaction failures (bad sequence, insufficient fee)
+- Rate limiting
+- Partial responses
+
+For detailed information, see [Stellar Failure Simulation Guide](docs/STELLAR_FAILURE_SIMULATION.md).
+
 ## 📚 Documentation
 
 - **[API Examples](docs/API_EXAMPLES.md)** - Complete request/response examples for all endpoints
+- **[Stellar Failure Simulation](docs/STELLAR_FAILURE_SIMULATION.md)** - Network failure testing guide
 - [Architecture Documentation](docs/ARCHITECTURE.md) - Detailed system architecture
 - [API Flow Diagram](docs/API_FLOW.md) - API request flow
 - [Quick Start Guide](docs/guides/QUICK_START.md) - Getting started quickly

@@ -56,7 +56,152 @@ class MockStellarService {
     // Rate limiting state
     this.requestTimestamps = [];
     
+    // Failure simulation state
+    this.failureSimulation = {
+      enabled: false,
+      type: null, // 'timeout', 'network_error', 'service_unavailable', 'bad_sequence', 'tx_failed'
+      probability: 0, // 0-1
+      consecutiveFailures: 0,
+      maxConsecutiveFailures: 0,
+    };
+    
     log.info('MOCK_STELLAR_SERVICE', 'Initialized with config', this.config);
+  }
+
+  /**
+   * Enable failure simulation for testing
+   * @param {string} type - Type of failure to simulate
+   * @param {number} probability - Probability of failure (0-1)
+   */
+  enableFailureSimulation(type, probability = 1.0) {
+    this.failureSimulation.enabled = true;
+    this.failureSimulation.type = type;
+    this.failureSimulation.probability = probability;
+    this.failureSimulation.consecutiveFailures = 0;
+    log.info('MOCK_STELLAR_SERVICE', 'Failure simulation enabled', { type, probability });
+  }
+
+  /**
+   * Disable failure simulation
+   */
+  disableFailureSimulation() {
+    this.failureSimulation.enabled = false;
+    this.failureSimulation.type = null;
+    this.failureSimulation.probability = 0;
+    this.failureSimulation.consecutiveFailures = 0;
+    log.info('MOCK_STELLAR_SERVICE', 'Failure simulation disabled');
+  }
+
+  /**
+   * Set maximum consecutive failures before auto-recovery
+   * @param {number} max - Maximum consecutive failures
+   */
+  setMaxConsecutiveFailures(max) {
+    this.failureSimulation.maxConsecutiveFailures = max;
+  }
+
+  /**
+   * Simulate various network and Stellar failures
+   * @private
+   */
+  _simulateFailure() {
+    if (!this.failureSimulation.enabled) return;
+    
+    // Check if we should fail based on probability
+    if (Math.random() > this.failureSimulation.probability) {
+      this.failureSimulation.consecutiveFailures = 0;
+      return;
+    }
+
+    // Check if we've hit max consecutive failures (auto-recovery)
+    if (this.failureSimulation.maxConsecutiveFailures > 0 &&
+        this.failureSimulation.consecutiveFailures >= this.failureSimulation.maxConsecutiveFailures) {
+      this.failureSimulation.consecutiveFailures = 0;
+      return;
+    }
+
+    this.failureSimulation.consecutiveFailures++;
+
+    const failureType = this.failureSimulation.type;
+    
+    switch (failureType) {
+      case 'timeout':
+        throw new BusinessLogicError(
+          ERROR_CODES.TRANSACTION_FAILED,
+          'Request timeout - Stellar network may be experiencing high load. Please try again.',
+          { retryable: true, retryAfter: 5000 }
+        );
+      
+      case 'network_error':
+        throw new BusinessLogicError(
+          ERROR_CODES.TRANSACTION_FAILED,
+          'Network error: Unable to connect to Stellar Horizon server. Check your connection.',
+          { retryable: true, retryAfter: 3000 }
+        );
+      
+      case 'service_unavailable':
+        throw new BusinessLogicError(
+          ERROR_CODES.TRANSACTION_FAILED,
+          'Service temporarily unavailable: Stellar Horizon is under maintenance. Please try again later.',
+          { retryable: true, retryAfter: 10000 }
+        );
+      
+      case 'bad_sequence':
+        throw new BusinessLogicError(
+          ERROR_CODES.TRANSACTION_FAILED,
+          'tx_bad_seq: Transaction sequence number does not match source account. This usually indicates a concurrent transaction.',
+          { retryable: true, retryAfter: 1000 }
+        );
+      
+      case 'tx_failed':
+        throw new BusinessLogicError(
+          ERROR_CODES.TRANSACTION_FAILED,
+          'tx_failed: Transaction failed due to network congestion or insufficient fee. Please retry with higher fee.',
+          { retryable: true, retryAfter: 2000 }
+        );
+      
+      case 'tx_insufficient_fee':
+        throw new BusinessLogicError(
+          ERROR_CODES.TRANSACTION_FAILED,
+          'tx_insufficient_fee: Transaction fee is too low for current network conditions.',
+          { retryable: true, retryAfter: 1000 }
+        );
+      
+      case 'connection_refused':
+        throw new BusinessLogicError(
+          ERROR_CODES.TRANSACTION_FAILED,
+          'Connection refused: Unable to establish connection to Stellar network.',
+          { retryable: true, retryAfter: 5000 }
+        );
+      
+      case 'rate_limit_horizon':
+        throw new BusinessLogicError(
+          ERROR_CODES.TRANSACTION_FAILED,
+          'Horizon rate limit exceeded: Too many requests to Stellar network. Please slow down.',
+          { retryable: true, retryAfter: 60000 }
+        );
+      
+      case 'partial_response':
+        throw new BusinessLogicError(
+          ERROR_CODES.TRANSACTION_FAILED,
+          'Incomplete response from Stellar network. Data may be corrupted.',
+          { retryable: true, retryAfter: 2000 }
+        );
+      
+      case 'ledger_closed':
+        throw new BusinessLogicError(
+          ERROR_CODES.TRANSACTION_FAILED,
+          'Ledger already closed: Transaction missed the ledger window. Please resubmit.',
+          { retryable: true, retryAfter: 5000 }
+        );
+      
+      default:
+        throw new BusinessLogicError(
+          ERROR_CODES.TRANSACTION_FAILED,
+          'Unknown network error occurred',
+          { retryable: true, retryAfter: 3000 }
+        );
+    }
   }
 
   /**
@@ -236,6 +381,7 @@ class MockStellarService {
     await this._simulateNetworkDelay();
     this._checkRateLimit();
     this._validatePublicKey(publicKey);
+    this._simulateFailure(); // New failure simulation
     
     const wallet = this.wallets.get(publicKey);
     
@@ -261,6 +407,7 @@ class MockStellarService {
     await this._simulateNetworkDelay();
     this._checkRateLimit();
     this._validatePublicKey(publicKey);
+    this._simulateFailure(); // New failure simulation
     this._simulateRandomFailure();
     
     const wallet = this.wallets.get(publicKey);
@@ -335,6 +482,7 @@ class MockStellarService {
     this._validateSecretKey(sourceSecret);
     this._validatePublicKey(destinationPublic);
     this._validateAmount(amount);
+    this._simulateFailure(); // New failure simulation
     this._simulateRandomFailure();
     
     // Find source wallet by secret key
@@ -567,6 +715,7 @@ class MockStellarService {
     this._validatePublicKey(sourcePublicKey);
     this._validatePublicKey(destinationPublic);
     this._validateAmount(amount.toString());
+    this._simulateFailure(); // New failure simulation
     this._simulateRandomFailure();
     
     let sourceWallet = this.wallets.get(sourcePublicKey);
