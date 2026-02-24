@@ -64,6 +64,7 @@ docs/
 **Location**: `docs/guides/`
 
 - **QUICK_START.md** - Quick start guide
+- **PRE_DEPLOYMENT_CHECKLIST.md** - Production deployment verification checklist
 - **MOCK_STELLAR_GUIDE.md** - Using mock Stellar service for testing
 - **MEMO_QUICK_REFERENCE.md** - Memo field quick reference
 - **Improved Readme.md** - Enhanced README
@@ -128,6 +129,7 @@ docs/
 - [Permission System](testing/PERMISSIONS.md)
 
 ### For Operations
+- [Pre-Deployment Checklist](guides/PRE_DEPLOYMENT_CHECKLIST.md) ⭐ NEW
 - [Deployment Guide](deployment/MIGRATION_GUIDE.md)
 - [Deployment Checklist](deployment/DELIVERY_CHECKLIST.md)
 - [Troubleshooting](deployment/PULL_TROUBLESHOOTING.md)

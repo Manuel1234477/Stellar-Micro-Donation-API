@@ -438,3 +438,17 @@ For issues and questions:
 ---
 
 Built with ❤️ using Node.js and Stellar
+
+
+## 📚 Documentation
+
+For comprehensive documentation, see the [Documentation Index](docs/README.md).
+
+### Key Documentation
+
+- **[Pre-Deployment Checklist](docs/guides/PRE_DEPLOYMENT_CHECKLIST.md)** - Production deployment verification
+- **[Quick Start Guide](docs/guides/QUICK_START.md)** - Get started quickly
+- **[API Examples](docs/API_EXAMPLES.md)** - Complete API usage examples
+- **[Coverage Guide](docs/COVERAGE_GUIDE.md)** - Test coverage documentation
+- **[Mock Stellar Guide](docs/guides/MOCK_STELLAR_GUIDE.md)** - Testing without network calls
+
