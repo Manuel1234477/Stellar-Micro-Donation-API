@@ -285,7 +285,8 @@ describe('Transaction Status Management', () => {
         status: 'pending',
       });
 
-      const all = Transaction.getAll();
+      // Load transactions from the test database
+      const all = Transaction.loadTransactions();
 
       expect(all.length).toBe(2);
       expect(all[0]).toHaveProperty('status');

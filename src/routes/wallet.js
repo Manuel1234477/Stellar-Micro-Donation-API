@@ -1,7 +1,7 @@
 const express = require('express');
 const router = express.Router();
 const Wallet = require('./models/wallet');
-const Database = require('../utils/database');
+const Transaction = require('./models/transaction');
 
 /**
  * POST /wallets
@@ -126,59 +126,27 @@ router.patch('/:id', (req, res) => {
  * GET /wallets/:publicKey/transactions
  * Get all transactions (sent and received) for a wallet
  */
-router.get('/:publicKey/transactions', async (req, res) => {
+router.get('/:publicKey/transactions', (req, res) => {
   try {
     const { publicKey } = req.params;
 
-    // First, check if user exists with this publicKey
-    const user = await Database.get(
-      'SELECT id, publicKey, createdAt FROM users WHERE publicKey = ?',
-      [publicKey]
+    // Get all transactions
+    const allTransactions = Transaction.getAll();
+
+    // Filter transactions where publicKey is donor or recipient
+    const walletTransactions = allTransactions.filter(tx => 
+      tx.donor === publicKey || tx.recipient === publicKey
     );
 
-    if (!user) {
-      // Return empty array if wallet doesn't exist (as per acceptance criteria)
-      return res.json({
-        success: true,
-        data: [],
-        count: 0,
-        message: 'No user found with this public key'
-      });
-    }
-
-    // Get all transactions where user is sender or receiver
-    const transactions = await Database.query(
-      `SELECT 
-        t.id,
-        t.senderId,
-        t.receiverId,
-        t.amount,
-        t.memo,
-        t.timestamp,
-        sender.publicKey as senderPublicKey,
-        receiver.publicKey as receiverPublicKey
-      FROM transactions t
-      LEFT JOIN users sender ON t.senderId = sender.id
-      LEFT JOIN users receiver ON t.receiverId = receiver.id
-      WHERE t.senderId = ? OR t.receiverId = ?
-      ORDER BY t.timestamp DESC`,
-      [user.id, user.id]
+    // Sort by timestamp descending (most recent first)
+    walletTransactions.sort((a, b) => 
+      new Date(b.timestamp) - new Date(a.timestamp)
     );
-
-    // Format the response
-    const formattedTransactions = transactions.map(tx => ({
-      id: tx.id,
-      sender: tx.senderPublicKey,
-      receiver: tx.receiverPublicKey,
-      amount: tx.amount,
-      memo: tx.memo,
-      timestamp: tx.timestamp
-    }));
 
     res.json({
       success: true,
-      data: formattedTransactions,
-      count: formattedTransactions.length
+      data: walletTransactions,
+      count: walletTransactions.length
     });
   } catch (error) {
     res.status(500).json({

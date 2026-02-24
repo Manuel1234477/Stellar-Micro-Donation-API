@@ -4,19 +4,15 @@
  * Run with: npm test -- donation-limits.test.js
  */
 
-const DonationValidator = require('../src/utils/donationValidator');
+const validator = require('../src/utils/donationValidator');
 const Transaction = require('../src/routes/models/transaction');
 const fs = require('fs');
 const path = require('path');
 
 describe('Donation Amount Validation', () => {
-  let validator;
   const testDbPath = path.join(__dirname, '../data/test-donations-limits.json');
 
   beforeEach(() => {
-    // Create validator with test limits
-    validator = new DonationValidator();
-    
     // Override with test values
     validator.minAmount = 0.01;
     validator.maxAmount = 10000;
