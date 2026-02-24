@@ -1,5 +1,6 @@
 const express = require('express');
 const config = require('../config/stellar');
+const { rateLimitConfig } = require('../config/rateLimit');
 const donationRoutes = require('./donation');
 const statsRoutes = require('./stats');
 const walletRoutes = require('./wallet');
@@ -8,6 +9,13 @@ const app = express();
 
 // Middleware
 app.use(express.json());
+
+// Rate limiting is applied per-route in donation.js
+// Configuration loaded from environment variables:
+// - RATE_LIMIT_MAX_REQUESTS (default: 100)
+// - RATE_LIMIT_WINDOW_MS (default: 60000)
+// - RATE_LIMIT_CLEANUP_INTERVAL_MS (default: 300000)
+console.log(`Rate limiting configured: ${rateLimitConfig.limit} requests per ${rateLimitConfig.windowMs}ms`);
 
 // Request logging middleware
 app.use((req, res, next) => {
@@ -39,7 +47,7 @@ app.use((req, res) => {
 });
 
 // Error handler
-app.use((err, req, res, next) => {
+app.use((err, req, res) => {
   console.error('Error:', err);
   res.status(500).json({
     error: 'Internal server error',
