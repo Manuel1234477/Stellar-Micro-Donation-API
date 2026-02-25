@@ -10,8 +10,6 @@
     "test": "jest",
     "test:coverage": "jest --coverage",
     "test:coverage:ci": "jest --coverage --ci --maxWorkers=2",
-    "test:memo": "node test-memo-feature.js",
-    "test:rate-limit": "node test-rate-limit.js",
     "check-coverage": "node scripts/check-coverage.js",
     "dev": "nodemon src/routes/app.js",
     "lint": "eslint .",
