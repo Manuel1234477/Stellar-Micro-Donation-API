@@ -111,8 +111,6 @@ function createRateLimiter(options = {}) {
 
 module.exports = {
   donationRateLimiter,
-  verificationRateLimiter
-};
   verificationRateLimiter,
-  createRateLimiter
+  createRateLimiter,
 };
