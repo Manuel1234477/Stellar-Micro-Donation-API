@@ -1,6 +1,8 @@
 # Service File Size Reduction - Issue #206 (Design Document)
 
-## Status: NOT IMPLEMENTED
+## Status: NOT IMPLEMENTED - DESIGN REFERENCE ONLY
+
+⚠️ **Note**: This PR contains only a design document. CI checks may fail because this branch does not include actual implementation changes. This is intentional - the document serves as a reference for future refactoring work.
 
 This document outlines a proposed approach for reducing service file sizes. The implementation was started but **reverted** due to test failures. This serves as a design reference for future work.
 
