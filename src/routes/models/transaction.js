@@ -86,6 +86,10 @@ class Transaction {
   };
 }
 
+  static getAll() {
+    return this.loadTransactions();
+  }
+
   static getById(id) {
     const transactions = this.loadTransactions();
     return transactions.find(t => t.id === id);
