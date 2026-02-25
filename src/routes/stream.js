@@ -4,6 +4,7 @@ const Database = require('../utils/database');
 const { checkPermission } = require('../middleware/rbac');
 const { PERMISSIONS } = require('../utils/permissions');
 const { VALID_FREQUENCIES, SCHEDULE_STATUS } = require('../constants');
+const { validateRequiredFields, validateFloat, validateEnum } = require('../utils/validationHelpers');
 const log = require('../utils/log');
 
 /**
@@ -37,10 +38,11 @@ router.post('/create', checkPermission(PERMISSIONS.STREAM_CREATE), async (req, r
     }
 
     // Validate frequency
-    if (!VALID_FREQUENCIES.includes(frequency.toLowerCase())) {
+    const frequencyValidation = validateEnum(frequency, VALID_FREQUENCIES, { caseInsensitive: true });
+    if (!frequencyValidation.valid) {
       return res.status(400).json({
         success: false,
-        error: `Frequency must be one of: ${VALID_FREQUENCIES.join(', ')}`
+        error: frequencyValidation.error
       });
     }
 
