@@ -1,5 +1,6 @@
 /**
  * Validation middleware for API endpoints
+ * Handles structural and logic-based checks for donation and wallet operations.
  */
 
 const {
@@ -13,12 +14,14 @@ const {
 } = require('../utils/validators');
 
 /**
- * Validate donation creation request
+ * Validate donation creation request.
+ * Checks for presence of amount/recipient, ensures donor and recipient are unique,
+ * and validates Stellar address formats if provided.
  */
 const validateDonationCreate = (req, res, next) => {
   const { amount, donor, recipient } = req.body;
 
-  // Validate required fields
+  // Validate required fields: Ensures mandatory payload keys exist
   if (!amount) {
     return res.status(400).json({
       success: false,
@@ -41,7 +44,7 @@ const validateDonationCreate = (req, res, next) => {
     });
   }
 
-  // Validate amount
+  // Validate amount: Checks for positive numeric values (non-zero)
   if (!isValidAmount(amount)) {
     return res.status(400).json({
       success: false,
@@ -53,11 +56,11 @@ const validateDonationCreate = (req, res, next) => {
     });
   }
 
-  // Sanitize strings
+  // Sanitize strings: Removes malicious or extra characters from input
   const normalizedDonor = sanitizeString(donor);
   const normalizedRecipient = sanitizeString(recipient);
 
-  // Validate donor and recipient are different
+  // Logical check: Prevents a user from donating to themselves
   if (normalizedDonor && normalizedRecipient && normalizedDonor === normalizedRecipient) {
     return res.status(400).json({
       success: false,
@@ -68,7 +71,7 @@ const validateDonationCreate = (req, res, next) => {
     });
   }
 
-  // If recipient is a Stellar address, validate format
+  // Recipient validation: Verifies G-address format if a Stellar key is used
   if (normalizedRecipient && normalizedRecipient.startsWith('G')) {
     if (!isValidStellarPublicKey(normalizedRecipient)) {
       return res.status(400).json({
@@ -82,7 +85,7 @@ const validateDonationCreate = (req, res, next) => {
     }
   }
 
-  // If donor is a Stellar address, validate format
+  // Donor validation: Verifies G-address format if a Stellar key is used
   if (normalizedDonor && normalizedDonor.startsWith('G')) {
     if (!isValidStellarPublicKey(normalizedDonor)) {
       return res.status(400).json({
@@ -100,7 +103,8 @@ const validateDonationCreate = (req, res, next) => {
 };
 
 /**
- * Validate transaction verification request
+ * Validate transaction verification request.
+ * Ensures the transaction hash is present and follows the 64-char hex standard.
  */
 const validateTransactionVerify = (req, res, next) => {
   const { transactionHash } = req.body;
@@ -116,6 +120,7 @@ const validateTransactionVerify = (req, res, next) => {
     });
   }
 
+  // Regex-based hex check: Confirms the hash format before hitting external RPCs
   if (!isValidTransactionHash(transactionHash)) {
     return res.status(400).json({
       success: false,
@@ -131,7 +136,8 @@ const validateTransactionVerify = (req, res, next) => {
 };
 
 /**
- * Validate date range query parameters
+ * Validate date range query parameters.
+ * Confirms both start and end dates exist and that the range is chronologically valid.
  */
 const validateDateRange = (req, res, next) => {
   const { startDate, endDate } = req.query;
@@ -147,6 +153,7 @@ const validateDateRange = (req, res, next) => {
     });
   }
 
+  // Internal validator check: Ensures start is before end
   const validation = isValidDateRange(startDate, endDate);
   
   if (!validation.valid) {
@@ -163,7 +170,8 @@ const validateDateRange = (req, res, next) => {
 };
 
 /**
- * Validate wallet creation request
+ * Validate wallet creation request.
+ * Enforces name/address requirements and checks for existing registration in DB.
  */
 const validateWalletCreate = (req, res, next) => {
   const { name, walletAddress } = req.body;
@@ -190,7 +198,7 @@ const validateWalletCreate = (req, res, next) => {
     });
   }
 
-  // Validate Stellar address format
+  // Format check: Enforces 56-character 'G' address standard
   if (!isValidStellarPublicKey(walletAddress)) {
     return res.status(400).json({
       success: false,
@@ -202,7 +210,7 @@ const validateWalletCreate = (req, res, next) => {
     });
   }
 
-  // Check if wallet already exists
+  // Uniqueness check: Queries existing storage to prevent duplicates
   if (walletAddressExists(walletAddress)) {
     return res.status(409).json({
       success: false,
@@ -218,7 +226,8 @@ const validateWalletCreate = (req, res, next) => {
 };
 
 /**
- * Validate wallet ID parameter
+ * Validate wallet ID parameter.
+ * Checks URL parameters to ensure the referenced wallet exists.
  */
 const validateWalletId = (req, res, next) => {
   const { id } = req.params;
@@ -234,6 +243,7 @@ const validateWalletId = (req, res, next) => {
     });
   }
 
+  // Existence check: Prevents proceeding with operations on null/ghost objects
   if (!walletExists(id)) {
     return res.status(404).json({
       success: false,
@@ -249,7 +259,8 @@ const validateWalletId = (req, res, next) => {
 };
 
 /**
- * Validate Stellar public key in request body
+ * Factory function to validate Stellar public keys in request bodies.
+ * @param {string} fieldName - The key in req.body to validate (defaults to 'publicKey')
  */
 const validatePublicKey = (fieldName = 'publicKey') => {
   return (req, res, next) => {
@@ -266,6 +277,7 @@ const validatePublicKey = (fieldName = 'publicKey') => {
       });
     }
 
+    // Standard public key validation check
     if (!isValidStellarPublicKey(publicKey)) {
       return res.status(400).json({
         success: false,

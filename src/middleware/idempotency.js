@@ -1,11 +1,8 @@
 /**
  * Idempotency Middleware
- * Ensures donation requests are processed only once
- * 
- * Usage:
- *   router.post('/donations', requireIdempotency, handler);
- * 
- * Client must provide 'Idempotency-Key' header with unique identifier
+ * Intent: Guarantee that a single logical operation (like a Stellar donation) is 
+ * executed exactly once, even if the client retries the request due to network instability.
+ * Flow: Header Check -> Key Validation -> Cache Lookup -> (If New) Hash Request Body -> (If Cached) Return Response.
  */
 
 const IdempotencyService = require('../services/IdempotencyService');
@@ -13,17 +10,19 @@ const { ValidationError } = require('../utils/errors');
 const log = require('../utils/log');
 
 /**
- * Middleware to require and validate idempotency key
- * @param {Object} req - Express request
- * @param {Object} res - Express response
- * @param {Function} next - Next middleware
+ * Required Idempotency Check
+ * Intent: Force the client to provide a unique key for write operations.
+ * Flow: 
+ * 1. Extract 'Idempotency-Key' or 'x-idempotency-key' from headers.
+ * 2. Validate format (ensure it's not empty or malformed).
+ * 3. Query the IdempotencyService to see if this key has a successful cached response.
+ * 4. If found: Short-circuit the request and return the cached JSON immediately.
+ * 5. If not found: Generate a cryptographic hash of the body to detect "Key Reuse" (same key, different data).
  */
 async function requireIdempotency(req, res, next) {
   try {
-    // Extract idempotency key from header
     const idempotencyKey = req.headers['idempotency-key'] || req.headers['x-idempotency-key'];
 
-    // Validate key presence
     if (!idempotencyKey) {
       throw new ValidationError(
         'Idempotency-Key header is required for this operation',
@@ -32,7 +31,6 @@ async function requireIdempotency(req, res, next) {
       );
     }
 
-    // Validate key format
     const validation = IdempotencyService.validateKey(idempotencyKey);
     if (!validation.valid) {
       throw new ValidationError(
@@ -42,10 +40,11 @@ async function requireIdempotency(req, res, next) {
       );
     }
 
-    // Check if key already exists
     const existing = await IdempotencyService.get(idempotencyKey);
     
     if (existing) {
+      log.info('IDEMPOTENCY', 'Returning cached response', { idempotencyKey });
+      
       // Return cached response (idempotent behavior)
       return res.status(200).json({
         ...existing.response,
@@ -54,10 +53,8 @@ async function requireIdempotency(req, res, next) {
       });
     }
 
-    // Generate request hash for duplicate detection
     const requestHash = IdempotencyService.generateRequestHash(req.body);
 
-    // Check if same request was made with different key (potential duplicate)
     const duplicate = await IdempotencyService.findByHash(requestHash, idempotencyKey);
     
     if (duplicate) {
@@ -66,7 +63,6 @@ async function requireIdempotency(req, res, next) {
         newKey: idempotencyKey,
       });
       
-      // Return warning but allow processing (different key = different intent)
       req.idempotencyWarning = {
         message: 'Similar request detected with different idempotency key',
         originalKey: duplicate.idempotencyKey,
@@ -88,16 +84,13 @@ async function requireIdempotency(req, res, next) {
 }
 
 /**
- * Middleware to store idempotency response after successful processing
- * Should be used in the route handler after successful operation
- * 
- * @param {Object} req - Express request
- * @param {Object} response - Response data to cache
- * @returns {Promise<void>}
+ * Cache Storage Utility
+ * Intent: Store the successful outcome of an operation so it can be replayed later.
+ * Flow: Called by the controller after successful DB/Stellar operations -> Persists result to the idempotency table.
  */
 async function storeIdempotencyResponse(req, response) {
   if (!req.idempotency || !req.idempotency.isNew) {
-    return; // Already cached or not using idempotency
+    return; 
   }
 
   try {
@@ -108,32 +101,29 @@ async function storeIdempotencyResponse(req, response) {
       req.user?.id
     );
   } catch (error) {
-    // Log error but don't fail the request
     log.error('IDEMPOTENCY', 'Failed to store idempotent response', { error: error.message });
   }
 }
 
 /**
- * Optional middleware for endpoints that support but don't require idempotency
- * @param {Object} req - Express request
- * @param {Object} res - Express response
- * @param {Function} next - Next middleware
+ * Optional Idempotency Handler
+ * Intent: Allow flexible endpoints that support idempotency if a key is provided but don't require it.
+ * Flow: Check for header -> If present, run requireIdempotency logic -> If absent, proceed to next().
  */
 async function optionalIdempotency(req, res, next) {
   const idempotencyKey = req.headers['idempotency-key'] || req.headers['x-idempotency-key'];
 
   if (!idempotencyKey) {
-    // No idempotency key provided, continue without it
     return next();
   }
 
-  // If key is provided, use full idempotency logic
   return requireIdempotency(req, res, next);
 }
 
 /**
- * Cleanup middleware - removes expired idempotency records
- * Can be called periodically or on app startup
+ * Maintenance Utility
+ * Intent: Purge old idempotency records to prevent the database from growing indefinitely.
+ * Flow: Deletes records older than the configured retention period (e.g., 24 hours).
  */
 async function cleanupExpiredKeys() {
   try {

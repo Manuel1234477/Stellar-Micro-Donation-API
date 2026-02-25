@@ -2,25 +2,24 @@ let rateLimit;
 try {
   rateLimit = require('express-rate-limit');
 } catch (error) {
-  // Fallback for constrained test environments where optional deps are unavailable.
+  // Graceful fallback for environments missing the express-rate-limit dependency
   rateLimit = () => (req, res, next) => next();
 }
 
 /**
- * Rate limiter for donation creation endpoints
- * Prevents abuse and accidental overload of donation operations
- * 
- * Limits:
- * - 10 requests per minute per IP address
- * - Applies to POST /donations and POST /donations/send
- * 
- * Response when limit exceeded:
- * - HTTP 429 (Too Many Requests)
- * - JSON body with error details and retry information
+ * Donation Creation Limiter (Strict)
+ * Intent: Protect the Stellar network from spam and the local database from brute-force donation entries.
+ * Scope: Targeted at write-heavy POST operations for donations.
+ * * Flow & Configuration:
+ * 1. Window: 60-second sliding window.
+ * 2. Threshold: Max 10 requests.
+ * 3. Idempotency Bypass: If a request carries a valid Idempotency Key and the response is 
+ * already cached, the 'skip' function returns true, allowing the retry without consuming the quota.
+ * 4. Exhaustion: Responds with HTTP 429 and includes 'retryAfter' metadata to guide client retry logic.
  */
 const donationRateLimiter = rateLimit({
-  windowMs: 60 * 1000, // 1 minute window
-  max: 10, // Limit each IP to 10 requests per windowMs
+  windowMs: 60 * 1000, 
+  max: 10, 
   message: {
     success: false,
     error: {
@@ -28,8 +27,8 @@ const donationRateLimiter = rateLimit({
       message: 'Too many donation requests. Please try again later.',
     }
   },
-  standardHeaders: true, // Return rate limit info in `RateLimit-*` headers
-  legacyHeaders: false, // Disable `X-RateLimit-*` headers
+  standardHeaders: true, 
+  legacyHeaders: false, 
   handler: (req, res) => {
     res.status(429).json({
       success: false,
@@ -40,24 +39,28 @@ const donationRateLimiter = rateLimit({
       }
     });
   },
-  // Skip rate limiting for successful requests that were handled by idempotency
+  /**
+   * Optimization: Do not penalize clients for retrying transactions that have 
+   * already been processed (Idempotency check).
+   */
   skip: (req) => {
-    // If request has idempotency response cached, it's a duplicate and shouldn't count
     return req.idempotency && req.idempotency.cached;
   }
 });
 
 /**
- * Rate limiter for donation verification endpoint
- * More lenient than creation since verification is read-heavy
- * 
- * Limits:
- * - 30 requests per minute per IP address
- * - Applies to POST /donations/verify
+ * Verification Endpoint Limiter (Moderate)
+ * Intent: Prevent excessive polling of the Stellar Horizon API through our verify endpoint.
+ * Scope: Targeted at POST /donations/verify.
+ * * Flow & Configuration:
+ * 1. Threshold: Higher limit (30 req/min) to accommodate legitimate verification polling 
+ * while still preventing denial-of-service attempts.
+ * 2. Header Injection: Returns standard RateLimit headers so frontend clients can implement 
+ * proactive throttling.
  */
 const verificationRateLimiter = rateLimit({
-  windowMs: 60 * 1000, // 1 minute window
-  max: 30, // Limit each IP to 30 requests per windowMs
+  windowMs: 60 * 1000, 
+  max: 30, 
   message: {
     success: false,
     error: {
@@ -108,6 +111,8 @@ function createRateLimiter(options = {}) {
 
 module.exports = {
   donationRateLimiter,
+  verificationRateLimiter
+};
   verificationRateLimiter,
   createRateLimiter
 };
