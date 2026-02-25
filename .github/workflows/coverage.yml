@@ -27,7 +27,6 @@ jobs:
       - name: Run tests with coverage
         run: npm run test:coverage:ci
         env:
-          NODE_ENV: test
           CI: true
           MOCK_STELLAR: true
           API_KEYS: test-key-1,test-key-2

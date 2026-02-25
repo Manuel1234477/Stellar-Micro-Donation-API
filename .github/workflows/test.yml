@@ -29,6 +29,5 @@ jobs:
       - name: Run test suite
         run: npm test
         env:
-          NODE_ENV: test
           MOCK_STELLAR: true
           API_KEYS: test-key-1,test-key-2
