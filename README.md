@@ -21,6 +21,7 @@ A Node.js/Express API for managing micro-donations on the Stellar blockchain net
 - **Analytics**: Get donation statistics and summaries
 - **API Key Rotation**: Zero-downtime key rotation with versioning and graceful deprecation
 - **Mock Mode**: Development mode with simulated Stellar operations
+- **Debug Mode**: Configurable verbose logging for local development troubleshooting
 - **Failure Simulation**: Comprehensive network failure testing for robust error handling
 - **Automated Scheduler**: Background service for executing recurring donations
 - **Rate Limiting**: Protection against abuse with configurable request limits on donation endpoints
@@ -106,6 +107,19 @@ For development with auto-reload:
 ```bash
 npm run dev
 ```
+
+### Debug Mode
+
+Enable verbose logging for troubleshooting:
+```bash
+# Add to .env file
+DEBUG_MODE=true
+
+# Start server with debug logging
+npm start
+```
+
+See [Debug Mode Documentation](docs/features/DEBUG_MODE.md) for details.
 
 ## 📡 API Endpoints
 

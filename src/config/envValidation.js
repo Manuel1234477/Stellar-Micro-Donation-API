@@ -73,6 +73,15 @@ const validateEnvironment = () => {
     }
   }
 
+  if (
+    process.env.DEBUG_MODE &&
+    !isValidBooleanString(process.env.DEBUG_MODE)
+  ) {
+    errors.push(
+      `DEBUG_MODE must be either "true" or "false". Received: "${process.env.DEBUG_MODE}".`,
+    );
+  }
+
   if (errors.length > 0) {
     const requiredList = getRequiredEnvVars()
       .map((name) => `- ${name}`)

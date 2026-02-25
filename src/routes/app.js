@@ -86,6 +86,17 @@ async function startServer() {
     log.info('APP', 'Stellar Micro-Donation API running', { port: PORT });
     log.info('APP', 'Active network configured', { network: config.network });
     log.info('APP', 'Health check endpoint ready', { url: `http://localhost:${PORT}/health` });
+    
+    if (log.isDebugMode) {
+      log.debug('APP', 'Debug mode enabled - verbose logging active');
+      log.debug('APP', 'Configuration loaded', {
+        port: PORT,
+        network: config.network,
+        horizonUrl: config.horizonUrl,
+        mockStellar: process.env.MOCK_STELLAR === 'true',
+        nodeEnv: process.env.NODE_ENV
+      });
+    }
 
     // Start the recurring donation scheduler
     recurringDonationScheduler.start();

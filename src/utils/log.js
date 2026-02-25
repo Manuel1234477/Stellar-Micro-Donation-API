@@ -1,5 +1,7 @@
 const { sanitizeForLogging } = require('./sanitizer');
 
+const isDebugMode = process.env.DEBUG_MODE === 'true';
+
 function safeStringify(value) {
   try {
     // Sanitize before stringifying to prevent log injection
@@ -38,8 +40,16 @@ function error(scope, message, meta) {
   console.error(formatMessage('ERROR', scope, message, meta));
 }
 
+function debug(scope, message, meta) {
+  if (isDebugMode) {
+    console.log(formatMessage('DEBUG', scope, message, meta));
+  }
+}
+
 module.exports = {
   info,
   warn,
   error,
+  debug,
+  isDebugMode,
 };

@@ -128,6 +128,20 @@ class Logger {
       log.info('REQUEST_LOGGER', 'Request payload', logData.request);
       log.info('REQUEST_LOGGER', 'Response payload', logData.response);
     }
+
+    // Log additional debug details in debug mode
+    if (log.isDebugMode) {
+      log.debug('REQUEST_LOGGER', 'Request details', {
+        headers: this.sanitize(logData.request?.headers),
+        query: logData.request?.query,
+        params: logData.request?.params,
+        ip: logData.request?.ip
+      });
+      log.debug('REQUEST_LOGGER', 'Response details', {
+        statusCode,
+        duration: `${duration}ms`
+      });
+    }
   }
 
   /**

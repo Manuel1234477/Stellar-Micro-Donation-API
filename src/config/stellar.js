@@ -41,6 +41,10 @@ const getNetworkConfig = () => {
 
   // If custom HORIZON_URL is provided, use it with the specified network
   if (process.env.HORIZON_URL) {
+    log.debug('STELLAR_CONFIG', 'Using custom Horizon URL', {
+      network: networkName,
+      horizonUrl: process.env.HORIZON_URL
+    });
     return {
       network: networkName,
       horizonUrl: process.env.HORIZON_URL,
