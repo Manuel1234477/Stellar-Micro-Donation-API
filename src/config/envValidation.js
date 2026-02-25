@@ -1,4 +1,4 @@
-const VALID_STELLAR_NETWORKS = ["testnet", "mainnet", "futurenet"];
+const VALID_STELLAR_NETWORKS = require('../constants').VALID_STELLAR_NETWORKS;
 
 const getRequiredEnvVars = () => {
   const required = ["API_KEYS"];
@@ -71,6 +71,15 @@ const validateEnvironment = () => {
         `HORIZON_URL must be a valid URL. Received: "${process.env.HORIZON_URL}".`,
       );
     }
+  }
+
+  if (
+    process.env.DEBUG_MODE &&
+    !isValidBooleanString(process.env.DEBUG_MODE)
+  ) {
+    errors.push(
+      `DEBUG_MODE must be either "true" or "false". Received: "${process.env.DEBUG_MODE}".`,
+    );
   }
 
   if (errors.length > 0) {

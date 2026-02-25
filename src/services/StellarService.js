@@ -5,12 +5,13 @@
 
 const StellarSdk = require('stellar-sdk');
 const StellarErrorHandler = require('../utils/stellarErrorHandler');
+const { STELLAR_NETWORKS, HORIZON_URLS } = require('../constants');
 const log = require('../utils/log');
 
 class StellarService {
   constructor(config = {}) {
-    this.network = config.network || 'testnet';
-    this.horizonUrl = config.horizonUrl || 'https://horizon-testnet.stellar.org';
+    this.network = config.network || STELLAR_NETWORKS.TESTNET;
+    this.horizonUrl = config.horizonUrl || HORIZON_URLS.TESTNET;
     this.serviceSecretKey = config.serviceSecretKey;
 
     this.server = new StellarSdk.Horizon.Server(this.horizonUrl);

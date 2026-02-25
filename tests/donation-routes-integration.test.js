@@ -12,7 +12,7 @@ const express = require('express');
 const donationRouter = require('../src/routes/donation');
 const Transaction = require('../src/routes/models/transaction');
 const { getStellarService } = require('../src/config/stellar');
-const { attachUserRole } = require('../src/middleware/rbacMiddleware');
+const { attachUserRole } = require('../src/middleware/rbac');
 
 // Create test app
 function createTestApp() {

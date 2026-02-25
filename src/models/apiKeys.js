@@ -1,15 +1,12 @@
 const db = require('../utils/database');
 const crypto = require('crypto');
 const log = require('../utils/log');
+const { API_KEY_STATUS } = require('../constants');
 
 /**
  * API Key status constants
  */
-const KEY_STATUS = {
-  ACTIVE: 'active',
-  DEPRECATED: 'deprecated',
-  REVOKED: 'revoked'
-};
+const KEY_STATUS = API_KEY_STATUS;
 
 /**
  * Initialize API keys table

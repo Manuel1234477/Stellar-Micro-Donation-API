@@ -1,9 +1,9 @@
 const express = require('express');
 const router = express.Router();
 const apiKeysModel = require('../models/apiKeys');
-const { requireAdmin } = require('../middleware/rbacMiddleware');
+const { requireAdmin } = require('../middleware/rbac');
 const { ValidationError } = require('../utils/errors');
-const log = require('../utils/log');
+const { validateNonEmptyString, validateRole, validateInteger } = require('../utils/validationHelpers');
 
 /**
  * POST /api/v1/api-keys
@@ -13,16 +13,21 @@ router.post('/', requireAdmin(), async (req, res, next) => {
   try {
     const { name, role = 'user', expiresInDays, metadata } = req.body;
 
-    if (!name || typeof name !== 'string' || name.trim().length === 0) {
-      throw new ValidationError('Name is required');
+    const nameValidation = validateNonEmptyString(name, 'Name');
+    if (!nameValidation.valid) {
+      throw new ValidationError(nameValidation.error);
     }
 
-    if (!['admin', 'user', 'guest'].includes(role)) {
-      throw new ValidationError('Role must be one of: admin, user, guest');
+    const roleValidation = validateRole(role);
+    if (!roleValidation.valid) {
+      throw new ValidationError(roleValidation.error);
     }
 
-    if (expiresInDays !== undefined && (typeof expiresInDays !== 'number' || expiresInDays <= 0)) {
-      throw new ValidationError('expiresInDays must be a positive number');
+    if (expiresInDays !== undefined) {
+      const expiresValidation = validateInteger(expiresInDays, { min: 1 });
+      if (!expiresValidation.valid) {
+        throw new ValidationError(`Invalid expiresInDays: ${expiresValidation.error}`);
+      }
     }
 
     const keyInfo = await apiKeysModel.createApiKey({
@@ -81,13 +86,13 @@ router.get('/', requireAdmin(), async (req, res, next) => {
  */
 router.post('/:id/deprecate', requireAdmin(), async (req, res, next) => {
   try {
-    const keyId = parseInt(req.params.id, 10);
+    const keyIdValidation = validateInteger(req.params.id, { min: 1 });
     
-    if (isNaN(keyId)) {
-      throw new ValidationError('Invalid key ID');
+    if (!keyIdValidation.valid) {
+      throw new ValidationError(`Invalid key ID: ${keyIdValidation.error}`);
     }
 
-    const success = await apiKeysModel.deprecateApiKey(keyId);
+    const success = await apiKeysModel.deprecateApiKey(keyIdValidation.value);
 
     if (!success) {
       return res.status(404).json({
@@ -114,13 +119,13 @@ router.post('/:id/deprecate', requireAdmin(), async (req, res, next) => {
  */
 router.delete('/:id', requireAdmin(), async (req, res, next) => {
   try {
-    const keyId = parseInt(req.params.id, 10);
+    const keyIdValidation = validateInteger(req.params.id, { min: 1 });
     
-    if (isNaN(keyId)) {
-      throw new ValidationError('Invalid key ID');
+    if (!keyIdValidation.valid) {
+      throw new ValidationError(`Invalid key ID: ${keyIdValidation.error}`);
     }
 
-    const success = await apiKeysModel.revokeApiKey(keyId);
+    const success = await apiKeysModel.revokeApiKey(keyIdValidation.value);
 
     if (!success) {
       return res.status(404).json({

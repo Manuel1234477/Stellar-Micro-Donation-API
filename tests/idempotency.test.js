@@ -6,7 +6,7 @@
 const IdempotencyService = require('../src/services/IdempotencyService');
 const Database = require('../src/utils/database');
 
-describe('Idempotency Service', () => {
+describe('Idempotency Service - Unit Tests', () => {
   beforeAll(async () => {
     // Create idempotency table for testing
     await Database.run(`
@@ -27,8 +27,8 @@ describe('Idempotency Service', () => {
     await Database.run('DELETE FROM idempotency_keys');
   });
 
-  describe('Key Validation', () => {
-    it('should validate correct idempotency key', () => {
+  describe('Idempotency Key Validation', () => {
+    it('should accept valid idempotency key format', () => {
       const validation = IdempotencyService.validateKey('valid-key-1234567890');
       expect(validation.valid).toBe(true);
     });
@@ -89,8 +89,8 @@ describe('Idempotency Service', () => {
     });
   });
 
-  describe('Store and Retrieve', () => {
-    it('should store and retrieve idempotency record', async () => {
+  describe('Storage and Retrieval', () => {
+    it('should store and retrieve idempotency record successfully', async () => {
       const key = 'test-key-1234567890';
       const hash = 'test-hash';
       const response = { success: true, data: { id: 1 } };
@@ -175,8 +175,8 @@ describe('Idempotency Service', () => {
     });
   });
 
-  describe('Cleanup', () => {
-    it('should delete expired records', async () => {
+  describe('Expired Records Cleanup', () => {
+    it('should delete expired records and preserve active ones', async () => {
       // Add expired record
       const expiredKey = 'expired-1234567890';
       const pastExpiry = new Date(Date.now() - 1000).toISOString();
@@ -234,8 +234,8 @@ describe('Idempotency Service', () => {
     });
   });
 
-  describe('Delete', () => {
-    it('should delete specific key', async () => {
+  describe('Record Deletion', () => {
+    it('should delete specific idempotency key successfully', async () => {
       const key = 'delete-test-1234567890';
       await IdempotencyService.store(key, 'hash', {}, 1);
       
