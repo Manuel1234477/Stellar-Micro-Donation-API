@@ -7,6 +7,8 @@ const streamRoutes = require('./stream');
 const transactionRoutes = require('./transaction');
 const apiKeysRoutes = require('./apiKeys');
 const recurringDonationScheduler = require('../services/RecurringDonationScheduler');
+const TransactionReconciliationService = require('../services/TransactionReconciliationService');
+const { getStellarService } = require('../config/stellar');
 const { errorHandler, notFoundHandler } = require('../middleware/errorHandler');
 const logger = require('../middleware/logger');
 const { attachUserRole } = require('../middleware/rbac');
@@ -17,6 +19,10 @@ const log = require('../utils/log');
 const requestId = require('../middleware/requestId');
 
 const app = express();
+
+// Initialize reconciliation service
+const stellarService = getStellarService();
+const reconciliationService = new TransactionReconciliationService(stellarService);
 
 // Middleware
 app.use(express.json());
@@ -49,6 +55,10 @@ app.get('/health', async (req, res) => {
       timestamp: new Date().toISOString(),
       dependencies: {
         database: 'ok'
+      },
+      services: {
+        recurringDonations: recurringDonationScheduler.getStatus(),
+        reconciliation: reconciliationService.getStatus()
       }
     });
   } catch (error) {
@@ -71,6 +81,34 @@ app.get('/abuse-signals', require('../middleware/rbac').requireAdmin(), (req, re
     data: abuseDetector.getStats(),
     timestamp: new Date().toISOString()
   });
+});
+
+// Manual reconciliation trigger (admin only)
+app.post('/reconcile', require('../middleware/rbac').requireAdmin(), async (req, res) => {
+  try {
+    if (reconciliationService.reconciliationInProgress) {
+      return res.status(409).json({
+        success: false,
+        error: 'Reconciliation already in progress'
+      });
+    }
+
+    // Trigger reconciliation without waiting
+    reconciliationService.reconcile().catch(error => {
+      log.error('APP', 'Manual reconciliation failed', { error: error.message });
+    });
+
+    res.json({
+      success: true,
+      message: 'Reconciliation started',
+      timestamp: new Date().toISOString()
+    });
+  } catch (error) {
+    res.status(500).json({
+      success: false,
+      error: error.message
+    });
+  }
 });
 
 // 404 handler (must be after all routes)
@@ -118,6 +156,9 @@ async function startServer() {
 
     // Start the recurring donation scheduler
     recurringDonationScheduler.start();
+    
+    // Start the transaction reconciliation service
+    reconciliationService.start();
   });
 }
 
