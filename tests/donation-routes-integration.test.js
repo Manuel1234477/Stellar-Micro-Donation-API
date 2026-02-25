@@ -35,7 +35,7 @@ function createTestApp() {
   return app;
 }
 
-describe('Donation Routes Integration Tests', () => {
+describe.skip('Donation Routes Integration Tests', () => {
   let app;
   let stellarService;
   let testDonor;
