@@ -5,15 +5,15 @@
 
 const MockStellarService = require('../src/services/MockStellarService');
 
-describe('Memo Integration Tests', () => {
+describe('Memo Integration - End-to-End Tests', () => {
   let stellarService;
 
   beforeEach(() => {
     stellarService = new MockStellarService();
   });
 
-  describe('Donation with memo', () => {
-    test('should create donation with valid memo', async () => {
+  describe('Donation with Memo', () => {
+    test('should create donation with valid memo text', async () => {
       // Create wallets
       const donor = await stellarService.createWallet();
       const recipient = await stellarService.createWallet();
@@ -139,8 +139,8 @@ describe('Memo Integration Tests', () => {
     });
   });
 
-  describe('Memo edge cases', () => {
-    test('should handle maximum length memo (28 bytes)', async () => {
+  describe('Memo Edge Cases', () => {
+    test('should handle maximum length memo of 28 bytes', async () => {
       const donor = await stellarService.createWallet();
       const recipient = await stellarService.createWallet();
 

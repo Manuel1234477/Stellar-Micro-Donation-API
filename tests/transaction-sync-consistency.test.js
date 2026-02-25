@@ -3,7 +3,7 @@ const Transaction = require('../src/routes/models/transaction');
 
 jest.mock('../src/routes/models/transaction');
 
-describe('Transaction Sync Consistency Checks', () => {
+describe('Transaction Sync - Consistency Checks', () => {
   let syncService;
   let mockServer;
 
@@ -22,7 +22,8 @@ describe('Transaction Sync Consistency Checks', () => {
     jest.clearAllMocks();
   });
 
-  test('should detect missing local transactions', async () => {
+  describe('Missing Transaction Detection', () => {
+    test('should identify missing local transactions not in database', async () => {
     const publicKey = 'GTEST123';
     const horizonTxs = [
       { id: 'tx1', ledger_attr: 12345, created_at: '2024-02-20T10:00:00Z', successful: true, source_account: publicKey },
@@ -40,7 +41,8 @@ describe('Transaction Sync Consistency Checks', () => {
     expect(report.inconsistencies[0].type).toBe('MISSING_LOCAL');
   });
 
-  test('should detect orphaned local transactions', async () => {
+  describe('Orphaned Transaction Detection', () => {
+    test('should identify orphaned local transactions not on blockchain', async () => {
     const publicKey = 'GTEST123';
     const horizonTxs = [
       { id: 'tx1', ledger_attr: 12345, created_at: '2024-02-20T10:00:00Z', successful: true, source_account: publicKey }
@@ -58,7 +60,8 @@ describe('Transaction Sync Consistency Checks', () => {
     expect(orphaned).toHaveLength(1);
   });
 
-  test('should detect status mismatches', async () => {
+  describe('Status Mismatch Detection', () => {
+    test('should identify status mismatches between local and blockchain', async () => {
     const publicKey = 'GTEST123';
     const horizonTxs = [
       { id: 'tx1', ledger_attr: 12345, created_at: '2024-02-20T10:00:00Z', successful: true, source_account: publicKey }
@@ -75,7 +78,8 @@ describe('Transaction Sync Consistency Checks', () => {
     expect(statusMismatch).toHaveLength(1);
   });
 
-  test('should reconcile inconsistencies', async () => {
+  describe('Inconsistency Reconciliation', () => {
+    test('should reconcile inconsistencies and update local state', async () => {
     const inconsistencies = [
       { type: 'STATUS_MISMATCH', data: { localId: '1', stellarTxId: 'tx1', localStatus: 'pending', onChainStatus: 'confirmed' } }
     ];
@@ -88,7 +92,8 @@ describe('Transaction Sync Consistency Checks', () => {
     expect(Transaction.updateStatus).toHaveBeenCalled();
   });
 
-  test('should perform full sync with consistency check', async () => {
+  describe('Full Sync with Consistency Check', () => {
+    test('should perform full sync with consistency check and reporting', async () => {
     const publicKey = 'GTEST123';
     
     mockServer.call.mockResolvedValue({

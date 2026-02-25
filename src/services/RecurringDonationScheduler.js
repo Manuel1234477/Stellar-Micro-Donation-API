@@ -1,5 +1,6 @@
 const Database = require('../utils/database');
 const MockStellarService = require('./MockStellarService');
+const { SCHEDULE_STATUS, DONATION_FREQUENCIES } = require('../constants');
 const log = require('../utils/log');
 
 class RecurringDonationScheduler {
@@ -84,9 +85,9 @@ class RecurringDonationScheduler {
          FROM recurring_donations rd
          JOIN users donor ON rd.donorId = donor.id
          JOIN users recipient ON rd.recipientId = recipient.id
-         WHERE rd.status = 'active' 
+         WHERE rd.status = ? 
          AND rd.nextExecutionDate <= ?`,
-        [now]
+        [SCHEDULE_STATUS.ACTIVE, now]
       );
 
       if (dueSchedules.length > 0) {
@@ -341,13 +342,13 @@ class RecurringDonationScheduler {
     const nextDate = new Date(currentDate);
     
     switch (frequency.toLowerCase()) {
-      case 'daily':
+      case DONATION_FREQUENCIES.DAILY:
         nextDate.setDate(nextDate.getDate() + 1);
         break;
-      case 'weekly':
+      case DONATION_FREQUENCIES.WEEKLY:
         nextDate.setDate(nextDate.getDate() + 7);
         break;
-      case 'monthly':
+      case DONATION_FREQUENCIES.MONTHLY:
         nextDate.setMonth(nextDate.getMonth() + 1);
         break;
       default:

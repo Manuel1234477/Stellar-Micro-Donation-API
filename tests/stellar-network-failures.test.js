@@ -312,7 +312,7 @@ describe('Stellar Network Failure Simulations', () => {
       const donor = await stellarService.createWallet();
       const recipient = await stellarService.createWallet();
 
-      stellarService.enableFailureSimulation('network_error', 0.5);
+      stellarService.enableFailureSimulation('network_error', 1.0); // Use 1.0 to ensure failures
 
       const operations = [
         () => stellarService.fundTestnetWallet(donor.publicKey),

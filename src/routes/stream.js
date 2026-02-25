@@ -1,8 +1,10 @@
 const express = require('express');
 const router = express.Router();
 const Database = require('../utils/database');
-const { checkPermission } = require('../middleware/rbacMiddleware');
+const { checkPermission } = require('../middleware/rbac');
 const { PERMISSIONS } = require('../utils/permissions');
+const { VALID_FREQUENCIES, SCHEDULE_STATUS } = require('../constants');
+const { validateRequiredFields, validateFloat, validateEnum } = require('../utils/validationHelpers');
 const log = require('../utils/log');
 
 /**
@@ -14,27 +16,33 @@ router.post('/create', checkPermission(PERMISSIONS.STREAM_CREATE), async (req, r
     const { donorPublicKey, recipientPublicKey, amount, frequency } = req.body;
 
     // Validate required fields
-    if (!donorPublicKey || !recipientPublicKey || !amount || !frequency) {
+    const requiredValidation = validateRequiredFields(
+      { donorPublicKey, recipientPublicKey, amount, frequency },
+      ['donorPublicKey', 'recipientPublicKey', 'amount', 'frequency']
+    );
+    
+    if (!requiredValidation.valid) {
       return res.status(400).json({
         success: false,
-        error: 'Missing required fields: donorPublicKey, recipientPublicKey, amount, frequency'
+        error: `Missing required fields: ${requiredValidation.missing.join(', ')}`
       });
     }
 
     // Validate amount
-    if (isNaN(parseFloat(amount)) || parseFloat(amount) <= 0) {
+    const amountValidation = validateFloat(amount);
+    if (!amountValidation.valid) {
       return res.status(400).json({
         success: false,
-        error: 'Amount must be a positive number'
+        error: `Invalid amount: ${amountValidation.error}`
       });
     }
 
     // Validate frequency
-    const validFrequencies = ['daily', 'weekly', 'monthly'];
-    if (!validFrequencies.includes(frequency.toLowerCase())) {
+    const frequencyValidation = validateEnum(frequency, VALID_FREQUENCIES, { caseInsensitive: true });
+    if (!frequencyValidation.valid) {
       return res.status(400).json({
         success: false,
-        error: 'Frequency must be one of: daily, weekly, monthly'
+        error: frequencyValidation.error
       });
     }
 
@@ -93,7 +101,7 @@ router.post('/create', checkPermission(PERMISSIONS.STREAM_CREATE), async (req, r
       `INSERT INTO recurring_donations 
        (donorId, recipientId, amount, frequency, nextExecutionDate, status) 
        VALUES (?, ?, ?, ?, ?, ?)`,
-      [donor.id, recipient.id, parseFloat(amount), frequency.toLowerCase(), nextExecutionDate.toISOString(), 'active']
+      [donor.id, recipient.id, parseFloat(amount), frequency.toLowerCase(), nextExecutionDate.toISOString(), SCHEDULE_STATUS.ACTIVE]
     );
 
     // Fetch the created schedule

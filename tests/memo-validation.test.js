@@ -5,9 +5,9 @@
 
 const MemoValidator = require('../src/utils/memoValidator');
 
-describe('MemoValidator', () => {
-  describe('validate()', () => {
-    test('should accept empty memo', () => {
+describe('MemoValidator - Unit Tests', () => {
+  describe('Memo Validation', () => {
+    test('should accept empty memo as valid', () => {
       const result = MemoValidator.validate('');
       expect(result.valid).toBe(true);
       expect(result.sanitized).toBe('');
@@ -77,8 +77,8 @@ describe('MemoValidator', () => {
     });
   });
 
-  describe('sanitize()', () => {
-    test('should return empty string for null/undefined', () => {
+  describe('Memo Sanitization', () => {
+    test('should return empty string for null or undefined input', () => {
       expect(MemoValidator.sanitize(null)).toBe('');
       expect(MemoValidator.sanitize(undefined)).toBe('');
     });
@@ -96,8 +96,8 @@ describe('MemoValidator', () => {
     });
   });
 
-  describe('isEmpty()', () => {
-    test('should return true for empty/null/undefined', () => {
+  describe('Empty Memo Check', () => {
+    test('should return true for empty, null, or whitespace-only memo', () => {
       expect(MemoValidator.isEmpty('')).toBe(true);
       expect(MemoValidator.isEmpty(null)).toBe(true);
       expect(MemoValidator.isEmpty(undefined)).toBe(true);
@@ -109,8 +109,8 @@ describe('MemoValidator', () => {
     });
   });
 
-  describe('truncate()', () => {
-    test('should truncate memo exceeding 28 bytes', () => {
+  describe('Memo Truncation', () => {
+    test('should truncate memo exceeding 28-byte limit', () => {
       const memo = 'a'.repeat(50);
       const truncated = MemoValidator.truncate(memo);
       expect(Buffer.byteLength(truncated, 'utf8')).toBeLessThanOrEqual(28);
@@ -129,8 +129,8 @@ describe('MemoValidator', () => {
     });
   });
 
-  describe('getMaxLength()', () => {
-    test('should return 28', () => {
+  describe('Maximum Length Constant', () => {
+    test('should return 28 as maximum memo length', () => {
       expect(MemoValidator.getMaxLength()).toBe(28);
     });
   });

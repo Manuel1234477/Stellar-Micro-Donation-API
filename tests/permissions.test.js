@@ -1,33 +1,33 @@
 const { hasPermission, getPermissionsByRole, roleExists } = require('../src/models/permissions');
 const { PERMISSIONS, ROLES, isValidPermission, permissionsMatch } = require('../src/utils/permissions');
 
-describe('Permission System Tests', () => {
-  describe('Role Permissions', () => {
-    test('admin should have all permissions', () => {
+describe('Permission System - Unit Tests', () => {
+  describe('Role-Based Permissions', () => {
+    test('should grant admin role all permissions', () => {
       expect(hasPermission(ROLES.ADMIN, PERMISSIONS.DONATIONS_CREATE)).toBe(true);
       expect(hasPermission(ROLES.ADMIN, PERMISSIONS.WALLETS_DELETE)).toBe(true);
       expect(hasPermission(ROLES.ADMIN, PERMISSIONS.STATS_ADMIN)).toBe(true);
       expect(hasPermission(ROLES.ADMIN, 'any:permission')).toBe(true);
     });
 
-    test('user should have limited permissions', () => {
+    test('should grant user role limited permissions', () => {
       expect(hasPermission(ROLES.USER, PERMISSIONS.DONATIONS_CREATE)).toBe(true);
       expect(hasPermission(ROLES.USER, PERMISSIONS.DONATIONS_READ)).toBe(true);
       expect(hasPermission(ROLES.USER, PERMISSIONS.WALLETS_READ)).toBe(true);
       expect(hasPermission(ROLES.USER, PERMISSIONS.STREAM_CREATE)).toBe(true);
     });
 
-    test('user should NOT have admin permissions', () => {
+    test('should deny user role admin-only permissions', () => {
       expect(hasPermission(ROLES.USER, PERMISSIONS.WALLETS_DELETE)).toBe(false);
       expect(hasPermission(ROLES.USER, PERMISSIONS.STATS_ADMIN)).toBe(false);
     });
 
-    test('guest should have minimal permissions', () => {
+    test('should grant guest role read-only permissions', () => {
       expect(hasPermission(ROLES.GUEST, PERMISSIONS.DONATIONS_READ)).toBe(true);
       expect(hasPermission(ROLES.GUEST, PERMISSIONS.STATS_READ)).toBe(true);
     });
 
-    test('guest should NOT have write permissions', () => {
+    test('should deny guest role write permissions', () => {
       expect(hasPermission(ROLES.GUEST, PERMISSIONS.DONATIONS_CREATE)).toBe(false);
       expect(hasPermission(ROLES.GUEST, PERMISSIONS.WALLETS_CREATE)).toBe(false);
       expect(hasPermission(ROLES.GUEST, PERMISSIONS.STREAM_CREATE)).toBe(false);
@@ -77,13 +77,13 @@ describe('Permission System Tests', () => {
     });
   });
 
-  describe('Get Permissions by Role', () => {
-    test('should return correct permissions for admin', () => {
+  describe('Permission Retrieval by Role', () => {
+    test('should return all permissions for admin role', () => {
       const permissions = getPermissionsByRole(ROLES.ADMIN);
       expect(permissions).toContain('*');
     });
 
-    test('should return correct permissions for user', () => {
+    test('should return limited permissions for user role', () => {
       const permissions = getPermissionsByRole(ROLES.USER);
       expect(permissions).toContain('donations:create');
       expect(permissions).toContain('donations:read');
@@ -91,7 +91,7 @@ describe('Permission System Tests', () => {
       expect(permissions).not.toContain('*');
     });
 
-    test('should return correct permissions for guest', () => {
+    test('should return read-only permissions for guest role', () => {
       const permissions = getPermissionsByRole(ROLES.GUEST);
       expect(permissions).toContain('donations:read');
       expect(permissions).toContain('stats:read');

@@ -1,8 +1,9 @@
 const StellarSdk = require('stellar-sdk');
 const Transaction = require('../routes/models/transaction');
+const { HORIZON_URLS } = require('../constants');
 
 class TransactionSyncService {
-  constructor(horizonUrl = 'https://horizon-testnet.stellar.org') {
+  constructor(horizonUrl = HORIZON_URLS.TESTNET) {
     this.server = new StellarSdk.Horizon.Server(horizonUrl);
   }
 

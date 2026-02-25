@@ -30,6 +30,10 @@ const PERMISSIONS = {
   STATS_READ: 'stats:read',
   STATS_ADMIN: 'stats:admin',
   
+  // Transaction permissions
+  TRANSACTIONS_READ: 'transactions:read',
+  TRANSACTIONS_SYNC: 'transactions:sync',
+  
   // Admin permissions
   ADMIN_ALL: '*'
 };

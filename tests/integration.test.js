@@ -6,7 +6,7 @@
 
 const { getStellarService } = require('../src/config/stellar');
 
-describe('Integration Tests with Mock Stellar', () => {
+describe('Integration Tests - Mock Stellar Service', () => {
   let stellarService;
 
   beforeEach(() => {
@@ -15,8 +15,8 @@ describe('Integration Tests with Mock Stellar', () => {
     stellarService = getStellarService();
   });
 
-  describe('Wallet Management Flow', () => {
-    test('should complete full wallet creation and funding flow', async () => {
+  describe('Wallet Management', () => {
+    test('should create wallet and fund it successfully', async () => {
       // Create wallet
       const wallet = await stellarService.createWallet();
       expect(wallet.publicKey).toBeDefined();
@@ -35,8 +35,8 @@ describe('Integration Tests with Mock Stellar', () => {
     });
   });
 
-  describe('Donation Flow', () => {
-    test('should complete full donation workflow', async () => {
+  describe('Donation Workflow', () => {
+    test('should send donation and update balances correctly', async () => {
       // Setup: Create and fund two wallets
       const donor = await stellarService.createWallet();
       const recipient = await stellarService.createWallet();
@@ -73,8 +73,8 @@ describe('Integration Tests with Mock Stellar', () => {
     });
   });
 
-  describe('Real-time Streaming', () => {
-    test('should stream donation transactions', async () => {
+  describe('Transaction Streaming', () => {
+    test('should receive transactions via stream listener', async () => {
       const donor = await stellarService.createWallet();
       const recipient = await stellarService.createWallet();
 
@@ -107,8 +107,8 @@ describe('Integration Tests with Mock Stellar', () => {
     });
   });
 
-  describe('Multiple Donations', () => {
-    test('should handle multiple sequential donations', async () => {
+  describe('Sequential Donations', () => {
+    test('should process multiple donations and maintain correct balances', async () => {
       const donor = await stellarService.createWallet();
       const recipient1 = await stellarService.createWallet();
       const recipient2 = await stellarService.createWallet();
@@ -154,8 +154,8 @@ describe('Integration Tests with Mock Stellar', () => {
     });
   });
 
-  describe('Error Scenarios', () => {
-    test('should handle insufficient balance error', async () => {
+  describe('Error Handling', () => {
+    test('should reject donation when balance is insufficient', async () => {
       const donor = await stellarService.createWallet();
       const recipient = await stellarService.createWallet();
 
@@ -172,22 +172,21 @@ describe('Integration Tests with Mock Stellar', () => {
       ).rejects.toThrow('Insufficient balance');
     });
 
-    test('should handle invalid wallet error', async () => {
+    test('should reject request for non-existent wallet', async () => {
       await expect(
         stellarService.getBalance('GINVALIDKEY123456789012345678901234567890123456')
       ).rejects.toThrow();
     });
   });
 
-  describe('Mock Service Configuration', () => {
-    test('should use mock service when MOCK_STELLAR=true', () => {
+  describe('Service Configuration', () => {
+    test('should return MockStellarService when MOCK_STELLAR is enabled', () => {
       process.env.MOCK_STELLAR = 'true';
       const service = getStellarService();
       expect(service.constructor.name).toBe('MockStellarService');
     });
 
-    test.skip('should use real service when MOCK_STELLAR=false', () => {
-      // Skipped: setup.js forces MOCK_STELLAR=true for all tests
+    test('should return StellarService when MOCK_STELLAR is disabled', () => {
       process.env.MOCK_STELLAR = 'false';
       const service = getStellarService();
       expect(service.constructor.name).toBe('StellarService');

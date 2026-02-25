@@ -7,6 +7,7 @@
 require('dotenv').config({ path: require('path').join(__dirname, '../../.env') });
 const path = require('path');
 const { validateEnvironment } = require('./envValidation');
+const { STELLAR_NETWORKS, HORIZON_URLS } = require('../constants');
 const log = require('../utils/log');
 
 validateEnvironment();
@@ -16,17 +17,17 @@ const MockStellarService = require('../services/MockStellarService');
 
 // Network presets for easy switching
 const NETWORK_PRESETS = {
-  testnet: {
-    network: 'testnet',
-    horizonUrl: 'https://horizon-testnet.stellar.org',
+  [STELLAR_NETWORKS.TESTNET]: {
+    network: STELLAR_NETWORKS.TESTNET,
+    horizonUrl: HORIZON_URLS.TESTNET,
   },
-  mainnet: {
-    network: 'mainnet',
-    horizonUrl: 'https://horizon.stellar.org',
+  [STELLAR_NETWORKS.MAINNET]: {
+    network: STELLAR_NETWORKS.MAINNET,
+    horizonUrl: HORIZON_URLS.MAINNET,
   },
-  futurenet: {
-    network: 'futurenet',
-    horizonUrl: 'https://horizon-futurenet.stellar.org',
+  [STELLAR_NETWORKS.FUTURENET]: {
+    network: STELLAR_NETWORKS.FUTURENET,
+    horizonUrl: HORIZON_URLS.FUTURENET,
   },
 };
 
@@ -41,6 +42,10 @@ const getNetworkConfig = () => {
 
   // If custom HORIZON_URL is provided, use it with the specified network
   if (process.env.HORIZON_URL) {
+    log.debug('STELLAR_CONFIG', 'Using custom Horizon URL', {
+      network: networkName,
+      horizonUrl: process.env.HORIZON_URL
+    });
     return {
       network: networkName,
       horizonUrl: process.env.HORIZON_URL,

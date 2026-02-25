@@ -26,11 +26,17 @@ function loadRolesConfig() {
           permissions: [
             'donations:create',
             'donations:read',
+            'donations:verify',
             'wallets:read',
             'wallets:create',
+            'wallets:update',
             'stream:create',
             'stream:read',
-            'stats:read'
+            'stream:update',
+            'stream:delete',
+            'stats:read',
+            'transactions:read',
+            'transactions:sync'
           ]
         },
         {

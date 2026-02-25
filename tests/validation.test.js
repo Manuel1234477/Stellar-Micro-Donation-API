@@ -7,9 +7,9 @@ const {
   sanitizeString
 } = require('../src/utils/validators');
 
-describe('Validation Utilities', () => {
-  describe('isValidStellarPublicKey', () => {
-    test('should accept valid Stellar public key', () => {
+describe('Validation Utilities - Unit Tests', () => {
+  describe('Stellar Public Key Validation', () => {
+    test('should accept valid Stellar public key starting with G', () => {
       const validKey = 'GBRPYHIL2CI3FNQ4BXLFMNDLFJUNPU2HY3ZMFSHONUCEOASW7QC7OX2H';
       expect(isValidStellarPublicKey(validKey)).toBe(true);
     });
@@ -36,8 +36,8 @@ describe('Validation Utilities', () => {
     });
   });
 
-  describe('isValidStellarSecretKey', () => {
-    test('should accept valid Stellar secret key', () => {
+  describe('Stellar Secret Key Validation', () => {
+    test('should accept valid Stellar secret key starting with S', () => {
       const validKey = 'SBRPYHIL2CI3FNQ4BXLFMNDLFJUNPU2HY3ZMFSHONUCEOASW7QC7OX2H';
       expect(isValidStellarSecretKey(validKey)).toBe(true);
     });
@@ -48,8 +48,8 @@ describe('Validation Utilities', () => {
     });
   });
 
-  describe('isValidAmount', () => {
-    test('should accept positive numbers', () => {
+  describe('Amount Validation', () => {
+    test('should accept positive numeric amounts', () => {
       expect(isValidAmount(1)).toBe(true);
       expect(isValidAmount(0.01)).toBe(true);
       expect(isValidAmount('10.5')).toBe(true);
@@ -79,8 +79,8 @@ describe('Validation Utilities', () => {
     });
   });
 
-  describe('isValidDateRange', () => {
-    test('should accept valid date range', () => {
+  describe('Date Range Validation', () => {
+    test('should accept valid date range with start before end', () => {
       const result = isValidDateRange('2024-01-01', '2024-12-31');
       expect(result.valid).toBe(true);
     });
@@ -103,8 +103,8 @@ describe('Validation Utilities', () => {
     });
   });
 
-  describe('isValidTransactionHash', () => {
-    test('should accept valid 64-char hex string', () => {
+  describe('Transaction Hash Validation', () => {
+    test('should accept valid 64-character hexadecimal hash', () => {
       const validHash = 'a'.repeat(64);
       expect(isValidTransactionHash(validHash)).toBe(true);
     });
@@ -130,8 +130,8 @@ describe('Validation Utilities', () => {
     });
   });
 
-  describe('sanitizeString', () => {
-    test('should trim whitespace', () => {
+  describe('String Sanitization', () => {
+    test('should trim leading and trailing whitespace', () => {
       expect(sanitizeString('  hello  ')).toBe('hello');
       expect(sanitizeString('\n\ttest\n')).toBe('test');
     });
