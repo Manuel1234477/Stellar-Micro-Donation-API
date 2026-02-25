@@ -1,6 +1,5 @@
 const express = require('express');
 const config = require('../config/stellar');
-const { rateLimitConfig } = require('../config/rateLimit');
 const donationRoutes = require('./donation');
 const walletRoutes = require('./wallet');
 const statsRoutes = require('./stats');
