@@ -2,7 +2,7 @@ const express = require('express');
 const router = express.Router();
 const Wallet = require('./models/wallet');
 const Database = require('../utils/database');
-const { checkPermission } = require('../middleware/rbacMiddleware');
+const { checkPermission } = require('../middleware/rbac');
 const { PERMISSIONS } = require('../utils/permissions');
 const { sanitizeLabel, sanitizeName } = require('../utils/sanitizer');
 

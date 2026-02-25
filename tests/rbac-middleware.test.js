@@ -3,7 +3,7 @@ jest.mock('../src/models/apiKeys', () => ({
 }));
 
 const { validateApiKey } = require('../src/models/apiKeys');
-const { checkPermission, checkAnyPermission, checkAllPermissions, requireAdmin, attachUserRole } = require('../src/middleware/rbacMiddleware');
+const { checkPermission, checkAnyPermission, checkAllPermissions, requireAdmin, attachUserRole } = require('../src/middleware/rbac');
 const { PERMISSIONS, ROLES } = require('../src/utils/permissions');
 const { UnauthorizedError, ForbiddenError } = require('../src/utils/errors');
 

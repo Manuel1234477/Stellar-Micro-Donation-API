@@ -2,7 +2,7 @@ const express = require('express');
 const router = express.Router();
 const Transaction = require('./models/transaction');
 const TransactionSyncService = require('../services/TransactionSyncService');
-const { checkPermission } = require('../middleware/rbacMiddleware');
+const { checkPermission } = require('../middleware/rbac');
 const { PERMISSIONS } = require('../utils/permissions');
 
 router.get('/', checkPermission(PERMISSIONS.TRANSACTIONS_READ), async (req, res) => {

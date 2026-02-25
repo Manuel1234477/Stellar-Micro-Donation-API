@@ -9,7 +9,7 @@ const apiKeysRoutes = require('./apiKeys');
 const recurringDonationScheduler = require('../services/RecurringDonationScheduler');
 const { errorHandler, notFoundHandler } = require('../middleware/errorHandler');
 const logger = require('../middleware/logger');
-const { attachUserRole } = require('../middleware/rbacMiddleware');
+const { attachUserRole } = require('../middleware/rbac');
 const abuseDetectionMiddleware = require('../middleware/abuseDetection');
 const Database = require('../utils/database');
 const { initializeApiKeysTable } = require('../models/apiKeys');
@@ -63,7 +63,7 @@ app.get('/health', async (req, res) => {
 });
 
 // Abuse detection stats endpoint (admin only)
-app.get('/abuse-signals', require('../middleware/rbacMiddleware').requireAdmin(), (req, res) => {
+app.get('/abuse-signals', require('../middleware/rbac').requireAdmin(), (req, res) => {
   const abuseDetector = require('../utils/abuseDetector');
   
   res.json({

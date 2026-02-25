@@ -2,7 +2,7 @@ const express = require('express');
 const router = express.Router();
 const StatsService = require('./services/StatsService');
 const { validateDateRange } = require('../middleware/validation');
-const { checkPermission } = require('../middleware/rbacMiddleware');
+const { checkPermission } = require('../middleware/rbac');
 const { PERMISSIONS } = require('../utils/permissions');
 
 /**
