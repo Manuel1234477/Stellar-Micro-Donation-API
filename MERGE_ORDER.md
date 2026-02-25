@@ -43,11 +43,19 @@ If PRs are already created, you can:
 
 ## Files with Potential Conflicts
 
-- `src/config/envValidation.js` - Deleted in #242, may be modified in #240
+- `src/config/envValidation.js` - Deleted in #242 (this is intentional, not a conflict)
 - `src/routes/donation.js` - Modified in #241, may conflict with #242
 - `src/routes/stats.js` - Modified in #241, may conflict with #242
 - `src/routes/wallet.js` - Modified in #241, may conflict with #242
 - `src/config/index.js` - Created in #240, modified in #242
+
+## Note on envValidation.js "Conflict"
+
+GitHub shows `src/config/envValidation.js` as a conflict because:
+- Main branch has this file
+- PR #242 deletes this file
+
+This is **NOT a real conflict** - it's the intended behavior. The file is obsolete and should be deleted. When #242 merges, the file will be properly removed from main.
 
 ## Recommendation
 
