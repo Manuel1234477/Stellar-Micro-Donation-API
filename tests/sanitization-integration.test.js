@@ -11,11 +11,11 @@ const Wallet = require('../src/routes/models/wallet');
 
 // Mock dependencies
 jest.mock('../src/utils/database');
-jest.mock('../src/middleware/apiKeyMiddleware', () => (req, res, next) => next());
-jest.mock('../src/middleware/rbacMiddleware', () => ({
+jest.mock('../src/middleware/apiKey', () => (req, res, next) => next());
+jest.mock('../src/middleware/rbac', () => ({
   checkPermission: () => (req, res, next) => next()
 }));
-jest.mock('../src/middleware/idempotencyMiddleware', () => ({
+jest.mock('../src/middleware/idempotency', () => ({
   requireIdempotency: (req, res, next) => {
     req.idempotency = { key: 'test-key-' + Date.now() };
     next();

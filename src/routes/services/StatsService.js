@@ -355,7 +355,11 @@ class StatsService {
   /**
    * Task: Implement donation analytics aggregation service
    * Fetches live data from Stellar and persists it for performance.
+   * 
+   * TODO: Uncomment and implement when needed
+   * Requires: Horizon SDK, config, and Database imports
    */
+  /*
   static async aggregateFromNetwork(walletAddress) {
     const server = new Horizon.Server(config.horizonUrl || 'https://horizon-testnet.stellar.org');
     
@@ -392,6 +396,7 @@ class StatsService {
       throw error;
     }
   }
+  */
 }
 
 module.exports = StatsService;

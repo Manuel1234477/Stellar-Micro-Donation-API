@@ -1,40 +1,31 @@
 const express = require('express');
 const router = express.Router();
-const Transaction = require('../models/transaction');
-const TransactionSyncService = require('../../services/TransactionSyncService');
+const Transaction = require('./models/transaction');
+const TransactionSyncService = require('../services/TransactionSyncService');
+const { checkPermission } = require('../middleware/rbac');
+const { PERMISSIONS } = require('../utils/permissions');
+const { validatePagination } = require('../utils/validationHelpers');
 
-
-
-router.get('/', async (req, res) => {
+router.get('/', checkPermission(PERMISSIONS.TRANSACTIONS_READ), async (req, res) => {
   try {
-    let { limit = 10, offset = 0 } = req.query;
+    const { limit = 10, offset = 0 } = req.query;
 
+    const paginationValidation = validatePagination(limit, offset);
     
-    limit = parseInt(limit);
-    offset = parseInt(offset);
-
-    
-    if (isNaN(limit) || limit <= 0) {
+    if (!paginationValidation.valid) {
       return res.status(400).json({
         success: false,
         error: {
-          code: 'INVALID_LIMIT',
-          message: 'Limit must be a positive number'
+          code: 'INVALID_PAGINATION',
+          message: paginationValidation.error
         }
       });
     }
 
-    if (isNaN(offset) || offset < 0) {
-      return res.status(400).json({
-        success: false,
-        error: {
-          code: 'INVALID_OFFSET',
-          message: 'Offset must be a non-negative number'
-        }
-      });
-    }
-
-    const result = Transaction.getPaginated({ limit, offset });
+    const result = Transaction.getPaginated({ 
+      limit: paginationValidation.limit, 
+      offset: paginationValidation.offset 
+    });
 
     return res.status(200).json({
       success: true,
@@ -53,7 +44,7 @@ router.get('/', async (req, res) => {
   }
 });
 
-router.post('/sync', async (req, res) => {
+router.post('/sync', checkPermission(PERMISSIONS.TRANSACTIONS_SYNC), async (req, res) => {
   try {
     const { publicKey } = req.body;
 

@@ -97,14 +97,15 @@ class Logger {
   }
 
   /**
-   * Intent: Provide real-time feedback to developers via the console.
+   * Intent: Provide real-time feedback to developers via the console using structured logging.
    * Flow: 
    * 1. Applies ANSI color codes based on HTTP status (Green/Yellow/Red).
-   * 2. Outputs high-level summary (Method, Endpoint, Status, Duration).
+   * 2. Outputs high-level summary including Method, Endpoint, Status, and requestId.
    * 3. If LOG_VERBOSE is active, outputs full sanitized request/response bodies.
+   * 4. If Debug Mode is active, logs granular metadata (headers, query, IP).
    */
   logToConsole(logData) {
-    const { timestamp, method, endpoint, statusCode, duration } = logData;
+    const { timestamp, method, endpoint, statusCode, duration, requestId } = logData;
     
     let statusColor = '\x1b[32m'; // Green for 2xx
     if (statusCode >= 400 && statusCode < 500) {
@@ -114,13 +115,40 @@ class Logger {
     }
     const resetColor = '\x1b[0m';
 
+    // Log high-level summary
     log.info('REQUEST_LOGGER', `${method} ${endpoint} ${statusColor}${statusCode}${resetColor} - ${duration}ms`, {
-      timestamp,
+      requestId,
+      statusCode,
+      duration,
+      method,
+      endpoint,
+      timestamp
     });
 
     if (process.env.LOG_VERBOSE === 'true') {
-      log.info('REQUEST_LOGGER', 'Request payload', logData.request);
-      log.info('REQUEST_LOGGER', 'Response payload', logData.response);
+      log.info('REQUEST_LOGGER', 'Request payload', { 
+        requestId,
+        ...logData.request 
+      });
+      log.info('REQUEST_LOGGER', 'Response payload', { 
+        requestId,
+        ...logData.response 
+      });
+    }
+
+    if (log.isDebugMode) {
+      log.debug('REQUEST_LOGGER', 'Request details', {
+        requestId,
+        headers: this.sanitize(logData.request?.headers),
+        query: logData.request?.query,
+        params: logData.request?.params,
+        ip: logData.request?.ip
+      });
+      log.debug('REQUEST_LOGGER', 'Response details', {
+        requestId,
+        statusCode,
+        duration: `${duration}ms`
+      });
     }
   }
 
@@ -139,8 +167,8 @@ class Logger {
     return (req, res, next) => {
       const startTime = Date.now();
       const timestamp = new Date().toISOString();
+      const requestId = req.id; 
 
-      // Hook into res.json to observe the outgoing payload
       const originalJson = res.json.bind(res);
       let responseBody = null;
 
@@ -149,12 +177,12 @@ class Logger {
         return originalJson(body);
       };
 
-      // Ensure logging occurs only after the request has been fully processed
       res.on('finish', () => {
         const duration = Date.now() - startTime;
 
         const logData = {
           timestamp,
+          requestId, 
           method: req.method,
           endpoint: req.originalUrl || req.url,
           statusCode: res.statusCode,
@@ -181,7 +209,6 @@ class Logger {
   }
 }
 
-// Global instance configuration based on environment variables
 const logger = new Logger({
   logToFile: process.env.LOG_TO_FILE === 'true',
   logDir: process.env.LOG_DIR || path.join(__dirname, '../../logs')

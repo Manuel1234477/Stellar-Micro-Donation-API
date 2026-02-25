@@ -12,20 +12,34 @@ try {
   }
 }
 
+const log = require('../utils/log');
+
 /**
  * Middleware to generate and attach a unique ID to every request
+<<<<<<< HEAD
  * Intent: Facilitate request tracing and log correlation across the system.
  * Flow: 
  * 1. Check for existing 'X-Request-ID' header (provided by proxy/load balancer).
  * 2. Fallback to generating a new unique UUID.
  * 3. Bind ID to the 'req' object for downstream access.
  * 4. Echo ID back in 'res' headers for client-side tracking.
+=======
+ * Also sets the requestId in the logging context for structured logging
+>>>>>>> upstream/main
  */
 const requestIdMiddleware = (req, res, next) => {
   const requestId = req.get('X-Request-ID') || uuidv4();
   
   req.id = requestId;
   res.setHeader('X-Request-ID', requestId);
+  
+  // Set logging context with requestId
+  log.setContext({ 
+    requestId,
+    method: req.method,
+    path: req.path,
+    ip: req.ip || req.connection?.remoteAddress
+  });
   
   next();
 };
