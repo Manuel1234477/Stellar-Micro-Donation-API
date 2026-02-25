@@ -183,8 +183,13 @@ describe('RBAC Middleware - Authorization Tests', () => {
   });
 
   describe('User Role Attachment', () => {
-    test('should attach admin role for admin API key', () => {
+    test('should attach admin role for admin API key', async () => {
       req.headers['x-api-key'] = 'admin-key-123';
+      validateApiKey.mockResolvedValue({
+        id: 1,
+        role: ROLES.ADMIN,
+        name: 'Admin Key'
+      });
       const middleware = attachUserRole();
       
       await middleware(req, res, next);

@@ -50,6 +50,7 @@ describe('Wallet Analytics API Integration Tests', () => {
   });
 
   afterEach(() => {
+    // Restore all mocks after each test
     jest.restoreAllMocks();
   });
 

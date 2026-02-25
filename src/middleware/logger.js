@@ -108,7 +108,7 @@ class Logger {
    * @param {Object} logData - Log data to output
    */
   logToConsole(logData) {
-    const { timestamp, method, endpoint, statusCode, duration, requestId } = logData;
+    const { method, endpoint, statusCode, duration, requestId } = logData;
     
     // Color coding based on status code
     let statusColor = '\x1b[32m'; // Green for 2xx

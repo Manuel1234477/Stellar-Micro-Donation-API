@@ -5,12 +5,18 @@
  */
 
 const MockStellarService = require('../src/services/MockStellarService');
+const { resetMockStellarService } = require('./helpers/testIsolation');
 
 describe('MockStellarService - Unit Tests', () => {
   let service;
 
   beforeEach(() => {
     service = new MockStellarService();
+  });
+
+  afterEach(() => {
+    // Clean up service state after each test
+    resetMockStellarService(service);
   });
 
   describe('Wallet Creation', () => {

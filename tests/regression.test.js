@@ -10,21 +10,25 @@ const log = require('../src/utils/log');
 const abuseDetector = require('../src/utils/abuseDetector');
 const { hasPermission } = require('../src/models/permissions');
 const { PERMISSIONS } = require('../src/utils/permissions');
+const { createIsolatedEnvironment } = require('./helpers/testIsolation');
 
 describe('Regression Tests - Recent Features', () => {
   describe('Debug Mode (#179)', () => {
-    const originalEnv = process.env.DEBUG_MODE;
-    const originalNodeEnv = process.env.NODE_ENV;
+    let cleanup;
 
     afterEach(() => {
-      process.env.DEBUG_MODE = originalEnv;
-      process.env.NODE_ENV = originalNodeEnv;
+      if (cleanup) {
+        cleanup();
+        cleanup = null;
+      }
       delete require.cache[require.resolve('../src/utils/log')];
     });
 
     it('should not enable debug mode in production', () => {
-      process.env.DEBUG_MODE = 'true';
-      process.env.NODE_ENV = 'production';
+      cleanup = createIsolatedEnvironment({
+        DEBUG_MODE: 'true',
+        NODE_ENV: 'production'
+      });
       
       const logModule = require('../src/utils/log');
       
@@ -32,8 +36,10 @@ describe('Regression Tests - Recent Features', () => {
     });
 
     it('should enable debug mode in development when DEBUG_MODE=true', () => {
-      process.env.DEBUG_MODE = 'true';
-      process.env.NODE_ENV = 'development';
+      cleanup = createIsolatedEnvironment({
+        DEBUG_MODE: 'true',
+        NODE_ENV: 'development'
+      });
       
       delete require.cache[require.resolve('../src/utils/log')];
       const logModule = require('../src/utils/log');
@@ -44,8 +50,10 @@ describe('Regression Tests - Recent Features', () => {
     });
 
     it('should disable debug mode when DEBUG_MODE=false', () => {
-      process.env.DEBUG_MODE = 'false';
-      process.env.NODE_ENV = 'development';
+      cleanup = createIsolatedEnvironment({
+        DEBUG_MODE: 'false',
+        NODE_ENV: 'development'
+      });
       
       delete require.cache[require.resolve('../src/utils/log')];
       const logModule = require('../src/utils/log');

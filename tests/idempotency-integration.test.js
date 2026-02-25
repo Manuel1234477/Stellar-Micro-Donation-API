@@ -6,6 +6,7 @@
 const request = require('supertest');
 const app = require('../src/routes/app');
 const Database = require('../src/utils/database');
+const { clearDatabaseTables } = require('./helpers/testIsolation');
 
 describe('Idempotency Integration - API Endpoint Tests', () => {
   beforeAll(async () => {
@@ -25,7 +26,12 @@ describe('Idempotency Integration - API Endpoint Tests', () => {
 
   beforeEach(async () => {
     // Clean up before each test
-    await Database.run('DELETE FROM idempotency_keys');
+    await clearDatabaseTables();
+  });
+
+  afterEach(async () => {
+    // Ensure clean state after each test
+    await clearDatabaseTables();
   });
 
   describe('POST /donations - Idempotency', () => {

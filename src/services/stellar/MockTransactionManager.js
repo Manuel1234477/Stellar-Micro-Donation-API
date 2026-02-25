@@ -5,7 +5,6 @@
 
 const crypto = require('crypto');
 const { NotFoundError, ValidationError, BusinessLogicError, ERROR_CODES } = require('../../utils/errors');
-const log = require('../../utils/log');
 
 class MockTransactionManager {
   constructor(config = {}) {

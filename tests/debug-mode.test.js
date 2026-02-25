@@ -3,26 +3,29 @@
  * Verifies debug mode functionality and logging behavior
  */
 
+const { createIsolatedEnvironment } = require('./helpers/testIsolation');
+
 describe('Debug Mode', () => {
-  let originalDebugMode;
+  let cleanup;
   let log;
 
   beforeEach(() => {
-    // Save original DEBUG_MODE
-    originalDebugMode = process.env.DEBUG_MODE;
-    
     // Clear module cache to reload with new env
     jest.resetModules();
   });
 
   afterEach(() => {
-    // Restore original DEBUG_MODE
-    process.env.DEBUG_MODE = originalDebugMode;
+    // Restore environment and clear cache
+    if (cleanup) {
+      cleanup();
+      cleanup = null;
+    }
     jest.resetModules();
   });
 
   describe('Debug Mode Disabled (Default)', () => {
     it('should have debug mode disabled by default', () => {
+      cleanup = createIsolatedEnvironment({});
       delete process.env.DEBUG_MODE;
       log = require('../src/utils/log');
       
@@ -30,6 +33,7 @@ describe('Debug Mode', () => {
     });
 
     it('should not output debug logs when disabled', () => {
+      cleanup = createIsolatedEnvironment({});
       delete process.env.DEBUG_MODE;
       log = require('../src/utils/log');
       
@@ -42,6 +46,7 @@ describe('Debug Mode', () => {
     });
 
     it('should still output info, warn, and error logs', () => {
+      cleanup = createIsolatedEnvironment({});
       delete process.env.DEBUG_MODE;
       log = require('../src/utils/log');
       

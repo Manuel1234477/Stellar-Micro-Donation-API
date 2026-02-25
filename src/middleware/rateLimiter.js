@@ -79,7 +79,35 @@ const verificationRateLimiter = rateLimit({
   }
 });
 
+/**
+ * Factory function for creating custom rate limiters in tests
+ * @param {Object} options - Rate limiter options
+ * @returns {Function} Rate limiter middleware
+ */
+function createRateLimiter(options = {}) {
+  const limit = options.limit || options.max || 10;
+  return rateLimit({
+    windowMs: options.windowMs || 60000,
+    max: limit,
+    standardHeaders: false, // Disable standard headers for tests
+    legacyHeaders: true, // Use X-RateLimit-* headers for tests
+    handler: (req, res) => {
+      res.status(429).json({
+        success: false,
+        error: {
+          code: 'RATE_LIMIT_EXCEEDED',
+          message: 'Too many requests. Please try again later.',
+          limit: limit,
+          resetAt: new Date(req.rateLimit.resetTime).toISOString()
+        }
+      });
+    }
+    // Remove custom keyGenerator to avoid IPv6 issues in CI
+  });
+}
+
 module.exports = {
   donationRateLimiter,
-  verificationRateLimiter
+  verificationRateLimiter,
+  createRateLimiter
 };

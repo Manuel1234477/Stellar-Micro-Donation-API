@@ -13,6 +13,7 @@ const donationRouter = require('../src/routes/donation');
 const Transaction = require('../src/routes/models/transaction');
 const { getStellarService } = require('../src/config/stellar');
 const { attachUserRole } = require('../src/middleware/rbac');
+const { resetMockStellarService } = require('./helpers/testIsolation');
 
 // Create test app
 function createTestApp() {
@@ -57,6 +58,16 @@ describe('Donation Routes Integration Tests', () => {
   beforeEach(() => {
     // Clear transaction data before each test
     Transaction._clearAllData();
+  });
+
+  afterEach(() => {
+    // Ensure clean state after each test
+    Transaction._clearAllData();
+  });
+
+  afterAll(() => {
+    // Clean up stellar service state
+    resetMockStellarService(stellarService);
   });
 
   describe('POST /donations - Create Donation', () => {

@@ -307,6 +307,20 @@ npm run keys -- revoke --id 2
 npm test
 ```
 
+### Test Isolation
+
+All tests are fully isolated and can run independently in any order:
+
+```bash
+# Run tests in random order to verify isolation
+npm test -- --randomize
+
+# Run with specific seed to reproduce order
+npm test -- --randomize --seed=123456
+```
+
+For detailed information about test isolation, see [Test Isolation Guide](docs/TEST_ISOLATION.md).
+
 ### Run Tests with Coverage
 
 ```bash
