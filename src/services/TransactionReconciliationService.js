@@ -2,6 +2,7 @@ const Database = require('../utils/database');
 const Transaction = require('../routes/models/transaction');
 const { TRANSACTION_STATES } = require('../utils/transactionStateMachine');
 const log = require('../utils/log');
+const { v4: uuidv4 } = require('uuid');
 
 class TransactionReconciliationService {
   constructor(stellarService) {
@@ -46,6 +47,9 @@ class TransactionReconciliationService {
     this.reconciliationInProgress = true;
 
     try {
+      const requestId = uuidv4();
+      log.setContext({ requestId });
+
       const pendingTxs = Transaction.getByStatus(TRANSACTION_STATES.PENDING);
       const submittedTxs = Transaction.getByStatus(TRANSACTION_STATES.SUBMITTED);
       
