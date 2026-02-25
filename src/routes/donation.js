@@ -11,6 +11,7 @@ const encryption = require('../utils/encryption');
 const log = require('../utils/log');
 const { TRANSACTION_STATES } = require('../utils/transactionStateMachine');
 const { donationRateLimiter, verificationRateLimiter } = require('../middleware/rateLimiter');
+const { validateRequiredFields, validateFloat, validateInteger } = require('../utils/validationHelpers');
 
 const { getStellarService } = require('../config/stellar');
 const donationValidator = require('../utils/donationValidator');
@@ -74,10 +75,15 @@ router.post('/send', donationRateLimiter, requireIdempotency, async (req, res) =
     });
 
     // 1. Validation
-    if (!senderId || !receiverId || !amount) {
+    const requiredValidation = validateRequiredFields(
+      { senderId, receiverId, amount },
+      ['senderId', 'receiverId', 'amount']
+    );
+    
+    if (!requiredValidation.valid) {
       return res.status(400).json({
         success: false,
-        error: 'Missing required fields: senderId, receiverId, amount'
+        error: `Missing required fields: ${requiredValidation.missing.join(', ')}`
       });
     }
 
@@ -88,10 +94,11 @@ router.post('/send', donationRateLimiter, requireIdempotency, async (req, res) =
       });
     }
 
-    if (isNaN(parseFloat(amount)) || parseFloat(amount) <= 0) {
+    const amountValidation = validateFloat(amount);
+    if (!amountValidation.valid) {
       return res.status(400).json({
         success: false,
-        error: 'Amount must be a positive number'
+        error: `Invalid amount: ${amountValidation.error}`
       });
     }
 
@@ -222,25 +229,25 @@ router.post('/', donationRateLimiter, requireApiKey, requireIdempotency, async (
       }
     }
 
-    const parsedAmount = parseFloat(amount);
-
-    // Validate amount type and basic checks
-    if (isNaN(parsedAmount) || parsedAmount <= 0) {
+    const amountValidation = validateFloat(amount);
+    if (!amountValidation.valid) {
       return res.status(400).json({
-        error: 'Amount must be a positive number'
+        error: `Invalid amount: ${amountValidation.error}`
       });
     }
+    
+    const parsedAmount = amountValidation.value;
 
     // Validate amount against configured limits
-    const amountValidation = donationValidator.validateAmount(parsedAmount);
-    if (!amountValidation.valid) {
+    const limitsValidation = donationValidator.validateAmount(parsedAmount);
+    if (!limitsValidation.valid) {
       return res.status(400).json({
         success: false,
         error: {
-          code: amountValidation.code,
-          message: amountValidation.error,
+          code: limitsValidation.code,
+          message: limitsValidation.error,
           limits: {
-            min: amountValidation.minAmount,
+            min: limitsValidation.minAmount,
             max: amountValidation.maxAmount,
           },
         },
@@ -355,11 +362,21 @@ router.get('/limits', checkPermission(PERMISSIONS.DONATIONS_READ), (req, res) =>
  */
 router.get('/recent', checkPermission(PERMISSIONS.DONATIONS_READ), (req, res, next) => {
   try {
-    const limit = Math.min(parseInt(req.query.limit) || 10, 100);
+    const limitValidation = validateInteger(req.query.limit, { 
+      min: 1, 
+      max: 100, 
+      default: 10 
+    });
 
-    if (isNaN(limit) || limit < 1) {
-      throw new ValidationError('Invalid limit parameter. Must be a positive number.', null, ERROR_CODES.INVALID_LIMIT);
+    if (!limitValidation.valid) {
+      throw new ValidationError(
+        `Invalid limit parameter: ${limitValidation.error}`, 
+        null, 
+        ERROR_CODES.INVALID_LIMIT
+      );
     }
+
+    const limit = limitValidation.value;
 
     const transactions = Transaction.getAll();
 
