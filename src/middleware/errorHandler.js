@@ -4,14 +4,18 @@
  */
 
 const { AppError } = require('../utils/errors');
+const log = require('../utils/log');
 
 /**
  * Error handler middleware
  * Should be registered last in the middleware chain
  */
 function errorHandler(err, req, res, next) {
-  // Log error for debugging
-  console.error('Error occurred:', {
+  void next;
+
+  // Task: Include request ID in logs
+  log.error('ERROR_HANDLER', 'Error occurred', {
+    requestId: req.id, // <--- New unique identifier
     path: req.path,
     method: req.method,
     error: err.message,
@@ -20,42 +24,22 @@ function errorHandler(err, req, res, next) {
 
   // Handle AppError instances
   if (err instanceof AppError) {
-    return res.status(err.statusCode).json(err.toJSON());
+    const errorBody = err.toJSON();
+    errorBody.error.requestId = req.id; // <--- Attach to response
+    return res.status(err.statusCode).json(errorBody);
   }
 
-  // Handle validation errors from express-validator or similar
-  if (err.name === 'ValidationError') {
-    return res.status(400).json({
-      success: false,
-      error: {
-        code: 'VALIDATION_ERROR',
-        message: err.message,
-        timestamp: new Date().toISOString()
-      }
-    });
-  }
-
-  // Handle syntax errors (malformed JSON)
-  if (err instanceof SyntaxError && err.status === 400 && 'body' in err) {
-    return res.status(400).json({
-      success: false,
-      error: {
-        code: 'INVALID_JSON',
-        message: 'Invalid JSON in request body',
-        timestamp: new Date().toISOString()
-      }
-    });
-  }
-
-  // Default to 500 internal server error
+  // Handle default errors
   const statusCode = err.statusCode || err.status || 500;
+  const isValidationError = err.name === 'ValidationError';
   res.status(statusCode).json({
     success: false,
     error: {
-      code: 'INTERNAL_ERROR',
-      message: process.env.NODE_ENV === 'production' 
+      code: isValidationError ? 'VALIDATION_ERROR' : 'INTERNAL_ERROR',
+      message: process.env.NODE_ENV === 'production' && !isValidationError
         ? 'An unexpected error occurred' 
         : err.message,
+      requestId: req.id, // <--- Task: Include in error responses
       timestamp: new Date().toISOString()
     }
   });

@@ -1,11 +1,11 @@
 const express = require('express');
 const router = express.Router();
-const Transaction = require('../models/transaction');
-const TransactionSyncService = require('../../services/TransactionSyncService');
+const Transaction = require('./models/transaction');
+const TransactionSyncService = require('../services/TransactionSyncService');
+const { checkPermission } = require('../middleware/rbacMiddleware');
+const { PERMISSIONS } = require('../utils/permissions');
 
-
-
-router.get('/', async (req, res) => {
+router.get('/', checkPermission(PERMISSIONS.TRANSACTIONS_READ), async (req, res) => {
   try {
     let { limit = 10, offset = 0 } = req.query;
 
@@ -53,7 +53,7 @@ router.get('/', async (req, res) => {
   }
 });
 
-router.post('/sync', async (req, res) => {
+router.post('/sync', checkPermission(PERMISSIONS.TRANSACTIONS_SYNC), async (req, res) => {
   try {
     const { publicKey } = req.body;
 

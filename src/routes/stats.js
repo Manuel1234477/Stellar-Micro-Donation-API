@@ -10,7 +10,7 @@ const { PERMISSIONS } = require('../utils/permissions');
  * Get daily aggregated donation volume
  * Query params: startDate, endDate (ISO format)
  */
-router.get('/daily', validateDateRange, (req, res) => {
+router.get('/daily', checkPermission(PERMISSIONS.STATS_READ), validateDateRange, (req, res) => {
   try {
     const { startDate, endDate } = req.query;
     const start = new Date(startDate);
@@ -46,7 +46,7 @@ router.get('/daily', validateDateRange, (req, res) => {
  * Get weekly aggregated donation volume
  * Query params: startDate, endDate (ISO format)
  */
-router.get('/weekly', validateDateRange, (req, res) => {
+router.get('/weekly', checkPermission(PERMISSIONS.STATS_READ), validateDateRange, (req, res) => {
   try {
     const { startDate, endDate } = req.query;
     const start = new Date(startDate);
@@ -82,7 +82,7 @@ router.get('/weekly', validateDateRange, (req, res) => {
  * Get overall summary statistics
  * Query params: startDate, endDate (ISO format)
  */
-router.get('/summary', validateDateRange, (req, res) => {
+router.get('/summary', checkPermission(PERMISSIONS.STATS_READ), validateDateRange, (req, res) => {
   try {
     const { startDate, endDate } = req.query;
     const start = new Date(startDate);
@@ -110,7 +110,7 @@ router.get('/summary', validateDateRange, (req, res) => {
  * Get aggregated stats by donor
  * Query params: startDate, endDate (ISO format)
  */
-router.get('/donors', validateDateRange, (req, res) => {
+router.get('/donors', checkPermission(PERMISSIONS.STATS_READ), validateDateRange, (req, res) => {
   try {
     const { startDate, endDate } = req.query;
     const start = new Date(startDate);
@@ -145,7 +145,7 @@ router.get('/donors', validateDateRange, (req, res) => {
  * Get aggregated stats by recipient
  * Query params: startDate, endDate (ISO format)
  */
-router.get('/recipients', validateDateRange, (req, res) => {
+router.get('/recipients', checkPermission(PERMISSIONS.STATS_READ), validateDateRange, (req, res) => {
   try {
     const { startDate, endDate } = req.query;
     const start = new Date(startDate);
@@ -270,6 +270,31 @@ router.get('/wallet/:walletAddress/analytics', checkPermission(PERMISSIONS.STATS
     res.json({
       success: true,
       data: analytics
+    });
+  } catch (error) {
+    res.status(500).json({
+      error: 'Failed to retrieve wallet analytics',
+      message: error.message
+    });
+  }
+});
+
+router.get('/wallet/:walletAddress/analytics', checkPermission(PERMISSIONS.STATS_READ), async (req, res) => {
+  try {
+    const { walletAddress } = req.params;
+
+    // Trigger the new aggregation logic
+    const liveStats = await StatsService.aggregateFromNetwork(walletAddress);
+
+    // Combine with your existing local transaction analytics
+    const localAnalytics = StatsService.getWalletAnalytics(walletAddress);
+
+    res.json({
+      success: true,
+      data: {
+        blockchain: liveStats,
+        local: localAnalytics
+      }
     });
   } catch (error) {
     res.status(500).json({

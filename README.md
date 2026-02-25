@@ -19,8 +19,13 @@ A Node.js/Express API for managing micro-donations on the Stellar blockchain net
 - **Recurring Donations**: Schedule automated recurring donations (daily, weekly, monthly)
 - **Wallet Management**: Track wallets and query transaction history
 - **Analytics**: Get donation statistics and summaries
+- **API Key Rotation**: Zero-downtime key rotation with versioning and graceful deprecation
 - **Mock Mode**: Development mode with simulated Stellar operations
+- **Debug Mode**: Configurable verbose logging for local development troubleshooting
+- **Failure Simulation**: Comprehensive network failure testing for robust error handling
 - **Automated Scheduler**: Background service for executing recurring donations
+- **Rate Limiting**: Protection against abuse with configurable request limits on donation endpoints
+- **Idempotency**: Prevent duplicate transactions with idempotency key support
 
 ## 🏗️ Architecture
 
@@ -103,7 +108,24 @@ For development with auto-reload:
 npm run dev
 ```
 
+### Debug Mode
+
+Enable verbose logging for troubleshooting:
+```bash
+# Add to .env file
+DEBUG_MODE=true
+
+# Start server with debug logging
+npm start
+```
+
+See [Debug Mode Documentation](docs/features/DEBUG_MODE.md) for details.
+
 ## 📡 API Endpoints
+
+### Quick Reference
+
+For detailed request/response examples with error handling, see the **[Complete API Examples Documentation](docs/API_EXAMPLES.md)**.
 
 ### Donations
 
@@ -111,7 +133,9 @@ npm run dev
 - `GET /donations` - List all donations
 - `GET /donations/recent?limit=10` - Get recent donations
 - `GET /donations/:id` - Get specific donation
+- `GET /donations/limits` - Get donation amount limits
 - `POST /donations/verify` - Verify transaction on blockchain
+- `PATCH /donations/:id/status` - Update donation status
 
 ### Wallets
 
@@ -130,8 +154,18 @@ npm run dev
 
 ### Statistics
 
-- `GET /stats/donations` - Get donation statistics
+- `GET /stats/daily` - Get daily donation statistics
+- `GET /stats/weekly` - Get weekly donation statistics
 - `GET /stats/summary` - Get summary analytics
+- `GET /stats/donors` - Get donor statistics
+- `GET /stats/recipients` - Get recipient statistics
+- `GET /stats/analytics-fees` - Get analytics fee summary
+- `GET /stats/wallet/:walletAddress/analytics` - Get wallet analytics
+
+### Transactions
+
+- `GET /transactions` - Get paginated transactions
+- `POST /transactions/sync` - Sync wallet transactions from Stellar network
 
 ### Health Check
 
@@ -192,6 +226,7 @@ Stellar-Micro-Donation-API/
 │   │   ├── donation.js
 │   │   ├── wallet.js
 │   │   ├── stream.js
+│   │   ├── transaction.js
 │   │   └── stats.js
 │   ├── services/         # Business logic services
 │   │   ├── StellarService.js
@@ -200,12 +235,25 @@ Stellar-Micro-Donation-API/
 │   ├── scripts/          # Database scripts
 │   │   └── initDB.js
 │   └── utils/            # Utility functions
-│       └── database.js
+│       ├── database.js
+│       └── permissions.js
 ├── data/                 # SQLite database files
 ├── docs/                 # Documentation
 ├── tests/                # Test files
 └── package.json
 ```
+
+### API Key Permissions
+
+The API uses role-based access control (RBAC) with three roles:
+
+| Role | Permissions | Use Case |
+|------|-------------|----------|
+| **admin** | All permissions (`*`) | System administration, API key management |
+| **user** | donations:*, wallets:*, stream:*, stats:read, transactions:* | Standard API operations |
+| **guest** | donations:read, stats:read | Read-only public access |
+
+For detailed permission audit and security hardening, see [API Key Permissions Audit](docs/API_KEY_PERMISSIONS_AUDIT.md).
 
 ### Environment Variables
 
@@ -215,11 +263,20 @@ Create a `.env` file in the project root:
 STELLAR_NETWORK=testnet
 HORIZON_URL=https://horizon-testnet.stellar.org
 PORT=3000
+```
+
+For API key authentication, use the new database-backed system (recommended):
+```bash
+npm run keys:create -- --name "My Key" --role user --expires 365
+```
+
+Or use legacy environment-based keys (deprecated):
+```env
 API_KEYS=your-api-key-here
 ```
 
 Required at startup:
-- `API_KEYS` (must include at least one comma-separated key)
+- `API_KEYS` (legacy method, or use database-backed keys)
 - `ENCRYPTION_KEY` (required only when `NODE_ENV=production`)
 
 Validated at startup (if provided):
@@ -228,17 +285,98 @@ Validated at startup (if provided):
 - `MOCK_STELLAR` must be `true` or `false`
 - `HORIZON_URL` must be a valid URL
 
+### API Key Management
+
+The API supports zero-downtime key rotation. See:
+- [API Key Rotation Guide](docs/API_KEY_ROTATION.md) - Complete documentation
+- [Quick Start Guide](docs/API_KEY_ROTATION_QUICK_START.md) - Common commands
+
+Quick commands:
+```bash
+npm run keys:create -- --name "My Key" --role user --expires 365
+npm run keys:list
+npm run keys -- deprecate --id 1
+npm run keys -- revoke --id 2
+```
+
 ## 🧪 Testing
 
-Run tests:
+### Run Tests
+
 ```bash
 npm test
 ```
 
-Run specific test file:
+### Run Tests with Coverage
+
+```bash
+npm run test:coverage
+```
+
+This generates:
+- Terminal coverage summary
+- HTML report at `coverage/lcov-report/index.html`
+- LCOV report for CI/CD integration
+- JSON summary for programmatic access
+
+### Check Coverage Thresholds
+
+```bash
+npm run check-coverage
+```
+
+Validates that coverage meets minimum thresholds:
+- **Branches**: 30%
+- **Functions**: 30%
+- **Lines**: 30%
+- **Statements**: 30%
+
+### View Coverage Report
+
+After running coverage, open the HTML report:
+
+```bash
+# macOS
+open coverage/lcov-report/index.html
+
+# Windows
+start coverage/lcov-report/index.html
+
+# Linux
+xdg-open coverage/lcov-report/index.html
+```
+
+### Coverage Enforcement
+
+Coverage is automatically enforced in CI/CD:
+- ✅ PRs must meet minimum 30% coverage thresholds
+- ❌ Builds fail if coverage drops below thresholds
+- 📊 Coverage reports uploaded as artifacts (30-day retention)
+
+For detailed coverage documentation, see [Coverage Guide](docs/COVERAGE_GUIDE.md).
+
+### Run Specific Tests
+
 ```bash
 npm test -- tests/integration.test.js
 ```
+
+### Run Integration Tests for Donation Routes
+
+Comprehensive end-to-end tests for all donation endpoints:
+
+```bash
+npm test tests/donation-routes-integration.test.js
+```
+
+**Coverage**: 60+ test cases covering:
+- All 7 donation endpoints
+- Success and failure scenarios
+- Validation, authentication, idempotency
+- Rate limiting and error handling
+- No live Stellar network required (uses MockStellarService)
+
+For detailed information, see [Donation Routes Integration Tests](DONATION_ROUTES_INTEGRATION_TESTS.md).
 
 ### Test Recurring Donations
 
@@ -246,8 +384,31 @@ npm test -- tests/integration.test.js
 node test-recurring-donations.js
 ```
 
+### Test Failure Scenarios
+
+The project includes comprehensive failure simulation for testing network errors and retry logic:
+
+```bash
+# Run failure simulation tests
+npm test tests/stellar-network-failures.test.js
+
+# Run retry logic tests
+npm test tests/stellar-retry-logic.test.js
+```
+
+**Failure Types Tested**:
+- Timeouts and network errors
+- Service unavailability
+- Transaction failures (bad sequence, insufficient fee)
+- Rate limiting
+- Partial responses
+
+For detailed information, see [Stellar Failure Simulation Guide](docs/STELLAR_FAILURE_SIMULATION.md).
+
 ## 📚 Documentation
 
+- **[API Examples](docs/API_EXAMPLES.md)** - Complete request/response examples for all endpoints
+- **[Stellar Failure Simulation](docs/STELLAR_FAILURE_SIMULATION.md)** - Network failure testing guide
 - [Architecture Documentation](docs/ARCHITECTURE.md) - Detailed system architecture
 - [API Flow Diagram](API%20flow%20diagram.txt) - API request flow
 - [Pre-Deployment Checklist](docs/guides/PRE_DEPLOYMENT_CHECKLIST.md) - Production deployment verification
@@ -271,9 +432,21 @@ The scheduler runs automatically when the server starts and checks for due donat
 
 1. Fork the repository
 2. Create a feature branch (`git checkout -b feature/amazing-feature`)
-3. Commit your changes (`git commit -m 'Add amazing feature'`)
-4. Push to the branch (`git push origin feature/amazing-feature`)
-5. Open a Pull Request
+3. Make your changes and add tests
+4. Run tests locally (`npm test`)
+5. Check coverage (`npm run test:coverage`)
+6. Ensure coverage thresholds are met (`npm run check-coverage`)
+7. Commit your changes (`git commit -m 'Add amazing feature'`)
+8. Push to the branch (`git push origin feature/amazing-feature`)
+9. Open a Pull Request
+
+**Note:** All CI checks must pass before merge, including:
+- ✅ All tests passing
+- ✅ Coverage thresholds met (30% minimum)
+- ✅ Linting checks passed
+- ✅ Security checks passed
+
+See [Branch Protection](docs/BRANCH_PROTECTION.md) and [Coverage Guide](docs/COVERAGE_GUIDE.md) for details.
 
 ## 📝 License
 

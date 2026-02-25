@@ -5,6 +5,7 @@
 
 const StellarSdk = require('stellar-sdk');
 const StellarErrorHandler = require('../utils/stellarErrorHandler');
+const log = require('../utils/log');
 
 class StellarService {
   constructor(config = {}) {
@@ -102,6 +103,7 @@ class StellarService {
             };
           }
         } catch (checkError) {
+          // Best-effort network safety check; original transient error will be thrown below.
         }
       }
 
@@ -245,7 +247,7 @@ class StellarService {
       .cursor('now')
       .stream({
         onmessage: (tx) => onTransaction(tx),
-        onerror: (error) => console.error('Stream error:', error),
+        onerror: (error) => log.error('STELLAR_SERVICE', 'Transaction stream error', { error: error.message }),
       });
   }
 

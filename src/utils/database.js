@@ -1,3 +1,5 @@
+require('dotenv').config({ path: require('path').join(__dirname, '../../src/.env') });
+
 const sqlite3 = require('sqlite3').verbose();
 const path = require('path');
 const { DatabaseError } = require('./errors');
@@ -57,6 +59,10 @@ class Database {
         }
       });
     });
+  }
+
+  static async all(sql, params = []) {
+    return this.query(sql, params);
   }
 }
 

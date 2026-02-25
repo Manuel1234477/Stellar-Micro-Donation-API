@@ -8,19 +8,24 @@ const { checkPermission } = require('../middleware/rbacMiddleware');
 const { PERMISSIONS } = require('../utils/permissions');
 const { ValidationError, NotFoundError, ERROR_CODES } = require('../utils/errors');
 const encryption = require('../utils/encryption');
+const log = require('../utils/log');
+const { TRANSACTION_STATES } = require('../utils/transactionStateMachine');
+const { donationRateLimiter, verificationRateLimiter } = require('../middleware/rateLimiter');
 
 const { getStellarService } = require('../config/stellar');
 const donationValidator = require('../utils/donationValidator');
 const memoValidator = require('../utils/memoValidator');
 const { calculateAnalyticsFee } = require('../utils/feeCalculator');
+const { sanitizeIdentifier } = require('../utils/sanitizer');
 
 const stellarService = getStellarService();
 
 /**
- * POST /donations
- * Create a new donation
+ * POST /donations/verify
+ * Verify a donation transaction by hash
+ * Rate limited: 30 requests per minute per IP
  */
-router.post('/verify', checkPermission(PERMISSIONS.DONATIONS_VERIFY), async (req, res) => {
+router.post('/verify', verificationRateLimiter, checkPermission(PERMISSIONS.DONATIONS_VERIFY), async (req, res) => {
   try {
     const { transactionHash } = req.body;
 
@@ -55,10 +60,18 @@ router.post('/verify', checkPermission(PERMISSIONS.DONATIONS_VERIFY), async (req
  * POST /donations/send
  * Send XLM from one wallet to another and record it
  * Requires idempotency key to prevent duplicate transactions
+ * Rate limited: 10 requests per minute per IP
  */
-router.post('/send', requireIdempotency, async (req, res) => {
+router.post('/send', donationRateLimiter, requireIdempotency, async (req, res) => {
   try {
     const { senderId, receiverId, amount, memo } = req.body;
+
+    log.debug('DONATION_ROUTE', 'Processing donation request', {
+      senderId,
+      receiverId,
+      amount,
+      hasMemo: !!memo
+    });
 
     // 1. Validation
     if (!senderId || !receiverId || !amount) {
@@ -86,6 +99,11 @@ router.post('/send', requireIdempotency, async (req, res) => {
     const sender = await Database.get('SELECT * FROM users WHERE id = ?', [senderId]);
     const receiver = await Database.get('SELECT * FROM users WHERE id = ?', [receiverId]);
 
+    log.debug('DONATION_ROUTE', 'Database lookup complete', {
+      senderFound: !!sender,
+      receiverFound: !!receiver
+    });
+
     if (!sender || !receiver) {
       return res.status(404).json({
         success: false,
@@ -103,11 +121,17 @@ router.post('/send', requireIdempotency, async (req, res) => {
     // 3. Stellar Transaction using custodial secret
     const secret = encryption.decrypt(sender.encryptedSecret);
 
+    log.debug('DONATION_ROUTE', 'Initiating Stellar transaction');
+
     const stellarResult = await stellarService.sendDonation({
       sourceSecret: secret,
       destinationPublic: receiver.publicKey,
       amount: amount,
       memo: memo
+    });
+
+    log.debug('DONATION_ROUTE', 'Stellar transaction successful', {
+      hash: stellarResult.hash
     });
 
     // 4. Record in SQLite
@@ -116,14 +140,24 @@ router.post('/send', requireIdempotency, async (req, res) => {
       [senderId, receiverId, amount, memo]
     );
 
-    // 5. Record in JSON for stats backward compatibility
-    Transaction.create({
+    // 5. Record in JSON with explicit lifecycle transitions
+    const transaction = Transaction.create({
       id: dbResult.id.toString(),
       amount: parseFloat(amount),
       donor: sender.publicKey,
       recipient: receiver.publicKey,
-      stellarTxId: stellarResult.transactionId,
-      status: 'completed'
+      status: TRANSACTION_STATES.PENDING
+    });
+
+    Transaction.updateStatus(transaction.id, TRANSACTION_STATES.SUBMITTED, {
+      transactionId: stellarResult.transactionId,
+      ledger: stellarResult.ledger,
+    });
+
+    Transaction.updateStatus(transaction.id, TRANSACTION_STATES.CONFIRMED, {
+      transactionId: stellarResult.transactionId,
+      ledger: stellarResult.ledger,
+      confirmedAt: new Date().toISOString(),
     });
 
     const response = {
@@ -144,7 +178,7 @@ router.post('/send', requireIdempotency, async (req, res) => {
 
     res.status(201).json(response);
   } catch (error) {
-    console.error('Send donation error:', error);
+    log.error('DONATION_ROUTE', 'Failed to send donation', { error: error.message });
     res.status(500).json({
       success: false,
       error: 'Failed to send donation',
@@ -157,7 +191,7 @@ router.post('/send', requireIdempotency, async (req, res) => {
  * POST /donations/verify
  * Verify a donation transaction by hash
  */
-router.post('/', requireApiKey, requireIdempotency, async (req, res, next) => {
+router.post('/', donationRateLimiter, requireApiKey, requireIdempotency, async (req, res, next) => {
   try {
 
     const { amount, donor, recipient, memo } = req.body;
@@ -213,9 +247,13 @@ router.post('/', requireApiKey, requireIdempotency, async (req, res, next) => {
       });
     }
 
+    // Sanitize user-provided identifiers
+    const sanitizedDonor = donor ? sanitizeIdentifier(donor) : '';
+    const sanitizedRecipient = sanitizeIdentifier(recipient);
+
     // Validate daily limit if donor is specified
-    if (donor && donor !== 'Anonymous') {
-      const dailyTotal = Transaction.getDailyTotalByDonor(donor);
+    if (sanitizedDonor && sanitizedDonor !== 'Anonymous') {
+      const dailyTotal = Transaction.getDailyTotalByDonor(sanitizedDonor);
       const dailyValidation = donationValidator.validateDailyLimit(parsedAmount, dailyTotal);
 
       if (!dailyValidation.valid) {
@@ -232,10 +270,7 @@ router.post('/', requireApiKey, requireIdempotency, async (req, res, next) => {
       }
     }
 
-    const normalizedDonor = typeof donor === 'string' ? donor.trim() : '';
-    const normalizedRecipient = typeof recipient === 'string' ? recipient.trim() : '';
-
-    if (normalizedDonor && normalizedRecipient && normalizedDonor === normalizedRecipient) {
+    if (sanitizedDonor && sanitizedRecipient && sanitizedDonor === sanitizedRecipient) {
       throw new ValidationError('Sender and recipient wallets must be different');
     }
 
@@ -248,8 +283,8 @@ router.post('/', requireApiKey, requireIdempotency, async (req, res, next) => {
 
     const transaction = Transaction.create({
       amount: parsedAmount,
-      donor: donor || 'Anonymous',
-      recipient,
+      donor: sanitizedDonor || 'Anonymous',
+      recipient: sanitizedRecipient,
       memo: sanitizedMemo,
       idempotencyKey: req.idempotency.key,
       analyticsFee: feeCalculation.fee,
@@ -388,7 +423,7 @@ router.patch('/:id/status', checkPermission(PERMISSIONS.DONATIONS_UPDATE), async
       throw new ValidationError('Missing required field: status', null, ERROR_CODES.MISSING_REQUIRED_FIELD);
     }
 
-    const validStatuses = ['pending', 'confirmed', 'failed', 'cancelled'];
+    const validStatuses = Object.values(TRANSACTION_STATES);
     if (!validStatuses.includes(status)) {
       throw new ValidationError(`Invalid status. Must be one of: ${validStatuses.join(', ')}`);
     }

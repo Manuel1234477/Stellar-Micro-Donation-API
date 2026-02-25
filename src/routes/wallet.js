@@ -4,6 +4,7 @@ const Wallet = require('./models/wallet');
 const Database = require('../utils/database');
 const { checkPermission } = require('../middleware/rbacMiddleware');
 const { PERMISSIONS } = require('../utils/permissions');
+const { sanitizeLabel, sanitizeName } = require('../utils/sanitizer');
 
 /**
  * POST /wallets
@@ -26,7 +27,15 @@ router.post('/', checkPermission(PERMISSIONS.WALLETS_CREATE), (req, res) => {
       });
     }
 
-    const wallet = Wallet.create({ address, label, ownerName });
+    // Sanitize user-provided metadata
+    const sanitizedLabel = label ? sanitizeLabel(label) : null;
+    const sanitizedOwnerName = ownerName ? sanitizeName(ownerName) : null;
+
+    const wallet = Wallet.create({ 
+      address, 
+      label: sanitizedLabel, 
+      ownerName: sanitizedOwnerName 
+    });
 
     res.status(201).json({
       success: true,
@@ -100,9 +109,10 @@ router.patch('/:id', checkPermission(PERMISSIONS.WALLETS_UPDATE), (req, res) => 
       });
     }
 
+    // Sanitize user-provided metadata
     const updates = {};
-    if (label !== undefined) updates.label = label;
-    if (ownerName !== undefined) updates.ownerName = ownerName;
+    if (label !== undefined) updates.label = sanitizeLabel(label);
+    if (ownerName !== undefined) updates.ownerName = sanitizeName(ownerName);
 
     const wallet = Wallet.update(req.params.id, updates);
     

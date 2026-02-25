@@ -21,7 +21,9 @@
         "stream:read",
         "stream:update",
         "stream:delete",
-        "stats:read"
+        "stats:read",
+        "transactions:read",
+        "transactions:sync"
       ]
     },
     {

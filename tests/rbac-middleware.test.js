@@ -1,3 +1,8 @@
+jest.mock('../src/models/apiKeys', () => ({
+  validateApiKey: jest.fn()
+}));
+
+const { validateApiKey } = require('../src/models/apiKeys');
 const { checkPermission, checkAnyPermission, checkAllPermissions, requireAdmin, attachUserRole } = require('../src/middleware/rbacMiddleware');
 const { PERMISSIONS, ROLES } = require('../src/utils/permissions');
 const { UnauthorizedError, ForbiddenError } = require('../src/utils/errors');
@@ -6,6 +11,7 @@ describe('RBAC Middleware - Authorization Tests', () => {
   let req, res, next;
 
   beforeEach(() => {
+    validateApiKey.mockReset();
     req = {
       headers: {},
       user: null
@@ -181,28 +187,34 @@ describe('RBAC Middleware - Authorization Tests', () => {
       req.headers['x-api-key'] = 'admin-key-123';
       const middleware = attachUserRole();
       
-      middleware(req, res, next);
+      await middleware(req, res, next);
       
       expect(req.user).toBeDefined();
       expect(req.user.role).toBe(ROLES.ADMIN);
       expect(next).toHaveBeenCalledWith();
     });
 
-    test('should attach user role for regular API key', () => {
+    test('should attach user role for regular API key', async () => {
+      validateApiKey.mockResolvedValue({
+        id: 2,
+        role: ROLES.USER,
+        name: 'User Key',
+        isDeprecated: false
+      });
       req.headers['x-api-key'] = 'user-key-456';
       const middleware = attachUserRole();
       
-      middleware(req, res, next);
+      await middleware(req, res, next);
       
       expect(req.user).toBeDefined();
       expect(req.user.role).toBe(ROLES.USER);
       expect(next).toHaveBeenCalledWith();
     });
 
-    test('should attach guest role for no API key', () => {
+    test('should attach guest role for no API key', async () => {
       const middleware = attachUserRole();
       
-      middleware(req, res, next);
+      await middleware(req, res, next);
       
       expect(req.user).toBeDefined();
       expect(req.user.role).toBe(ROLES.GUEST);

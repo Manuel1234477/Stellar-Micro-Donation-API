@@ -11,6 +11,8 @@
  * This implementation focuses on MEMO_TEXT for simplicity
  */
 
+const { sanitizeMemo } = require('./sanitizer');
+
 const MAX_MEMO_LENGTH = 28; // Stellar MEMO_TEXT limit in bytes
 
 class MemoValidator {
@@ -65,6 +67,7 @@ class MemoValidator {
 
     // Check for non-printable characters (only allow printable ASCII + common UTF-8)
     // Here we reject control characters entirely
+    // eslint-disable-next-line no-control-regex -- Intentionally checking for control characters
     if (/[\x00-\x1F\x7F]/.test(sanitized)) {
       return {
         valid: false,
@@ -86,12 +89,8 @@ class MemoValidator {
    * @returns {string} Sanitized memo
    */
   static sanitize(memo) {
-    if (!memo || typeof memo !== 'string') {
-      return '';
-    }
-
-    // Trim whitespace and remove null bytes
-    return memo.trim().replace(/\0/g, '');
+    // Use centralized sanitization utility
+    return sanitizeMemo(memo);
   }
 
   /**
