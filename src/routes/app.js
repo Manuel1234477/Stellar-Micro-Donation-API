@@ -10,6 +10,7 @@ const recurringDonationScheduler = require('../services/RecurringDonationSchedul
 const { errorHandler, notFoundHandler } = require('../middleware/errorHandler');
 const logger = require('../middleware/logger');
 const { attachUserRole } = require('../middleware/rbacMiddleware');
+const abuseDetectionMiddleware = require('../middleware/abuseDetection');
 const Database = require('../utils/database');
 const { initializeApiKeysTable } = require('../models/apiKeys');
 const log = require('../utils/log');
@@ -23,6 +24,9 @@ app.use(requestId);
 
 // Request/Response logging middleware
 app.use(logger.middleware());
+
+// Abuse detection (observability only - no blocking)
+app.use(abuseDetectionMiddleware);
 
 // Attach user role from authentication (must be before routes)
 app.use(attachUserRole());
@@ -56,6 +60,17 @@ app.get('/health', async (req, res) => {
       }
     });
   }
+});
+
+// Abuse detection stats endpoint (admin only)
+app.get('/abuse-signals', require('../middleware/rbacMiddleware').requireAdmin(), (req, res) => {
+  const abuseDetector = require('../utils/abuseDetector');
+  
+  res.json({
+    success: true,
+    data: abuseDetector.getStats(),
+    timestamp: new Date().toISOString()
+  });
 });
 
 // 404 handler (must be after all routes)
