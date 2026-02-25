@@ -59,6 +59,20 @@ function setContext(context) {
 }
 
 /**
+ * Run a function with an isolated request context
+ * @param {Object} context - Context data (requestId, userId, transactionId, etc.)
+ * @param {Function} callback - Function to run within context
+ * @returns {any} Result of callback
+ */
+function runWithContext(context, callback) {
+  if (!contextStorage) {
+    return callback();
+  }
+  const currentContext = contextStorage.getStore() || {};
+  return contextStorage.run({ ...currentContext, ...context }, callback);
+}
+
+/**
  * Build structured log entry with standard and custom fields
  * @param {string} level - Log level (INFO, WARN, ERROR, DEBUG)
  * @param {string} scope - Log scope/component (e.g., 'DONATION_ROUTE', 'STELLAR_SERVICE')
@@ -195,6 +209,7 @@ module.exports = {
   child,
   setContext,
   getContext,
+  runWithContext,
   isDebugMode,
   STANDARD_FIELDS,
 };

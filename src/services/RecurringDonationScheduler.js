@@ -13,6 +13,7 @@ const Database = require('../utils/database');
 const MockStellarService = require('./MockStellarService');
 const { SCHEDULE_STATUS, DONATION_FREQUENCIES } = require('../constants');
 const log = require('../utils/log');
+const { v4: uuidv4 } = require('uuid');
 
 class RecurringDonationScheduler {
   /**
@@ -87,6 +88,9 @@ class RecurringDonationScheduler {
     }
 
     try {
+      const requestId = uuidv4();
+      log.setContext({ requestId });
+
       const now = new Date().toISOString();
       
       // Find all active schedules that are due for execution
