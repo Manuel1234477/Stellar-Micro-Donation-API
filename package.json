@@ -6,7 +6,6 @@
   "scripts": {
     "start": "npm run validate-env && node src/routes/app.js",
     "validate-env": "node -e \"require('./src/config/envValidator').validateEnvironment()\"",
-    "init-db": "node src/scripts/initDB.js",
     "migrate:memo": "node src/scripts/addMemoColumn.js",
     "test": "jest",
     "test:coverage": "jest --coverage",
