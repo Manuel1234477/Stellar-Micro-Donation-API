@@ -37,13 +37,7 @@ router.get('/daily', checkPermission(PERMISSIONS.STATS_READ), validateDateRange,
       }
     });
   } catch (error) {
-    res.status(500).json({
-      success: false,
-      error: {
-        code: 'STATS_FAILED',
-        message: error.message
-      }
-    });
+    next(error);
   }
 });
 
@@ -52,134 +46,130 @@ router.get('/daily', checkPermission(PERMISSIONS.STATS_READ), validateDateRange,
  * Get weekly aggregated donation volume
  * Query params: startDate, endDate (ISO format)
  */
-router.get('/weekly', checkPermission(PERMISSIONS.STATS_READ), validateDateRange, (req, res) => {
-  try {
-    const { startDate, endDate } = req.query;
-    const start = new Date(startDate);
-    const end = new Date(endDate);
+router.get(
+  "/weekly",
+  checkPermission(PERMISSIONS.STATS_READ),
+  validateDateRange,
+  (req, res, next) => {
+    try {
+      const { startDate, endDate } = req.query;
+      const start = new Date(startDate);
+      const end = new Date(endDate);
 
-    const stats = StatsService.getWeeklyStats(start, end);
+      const stats = StatsService.getWeeklyStats(start, end);
 
-    res.json({
-      success: true,
-      data: stats,
-      metadata: {
-        dateRange: {
-          start: start.toISOString(),
-          end: end.toISOString()
+      res.json({
+        success: true,
+        data: stats,
+        metadata: {
+          dateRange: {
+            start: start.toISOString(),
+            end: end.toISOString(),
+          },
+          totalWeeks: stats.length,
+          aggregationType: "weekly",
         },
-        totalWeeks: stats.length,
-        aggregationType: 'weekly'
-      }
-    });
-  } catch (error) {
-    res.status(500).json({
-      success: false,
-      error: {
-        code: 'STATS_FAILED',
-        message: error.message
-      }
-    });
-  }
-});
+      });
+    } catch (error) {
+      next(error);
+    }
+  },
+);
 
 /**
  * GET /stats/summary
  * Get overall summary statistics
  * Query params: startDate, endDate (ISO format)
  */
-router.get('/summary', checkPermission(PERMISSIONS.STATS_READ), validateDateRange, (req, res) => {
-  try {
-    const { startDate, endDate } = req.query;
-    const start = new Date(startDate);
-    const end = new Date(endDate);
+router.get(
+  "/summary",
+  checkPermission(PERMISSIONS.STATS_READ),
+  validateDateRange,
+  (req, res, next) => {
+    try {
+      const { startDate, endDate } = req.query;
+      const start = new Date(startDate);
+      const end = new Date(endDate);
 
-    const stats = StatsService.getSummaryStats(start, end);
+      const stats = StatsService.getSummaryStats(start, end);
 
-    res.json({
-      success: true,
-      data: stats
-    });
-  } catch (error) {
-    res.status(500).json({
-      success: false,
-      error: {
-        code: 'STATS_FAILED',
-        message: error.message
-      }
-    });
-  }
-});
+      res.json({
+        success: true,
+        data: stats,
+      });
+    } catch (error) {
+      next(error);
+    }
+  },
+);
 
 /**
  * GET /stats/donors
  * Get aggregated stats by donor
  * Query params: startDate, endDate (ISO format)
  */
-router.get('/donors', checkPermission(PERMISSIONS.STATS_READ), validateDateRange, (req, res) => {
-  try {
-    const { startDate, endDate } = req.query;
-    const start = new Date(startDate);
-    const end = new Date(endDate);
+router.get(
+  "/donors",
+  checkPermission(PERMISSIONS.STATS_READ),
+  validateDateRange,
+  (req, res, next) => {
+    try {
+      const { startDate, endDate } = req.query;
+      const start = new Date(startDate);
+      const end = new Date(endDate);
 
-    const stats = StatsService.getDonorStats(start, end);
+      const stats = StatsService.getDonorStats(start, end);
 
-    res.json({
-      success: true,
-      data: stats,
-      metadata: {
-        dateRange: {
-          start: start.toISOString(),
-          end: end.toISOString()
+      res.json({
+        success: true,
+        data: stats,
+        metadata: {
+          dateRange: {
+            start: start.toISOString(),
+            end: end.toISOString(),
+          },
+          totalDonors: stats.length,
         },
-        totalDonors: stats.length
-      }
-    });
-  } catch (error) {
-    res.status(500).json({
-      success: false,
-      error: {
-        code: 'STATS_FAILED',
-        message: error.message
-      }
-    });
-  }
-});
+      });
+    } catch (error) {
+      next(error);
+    }
+  },
+);
 
 /**
  * GET /stats/recipients
  * Get aggregated stats by recipient
  * Query params: startDate, endDate (ISO format)
  */
-router.get('/recipients', checkPermission(PERMISSIONS.STATS_READ), validateDateRange, (req, res) => {
-  try {
-    const { startDate, endDate } = req.query;
-    const start = new Date(startDate);
-    const end = new Date(endDate);
+router.get(
+  "/recipients",
+  checkPermission(PERMISSIONS.STATS_READ),
+  validateDateRange,
+  (req, res, next) => {
+    try {
+      const { startDate, endDate } = req.query;
+      const start = new Date(startDate);
+      const end = new Date(endDate);
 
-    const stats = StatsService.getRecipientStats(start, end);
+      const stats = StatsService.getRecipientStats(start, end);
 
-    res.json({
-      success: true,
-      data: stats,
-      metadata: {
-        dateRange: {
-          start: start.toISOString(),
-          end: end.toISOString()
+      res.json({
+        success: true,
+        data: stats,
+        metadata: {
+          dateRange: {
+            start: start.toISOString(),
+            end: end.toISOString(),
+          },
+          totalRecipients: stats.length,
         },
-        totalRecipients: stats.length
-      }
-    });
-  } catch (error) {
-    res.status(500).json({
-      success: false,
-      error: {
-        code: 'STATS_FAILED',
-        message: error.message
-      }
-    });
-  }
-});
+      });
+    } catch (error) {
+      next(error);
+    }
+  },
+);
 
 /**
  * GET /stats/analytics-fees
@@ -202,10 +192,7 @@ router.get('/analytics-fees', checkPermission(PERMISSIONS.STATS_READ), validateD
       }
     });
   } catch (error) {
-    res.status(500).json({
-      error: 'Failed to retrieve analytics fee stats',
-      message: error.message
-    });
+    next(error);
   }
 });
 
@@ -259,10 +246,29 @@ router.get('/wallet/:walletAddress/analytics', checkPermission(PERMISSIONS.STATS
       data: analytics
     });
   } catch (error) {
-    res.status(500).json({
-      error: 'Failed to retrieve wallet analytics',
-      message: error.message
+    next(error);
+  }
+});
+
+router.get('/wallet/:walletAddress/analytics', checkPermission(PERMISSIONS.STATS_READ), async (req, res) => {
+  try {
+    const { walletAddress } = req.params;
+
+    // Trigger the new aggregation logic
+    const liveStats = await StatsService.aggregateFromNetwork(walletAddress);
+
+    // Combine with your existing local transaction analytics
+    const localAnalytics = StatsService.getWalletAnalytics(walletAddress);
+
+    res.json({
+      success: true,
+      data: {
+        blockchain: liveStats,
+        local: localAnalytics
+      }
     });
+  } catch (error) {
+    next(error);
   }
 });
 

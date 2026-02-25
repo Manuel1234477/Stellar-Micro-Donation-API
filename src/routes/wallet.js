@@ -26,11 +26,7 @@ router.post('/', checkPermission(PERMISSIONS.WALLETS_CREATE), (req, res) => {
       data: wallet
     });
   } catch (error) {
-    const status = error.statusCode || 500;
-    res.status(status).json({
-      error: error.message || 'Failed to create wallet',
-      code: error.code
-    });
+    next(error);
   }
 });
 
@@ -47,10 +43,7 @@ router.get('/', checkPermission(PERMISSIONS.WALLETS_READ), (req, res) => {
       count: wallets.length
     });
   } catch (error) {
-    res.status(500).json({
-      error: 'Failed to retrieve wallets',
-      message: error.message
-    });
+    next(error);
   }
 });
 
@@ -67,11 +60,7 @@ router.get('/:id', checkPermission(PERMISSIONS.WALLETS_READ), (req, res) => {
       data: wallet
     });
   } catch (error) {
-    const status = error.statusCode || 500;
-    res.status(status).json({
-      error: error.message || 'Failed to retrieve wallet',
-      code: error.code
-    });
+    next(error);
   }
 });
 
@@ -89,11 +78,7 @@ router.patch('/:id', checkPermission(PERMISSIONS.WALLETS_UPDATE), (req, res) => 
       data: wallet
     });
   } catch (error) {
-    const status = error.statusCode || 500;
-    res.status(status).json({
-      error: error.message || 'Failed to update wallet',
-      code: error.code
-    });
+    next(error);
   }
 });
 
@@ -113,10 +98,7 @@ router.get('/:publicKey/transactions', checkPermission(PERMISSIONS.WALLETS_READ)
       message: result.message
     });
   } catch (error) {
-    res.status(500).json({
-      error: 'Failed to retrieve transactions',
-      message: error.message
-    });
+    next(error);
   }
 });
 
