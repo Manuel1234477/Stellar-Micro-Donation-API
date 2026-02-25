@@ -6,9 +6,10 @@
 const StellarSdk = require('stellar-sdk');
 const StellarErrorHandler = require('../utils/stellarErrorHandler');
 const { STELLAR_NETWORKS, HORIZON_URLS } = require('../constants');
+const StellarServiceInterface = require('./interfaces/StellarServiceInterface');
 const log = require('../utils/log');
 
-class StellarService {
+class StellarService extends StellarServiceInterface {
   /**
    * Create a new StellarService instance
    * @param {Object} [config={}] - Configuration options
