@@ -1,9 +1,7 @@
 /**
  * Validation utilities for API requests
+ * Cleaned up to remove unused functions and dependencies
  */
-
-const Transaction = require('../routes/models/transaction');
-const User = require('../routes/models/user');
 
 /**
  * Validate Stellar public key format
@@ -35,33 +33,6 @@ const isValidStellarSecretKey = (key) => {
 const isValidAmount = (amount) => {
   const num = parseFloat(amount);
   return !isNaN(num) && num > 0 && isFinite(num);
-};
-
-/**
- * Validate wallet ID exists in database
- */
-const walletExists = (walletId) => {
-  if (!walletId) return false;
-  const user = User.getById(walletId);
-  return !!user;
-};
-
-/**
- * Validate wallet address exists in database
- */
-const walletAddressExists = (walletAddress) => {
-  if (!walletAddress) return false;
-  const user = User.getByWallet(walletAddress);
-  return !!user;
-};
-
-/**
- * Validate transaction ID exists
- */
-const transactionExists = (transactionId) => {
-  if (!transactionId) return false;
-  const transaction = Transaction.getById(transactionId);
-  return !!transaction;
 };
 
 /**
@@ -112,9 +83,6 @@ module.exports = {
   isValidStellarPublicKey,
   isValidStellarSecretKey,
   isValidAmount,
-  walletExists,
-  walletAddressExists,
-  transactionExists,
   isValidDate,
   isValidDateRange,
   isValidTransactionHash,
