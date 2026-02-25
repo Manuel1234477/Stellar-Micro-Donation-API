@@ -12,8 +12,11 @@ try {
   }
 }
 
+const log = require('../utils/log');
+
 /**
  * Middleware to generate and attach a unique ID to every request
+ * Also sets the requestId in the logging context for structured logging
  */
 const requestIdMiddleware = (req, res, next) => {
   // Generate ID
@@ -24,6 +27,14 @@ const requestIdMiddleware = (req, res, next) => {
   
   // Set header in response
   res.setHeader('X-Request-ID', requestId);
+  
+  // Set logging context with requestId
+  log.setContext({ 
+    requestId,
+    method: req.method,
+    path: req.path,
+    ip: req.ip || req.connection?.remoteAddress
+  });
   
   next();
 };

@@ -67,6 +67,7 @@ router.post('/send', donationRateLimiter, requireIdempotency, async (req, res) =
     const { senderId, receiverId, amount, memo } = req.body;
 
     log.debug('DONATION_ROUTE', 'Processing donation request', {
+      requestId: req.id,
       senderId,
       receiverId,
       amount,
@@ -100,6 +101,7 @@ router.post('/send', donationRateLimiter, requireIdempotency, async (req, res) =
     const receiver = await Database.get('SELECT * FROM users WHERE id = ?', [receiverId]);
 
     log.debug('DONATION_ROUTE', 'Database lookup complete', {
+      requestId: req.id,
       senderFound: !!sender,
       receiverFound: !!receiver
     });
@@ -121,7 +123,9 @@ router.post('/send', donationRateLimiter, requireIdempotency, async (req, res) =
     // 3. Stellar Transaction using custodial secret
     const secret = encryption.decrypt(sender.encryptedSecret);
 
-    log.debug('DONATION_ROUTE', 'Initiating Stellar transaction');
+    log.debug('DONATION_ROUTE', 'Initiating Stellar transaction', {
+      requestId: req.id
+    });
 
     const stellarResult = await stellarService.sendDonation({
       sourceSecret: secret,
@@ -130,8 +134,12 @@ router.post('/send', donationRateLimiter, requireIdempotency, async (req, res) =
       memo: memo
     });
 
+    const transactionId = stellarResult.hash;
+
     log.debug('DONATION_ROUTE', 'Stellar transaction successful', {
-      hash: stellarResult.hash
+      requestId: req.id,
+      transactionId,
+      ledger: stellarResult.ledger
     });
 
     // 4. Record in SQLite
@@ -178,7 +186,11 @@ router.post('/send', donationRateLimiter, requireIdempotency, async (req, res) =
 
     res.status(201).json(response);
   } catch (error) {
-    log.error('DONATION_ROUTE', 'Failed to send donation', { error: error.message });
+    log.error('DONATION_ROUTE', 'Failed to send donation', { 
+      requestId: req.id,
+      error: error.message,
+      stack: error.stack
+    });
     res.status(500).json({
       success: false,
       error: 'Failed to send donation',

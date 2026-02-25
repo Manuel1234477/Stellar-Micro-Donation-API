@@ -104,11 +104,11 @@ class Logger {
   }
 
   /**
-   * Log to console
+   * Log to console with structured fields
    * @param {Object} logData - Log data to output
    */
   logToConsole(logData) {
-    const { timestamp, method, endpoint, statusCode, duration } = logData;
+    const { timestamp, method, endpoint, statusCode, duration, requestId } = logData;
     
     // Color coding based on status code
     let statusColor = '\x1b[32m'; // Green for 2xx
@@ -119,25 +119,38 @@ class Logger {
     }
     const resetColor = '\x1b[0m';
 
+    // Use structured logging with requestId
     log.info('REQUEST_LOGGER', `${method} ${endpoint} ${statusColor}${statusCode}${resetColor} - ${duration}ms`, {
-      timestamp,
+      requestId,
+      statusCode,
+      duration,
+      method,
+      endpoint
     });
 
     // Log request/response details in verbose mode
     if (process.env.LOG_VERBOSE === 'true') {
-      log.info('REQUEST_LOGGER', 'Request payload', logData.request);
-      log.info('REQUEST_LOGGER', 'Response payload', logData.response);
+      log.info('REQUEST_LOGGER', 'Request payload', { 
+        requestId,
+        ...logData.request 
+      });
+      log.info('REQUEST_LOGGER', 'Response payload', { 
+        requestId,
+        ...logData.response 
+      });
     }
 
     // Log additional debug details in debug mode
     if (log.isDebugMode) {
       log.debug('REQUEST_LOGGER', 'Request details', {
+        requestId,
         headers: this.sanitize(logData.request?.headers),
         query: logData.request?.query,
         params: logData.request?.params,
         ip: logData.request?.ip
       });
       log.debug('REQUEST_LOGGER', 'Response details', {
+        requestId,
         statusCode,
         duration: `${duration}ms`
       });
@@ -151,6 +164,7 @@ class Logger {
     return (req, res, next) => {
       const startTime = Date.now();
       const timestamp = new Date().toISOString();
+      const requestId = req.id; // Get requestId from request (set by requestId middleware)
 
       // Capture original res.json to intercept response
       const originalJson = res.json.bind(res);
@@ -167,6 +181,7 @@ class Logger {
 
         const logData = {
           timestamp,
+          requestId, // Include requestId for tracing
           method: req.method,
           endpoint: req.originalUrl || req.url,
           statusCode: res.statusCode,
