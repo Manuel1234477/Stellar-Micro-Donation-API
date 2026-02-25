@@ -1,4 +1,4 @@
-const VALID_STELLAR_NETWORKS = ["testnet", "mainnet", "futurenet"];
+const VALID_STELLAR_NETWORKS = require('../constants').VALID_STELLAR_NETWORKS;
 
 const getRequiredEnvVars = () => {
   const required = ["API_KEYS"];
