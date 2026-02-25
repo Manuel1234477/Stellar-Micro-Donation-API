@@ -64,13 +64,7 @@ app.get('/health', async (req, res) => {
       }
     });
   } catch (error) {
-    return res.status(503).json({
-      status: 'unhealthy',
-      timestamp: new Date().toISOString(),
-      dependencies: {
-        database: 'unavailable'
-      }
-    });
+    next(error);
   }
 });
 
@@ -106,10 +100,7 @@ app.post('/reconcile', require('../middleware/rbac').requireAdmin(), async (req,
       timestamp: new Date().toISOString()
     });
   } catch (error) {
-    res.status(500).json({
-      success: false,
-      error: error.message
-    });
+    next(error);
   }
 });
 
