@@ -11,6 +11,7 @@ A Node.js/Express API for managing micro-donations on the Stellar blockchain net
 - [Database Schema](#database-schema)
 - [Development](#development)
 - [Testing](#testing)
+- [Troubleshooting](#troubleshooting)
 - [Documentation](#documentation)
 
 ## ✨ Features
@@ -419,15 +420,32 @@ npm test tests/stellar-retry-logic.test.js
 
 For detailed information, see [Stellar Failure Simulation Guide](docs/STELLAR_FAILURE_SIMULATION.md).
 
-## 📚 Documentation
+## �️ Troubleshooting
 
-- **[API Examples](docs/API_EXAMPLES.md)** - Complete request/response examples for all endpoints
-- **[Stellar Failure Simulation](docs/STELLAR_FAILURE_SIMULATION.md)** - Network failure testing guide
-- [Architecture Documentation](docs/ARCHITECTURE.md) - Detailed system architecture
-- [API Flow Diagram](API%20flow%20diagram.txt) - API request flow
-- [Pre-Deployment Checklist](docs/guides/PRE_DEPLOYMENT_CHECKLIST.md) - Production deployment verification
-- [Mock Stellar Guide](MOCK_STELLAR_GUIDE.md) - Using mock Stellar service
-- [Quick Start Guide](QUICK_START.md) - Getting started quickly
+Having issues? We've got you covered!
+
+### Quick Fixes
+- **Server won't start?** Check environment: `npm run validate-env`
+- **Tests failing?** Clear cache: `npx jest --clearCache`
+- **Port in use?** Kill process: `kill -9 $(lsof -ti:3000)`
+- **Dependencies broken?** Fresh install: `rm -rf node_modules package-lock.json && npm install`
+
+### Common Issues
+- Missing `.env` file → `cp .env.example .env`
+- API keys required → Add `API_KEYS=dev_key_123` to `.env`
+- Use mock mode for development → `MOCK_STELLAR=true`
+
+### Get Help
+- **[Full Troubleshooting Guide](docs/DEVELOPER_TROUBLESHOOTING_GUIDE.md)** - Comprehensive solutions
+- **[Quick Reference](docs/TROUBLESHOOTING_QUICK_REFERENCE.md)** - Fast fixes for common problems
+- Check [GitHub Issues](../../issues) for known problems
+- Search [Discussions](../../discussions) for community help
+
+### Debug Mode
+Enable detailed logging for troubleshooting:
+```bash
+DEBUG_MODE=true LOG_VERBOSE=true npm start
+```
 
 ## 🔧 Configuration
 
@@ -441,6 +459,25 @@ The API can work with both Stellar testnet and mainnet. Configure via environmen
 ### Recurring Donation Scheduler
 
 The scheduler runs automatically when the server starts and checks for due donations every 60 seconds. It can be configured in `src/services/RecurringDonationScheduler.js`.
+
+## 📚 Documentation
+
+### Getting Started
+- **[API Examples](docs/API_EXAMPLES.md)** - Complete request/response examples for all endpoints
+- **[Quick Start Guide](QUICK_START.md)** - Getting started quickly
+- **[Troubleshooting Guide](docs/DEVELOPER_TROUBLESHOOTING_GUIDE.md)** - Solutions for common issues
+- **[Quick Reference](docs/TROUBLESHOOTING_QUICK_REFERENCE.md)** - Fast fixes for common problems
+
+### Technical Documentation
+- **[Architecture Documentation](docs/ARCHITECTURE.md)** - Detailed system architecture
+- **[Stellar Failure Simulation](docs/STELLAR_FAILURE_SIMULATION.md)** - Network failure testing guide
+- **[API Flow Diagram](API%20flow%20diagram.txt)** - API request flow
+- **[Mock Stellar Guide](MOCK_STELLAR_GUIDE.md)** - Using mock Stellar service
+
+### Development & Deployment
+- **[Pre-Deployment Checklist](docs/guides/PRE_DEPLOYMENT_CHECKLIST.md)** - Production deployment verification
+- **[CI Pipeline Documentation](docs/CI_PIPELINE.md)** - Understanding CI/CD workflows
+- **[Test Coverage Guide](docs/COVERAGE_GUIDE.md)** - Writing and maintaining tests
 
 ## 🤝 Contributing
 
