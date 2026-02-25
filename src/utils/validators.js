@@ -1,16 +1,7 @@
 /**
- * Validators Utility - Input Validation Layer
- * 
- * RESPONSIBILITY: Reusable validation functions for Stellar addresses, amounts, and data formats
- * OWNER: Backend Team
- * DEPENDENCIES: Transaction model, User model
- * 
- * Provides validation helpers for API request data including Stellar public keys,
- * amounts, date ranges, transaction hashes, and entity existence checks.
+ * Validation utilities for API requests
+ * Cleaned up to remove unused functions and dependencies
  */
-
-const Transaction = require('../routes/models/transaction');
-const User = require('../routes/models/user');
 
 /**
  * Validate Stellar public key format
@@ -42,33 +33,6 @@ const isValidStellarSecretKey = (key) => {
 const isValidAmount = (amount) => {
   const num = parseFloat(amount);
   return !isNaN(num) && num > 0 && isFinite(num);
-};
-
-/**
- * Validate wallet ID exists in database
- */
-const walletExists = (walletId) => {
-  if (!walletId) return false;
-  const user = User.getById(walletId);
-  return !!user;
-};
-
-/**
- * Validate wallet address exists in database
- */
-const walletAddressExists = (walletAddress) => {
-  if (!walletAddress) return false;
-  const user = User.getByWallet(walletAddress);
-  return !!user;
-};
-
-/**
- * Validate transaction ID exists
- */
-const transactionExists = (transactionId) => {
-  if (!transactionId) return false;
-  const transaction = Transaction.getById(transactionId);
-  return !!transaction;
 };
 
 /**
@@ -110,15 +74,17 @@ const isValidTransactionHash = (hash) => {
 /**
  * Sanitize string input
  */
+const sanitizeString = (str) => {
+  if (typeof str !== 'string') return '';
+  return str.trim();
+};
 
 module.exports = {
   isValidStellarPublicKey,
   isValidStellarSecretKey,
   isValidAmount,
-  walletExists,
-  walletAddressExists,
-  transactionExists,
   isValidDate,
   isValidDateRange,
   isValidTransactionHash,
+  sanitizeString
 };
