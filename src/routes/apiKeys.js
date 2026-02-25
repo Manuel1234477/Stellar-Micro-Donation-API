@@ -3,7 +3,6 @@ const router = express.Router();
 const apiKeysModel = require('../models/apiKeys');
 const { requireAdmin } = require('../middleware/rbacMiddleware');
 const { ValidationError } = require('../utils/errors');
-const log = require('../utils/log');
 
 /**
  * POST /api/v1/api-keys
