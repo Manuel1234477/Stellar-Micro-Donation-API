@@ -1,15 +1,16 @@
 const { sanitizeForLogging } = require('./sanitizer');
+const config = require('../config');
 
-const isDebugMode = process.env.DEBUG_MODE === 'true';
+const isDebugMode = config.logging.debugMode;
 
 /**
  * Standard log fields for structured logging
  * These fields provide consistent context across all logs
  */
 const STANDARD_FIELDS = {
-  SERVICE_NAME: 'stellar-micro-donation-api',
-  ENVIRONMENT: process.env.NODE_ENV || 'development',
-  VERSION: process.env.npm_package_version || '1.0.0'
+  SERVICE_NAME: config.app.name,
+  ENVIRONMENT: config.server.env,
+  VERSION: config.app.version
 };
 
 /**

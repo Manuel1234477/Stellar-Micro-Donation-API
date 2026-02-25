@@ -1,16 +1,14 @@
 const { UnauthorizedError, ForbiddenError } = require('../utils/errors');
 const { hasPermission } = require('../models/permissions');
 const { validateApiKey } = require('../models/apiKeys');
+const config = require('../config');
 
 /**
  * Role-Based Access Control (RBAC) Configuration
  * Intent: Handle the transition between legacy environment-based keys and 
  * the new database-backed API key system with granular permissions.
  */
-const legacyKeys = (process.env.API_KEYS || '')
-  .split(',')
-  .map(k => k.trim())
-  .filter(Boolean);
+const legacyKeys = config.apiKeys.legacy;
 
 /**
  * Single Permission Validator

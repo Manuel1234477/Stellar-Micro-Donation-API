@@ -1,5 +1,6 @@
 const express = require('express');
-const config = require('../config/stellar');
+const config = require('../config');
+const stellarConfig = require('../config/stellar');
 const donationRoutes = require('./donation');
 const walletRoutes = require('./wallet');
 const statsRoutes = require('./stats');
@@ -127,7 +128,7 @@ process.on('unhandledRejection', (reason, promise) => {
   });
 });
 
-const PORT = config.port;
+const PORT = stellarConfig.port;
 
 // Initialize API keys table before starting server
 async function startServer() {
@@ -147,7 +148,7 @@ async function startServer() {
   app.listen(PORT, () => {
     log.info('APP', 'API started', { 
       port: PORT, 
-      network: config.network,
+      network: stellarConfig.network,
       healthCheck: `http://localhost:${PORT}/health`
     });
     
@@ -155,10 +156,10 @@ async function startServer() {
       log.debug('APP', 'Debug mode enabled - verbose logging active');
       log.debug('APP', 'Configuration loaded', {
         port: PORT,
-        network: config.network,
-        horizonUrl: config.horizonUrl,
-        mockStellar: process.env.MOCK_STELLAR === 'true',
-        nodeEnv: process.env.NODE_ENV
+        network: stellarConfig.network,
+        horizonUrl: stellarConfig.horizonUrl,
+        mockStellar: config.stellar.mockEnabled,
+        nodeEnv: config.server.env
       });
     }
 

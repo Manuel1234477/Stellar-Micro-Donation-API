@@ -1,14 +1,12 @@
 const { validateApiKey } = require('../models/apiKeys');
 const log = require('../utils/log');
+const config = require('../config');
 
 /**
  * Legacy Support Configuration
  * Intent: Maintain backward compatibility for users still utilizing environment-variable based keys.
  */
-const legacyKeys = (process.env.API_KEYS || '')
-  .split(',')
-  .map(k => k.trim())
-  .filter(Boolean);
+const legacyKeys = config.apiKeys.legacy;
 
 /**
  * API Key Authentication Middleware

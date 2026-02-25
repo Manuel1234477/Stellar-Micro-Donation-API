@@ -5,14 +5,16 @@ const IV_LENGTH = 12; // Standard for GCM
 // eslint-disable-next-line no-unused-vars -- Reserved for future GCM tag validation
 const AUTH_TAG_LENGTH = 16;
 
+const config = require('../config');
+
 /**
  * Get or derive the encryption key
  * In a real app, this should be a 32-byte key from a secure environment variable
  */
 const getEncryptionKey = () => {
-    const key = process.env.ENCRYPTION_KEY;
+    const key = config.encryption.key;
     if (!key) {
-        if (process.env.NODE_ENV === 'production') {
+        if (config.encryption.requireInProduction) {
             throw new Error('ENCRYPTION_KEY must be set in production');
         }
         // Fallback for development only
