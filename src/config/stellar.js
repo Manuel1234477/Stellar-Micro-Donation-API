@@ -7,10 +7,10 @@
 require('dotenv').config({ path: require('path').join(__dirname, '../../.env') });
 const path = require('path');
 const { validateEnvironment } = require('./envValidation');
+const { securityConfig } = require("./securityConfig");
 const { STELLAR_NETWORKS, HORIZON_URLS } = require('../constants');
+const config = require('./index');
 const log = require('../utils/log');
-
-validateEnvironment();
 
 const StellarService = require('../services/StellarService');
 const MockStellarService = require('../services/MockStellarService');
@@ -31,59 +31,96 @@ const NETWORK_PRESETS = {
   },
 };
 
-const useMockStellar = process.env.MOCK_STELLAR === 'true';
+// Use security configuration for mock mode
+const useMockStellar = securityConfig.MOCK_STELLAR === 'true';
 
 /**
- * Get network configuration based on STELLAR_NETWORK env variable
- * Defaults to testnet if not specified or invalid
+ * Get network configuration based on security configuration
+ * Uses safe defaults with proper validation
  */
 const getNetworkConfig = () => {
-  const networkName = (process.env.STELLAR_NETWORK || 'testnet').toLowerCase();
+  const networkName = securityConfig.STELLAR_NETWORK;
 
-  // If custom HORIZON_URL is provided, use it with the specified network
-  if (process.env.HORIZON_URL) {
-    log.debug('STELLAR_CONFIG', 'Using custom Horizon URL', {
-      network: networkName,
-      horizonUrl: process.env.HORIZON_URL
-    });
+  // If custom HORIZON_URL is provided from security config, use it
+  if (securityConfig.HORIZON_URL) {
+    log.info(
+      "STELLAR_CONFIG",
+      "Using custom Horizon URL from security config",
+      {
+        network: networkName,
+        horizonUrl: securityConfig.HORIZON_URL,
+      },
+    );
     return {
       network: networkName,
-      horizonUrl: process.env.HORIZON_URL,
+      horizonUrl: securityConfig.HORIZON_URL,
     };
   }
 
   // Use preset or default to testnet
-  return NETWORK_PRESETS[networkName] || NETWORK_PRESETS.testnet;
-};
+  const config = NETWORK_PRESETS[networkName] || NETWORK_PRESETS.testnet;
+
+  log.info("STELLAR_CONFIG", "Using network preset", {
+    network: config.network,
+    horizonUrl: config.horizonUrl,
+    source: networkName === config.network ? "security_config" : "default",
+  });
+
+  return config;
+};;
 
 /**
- * Get Stellar service instance
- * Returns mock service if MOCK_STELLAR=true, otherwise real service
+ * Get Stellar service instance with security configuration
+ * Returns mock service if configured, otherwise real service
  */
 const getStellarService = () => {
   if (useMockStellar) {
-    log.info('STELLAR_CONFIG', 'Using mock Stellar service');
+    log.info("STELLAR_CONFIG", "Using mock Stellar service", {
+      mockStellar: securityConfig.MOCK_STELLAR,
+      network: securityConfig.STELLAR_NETWORK,
+    });
     return new MockStellarService();
   }
+
   const networkConfig = getNetworkConfig();
-  log.info('STELLAR_CONFIG', 'Using real Stellar service', { 
+  const serviceSecretKey =
+    securityConfig.SERVICE_SECRET_KEY || securityConfig.STELLAR_SECRET;
+  
+  log.info("STELLAR_CONFIG", "Using real Stellar service", {
     network: networkConfig.network.toUpperCase(),
-    horizonUrl: networkConfig.horizonUrl
+    horizonUrl: networkConfig.horizonUrl,
+    hasServiceKey: !!serviceSecretKey,
   });
 
   return new StellarService({
     network: networkConfig.network,
     horizonUrl: networkConfig.horizonUrl,
-    // Support both STELLAR_SECRET and SERVICE_SECRET_KEY for flexibility
-    serviceSecretKey: process.env.STELLAR_SECRET || process.env.SERVICE_SECRET_KEY,
+    serviceSecretKey: serviceSecretKey,
   });
+};
+
+/**
+ * Get security configuration summary for Stellar
+ */
+const getStellarSecuritySummary = () => {
+  return {
+    network: securityConfig.STELLAR_NETWORK,
+    mockStellar: useMockStellar,
+    hasCustomHorizon: !!securityConfig.HORIZON_URL,
+    hasServiceKey: !!(securityConfig.SERVICE_SECRET_KEY || securityConfig.STELLAR_SECRET),
+    horizonUrl: securityConfig.HORIZON_URL || getNetworkConfig().horizonUrl
+  };
 };
 
 module.exports = {
   getStellarService,
   useMockStellar,
+  getNetworkConfig,
+  getStellarSecuritySummary,
   port: process.env.PORT || 3000,
   network: getNetworkConfig().network,
   horizonUrl: getNetworkConfig().horizonUrl,
-  dbPath: process.env.DB_JSON_PATH || path.join(__dirname, '../../data/donations.json'),
+  dbPath:
+    process.env.DB_JSON_PATH ||
+    path.join(__dirname, "../../data/donations.json"),
 };

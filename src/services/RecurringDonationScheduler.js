@@ -111,7 +111,7 @@ class RecurringDonationScheduler {
 
       try {
         const now = new Date().toISOString();
-
+        
         // Find all active schedules that are due for execution
         const dueSchedules = await Database.query(
           `SELECT 
@@ -130,7 +130,7 @@ class RecurringDonationScheduler {
            JOIN users recipient ON rd.recipientId = recipient.id
            WHERE rd.status = ? 
            AND rd.nextExecutionDate <= ?`,
-          [SCHEDULE_STATUS.ACTIVE, now],
+          [SCHEDULE_STATUS.ACTIVE, now]
         );
 
         if (dueSchedules.length > 0) {

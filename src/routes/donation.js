@@ -193,28 +193,7 @@ router.post('/send', donationRateLimiter, requireIdempotency, async (req, res) =
 
     res.status(201).json(response);
   } catch (error) {
-    log.error('DONATION_ROUTE', 'Failed to send donation', { 
-      requestId: req.id,
-      error: error.message,
-      stack: error.stack
-    });
-    
-    // Handle duplicate donation gracefully
-    if (error.name === 'DuplicateError') {
-      return res.status(409).json({
-        success: false,
-        error: {
-          code: error.code,
-          message: error.message
-        }
-      });
-    }
-    
-    res.status(500).json({
-      success: false,
-      error: 'Failed to send donation',
-      message: error.message
-    });
+    next(error);
   }
 });
 
@@ -371,10 +350,7 @@ router.get('/limits', checkPermission(PERMISSIONS.DONATIONS_READ), (req, res) =>
       },
     });
   } catch (error) {
-    res.status(500).json({
-      error: 'Failed to retrieve limits',
-      message: error.message
-    });
+    next(error);
   }
 });
 
