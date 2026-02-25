@@ -116,10 +116,10 @@ router.post('/send', donationRateLimiter, requireIdempotency, async (req, res) =
       memo: memo
     });
 
-    // 4. Record in SQLite
+    // 4. Record in SQLite with idempotency key
     const dbResult = await Database.run(
-      'INSERT INTO transactions (senderId, receiverId, amount, memo, timestamp) VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP)',
-      [senderId, receiverId, amount, memo]
+      'INSERT INTO transactions (senderId, receiverId, amount, memo, timestamp, idempotencyKey) VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP, ?)',
+      [senderId, receiverId, amount, memo, req.idempotency.key]
     );
 
     // 5. Record in JSON with explicit lifecycle transitions
@@ -161,6 +161,18 @@ router.post('/send', donationRateLimiter, requireIdempotency, async (req, res) =
     res.status(201).json(response);
   } catch (error) {
     log.error('DONATION_ROUTE', 'Failed to send donation', { error: error.message });
+    
+    // Handle duplicate donation gracefully
+    if (error.name === 'DuplicateError') {
+      return res.status(409).json({
+        success: false,
+        error: {
+          code: error.code,
+          message: error.message
+        }
+      });
+    }
+    
     res.status(500).json({
       success: false,
       error: 'Failed to send donation',

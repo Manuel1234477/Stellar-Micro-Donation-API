@@ -2,7 +2,7 @@ require('dotenv').config({ path: require('path').join(__dirname, '../../src/.env
 
 const sqlite3 = require('sqlite3').verbose();
 const path = require('path');
-const { DatabaseError } = require('./errors');
+const { DatabaseError, DuplicateError } = require('./errors');
 
 const DB_PATH = path.join(__dirname, '../../data/stellar_donations.db');
 
@@ -19,13 +19,24 @@ class Database {
     });
   }
 
+  /**
+   * Check if error is a UNIQUE constraint violation
+   */
+  static isUniqueConstraintError(err) {
+    return err && err.code === 'SQLITE_CONSTRAINT' && err.message.includes('UNIQUE');
+  }
+
   static async query(sql, params = []) {
     const db = await this.getConnection();
     return new Promise((resolve, reject) => {
       db.all(sql, params, (err, rows) => {
         db.close();
         if (err) {
-          reject(new DatabaseError('Database query failed', err));
+          if (this.isUniqueConstraintError(err)) {
+            reject(new DuplicateError('Duplicate donation detected - this transaction has already been processed'));
+          } else {
+            reject(new DatabaseError('Database query failed', err));
+          }
         } else {
           resolve(rows);
         }
@@ -39,7 +50,11 @@ class Database {
       db.run(sql, params, function(err) {
         db.close();
         if (err) {
-          reject(new DatabaseError('Database operation failed', err));
+          if (Database.isUniqueConstraintError(err)) {
+            reject(new DuplicateError('Duplicate donation detected - this transaction has already been processed'));
+          } else {
+            reject(new DatabaseError('Database operation failed', err));
+          }
         } else {
           resolve({ id: this.lastID, changes: this.changes });
         }
@@ -53,7 +68,11 @@ class Database {
       db.get(sql, params, (err, row) => {
         db.close();
         if (err) {
-          reject(new DatabaseError('Database query failed', err));
+          if (this.isUniqueConstraintError(err)) {
+            reject(new DuplicateError('Duplicate donation detected - this transaction has already been processed'));
+          } else {
+            reject(new DatabaseError('Database query failed', err));
+          }
         } else {
           resolve(row);
         }

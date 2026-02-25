@@ -33,6 +33,7 @@ const ERROR_CODES = {
   
   // Business logic errors (422)
   DUPLICATE_TRANSACTION: 'DUPLICATE_TRANSACTION',
+  DUPLICATE_DONATION: 'DUPLICATE_DONATION',
   INSUFFICIENT_BALANCE: 'INSUFFICIENT_BALANCE',
   TRANSACTION_FAILED: 'TRANSACTION_FAILED',
   
@@ -134,6 +135,16 @@ class DatabaseError extends AppError {
   }
 }
 
+/**
+ * Duplicate entry error (409)
+ * Thrown when a unique constraint is violated
+ */
+class DuplicateError extends AppError {
+  constructor(message = 'Duplicate entry detected', code = ERROR_CODES.DUPLICATE_DONATION) {
+    super(code, message, 409);
+  }
+}
+
 module.exports = {
   ERROR_CODES,
   AppError,
@@ -143,5 +154,6 @@ module.exports = {
   NotFoundError,
   BusinessLogicError,
   InternalError,
-  DatabaseError
+  DatabaseError,
+  DuplicateError
 };

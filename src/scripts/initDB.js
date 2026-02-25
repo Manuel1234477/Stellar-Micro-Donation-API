@@ -58,6 +58,7 @@ function createTransactionsTable(db) {
         amount REAL NOT NULL,
         memo TEXT,
         timestamp DATETIME DEFAULT CURRENT_TIMESTAMP,
+        idempotencyKey TEXT UNIQUE,
         FOREIGN KEY (senderId) REFERENCES users(id),
         FOREIGN KEY (receiverId) REFERENCES users(id)
       )
@@ -67,7 +68,25 @@ function createTransactionsTable(db) {
       if (err) {
         reject(err);
       } else {
-        console.log('✓ Created transactions table (with memo column)');
+        console.log('✓ Created transactions table with idempotency constraint');
+        resolve();
+      }
+    });
+  });
+}
+
+function createIndexes(db) {
+  return new Promise((resolve, reject) => {
+    const createIndexSQL = `
+      CREATE INDEX IF NOT EXISTS idx_transactions_idempotency 
+      ON transactions(idempotencyKey)
+    `;
+
+    db.run(createIndexSQL, (err) => {
+      if (err) {
+        reject(err);
+      } else {
+        console.log('✓ Created index on idempotencyKey');
         resolve();
       }
     });
@@ -167,6 +186,7 @@ async function main() {
     db = await createDatabase();
     await createUsersTable(db);
     await createTransactionsTable(db);
+    await createIndexes(db);
     await insertSampleUsers(db);
     await insertSampleTransactions(db);
     await verifyTables(db);
