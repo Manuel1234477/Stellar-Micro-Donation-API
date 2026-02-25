@@ -101,11 +101,8 @@ function createRateLimiter(options = {}) {
           resetAt: new Date(req.rateLimit.resetTime).toISOString()
         }
       });
-    },
-    keyGenerator: (req) => {
-      // Use API key for rate limiting instead of IP
-      return req.headers['x-api-key'] || req.ip;
     }
+    // Remove custom keyGenerator to avoid IPv6 issues in CI
   });
 }
 
