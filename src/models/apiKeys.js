@@ -38,7 +38,6 @@ async function initializeApiKeysTable() {
   try {
     await db.run(createTableQuery);
     await db.run(createIndexQuery);
-    log.info('API_KEYS', 'API keys table initialized');
   } catch (error) {
     log.error('API_KEYS', 'Failed to initialize API keys table', { error: error.message });
     throw error;

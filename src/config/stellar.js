@@ -66,8 +66,10 @@ const getStellarService = () => {
     return new MockStellarService();
   }
   const networkConfig = getNetworkConfig();
-  log.info('STELLAR_CONFIG', 'Using real Stellar service', { network: networkConfig.network.toUpperCase() });
-  log.info('STELLAR_CONFIG', 'Resolved Horizon URL', { horizonUrl: networkConfig.horizonUrl });
+  log.info('STELLAR_CONFIG', 'Using real Stellar service', { 
+    network: networkConfig.network.toUpperCase(),
+    horizonUrl: networkConfig.horizonUrl
+  });
 
   return new StellarService({
     network: networkConfig.network,

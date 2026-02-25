@@ -43,11 +43,9 @@ class RecurringDonationScheduler {
    */
   start() {
     if (this.isRunning) {
-      log.info('RECURRING_SCHEDULER', 'Scheduler is already running');
       return;
     }
 
-    log.info('RECURRING_SCHEDULER', 'Starting recurring donation scheduler');
     this.isRunning = true;
     
     // Run immediately on start
@@ -69,11 +67,9 @@ class RecurringDonationScheduler {
    */
   stop() {
     if (!this.isRunning) {
-      log.info('RECURRING_SCHEDULER', 'Scheduler is not running');
       return;
     }
 
-    log.info('RECURRING_SCHEDULER', 'Stopping recurring donation scheduler');
     clearInterval(this.intervalId);
     this.isRunning = false;
     log.info('RECURRING_SCHEDULER', 'Scheduler stopped');
@@ -147,7 +143,6 @@ class RecurringDonationScheduler {
   async executeScheduleWithRetry(schedule) {
     // Prevent duplicate execution
     if (this.executingSchedules.has(schedule.id)) {
-      log.info('RECURRING_SCHEDULER', 'Schedule is already being executed, skipping', { scheduleId: schedule.id });
       return;
     }
 
@@ -158,43 +153,25 @@ class RecurringDonationScheduler {
       
       for (let attempt = 1; attempt <= this.maxRetries; attempt++) {
         try {
-          log.info('RECURRING_SCHEDULER', 'Executing schedule', {
-            scheduleId: schedule.id,
-            attempt,
-            maxRetries: this.maxRetries,
-          });
-          
           await this.executeSchedule(schedule);
-          
-          // Success - clear any previous failures
-          log.info('RECURRING_SCHEDULER', 'Schedule executed successfully', { scheduleId: schedule.id });
-          return;
+          return; // Success
         } catch (error) {
           lastError = error;
-          log.error('RECURRING_SCHEDULER', 'Schedule execution attempt failed', {
+          log.error('RECURRING_SCHEDULER', 'Schedule execution failed', {
             scheduleId: schedule.id,
             attempt,
             maxRetries: this.maxRetries,
             error: error.message,
           });
           
-          // If this isn't the last attempt, wait before retrying
+          // Wait before retrying (except on last attempt)
           if (attempt < this.maxRetries) {
-            const backoffTime = this.calculateBackoff(attempt);
-            log.info('RECURRING_SCHEDULER', 'Retrying schedule execution after backoff', {
-              scheduleId: schedule.id,
-              backoffMs: backoffTime,
-            });
-            await this.sleep(backoffTime);
+            await this.sleep(this.calculateBackoff(attempt));
           }
         }
       }
 
       // All retries failed
-      log.error('RECURRING_SCHEDULER', 'All retry attempts failed', {
-        scheduleId: schedule.id,
-        maxRetries: this.maxRetries,
-      });
       await this.handleFailedExecution(schedule, lastError);
     } finally {
       this.executingSchedules.delete(schedule.id);
@@ -213,18 +190,10 @@ class RecurringDonationScheduler {
     try {
       // Check if this schedule was already executed recently (duplicate prevention)
       if (await this.wasRecentlyExecuted(schedule)) {
-        log.info('RECURRING_SCHEDULER', 'Schedule was recently executed, skipping duplicate', { scheduleId: schedule.id });
         return;
       }
 
-      log.info('RECURRING_SCHEDULER', 'Sending recurring donation transaction', {
-        scheduleId: schedule.id,
-        amount: schedule.amount,
-        donorPublicKey: schedule.donorPublicKey,
-        recipientPublicKey: schedule.recipientPublicKey,
-      });
-
-      // Simulate sending donation on testnet using MockStellarService
+      // Send donation on Stellar network
       const transactionResult = await this.stellarService.sendPayment(
         schedule.donorPublicKey,
         schedule.recipientPublicKey,
@@ -261,9 +230,9 @@ class RecurringDonationScheduler {
         [new Date().toISOString(), nextExecutionDate.toISOString(), schedule.id]
       );
 
-      log.info('RECURRING_SCHEDULER', 'Recurring donation executed', {
+      log.info('RECURRING_SCHEDULER', 'Donation executed', {
         scheduleId: schedule.id,
-        transactionHash: transactionResult.hash,
+        txHash: transactionResult.hash,
         nextExecution: nextExecutionDate.toISOString(),
       });
       
@@ -307,12 +276,7 @@ class RecurringDonationScheduler {
    */
   async handleFailedExecution(schedule, error) {
     try {
-      // Log the failure
       await this.logFailure(schedule.id, schedule, error.message);
-      
-      // Optionally pause the schedule after repeated failures
-      // For now, we'll just log and let it retry on the next cycle
-      log.error('RECURRING_SCHEDULER', 'Schedule will be retried on next cycle', { scheduleId: schedule.id });
     } catch (logError) {
       log.error('RECURRING_SCHEDULER', 'Failed to log execution failure', { error: logError.message });
     }

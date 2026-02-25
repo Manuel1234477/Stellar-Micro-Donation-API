@@ -64,8 +64,6 @@ class MockStellarService {
       consecutiveFailures: 0,
       maxConsecutiveFailures: 0,
     };
-    
-    log.info('MOCK_STELLAR_SERVICE', 'Initialized with config', this.config);
   }
 
   /**
@@ -89,7 +87,6 @@ class MockStellarService {
     this.failureSimulation.type = null;
     this.failureSimulation.probability = 0;
     this.failureSimulation.consecutiveFailures = 0;
-    log.info('MOCK_STELLAR_SERVICE', 'Failure simulation disabled');
   }
 
   /**

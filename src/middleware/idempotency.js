@@ -47,8 +47,6 @@ async function requireIdempotency(req, res, next) {
     
     if (existing) {
       // Return cached response (idempotent behavior)
-      log.info('IDEMPOTENCY', 'Returning cached response', { idempotencyKey });
-      
       return res.status(200).json({
         ...existing.response,
         _idempotent: true,
@@ -109,8 +107,6 @@ async function storeIdempotencyResponse(req, response) {
       response,
       req.user?.id
     );
-
-    log.info('IDEMPOTENCY', 'Stored idempotent response', { idempotencyKey: req.idempotency.key });
   } catch (error) {
     // Log error but don't fail the request
     log.error('IDEMPOTENCY', 'Failed to store idempotent response', { error: error.message });
