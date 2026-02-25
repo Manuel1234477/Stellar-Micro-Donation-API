@@ -1,9 +1,24 @@
+/**
+ * Recurring Donation Scheduler
+ * Automatically processes recurring donation schedules at regular intervals
+ * 
+ * Features:
+ * - Automatic execution of due donations
+ * - Retry logic with exponential backoff
+ * - Duplicate execution prevention
+ * - Execution logging and failure tracking
+ */
+
 const Database = require('../utils/database');
 const MockStellarService = require('./MockStellarService');
 const { SCHEDULE_STATUS, DONATION_FREQUENCIES } = require('../constants');
 const log = require('../utils/log');
 
 class RecurringDonationScheduler {
+  /**
+   * Create a new RecurringDonationScheduler instance
+   * Initializes with default configuration for retry logic and execution tracking
+   */
   constructor() {
     this.intervalId = null;
     this.isRunning = false;
@@ -22,6 +37,9 @@ class RecurringDonationScheduler {
 
   /**
    * Start the scheduler
+   * Begins processing recurring donation schedules at regular intervals
+   * Runs immediately on start, then continues at configured intervals
+   * @returns {void}
    */
   start() {
     if (this.isRunning) {
@@ -45,6 +63,9 @@ class RecurringDonationScheduler {
 
   /**
    * Stop the scheduler
+   * Stops processing recurring donation schedules
+   * Does not interrupt currently executing donations
+   * @returns {void}
    */
   stop() {
     if (!this.isRunning) {
@@ -60,6 +81,9 @@ class RecurringDonationScheduler {
 
   /**
    * Process all due schedules
+   * Queries database for active schedules with nextExecutionDate <= now
+   * Executes them concurrently with duplicate prevention
+   * @returns {Promise<void>}
    */
   async processSchedules() {
     if (!this.isRunning) {
@@ -108,6 +132,17 @@ class RecurringDonationScheduler {
 
   /**
    * Execute a schedule with retry logic
+   * Attempts execution up to maxRetries times with exponential backoff
+   * Prevents duplicate execution using in-memory tracking
+   * @param {Object} schedule - Schedule object from database
+   * @param {number} schedule.id - Schedule ID
+   * @param {number} schedule.donorId - Donor user ID
+   * @param {number} schedule.recipientId - Recipient user ID
+   * @param {string} schedule.amount - Donation amount
+   * @param {string} schedule.frequency - Donation frequency
+   * @param {string} schedule.donorPublicKey - Donor's Stellar public key
+   * @param {string} schedule.recipientPublicKey - Recipient's Stellar public key
+   * @returns {Promise<void>}
    */
   async executeScheduleWithRetry(schedule) {
     // Prevent duplicate execution
@@ -168,6 +203,11 @@ class RecurringDonationScheduler {
 
   /**
    * Execute a single schedule
+   * Sends the donation transaction and updates the schedule in database
+   * Records transaction and calculates next execution date
+   * @param {Object} schedule - Schedule object from database
+   * @returns {Promise<void>}
+   * @throws {Error} If transaction fails or database update fails
    */
   async executeSchedule(schedule) {
     try {
@@ -238,6 +278,10 @@ class RecurringDonationScheduler {
 
   /**
    * Check if schedule was recently executed to prevent duplicates
+   * Considers execution "recent" if within last 5 minutes
+   * @param {Object} schedule - Schedule object with lastExecutionDate
+   * @param {string} [schedule.lastExecutionDate] - ISO timestamp of last execution
+   * @returns {Promise<boolean>} True if executed within last 5 minutes
    */
   async wasRecentlyExecuted(schedule) {
     if (!schedule.lastExecutionDate) {
@@ -255,7 +299,11 @@ class RecurringDonationScheduler {
   }
 
   /**
-   * Handle failed execution after all retries
+   * Handle failed execution after all retries exhausted
+   * Logs the failure for monitoring and debugging
+   * @param {Object} schedule - Schedule object
+   * @param {Error} error - Error that caused the failure
+   * @returns {Promise<void>}
    */
   async handleFailedExecution(schedule, error) {
     try {
@@ -271,7 +319,13 @@ class RecurringDonationScheduler {
   }
 
   /**
-   * Log execution attempt
+   * Log execution attempt to database
+   * Creates execution log table if it doesn't exist
+   * @param {number} scheduleId - Schedule ID
+   * @param {string} status - Execution status ('SUCCESS' or 'FAILED')
+   * @param {string} [transactionHash=null] - Transaction hash if successful
+   * @param {string} [errorMessage=null] - Error message if failed
+   * @returns {Promise<void>}
    */
   async logExecution(scheduleId, status, transactionHash = null, errorMessage = null) {
     try {
@@ -300,6 +354,11 @@ class RecurringDonationScheduler {
 
   /**
    * Log general failure
+   * Logs error to console and database
+   * @param {string} context - Context where failure occurred
+   * @param {Object} [schedule] - Schedule object if applicable
+   * @param {string} errorMessage - Error message
+   * @returns {Promise<void>}
    */
   async logFailure(context, schedule, errorMessage) {
     const scheduleId = schedule ? schedule.id : null;
@@ -315,7 +374,10 @@ class RecurringDonationScheduler {
   }
 
   /**
-   * Calculate exponential backoff time
+   * Calculate exponential backoff time with jitter
+   * Prevents thundering herd problem by adding randomness
+   * @param {number} attempt - Current attempt number (1-indexed)
+   * @returns {number} Backoff time in milliseconds
    */
   calculateBackoff(attempt) {
     const backoff = Math.min(
@@ -329,7 +391,9 @@ class RecurringDonationScheduler {
   }
 
   /**
-   * Sleep utility
+   * Sleep utility for async delays
+   * @param {number} ms - Milliseconds to sleep
+   * @returns {Promise<void>} Resolves after specified time
    */
   sleep(ms) {
     return new Promise(resolve => setTimeout(resolve, ms));
@@ -337,6 +401,10 @@ class RecurringDonationScheduler {
 
   /**
    * Calculate the next execution date based on frequency
+   * Supports daily, weekly, and monthly frequencies
+   * @param {Date} currentDate - Current execution date
+   * @param {string} frequency - Frequency ('daily', 'weekly', or 'monthly')
+   * @returns {Date} Next execution date
    */
   calculateNextExecutionDate(currentDate, frequency) {
     const nextDate = new Date(currentDate);
