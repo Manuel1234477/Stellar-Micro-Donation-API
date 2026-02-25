@@ -1,7 +1,7 @@
 const express = require('express');
 const router = express.Router();
 const Database = require('../utils/database');
-const { checkPermission } = require('../middleware/rbacMiddleware');
+const { checkPermission } = require('../middleware/rbac');
 const { PERMISSIONS } = require('../utils/permissions');
 const log = require('../utils/log');
 

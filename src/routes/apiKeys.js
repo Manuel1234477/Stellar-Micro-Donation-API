@@ -1,7 +1,7 @@
 const express = require('express');
 const router = express.Router();
 const apiKeysModel = require('../models/apiKeys');
-const { requireAdmin } = require('../middleware/rbacMiddleware');
+const { requireAdmin } = require('../middleware/rbac');
 const { ValidationError } = require('../utils/errors');
 
 /**
