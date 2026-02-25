@@ -1,0 +1,34 @@
+{
+  "roles": [
+    {
+      "name": "admin",
+      "permissions": ["*"]
+    },
+    {
+      "name": "user",
+      "permissions": [
+        "donations:create",
+        "donations:read",
+        "donations:verify",
+        "donations:update",
+        "wallets:create",
+        "wallets:read",
+        "wallets:update",
+        "stream:create",
+        "stream:read",
+        "stream:update",
+        "stream:delete",
+        "stats:read",
+        "transactions:read",
+        "transactions:sync"
+      ]
+    },
+    {
+      "name": "guest",
+      "permissions": [
+        "donations:read",
+        "stats:read"
+      ]
+    }
+  ]
+}

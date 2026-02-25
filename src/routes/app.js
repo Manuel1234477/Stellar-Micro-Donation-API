@@ -15,6 +15,7 @@ const { attachUserRole } = require('../middleware/rbac');
 const abuseDetectionMiddleware = require('../middleware/abuseDetection');
 const Database = require('../utils/database');
 const { initializeApiKeysTable } = require('../models/apiKeys');
+const { validateRBAC } = require('../utils/rbacValidator');
 const log = require('../utils/log');
 const requestId = require('../middleware/requestId');
 
@@ -134,6 +135,13 @@ async function startServer() {
     await initializeApiKeysTable();
   } catch (error) {
     log.error('APP', 'Failed to initialize API keys table', { error: error.message });
+  }
+
+  // Validate RBAC configuration
+  try {
+    validateRBAC({ logWarnings: true, throwOnError: false });
+  } catch (error) {
+    log.error('APP', 'RBAC validation failed', { error: error.message });
   }
 
   app.listen(PORT, () => {

@@ -7,7 +7,6 @@
     "start": "npm run validate-env && node src/routes/app.js",
     "validate-env": "node -e \"require('./src/config/envValidation').validateEnvironment()\"",
     "init-db": "node src/scripts/initDB.js",
-    "validate-env": "node -e \"require('./src/config/envValidator').validateEnvironment()\"",
     "migrate:memo": "node src/scripts/addMemoColumn.js",
     "test": "jest",
     "test:coverage": "jest --coverage",
@@ -19,7 +18,8 @@
     "keys": "node src/scripts/manageApiKeys.js",
     "keys:create": "node src/scripts/manageApiKeys.js create",
     "keys:list": "node src/scripts/manageApiKeys.js list",
-    "keys:help": "node src/scripts/manageApiKeys.js help"
+    "keys:help": "node src/scripts/manageApiKeys.js help",
+    "validate:rbac": "node scripts/validate-rbac.js"
   },
   "dependencies": {
     "dotenv": "^16.0.3",
