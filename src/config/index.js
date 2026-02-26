@@ -11,7 +11,7 @@
 
 require('dotenv').config({ path: require('path').join(__dirname, '../../.env') });
 const path = require('path');
-const { VALID_STELLAR_NETWORKS, STELLAR_NETWORKS, HORIZON_URLS } = require('../constants');
+const { VALID_STELLAR_NETWORKS, HORIZON_URLS } = require('../constants');
 
 /**
  * Configuration error class for clear error messages

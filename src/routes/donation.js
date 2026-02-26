@@ -19,22 +19,133 @@ const { ValidationError, ERROR_CODES } = require('../utils/errors');
 const log = require('../utils/log');
 const { donationRateLimiter, verificationRateLimiter } = require('../middleware/rateLimiter');
 const { validateRequiredFields, validateFloat, validateInteger } = require('../utils/validationHelpers');
+const { validateSchema } = require('../middleware/schemaValidation');
+const { TRANSACTION_STATES } = require('../utils/transactionStateMachine');
 
 const { getStellarService } = require('../config/stellar');
 const DonationService = require('../services/DonationService');
+const { LIFECYCLE_STAGES } = require('../middleware/requestLifecycle');
 
 const stellarService = getStellarService();
 const donationService = new DonationService(stellarService);
+
+const verifyDonationSchema = validateSchema({
+  body: {
+    fields: {
+      transactionHash: {
+        type: 'string',
+        required: true,
+        trim: true,
+        pattern: /^[a-fA-F0-9]{64}$/,
+      },
+    },
+  },
+});
+
+const sendDonationSchema = validateSchema({
+  body: {
+    fields: {
+      senderId: { type: 'integer', required: true, min: 1 },
+      receiverId: { type: 'integer', required: true, min: 1 },
+      amount: { type: 'number', required: true, min: 0.0000001 },
+      memo: { type: 'string', required: false, maxLength: 255, nullable: true },
+    },
+  },
+});
+
+const createDonationSchema = validateSchema({
+  body: {
+    fields: {
+      amount: { type: 'number', required: true, min: 0.0000001 },
+      donor: {
+        type: 'string',
+        required: false,
+        maxLength: 255,
+        nullable: true,
+      },
+      recipient: {
+        type: 'string',
+        required: true,
+        maxLength: 255,
+      },
+      memo: {
+        type: 'string',
+        required: false,
+        maxLength: 255,
+        nullable: true,
+      },
+    },
+  },
+});
+
+const donationIdParamSchema = validateSchema({
+  params: {
+    fields: {
+      id: { type: 'integerString', required: true },
+    },
+  },
+});
+
+const recentDonationsQuerySchema = validateSchema({
+  query: {
+    fields: {
+      limit: {
+        type: 'integerString',
+        required: false,
+        validate: (value) => {
+          const parsed = Number(value);
+          return parsed >= 1 && parsed <= 100
+            ? true
+            : 'limit must be an integer between 1 and 100';
+        },
+      },
+    },
+  },
+});
+
+const updateDonationStatusSchema = validateSchema({
+  params: {
+    fields: {
+      id: { type: 'integerString', required: true },
+    },
+  },
+  body: {
+    fields: {
+      status: {
+        type: 'string',
+        required: true,
+        enum: [...Object.values(TRANSACTION_STATES), 'completed', 'cancelled'],
+      },
+      stellarTxId: {
+        type: 'string',
+        required: false,
+        maxLength: 128,
+        nullable: true,
+      },
+      ledger: {
+        type: 'integer',
+        required: false,
+        min: 1,
+        nullable: true,
+      },
+    },
+  },
+});
 
 /**
  * POST /donations/verify
  * Verify a donation transaction by hash
  * Rate limited: 30 requests per minute per IP
  */
-router.post('/verify', verificationRateLimiter, checkPermission(PERMISSIONS.DONATIONS_VERIFY), async (req, res) => {
+router.post('/verify', verificationRateLimiter, checkPermission(PERMISSIONS.DONATIONS_VERIFY), verifyDonationSchema, async (req, res) => {
   try {
     const { transactionHash } = req.body;
     const verification = await donationService.verifyTransaction(transactionHash);
+
+    // Mark processing complete
+    if (req.markLifecycleStage) {
+      req.markLifecycleStage(LIFECYCLE_STAGES.PROCESSED);
+    }
 
     res.status(200).json({
       success: true,
@@ -61,7 +172,7 @@ router.post('/verify', verificationRateLimiter, checkPermission(PERMISSIONS.DONA
  * Requires idempotency key to prevent duplicate transactions
  * Rate limited: 10 requests per minute per IP
  */
-router.post('/send', donationRateLimiter, requireIdempotency, async (req, res) => {
+router.post('/send', donationRateLimiter, requireIdempotency, sendDonationSchema, async (req, res) => {
   try {
     const { senderId, receiverId, amount, memo } = req.body;
 
@@ -111,6 +222,11 @@ router.post('/send', donationRateLimiter, requireIdempotency, async (req, res) =
       requestId: req.id
     });
 
+    // Mark processing complete
+    if (req.markLifecycleStage) {
+      req.markLifecycleStage(LIFECYCLE_STAGES.PROCESSED);
+    }
+
     const response = {
       success: true,
       data: result
@@ -148,7 +264,7 @@ router.post('/send', donationRateLimiter, requireIdempotency, async (req, res) =
  * POST /donations
  * Create a non-custodial donation record
  */
-router.post('/', donationRateLimiter, requireApiKey, requireIdempotency, async (req, res, next) => {
+router.post('/', donationRateLimiter, requireApiKey, requireIdempotency, createDonationSchema, async (req, res, next) => {
   try {
     const { amount, donor, recipient, memo } = req.body;
 
@@ -170,8 +286,6 @@ router.post('/', donationRateLimiter, requireApiKey, requireIdempotency, async (
       });
     }
 
-    const parsedAmount = amountValidation.value;
-
     // Delegate to service
     const transaction = await donationService.createDonationRecord({
       amount: amountValidation.value,
@@ -180,6 +294,11 @@ router.post('/', donationRateLimiter, requireApiKey, requireIdempotency, async (
       memo,
       idempotencyKey: req.idempotency.key
     });
+
+    // Mark processing complete
+    if (req.markLifecycleStage) {
+      req.markLifecycleStage(LIFECYCLE_STAGES.PROCESSED);
+    }
 
     const response = {
       success: true,
@@ -203,6 +322,12 @@ router.post('/', donationRateLimiter, requireApiKey, requireIdempotency, async (
 router.get('/', checkPermission(PERMISSIONS.DONATIONS_READ), (req, res, next) => {
   try {
     const transactions = donationService.getAllDonations();
+    
+    // Mark processing complete
+    if (req.markLifecycleStage) {
+      req.markLifecycleStage(LIFECYCLE_STAGES.PROCESSED);
+    }
+    
     res.json({
       success: true,
       data: transactions,
@@ -220,6 +345,12 @@ router.get('/', checkPermission(PERMISSIONS.DONATIONS_READ), (req, res, next) =>
 router.get('/limits', checkPermission(PERMISSIONS.DONATIONS_READ), (req, res) => {
   try {
     const limits = donationService.getDonationLimits();
+    
+    // Mark processing complete
+    if (req.markLifecycleStage) {
+      req.markLifecycleStage(LIFECYCLE_STAGES.PROCESSED);
+    }
+    
     res.json({
       success: true,
       data: limits
@@ -235,7 +366,7 @@ router.get('/limits', checkPermission(PERMISSIONS.DONATIONS_READ), (req, res) =>
  * Query params:
  *   - limit: number of recent donations to return (default: 10, max: 100)
  */
-router.get('/recent', checkPermission(PERMISSIONS.DONATIONS_READ), (req, res, next) => {
+router.get('/recent', checkPermission(PERMISSIONS.DONATIONS_READ), recentDonationsQuerySchema, (req, res, next) => {
   try {
     const limitValidation = validateInteger(req.query.limit, {
       min: 1,
@@ -253,6 +384,11 @@ router.get('/recent', checkPermission(PERMISSIONS.DONATIONS_READ), (req, res, ne
 
     const transactions = donationService.getRecentDonations(limitValidation.value);
 
+    // Mark processing complete
+    if (req.markLifecycleStage) {
+      req.markLifecycleStage(LIFECYCLE_STAGES.PROCESSED);
+    }
+
     res.json({
       success: true,
       data: transactions,
@@ -268,9 +404,14 @@ router.get('/recent', checkPermission(PERMISSIONS.DONATIONS_READ), (req, res, ne
  * GET /donations/:id
  * Get a specific donation
  */
-router.get('/:id', checkPermission(PERMISSIONS.DONATIONS_READ), (req, res, next) => {
+router.get('/:id', checkPermission(PERMISSIONS.DONATIONS_READ), donationIdParamSchema, (req, res, next) => {
   try {
     const transaction = donationService.getDonationById(req.params.id);
+
+    // Mark processing complete
+    if (req.markLifecycleStage) {
+      req.markLifecycleStage(LIFECYCLE_STAGES.PROCESSED);
+    }
 
     res.json({
       success: true,
@@ -285,7 +426,7 @@ router.get('/:id', checkPermission(PERMISSIONS.DONATIONS_READ), (req, res, next)
  * PATCH /donations/:id/status
  * Update donation transaction status
  */
-router.patch('/:id/status', checkPermission(PERMISSIONS.DONATIONS_UPDATE), async (req, res, next) => {
+router.patch('/:id/status', checkPermission(PERMISSIONS.DONATIONS_UPDATE), updateDonationStatusSchema, async (req, res, next) => {
   try {
     const { id } = req.params;
     const { status, stellarTxId, ledger } = req.body;
@@ -299,6 +440,11 @@ router.patch('/:id/status', checkPermission(PERMISSIONS.DONATIONS_UPDATE), async
     if (ledger) stellarData.ledger = ledger;
 
     const updatedTransaction = donationService.updateDonationStatus(id, status, stellarData);
+
+    // Mark processing complete
+    if (req.markLifecycleStage) {
+      req.markLifecycleStage(LIFECYCLE_STAGES.PROCESSED);
+    }
 
     res.json({
       success: true,
