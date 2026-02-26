@@ -18,6 +18,7 @@ const StellarServiceInterface = require('./interfaces/StellarServiceInterface');
 const { STELLAR_NETWORKS, HORIZON_URLS } = require('../constants');
 const StellarErrorHandler = require('../utils/stellarErrorHandler');
 const log = require('../utils/log');
+const { withTimeout, TIMEOUT_DEFAULTS, TimeoutError } = require('../utils/timeoutHandler');
 
 class StellarService extends StellarServiceInterface {
   /**
@@ -33,6 +34,13 @@ class StellarService extends StellarServiceInterface {
     this.serviceSecretKey = config.serviceSecretKey;
 
     this.server = new StellarSdk.Horizon.Server(this.horizonUrl);
+    
+    // Timeout configuration
+    this.timeouts = {
+      api: config.apiTimeout || TIMEOUT_DEFAULTS.STELLAR_API,
+      submit: config.submitTimeout || TIMEOUT_DEFAULTS.STELLAR_SUBMIT,
+      stream: config.streamTimeout || TIMEOUT_DEFAULTS.STELLAR_STREAM,
+    };
   }
 
   /**
@@ -42,6 +50,11 @@ class StellarService extends StellarServiceInterface {
    * @returns {boolean} True if error is transient and retryable
    */
   _isTransientNetworkError(error) {
+    // Timeout errors are retryable
+    if (error instanceof TimeoutError) {
+      return true;
+    }
+
     const message = error && error.message ? error.message : '';
     const code = error && error.code ? error.code : '';
     const status = error && error.response && error.response.status ? error.response.status : null;
@@ -58,7 +71,8 @@ class StellarService extends StellarServiceInterface {
       'ECONNRESET',
       'socket hang up',
       'Network Error',
-      'network timeout'
+      'network timeout',
+      'timed out'
     ];
 
     if (messageTokens.some(token => message.includes(token))) {
@@ -90,27 +104,46 @@ class StellarService extends StellarServiceInterface {
   }
 
   /**
-   * Execute an operation with automatic retry on transient errors
+   * Execute an operation with automatic retry on transient errors and timeout
    * @private
    * @param {Function} operation - Async operation to execute
+   * @param {string} operationName - Name of operation for logging
+   * @param {number} [timeout] - Timeout in milliseconds (defaults to api timeout)
    * @returns {Promise<*>} Result of the operation
    * @throws {Error} If all retry attempts fail or error is not transient
    */
-  async _executeWithRetry(operation) {
+  async _executeWithRetry(operation, operationName = 'stellar_operation', timeout = null) {
     const maxAttempts = 3;
+    const timeoutMs = timeout || this.timeouts.api;
     let lastError = null;
 
     for (let attempt = 1; attempt <= maxAttempts; attempt++) {
       try {
-        return await operation();
+        return await withTimeout(operation(), timeoutMs, operationName);
       } catch (error) {
         lastError = error;
+
+        // Log timeout errors
+        if (error instanceof TimeoutError) {
+          log.warn('STELLAR_SERVICE', 'Operation timeout', {
+            operation: operationName,
+            attempt,
+            maxAttempts,
+            timeoutMs
+          });
+        }
 
         if (!this._isTransientNetworkError(error) || attempt === maxAttempts) {
           throw error;
         }
 
         const delay = this._getBackoffDelay(attempt);
+        log.debug('STELLAR_SERVICE', 'Retrying after transient error', {
+          operation: operationName,
+          attempt,
+          delay,
+          error: error.message
+        });
         await new Promise(resolve => setTimeout(resolve, delay));
       }
     }
@@ -119,7 +152,7 @@ class StellarService extends StellarServiceInterface {
   }
 
   /**
-   * Submit transaction with network safety checks
+   * Submit transaction with network safety checks and timeout
    * Attempts to verify transaction was recorded even if submission fails
    * @private
    * @param {Object} builtTx - Built and signed Stellar transaction
@@ -130,7 +163,11 @@ class StellarService extends StellarServiceInterface {
     const txHash = builtTx.hash().toString('hex');
 
     try {
-      const result = await this.server.submitTransaction(builtTx);
+      const result = await withTimeout(
+        this.server.submitTransaction(builtTx),
+        this.timeouts.submit,
+        'submitTransaction'
+      );
       return {
         hash: result.hash,
         ledger: result.ledger
@@ -138,17 +175,26 @@ class StellarService extends StellarServiceInterface {
     } catch (error) {
       if (this._isTransientNetworkError(error)) {
         try {
-          const existingTx = await this._executeWithRetry(() =>
-            this.server.transaction(txHash).call()
+          const existingTx = await this._executeWithRetry(
+            () => this.server.transaction(txHash).call(),
+            'verifySubmittedTransaction'
           );
 
           if (existingTx && existingTx.hash === txHash) {
+            log.info('STELLAR_SERVICE', 'Transaction verified after submission timeout', {
+              txHash,
+              ledger: existingTx.ledger
+            });
             return {
               hash: existingTx.hash,
               ledger: existingTx.ledger
             };
           }
         } catch (checkError) {
+          log.debug('STELLAR_SERVICE', 'Could not verify transaction after submission error', {
+            txHash,
+            error: checkError.message
+          });
           // Best-effort network safety check; original transient error will be thrown below.
         }
       }
@@ -177,7 +223,10 @@ class StellarService extends StellarServiceInterface {
   // eslint-disable-next-line no-unused-vars
   async getBalance(publicKey) {
     return StellarErrorHandler.wrap(async () => {
-      const account = await this._executeWithRetry(() => this.server.loadAccount(publicKey));
+      const account = await this._executeWithRetry(
+        () => this.server.loadAccount(publicKey),
+        'loadAccount'
+      );
       const nativeBalance = account.balances.find(b => b.asset_type === 'native');
       return {
         balance: nativeBalance ? nativeBalance.balance : '0',
@@ -194,7 +243,10 @@ class StellarService extends StellarServiceInterface {
   // eslint-disable-next-line no-unused-vars
   async fundTestnetWallet(publicKey) {
     return StellarErrorHandler.wrap(async () => {
-      await this._executeWithRetry(() => this.server.friendbot(publicKey).call());
+      await this._executeWithRetry(
+        () => this.server.friendbot(publicKey).call(),
+        'friendbot'
+      );
       const balance = await this.getBalance(publicKey);
       return balance;
     }, 'fundTestnetWallet');
@@ -230,8 +282,9 @@ class StellarService extends StellarServiceInterface {
   async sendDonation({ sourceSecret, destinationPublic, amount, memo = '' }) {
     return StellarErrorHandler.wrap(async () => {
       const sourceKeypair = StellarSdk.Keypair.fromSecret(sourceSecret);
-      const sourceAccount = await this._executeWithRetry(() =>
-        this.server.loadAccount(sourceKeypair.publicKey())
+      const sourceAccount = await this._executeWithRetry(
+        () => this.server.loadAccount(sourceKeypair.publicKey()),
+        'loadAccountForDonation'
       );
 
       const transaction = new StellarSdk.TransactionBuilder(sourceAccount, {
@@ -269,12 +322,13 @@ class StellarService extends StellarServiceInterface {
   // eslint-disable-next-line no-unused-vars
   async getTransactionHistory(publicKey, limit = 10) {
     return StellarErrorHandler.wrap(async () => {
-      const result = await this._executeWithRetry(() =>
-        this.server.transactions()
+      const result = await this._executeWithRetry(
+        () => this.server.transactions()
           .forAccount(publicKey)
           .limit(limit)
           .order('desc')
-          .call()
+          .call(),
+        'getTransactionHistory'
       );
       return result.records;
     }, 'getTransactionHistory');
@@ -288,13 +342,58 @@ class StellarService extends StellarServiceInterface {
    */
   // eslint-disable-next-line no-unused-vars
   streamTransactions(publicKey, onTransaction) {
-    return this.server.transactions()
+    const streamTimeout = this.timeouts.stream;
+    let lastMessageTime = Date.now();
+    let timeoutTimer = null;
+
+    const resetTimeout = () => {
+      if (timeoutTimer) {
+        clearTimeout(timeoutTimer);
+      }
+      timeoutTimer = setTimeout(() => {
+        const elapsed = Date.now() - lastMessageTime;
+        log.error('STELLAR_SERVICE', 'Transaction stream timeout', {
+          publicKey,
+          timeoutMs: streamTimeout,
+          elapsedMs: elapsed
+        });
+        if (closeStream) {
+          closeStream();
+        }
+      }, streamTimeout);
+    };
+
+    resetTimeout();
+
+    const closeStream = this.server.transactions()
       .forAccount(publicKey)
       .cursor('now')
       .stream({
-        onmessage: (tx) => onTransaction(tx),
-        onerror: (error) => log.error('STELLAR_SERVICE', 'Transaction stream error', { error: error.message }),
+        onmessage: (tx) => {
+          lastMessageTime = Date.now();
+          resetTimeout();
+          onTransaction(tx);
+        },
+        onerror: (error) => {
+          if (timeoutTimer) {
+            clearTimeout(timeoutTimer);
+          }
+          log.error('STELLAR_SERVICE', 'Transaction stream error', { 
+            error: error.message,
+            publicKey
+          });
+        },
       });
+
+    // Return enhanced close function that also clears timeout
+    return () => {
+      if (timeoutTimer) {
+        clearTimeout(timeoutTimer);
+      }
+      if (closeStream) {
+        closeStream();
+      }
+    };
   }
 
   /**
@@ -305,8 +404,9 @@ class StellarService extends StellarServiceInterface {
   // eslint-disable-next-line no-unused-vars
   async verifyTransaction(transactionHash) {
     return StellarErrorHandler.wrap(async () => {
-      const tx = await this._executeWithRetry(() =>
-        this.server.transaction(transactionHash).call()
+      const tx = await this._executeWithRetry(
+        () => this.server.transaction(transactionHash).call(),
+        'verifyTransaction'
       );
       return {
         verified: true,
