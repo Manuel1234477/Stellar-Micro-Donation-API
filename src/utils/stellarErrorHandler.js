@@ -1,7 +1,14 @@
 /**
- * Stellar Error Handler
- * Catches and transforms Stellar SDK errors into user-friendly responses
+ * Stellar Error Handler - Error Translation Layer
+ * 
+ * RESPONSIBILITY: Transforms Stellar SDK errors into user-friendly API responses
+ * OWNER: Blockchain Team
+ * DEPENDENCIES: Logger
+ * 
+ * Catches and translates low-level Stellar SDK errors into consistent, actionable
+ * error messages for API consumers. Maps blockchain errors to HTTP status codes.
  */
+
 const log = require('./log');
 
 class StellarErrorHandler {

@@ -1,21 +1,46 @@
 /**
- * Real Stellar Service
- * Handles actual blockchain interactions with Stellar network
+ * Stellar Service - Blockchain Integration Layer
+ * 
+ * RESPONSIBILITY: Direct integration with Stellar blockchain network via Stellar SDK
+ * OWNER: Blockchain Team
+ * DEPENDENCIES: Stellar SDK, Horizon API, stellar config
+ * 
+ * Handles all blockchain operations including wallet creation, balance queries,
+ * transaction submission, and network communication with retry logic and error handling.
+ * Real Stellar Service - Handles actual blockchain interactions with Stellar network
  */
 
+// External modules
 const StellarSdk = require('stellar-sdk');
+
+// Internal modules
+const StellarServiceInterface = require('./interfaces/StellarServiceInterface');
+const { STELLAR_NETWORKS, HORIZON_URLS } = require('../constants');
 const StellarErrorHandler = require('../utils/stellarErrorHandler');
 const log = require('../utils/log');
 
-class StellarService {
+class StellarService extends StellarServiceInterface {
+  /**
+   * Create a new StellarService instance
+   * @param {Object} [config={}] - Configuration options
+   * @param {string} [config.network='testnet'] - Stellar network ('testnet' or 'public')
+   * @param {string} [config.horizonUrl] - Horizon server URL
+   * @param {string} [config.serviceSecretKey] - Service account secret key
+   */
   constructor(config = {}) {
-    this.network = config.network || 'testnet';
-    this.horizonUrl = config.horizonUrl || 'https://horizon-testnet.stellar.org';
+    this.network = config.network || STELLAR_NETWORKS.TESTNET;
+    this.horizonUrl = config.horizonUrl || HORIZON_URLS.TESTNET;
     this.serviceSecretKey = config.serviceSecretKey;
 
     this.server = new StellarSdk.Horizon.Server(this.horizonUrl);
   }
 
+  /**
+   * Check if an error is a transient network error that can be retried
+   * @private
+   * @param {Error} error - Error to check
+   * @returns {boolean} True if error is transient and retryable
+   */
   _isTransientNetworkError(error) {
     const message = error && error.message ? error.message : '';
     const code = error && error.code ? error.code : '';
@@ -51,6 +76,12 @@ class StellarService {
     return codeTokens.includes(code);
   }
 
+  /**
+   * Calculate exponential backoff delay for retry attempts
+   * @private
+   * @param {number} attempt - Current attempt number (1-indexed)
+   * @returns {number} Delay in milliseconds
+   */
   _getBackoffDelay(attempt) {
     const base = 200;
     const max = 2000;
@@ -58,6 +89,13 @@ class StellarService {
     return Math.min(delay, max);
   }
 
+  /**
+   * Execute an operation with automatic retry on transient errors
+   * @private
+   * @param {Function} operation - Async operation to execute
+   * @returns {Promise<*>} Result of the operation
+   * @throws {Error} If all retry attempts fail or error is not transient
+   */
   async _executeWithRetry(operation) {
     const maxAttempts = 3;
     let lastError = null;
@@ -80,6 +118,14 @@ class StellarService {
     throw lastError;
   }
 
+  /**
+   * Submit transaction with network safety checks
+   * Attempts to verify transaction was recorded even if submission fails
+   * @private
+   * @param {Object} builtTx - Built and signed Stellar transaction
+   * @returns {Promise<{hash: string, ledger: number}>} Transaction result
+   * @throws {Error} If transaction submission fails and cannot be verified
+   */
   async _submitTransactionWithNetworkSafety(builtTx) {
     const txHash = builtTx.hash().toString('hex');
 

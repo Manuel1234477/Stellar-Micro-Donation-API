@@ -1,5 +1,12 @@
 /**
- * Validation utilities for API requests
+ * Validators Utility - Input Validation Layer
+ * 
+ * RESPONSIBILITY: Reusable validation functions for Stellar addresses, amounts, and data formats
+ * OWNER: Backend Team
+ * DEPENDENCIES: Transaction model, User model
+ * 
+ * Provides validation helpers for API request data including Stellar public keys,
+ * amounts, date ranges, transaction hashes, and entity existence checks.
  */
 
 const Transaction = require('../routes/models/transaction');
@@ -11,7 +18,7 @@ const User = require('../routes/models/user');
  */
 const isValidStellarPublicKey = (key) => {
   if (typeof key !== 'string') return false;
-  
+
   // Stellar public keys: start with 'G', 56 chars, alphanumeric
   const stellarPublicKeyRegex = /^G[A-Z2-7]{55}$/;
   return stellarPublicKeyRegex.test(key);
@@ -23,7 +30,7 @@ const isValidStellarPublicKey = (key) => {
  */
 const isValidStellarSecretKey = (key) => {
   if (typeof key !== 'string') return false;
-  
+
   // Stellar secret keys: start with 'S', 56 chars, alphanumeric
   const stellarSecretKeyRegex = /^S[A-Z2-7]{55}$/;
   return stellarSecretKeyRegex.test(key);
@@ -78,15 +85,15 @@ const isValidDate = (dateString) => {
 const isValidDateRange = (startDate, endDate) => {
   const start = new Date(startDate);
   const end = new Date(endDate);
-  
+
   if (isNaN(start.getTime()) || isNaN(end.getTime())) {
     return { valid: false, error: 'Invalid date format' };
   }
-  
+
   if (start > end) {
     return { valid: false, error: 'startDate must be before endDate' };
   }
-  
+
   return { valid: true };
 };
 
@@ -103,10 +110,6 @@ const isValidTransactionHash = (hash) => {
 /**
  * Sanitize string input
  */
-const sanitizeString = (str) => {
-  if (typeof str !== 'string') return '';
-  return str.trim();
-};
 
 module.exports = {
   isValidStellarPublicKey,
@@ -118,5 +121,4 @@ module.exports = {
   isValidDate,
   isValidDateRange,
   isValidTransactionHash,
-  sanitizeString
 };

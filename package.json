@@ -4,28 +4,39 @@
   "description": "Micro-donation API using Stellar blockchain",
   "main": "src/routes/app.js",
   "scripts": {
-    "start": "node src/routes/app.js",
+    "start": "npm run validate-env && node src/routes/app.js",
+    "validate-env": "node -e \"require('./src/config/envValidation').validateEnvironment()\"",
     "init-db": "node src/scripts/initDB.js",
     "migrate:memo": "node src/scripts/addMemoColumn.js",
     "test": "jest",
-    "test:memo": "node test-memo-feature.js",
-    "test:rate-limit": "node test-rate-limit.js",
-    "test:chaos": "jest chaos-testing.test.js",
-    "test:no-chaos": "jest --testPathIgnorePatterns=chaos-testing",
+    "test:coverage": "jest --coverage",
+    "test:coverage:ci": "jest --coverage --ci --maxWorkers=2",
+    "check-coverage": "node scripts/check-coverage.js",
     "dev": "nodemon src/routes/app.js",
-    "lint": "eslint ."
+    "lint": "eslint .",
+    "lint:security": "eslint . --ext .js --format stylish",
+    "keys": "node src/scripts/manageApiKeys.js",
+    "keys:create": "node src/scripts/manageApiKeys.js create",
+    "keys:list": "node src/scripts/manageApiKeys.js list",
+    "keys:help": "node src/scripts/manageApiKeys.js help",
+    "validate:rbac": "node scripts/validate-rbac.js"
   },
   "dependencies": {
     "dotenv": "^16.0.3",
     "express": "^4.18.2",
     "express-rate-limit": "^8.2.1",
     "sqlite3": "^5.1.7",
-    "stellar-sdk": "^11.0.0"
+    "stellar-sdk": "^11.0.0",
+    "uuid": "^9.0.1"
   },
   "devDependencies": {
-    "eslint": "^8.57.0",
+    "eslint": "^8.57.1",
+    "eslint-plugin-no-secrets": "^2.2.2",
+    "eslint-plugin-security": "^4.0.0",
     "jest": "^29.7.0",
+    "madge": "^8.0.0",
     "nodemon": "^2.0.20",
+    "sql.js": "^1.14.0",
     "supertest": "^6.3.3"
   }
 }

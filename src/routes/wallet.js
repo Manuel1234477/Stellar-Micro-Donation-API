@@ -1,10 +1,21 @@
+/**
+ * Wallet Routes - API Endpoint Layer
+ * 
+ * RESPONSIBILITY: HTTP request handling for wallet operations
+ * OWNER: Backend Team
+ * DEPENDENCIES: WalletService, middleware (auth, RBAC)
+ * 
+ * Thin controllers that orchestrate service calls for wallet creation, updates,
+ * and transaction history queries. All business logic delegated to WalletService.
+ */
+
 const express = require('express');
 const router = express.Router();
-const Wallet = require('./models/wallet');
-const Database = require('../utils/database');
-const { checkPermission } = require('../middleware/rbacMiddleware');
+const { checkPermission } = require('../middleware/rbac');
 const { PERMISSIONS } = require('../utils/permissions');
-const { sanitizeLabel, sanitizeName } = require('../utils/sanitizer');
+const WalletService = require('../services/WalletService');
+
+const walletService = new WalletService();
 
 /**
  * POST /wallets
@@ -31,10 +42,10 @@ router.post('/', checkPermission(PERMISSIONS.WALLETS_CREATE), (req, res) => {
     const sanitizedLabel = label ? sanitizeLabel(label) : null;
     const sanitizedOwnerName = ownerName ? sanitizeName(ownerName) : null;
 
-    const wallet = Wallet.create({ 
-      address, 
-      label: sanitizedLabel, 
-      ownerName: sanitizedOwnerName 
+    const wallet = Wallet.create({
+      address,
+      label: sanitizedLabel,
+      ownerName: sanitizedOwnerName
     });
 
     res.status(201).json({
@@ -42,10 +53,7 @@ router.post('/', checkPermission(PERMISSIONS.WALLETS_CREATE), (req, res) => {
       data: wallet
     });
   } catch (error) {
-    res.status(500).json({
-      error: 'Failed to create wallet',
-      message: error.message
-    });
+    next(error);
   }
 });
 
@@ -55,17 +63,14 @@ router.post('/', checkPermission(PERMISSIONS.WALLETS_CREATE), (req, res) => {
  */
 router.get('/', checkPermission(PERMISSIONS.WALLETS_READ), (req, res) => {
   try {
-    const wallets = Wallet.getAll();
+    const wallets = walletService.getAllWallets();
     res.json({
       success: true,
       data: wallets,
       count: wallets.length
     });
   } catch (error) {
-    res.status(500).json({
-      error: 'Failed to retrieve wallets',
-      message: error.message
-    });
+    next(error);
   }
 });
 
@@ -76,7 +81,7 @@ router.get('/', checkPermission(PERMISSIONS.WALLETS_READ), (req, res) => {
 router.get('/:id', checkPermission(PERMISSIONS.WALLETS_READ), (req, res) => {
   try {
     const wallet = Wallet.getById(req.params.id);
-    
+
     if (!wallet) {
       return res.status(404).json({
         error: 'Wallet not found'
@@ -88,10 +93,7 @@ router.get('/:id', checkPermission(PERMISSIONS.WALLETS_READ), (req, res) => {
       data: wallet
     });
   } catch (error) {
-    res.status(500).json({
-      error: 'Failed to retrieve wallet',
-      message: error.message
-    });
+    next(error);
   }
 });
 
@@ -115,7 +117,7 @@ router.patch('/:id', checkPermission(PERMISSIONS.WALLETS_UPDATE), (req, res) => 
     if (ownerName !== undefined) updates.ownerName = sanitizeName(ownerName);
 
     const wallet = Wallet.update(req.params.id, updates);
-    
+
     if (!wallet) {
       return res.status(404).json({
         error: 'Wallet not found'
@@ -127,10 +129,7 @@ router.patch('/:id', checkPermission(PERMISSIONS.WALLETS_UPDATE), (req, res) => 
       data: wallet
     });
   } catch (error) {
-    res.status(500).json({
-      error: 'Failed to update wallet',
-      message: error.message
-    });
+    next(error);
   }
 });
 
@@ -160,7 +159,7 @@ router.get('/:publicKey/transactions', checkPermission(PERMISSIONS.WALLETS_READ)
 
     // Get all transactions where user is sender or receiver
     const transactions = await Database.query(
-      `SELECT 
+      `SELECT
         t.id,
         t.senderId,
         t.receiverId,
@@ -189,14 +188,12 @@ router.get('/:publicKey/transactions', checkPermission(PERMISSIONS.WALLETS_READ)
 
     res.json({
       success: true,
-      data: formattedTransactions,
-      count: formattedTransactions.length
+      data: result.transactions,
+      count: result.count,
+      message: result.message
     });
   } catch (error) {
-    res.status(500).json({
-      error: 'Failed to retrieve transactions',
-      message: error.message
-    });
+    next(error);
   }
 });
 

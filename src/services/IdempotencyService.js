@@ -1,12 +1,12 @@
 /**
- * Idempotency Service
- * Ensures donation requests are processed only once, even with retries or network issues
+ * Idempotency Service - Request Deduplication Layer
  * 
- * Design:
- * - Uses idempotency keys (client-provided unique identifiers)
- * - Stores request hashes to detect duplicates
- * - Returns cached responses for duplicate requests
- * - Implements TTL for automatic cleanup
+ * RESPONSIBILITY: Ensures donation requests are processed exactly once
+ * OWNER: Backend Team
+ * DEPENDENCIES: Database, crypto
+ * 
+ * Prevents duplicate transaction execution using idempotency keys and request hashing.
+ * Stores cached responses for duplicate requests with automatic TTL-based cleanup.
  */
 
 const crypto = require('crypto');
@@ -37,10 +37,10 @@ class IdempotencyService {
    */
   async store(idempotencyKey, requestHash, response, userId = null) {
     const expiresAt = new Date(Date.now() + this.DEFAULT_TTL).toISOString();
-    
+
     await Database.run(
-      `INSERT INTO idempotency_keys 
-       (idempotencyKey, requestHash, response, userId, createdAt, expiresAt) 
+      `INSERT INTO idempotency_keys
+       (idempotencyKey, requestHash, response, userId, createdAt, expiresAt)
        VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP, ?)`,
       [idempotencyKey, requestHash, JSON.stringify(response), userId, expiresAt]
     );
@@ -53,8 +53,8 @@ class IdempotencyService {
    */
   async get(idempotencyKey) {
     const record = await Database.get(
-      `SELECT * FROM idempotency_keys 
-       WHERE idempotencyKey = ? 
+      `SELECT * FROM idempotency_keys
+       WHERE idempotencyKey = ?
        AND datetime(expiresAt) > datetime('now')`,
       [idempotencyKey]
     );
@@ -78,8 +78,8 @@ class IdempotencyService {
    * @returns {Promise<Object|null>} Matching record or null
    */
   async findByHash(requestHash, excludeKey = null) {
-    let query = `SELECT * FROM idempotency_keys 
-                 WHERE requestHash = ? 
+    let query = `SELECT * FROM idempotency_keys
+                 WHERE requestHash = ?
                  AND datetime(expiresAt) > datetime('now')`;
     const params = [requestHash];
 
@@ -155,7 +155,7 @@ class IdempotencyService {
    */
   async cleanupExpired() {
     const result = await Database.run(
-      `DELETE FROM idempotency_keys 
+      `DELETE FROM idempotency_keys
        WHERE datetime(expiresAt) <= datetime('now')`
     );
 
@@ -172,12 +172,12 @@ class IdempotencyService {
     );
 
     const active = await Database.get(
-      `SELECT COUNT(*) as count FROM idempotency_keys 
+      `SELECT COUNT(*) as count FROM idempotency_keys
        WHERE datetime(expiresAt) > datetime('now')`
     );
 
     const expired = await Database.get(
-      `SELECT COUNT(*) as count FROM idempotency_keys 
+      `SELECT COUNT(*) as count FROM idempotency_keys
        WHERE datetime(expiresAt) <= datetime('now')`
     );
 

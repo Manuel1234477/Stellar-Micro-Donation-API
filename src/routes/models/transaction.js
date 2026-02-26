@@ -1,6 +1,6 @@
 const fs = require('fs');
 const path = require('path');
-const config = require('../../config/stellar');
+const dbPath = process.env.DB_JSON_PATH || require('path').join(__dirname, '../../data/donations.json');
 const {
   TRANSACTION_STATES,
   normalizeState,
@@ -9,8 +9,9 @@ const {
 } = require('../../utils/transactionStateMachine');
 
 class Transaction {
+  static eventEmitter = donationEvents;
   static getDbPath() {
-    return config.dbPath;
+    return dbPath;
   }
 
   static ensureDbDir() {
@@ -37,6 +38,14 @@ class Transaction {
   static saveTransactions(transactions) {
     this.ensureDbDir();
     fs.writeFileSync(this.getDbPath(), JSON.stringify(transactions, null, 2));
+  }
+
+  /**
+   * Set the event emitter instance (for testing)
+   * @param {Object} emitter - Event emitter to use
+   */
+  static setEventEmitter(emitter) {
+    this.eventEmitter = emitter;
   }
 
   static create(transactionData) {
@@ -177,6 +186,11 @@ class Transaction {
           t.status !== 'cancelled';
       })
       .reduce((total, t) => total + t.amount, 0);
+  }
+
+  // Test helper for integration suites.
+  static _clearAllData() {
+    this.saveTransactions([]);
   }
 }
 

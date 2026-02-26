@@ -6,8 +6,9 @@
 const request = require('supertest');
 const app = require('../src/routes/app');
 const Database = require('../src/utils/database');
+const { clearDatabaseTables } = require('./helpers/testIsolation');
 
-describe('Idempotency Integration Tests', () => {
+describe('Idempotency Integration - API Endpoint Tests', () => {
   beforeAll(async () => {
     // Ensure idempotency table exists
     await Database.run(`
@@ -25,7 +26,12 @@ describe('Idempotency Integration Tests', () => {
 
   beforeEach(async () => {
     // Clean up before each test
-    await Database.run('DELETE FROM idempotency_keys');
+    await clearDatabaseTables();
+  });
+
+  afterEach(async () => {
+    // Ensure clean state after each test
+    await clearDatabaseTables();
   });
 
   describe('POST /donations - Idempotency', () => {
@@ -217,8 +223,8 @@ describe('Idempotency Integration Tests', () => {
     });
   });
 
-  describe('Idempotency Key Formats', () => {
-    it('should accept UUID format', async () => {
+  describe('Idempotency Key Format Support', () => {
+    it('should accept UUID format idempotency key', async () => {
       const uuid = '550e8400-e29b-41d4-a716-446655440000';
       
       const response = await request(app)
@@ -298,8 +304,8 @@ describe('Idempotency Integration Tests', () => {
     });
   });
 
-  describe('Error Scenarios', () => {
-    it('should not cache failed requests', async () => {
+  describe('Error Handling', () => {
+    it('should not cache failed request responses', async () => {
       const idempotencyKey = 'error-test-' + Date.now();
       
       // First request with invalid data (should fail)

@@ -23,22 +23,22 @@ async function addIdempotencyTable() {
 
     // Create indexes separately
     await Database.run(`
-      CREATE INDEX IF NOT EXISTS idx_idempotency_key 
+      CREATE INDEX IF NOT EXISTS idx_idempotency_key
       ON idempotency_keys(idempotencyKey)
     `);
 
     await Database.run(`
-      CREATE INDEX IF NOT EXISTS idx_request_hash 
+      CREATE INDEX IF NOT EXISTS idx_request_hash
       ON idempotency_keys(requestHash)
     `);
 
     await Database.run(`
-      CREATE INDEX IF NOT EXISTS idx_expires_at 
+      CREATE INDEX IF NOT EXISTS idx_expires_at
       ON idempotency_keys(expiresAt)
     `);
 
     await Database.run(`
-      CREATE INDEX IF NOT EXISTS idx_user_id 
+      CREATE INDEX IF NOT EXISTS idx_user_id
       ON idempotency_keys(userId)
     `);
 

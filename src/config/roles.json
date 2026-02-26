@@ -2,18 +2,15 @@
   "roles": [
     {
       "name": "admin",
-      "description": "Full system access",
-      "permissions": [
-        "*"
-      ]
+      "permissions": ["*"]
     },
     {
       "name": "user",
-      "description": "Regular authenticated user",
       "permissions": [
         "donations:create",
         "donations:read",
         "donations:verify",
+        "donations:update",
         "wallets:create",
         "wallets:read",
         "wallets:update",
@@ -21,12 +18,13 @@
         "stream:read",
         "stream:update",
         "stream:delete",
-        "stats:read"
+        "stats:read",
+        "transactions:read",
+        "transactions:sync"
       ]
     },
     {
       "name": "guest",
-      "description": "Unauthenticated or read-only access",
       "permissions": [
         "donations:read",
         "stats:read"

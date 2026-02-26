@@ -74,6 +74,7 @@ temp/
 # Editor directories and files
 
 # Database
+database.js/
 *.db
 *.sqlite
 *.sqlite3

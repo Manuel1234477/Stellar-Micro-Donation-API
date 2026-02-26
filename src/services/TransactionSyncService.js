@@ -1,57 +1,38 @@
+/**
+ * Transaction Sync Service - Blockchain Data Synchronization
+ * 
+ * RESPONSIBILITY: Synchronizes transactions from Stellar Horizon API to local database
+ * OWNER: Backend Team
+ * DEPENDENCIES: StellarService, Horizon API, Transaction model
+ * 
+ * Fetches transaction history from Stellar network and creates local records for new
+ * transactions, ensuring local database reflects blockchain state.
+ */
+
 const StellarSdk = require('stellar-sdk');
+
+// Internal modules
 const Transaction = require('../routes/models/transaction');
+const { HORIZON_URLS } = require('../constants');
 
 class TransactionSyncService {
-  constructor(horizonUrl = 'https://horizon-testnet.stellar.org') {
+  /**
+   * Create a new TransactionSyncService instance
+   * @param {Object} stellarService - Stellar service instance
+   * @param {string} [horizonUrl] - Horizon server URL (optional)
+   */
+  constructor(stellarService, horizonUrl = HORIZON_URLS.TESTNET) {
+    if (!stellarService) throw new Error('stellarService is required');
+    this.stellarService = stellarService;
     this.server = new StellarSdk.Horizon.Server(horizonUrl);
   }
 
+  /**
+   * Sync wallet transactions from Stellar network to local database
+   * Fetches transactions from Horizon and creates local records for new ones
+   * @param {string} publicKey - Stellar public key to sync
+   * @returns {Promise<{synced: number, transactions: Array}>} Sync results
+   */
   async syncWalletTransactions(publicKey) {
     const horizonTxs = await this._fetchHorizonTransactions(publicKey);
     const syncedTxs = [];
-
-    for (const tx of horizonTxs) {
-      const existing = Transaction.getByStellarTxId(tx.id);
-      
-      if (!existing) {
-        const newTx = Transaction.create({
-          stellarTxId: tx.id,
-          stellarLedger: tx.ledger_attr,
-          timestamp: tx.created_at,
-          status: 'confirmed',
-          confirmedAt: tx.created_at,
-          amount: this._extractAmount(tx),
-          donor: this._extractSource(tx),
-          recipient: this._extractDestination(tx)
-        });
-        syncedTxs.push(newTx);
-      }
-    }
-
-    return { synced: syncedTxs.length, transactions: syncedTxs };
-  }
-
-  async _fetchHorizonTransactions(publicKey, limit = 200) {
-    const txs = await this.server.transactions()
-      .forAccount(publicKey)
-      .limit(limit)
-      .order('desc')
-      .call();
-    
-    return txs.records;
-  }
-
-  _extractAmount(tx) {
-    return tx.operations?.[0]?.amount || '0';
-  }
-
-  _extractSource(tx) {
-    return tx.source_account;
-  }
-
-  _extractDestination(tx) {
-    return tx.operations?.[0]?.destination || tx.source_account;
-  }
-}
-
-module.exports = TransactionSyncService;

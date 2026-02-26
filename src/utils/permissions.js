@@ -13,23 +13,27 @@ const PERMISSIONS = {
   DONATIONS_UPDATE: 'donations:update',
   DONATIONS_DELETE: 'donations:delete',
   DONATIONS_VERIFY: 'donations:verify',
-  
+
   // Wallet permissions
   WALLETS_CREATE: 'wallets:create',
   WALLETS_READ: 'wallets:read',
   WALLETS_UPDATE: 'wallets:update',
   WALLETS_DELETE: 'wallets:delete',
-  
+
   // Stream (recurring donations) permissions
   STREAM_CREATE: 'stream:create',
   STREAM_READ: 'stream:read',
   STREAM_UPDATE: 'stream:update',
   STREAM_DELETE: 'stream:delete',
-  
+
   // Stats permissions
   STATS_READ: 'stats:read',
   STATS_ADMIN: 'stats:admin',
-  
+
+  // Transaction permissions
+  TRANSACTIONS_READ: 'transactions:read',
+  TRANSACTIONS_SYNC: 'transactions:sync',
+
   // Admin permissions
   ADMIN_ALL: '*'
 };
@@ -52,18 +56,18 @@ function isValidPermission(permission) {
   if (!permission || typeof permission !== 'string') {
     return false;
   }
-  
+
   // Check for wildcard
   if (permission === '*') {
     return true;
   }
-  
+
   // Check format: resource:action or resource:*
   const parts = permission.split(':');
   if (parts.length !== 2) {
     return false;
   }
-  
+
   const [resource, action] = parts;
   return Boolean(resource && action);
 }
@@ -77,7 +81,7 @@ function parsePermission(permission) {
   if (permission === '*') {
     return { resource: '*', action: '*' };
   }
-  
+
   const [resource, action] = permission.split(':');
   return { resource, action };
 }
@@ -93,20 +97,20 @@ function permissionsMatch(required, granted) {
   if (granted === '*') {
     return true;
   }
-  
+
   // Exact match
   if (required === granted) {
     return true;
   }
-  
+
   // Check resource-level wildcard
   const reqParsed = parsePermission(required);
   const grantedParsed = parsePermission(granted);
-  
+
   if (reqParsed.resource === grantedParsed.resource && grantedParsed.action === '*') {
     return true;
   }
-  
+
   return false;
 }
 

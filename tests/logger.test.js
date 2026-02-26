@@ -2,7 +2,7 @@ const { Logger } = require('../src/middleware/logger');
 const fs = require('fs');
 const path = require('path');
 
-describe('Logger Middleware', () => {
+describe('Logger Middleware - Unit Tests', () => {
   let logger;
   const testLogDir = path.join(__dirname, '../test-logs');
 
@@ -25,8 +25,8 @@ describe('Logger Middleware', () => {
     }
   });
 
-  describe('sanitize()', () => {
-    test('should redact sensitive fields', () => {
+  describe('Data Sanitization', () => {
+    test('should redact sensitive fields from data', () => {
       const data = {
         username: 'testuser',
         password: 'secret123',
@@ -146,8 +146,8 @@ describe('Logger Middleware', () => {
     });
   });
 
-  describe('formatLog()', () => {
-    test('should format log data as JSON', () => {
+  describe('Log Formatting', () => {
+    test('should format log data as JSON string', () => {
       const logData = {
         timestamp: '2024-02-20T10:00:00.000Z',
         method: 'GET',
@@ -163,7 +163,7 @@ describe('Logger Middleware', () => {
     });
   });
 
-  describe('ensureLogDirectory()', () => {
+  describe('Log Directory Management', () => {
     test('should create log directory if it does not exist', () => {
       const fileLogger = new Logger({
         logToFile: true,
@@ -174,7 +174,7 @@ describe('Logger Middleware', () => {
     });
   });
 
-  describe('writeToFile()', () => {
+  describe('File Writing', () => {
     test('should write log to file when logToFile is enabled', (done) => {
       const fileLogger = new Logger({
         logToFile: true,
@@ -220,8 +220,8 @@ describe('Logger Middleware', () => {
     });
   });
 
-  describe('middleware()', () => {
-    test('should return a middleware function', () => {
+  describe('Middleware Function', () => {
+    test('should return a middleware function with correct signature', () => {
       const middleware = logger.middleware();
       expect(typeof middleware).toBe('function');
       expect(middleware.length).toBe(3); // req, res, next
@@ -294,8 +294,8 @@ describe('Logger Middleware', () => {
     });
   });
 
-  describe('logToConsole()', () => {
-    test('should log basic request information', () => {
+  describe('Console Logging', () => {
+    test('should log basic request information to console', () => {
       const consoleSpy = jest.spyOn(console, 'log').mockImplementation();
 
       const logData = {

@@ -7,7 +7,7 @@ const { getStellarService } = require('../src/config/stellar');
 const Transaction = require('../src/routes/models/transaction');
 const DonationValidator = require('../src/utils/donationValidator');
 
-describe('Failure Scenario Tests', () => {
+describe('Failure Scenarios - Comprehensive Error Tests', () => {
   let stellarService;
 
   beforeEach(() => {
@@ -15,8 +15,8 @@ describe('Failure Scenario Tests', () => {
     stellarService = getStellarService();
   });
 
-  describe('Insufficient Funds Scenarios', () => {
-    test('should reject donation when balance is zero', async () => {
+  describe('Insufficient Balance Errors', () => {
+    test('should reject donation when wallet balance is zero', async () => {
       const donor = await stellarService.createWallet();
       const recipient = await stellarService.createWallet();
 
@@ -80,8 +80,8 @@ describe('Failure Scenario Tests', () => {
     });
   });
 
-  describe('Invalid Account Scenarios', () => {
-    test('should reject invalid source secret key', async () => {
+  describe('Invalid Account Errors', () => {
+    test('should reject invalid source secret key format', async () => {
       const recipient = await stellarService.createWallet();
 
       await expect(
@@ -139,8 +139,8 @@ describe('Failure Scenario Tests', () => {
     });
   });
 
-  describe('Invalid Amount Scenarios', () => {
-    test('should reject negative amount', async () => {
+  describe('Invalid Amount Errors', () => {
+    test('should reject negative donation amount', async () => {
       const donor = await stellarService.createWallet();
       const recipient = await stellarService.createWallet();
       await stellarService.fundTestnetWallet(donor.publicKey);
@@ -216,8 +216,8 @@ describe('Failure Scenario Tests', () => {
     });
   });
 
-  describe('Memo Validation Failures', () => {
-    test('should reject memo exceeding 28 bytes', async () => {
+  describe('Memo Validation Errors', () => {
+    test('should reject memo exceeding 28-byte limit', async () => {
       const donor = await stellarService.createWallet();
       const recipient = await stellarService.createWallet();
       await stellarService.fundTestnetWallet(donor.publicKey);
@@ -250,7 +250,7 @@ describe('Failure Scenario Tests', () => {
     });
   });
 
-  describe('Transaction Validation Failures', () => {
+  describe('Transaction Validation Errors', () => {
     test('should reject transaction with missing required fields', async () => {
       await expect(
         stellarService.sendDonation({})
@@ -278,7 +278,7 @@ describe('Failure Scenario Tests', () => {
     });
   });
 
-  describe('Concurrent Transaction Failures', () => {
+  describe('Concurrent Transaction Errors', () => {
     test('should handle race condition with insufficient funds', async () => {
       const donor = await stellarService.createWallet();
       const recipient1 = await stellarService.createWallet();
@@ -336,8 +336,8 @@ describe('Failure Scenario Tests', () => {
     });
   });
 
-  describe('Daily Limit Failures', () => {
-    test('should reject donation exceeding daily limit', () => {
+  describe('Daily Limit Errors', () => {
+    test('should reject donation exceeding daily limit threshold', () => {
       const validator = new DonationValidator();
       validator.maxDailyPerDonor = 1000;
 
@@ -370,7 +370,7 @@ describe('Failure Scenario Tests', () => {
     });
   });
 
-  describe('Database Operation Failures', () => {
+  describe('Database Operation Errors', () => {
     test('should handle transaction creation failure gracefully', () => {
       expect(() => {
         Transaction.create({});
@@ -407,8 +407,8 @@ describe('Failure Scenario Tests', () => {
     });
   });
 
-  describe('Stream Connection Failures', () => {
-    test('should handle stream to invalid account', () => {
+  describe('Stream Connection Errors', () => {
+    test('should handle stream to invalid account gracefully', () => {
       expect(() => {
         stellarService.streamTransactions('INVALID', () => {});
       }).toThrow();
@@ -434,7 +434,7 @@ describe('Failure Scenario Tests', () => {
     });
   });
 
-  describe('Balance Query Failures', () => {
+  describe('Balance Query Errors', () => {
     test('should handle balance query for unfunded account', async () => {
       const wallet = await stellarService.createWallet();
       const balance = await stellarService.getBalance(wallet.publicKey);
@@ -455,7 +455,7 @@ describe('Failure Scenario Tests', () => {
     });
   });
 
-  describe('Transaction History Failures', () => {
+  describe('Transaction History Errors', () => {
     test('should handle history query for account with no transactions', async () => {
       const wallet = await stellarService.createWallet();
       const history = await stellarService.getTransactionHistory(wallet.publicKey);
@@ -480,7 +480,7 @@ describe('Failure Scenario Tests', () => {
     });
   });
 
-  describe('Wallet Creation Failures', () => {
+  describe('Wallet Creation Errors', () => {
     test('should handle wallet creation with invalid parameters', async () => {
       if (stellarService.createWalletWithParams) {
         await expect(
@@ -522,8 +522,8 @@ describe('Failure Scenario Tests', () => {
     });
   });
 
-  describe('Edge Case Failures', () => {
-    test('should handle extremely large amount', async () => {
+  describe('Edge Case Errors', () => {
+    test('should handle extremely large amount gracefully', async () => {
       const donor = await stellarService.createWallet();
       const recipient = await stellarService.createWallet();
       await stellarService.fundTestnetWallet(donor.publicKey);

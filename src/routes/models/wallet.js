@@ -62,7 +62,7 @@ class Wallet {
     const wallets = this.loadWallets();
     const index = wallets.findIndex(w => w.id === id);
     if (index === -1) return null;
-    
+
     wallets[index] = {
       ...wallets[index],
       ...updates,

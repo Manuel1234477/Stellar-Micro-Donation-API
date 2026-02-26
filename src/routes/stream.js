@@ -1,8 +1,21 @@
+/**
+ * Stream Routes - API Endpoint Layer
+ * 
+ * RESPONSIBILITY: HTTP request handling for recurring donation schedules
+ * OWNER: Backend Team
+ * DEPENDENCIES: Database, middleware (auth, RBAC), validation helpers
+ * 
+ * Handles creation, retrieval, and cancellation of recurring donation schedules.
+ * Manages schedule lifecycle and status updates for automated donation execution.
+ */
+
 const express = require('express');
 const router = express.Router();
 const Database = require('../utils/database');
-const { checkPermission } = require('../middleware/rbacMiddleware');
+const { checkPermission } = require('../middleware/rbac');
 const { PERMISSIONS } = require('../utils/permissions');
+const { VALID_FREQUENCIES, SCHEDULE_STATUS } = require('../constants');
+const { validateRequiredFields, validateFloat, validateEnum } = require('../utils/validationHelpers');
 const log = require('../utils/log');
 
 /**
@@ -14,27 +27,33 @@ router.post('/create', checkPermission(PERMISSIONS.STREAM_CREATE), async (req, r
     const { donorPublicKey, recipientPublicKey, amount, frequency } = req.body;
 
     // Validate required fields
-    if (!donorPublicKey || !recipientPublicKey || !amount || !frequency) {
+    const requiredValidation = validateRequiredFields(
+      { donorPublicKey, recipientPublicKey, amount, frequency },
+      ['donorPublicKey', 'recipientPublicKey', 'amount', 'frequency']
+    );
+
+    if (!requiredValidation.valid) {
       return res.status(400).json({
         success: false,
-        error: 'Missing required fields: donorPublicKey, recipientPublicKey, amount, frequency'
+        error: `Missing required fields: ${requiredValidation.missing.join(', ')}`
       });
     }
 
     // Validate amount
-    if (isNaN(parseFloat(amount)) || parseFloat(amount) <= 0) {
+    const amountValidation = validateFloat(amount);
+    if (!amountValidation.valid) {
       return res.status(400).json({
         success: false,
-        error: 'Amount must be a positive number'
+        error: `Invalid amount: ${amountValidation.error}`
       });
     }
 
     // Validate frequency
-    const validFrequencies = ['daily', 'weekly', 'monthly'];
-    if (!validFrequencies.includes(frequency.toLowerCase())) {
+    const frequencyValidation = validateEnum(frequency, VALID_FREQUENCIES, { caseInsensitive: true });
+    if (!frequencyValidation.valid) {
       return res.status(400).json({
         success: false,
-        error: 'Frequency must be one of: daily, weekly, monthly'
+        error: frequencyValidation.error
       });
     }
 
@@ -75,7 +94,7 @@ router.post('/create', checkPermission(PERMISSIONS.STREAM_CREATE), async (req, r
     // Calculate next execution date based on frequency
     const now = new Date();
     const nextExecutionDate = new Date(now);
-    
+
     switch (frequency.toLowerCase()) {
       case 'daily':
         nextExecutionDate.setDate(nextExecutionDate.getDate() + 1);
@@ -90,15 +109,15 @@ router.post('/create', checkPermission(PERMISSIONS.STREAM_CREATE), async (req, r
 
     // Insert recurring donation schedule
     const result = await Database.run(
-      `INSERT INTO recurring_donations 
-       (donorId, recipientId, amount, frequency, nextExecutionDate, status) 
+      `INSERT INTO recurring_donations
+       (donorId, recipientId, amount, frequency, nextExecutionDate, status)
        VALUES (?, ?, ?, ?, ?, ?)`,
-      [donor.id, recipient.id, parseFloat(amount), frequency.toLowerCase(), nextExecutionDate.toISOString(), 'active']
+      [donor.id, recipient.id, parseFloat(amount), frequency.toLowerCase(), nextExecutionDate.toISOString(), SCHEDULE_STATUS.ACTIVE]
     );
 
     // Fetch the created schedule
     const schedule = await Database.get(
-      `SELECT 
+      `SELECT
         rd.id,
         rd.amount,
         rd.frequency,
@@ -130,12 +149,7 @@ router.post('/create', checkPermission(PERMISSIONS.STREAM_CREATE), async (req, r
       }
     });
   } catch (error) {
-    log.error('STREAM_ROUTE', 'Failed to create recurring donation', { error: error.message });
-    res.status(500).json({
-      success: false,
-      error: 'Failed to create recurring donation schedule',
-      message: error.message
-    });
+    next(error);
   }
 });
 
@@ -146,7 +160,7 @@ router.post('/create', checkPermission(PERMISSIONS.STREAM_CREATE), async (req, r
 router.get('/schedules', checkPermission(PERMISSIONS.STREAM_READ), async (req, res) => {
   try {
     const schedules = await Database.query(
-      `SELECT 
+      `SELECT
         rd.id,
         rd.amount,
         rd.frequency,
@@ -169,12 +183,7 @@ router.get('/schedules', checkPermission(PERMISSIONS.STREAM_READ), async (req, r
       count: schedules.length
     });
   } catch (error) {
-    log.error('STREAM_ROUTE', 'Failed to fetch recurring donation schedules', { error: error.message });
-    res.status(500).json({
-      success: false,
-      error: 'Failed to fetch recurring donation schedules',
-      message: error.message
-    });
+    next(error);
   }
 });
 
@@ -185,7 +194,7 @@ router.get('/schedules', checkPermission(PERMISSIONS.STREAM_READ), async (req, r
 router.get('/schedules/:id', checkPermission(PERMISSIONS.STREAM_READ), async (req, res) => {
   try {
     const schedule = await Database.get(
-      `SELECT 
+      `SELECT
         rd.id,
         rd.amount,
         rd.frequency,

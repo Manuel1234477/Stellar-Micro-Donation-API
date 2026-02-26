@@ -1,13 +1,13 @@
 /**
  * Memo Validator
  * Validates and sanitizes transaction memos according to Stellar specifications
- * 
+ *
  * Stellar Memo Types:
  * - MEMO_TEXT: Up to 28 bytes of UTF-8 text
  * - MEMO_ID: 64-bit unsigned integer
  * - MEMO_HASH: 32-byte hash
  * - MEMO_RETURN: 32-byte hash for returns
- * 
+ *
  * This implementation focuses on MEMO_TEXT for simplicity
  */
 
@@ -67,6 +67,7 @@ class MemoValidator {
 
     // Check for non-printable characters (only allow printable ASCII + common UTF-8)
     // Here we reject control characters entirely
+    // eslint-disable-next-line no-control-regex -- Intentionally checking for control characters
     if (/[\x00-\x1F\x7F]/.test(sanitized)) {
       return {
         valid: false,

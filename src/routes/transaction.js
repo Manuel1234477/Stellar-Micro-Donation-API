@@ -1,40 +1,42 @@
+/**
+ * Transaction Routes - API Endpoint Layer
+ * 
+ * RESPONSIBILITY: HTTP request handling for transaction queries and synchronization
+ * OWNER: Backend Team
+ * DEPENDENCIES: Transaction model, TransactionSyncService, middleware (auth, RBAC)
+ * 
+ * Handles transaction listing with pagination and blockchain synchronization operations.
+ * Provides endpoints for querying transaction history and syncing with Stellar network.
+ */
+
 const express = require('express');
 const router = express.Router();
-const Transaction = require('../models/transaction');
-const TransactionSyncService = require('../../services/TransactionSyncService');
+const Transaction = require('./models/transaction');
+const TransactionSyncService = require('../services/TransactionSyncService');
+const { checkPermission } = require('../middleware/rbac');
+const { PERMISSIONS } = require('../utils/permissions');
+const { validatePagination } = require('../utils/validationHelpers');
 
-
-
-router.get('/', async (req, res) => {
+router.get('/', checkPermission(PERMISSIONS.TRANSACTIONS_READ), async (req, res) => {
   try {
-    let { limit = 10, offset = 0 } = req.query;
+    const { limit = 10, offset = 0 } = req.query;
 
-    
-    limit = parseInt(limit);
-    offset = parseInt(offset);
+    const paginationValidation = validatePagination(limit, offset);
 
-    
-    if (isNaN(limit) || limit <= 0) {
+    if (!paginationValidation.valid) {
       return res.status(400).json({
         success: false,
         error: {
-          code: 'INVALID_LIMIT',
-          message: 'Limit must be a positive number'
+          code: 'INVALID_PAGINATION',
+          message: paginationValidation.error
         }
       });
     }
 
-    if (isNaN(offset) || offset < 0) {
-      return res.status(400).json({
-        success: false,
-        error: {
-          code: 'INVALID_OFFSET',
-          message: 'Offset must be a non-negative number'
-        }
-      });
-    }
-
-    const result = Transaction.getPaginated({ limit, offset });
+    const result = Transaction.getPaginated({
+      limit: paginationValidation.limit,
+      offset: paginationValidation.offset
+    });
 
     return res.status(200).json({
       success: true,
@@ -43,41 +45,39 @@ router.get('/', async (req, res) => {
     });
 
   } catch (error) {
-    return res.status(500).json({
-      success: false,
-      error: {
-        code: 'SERVER_ERROR',
-        message: 'Failed to fetch transactions'
+    next(error);
+  }
+});
+
+router.post(
+  "/sync",
+  checkPermission(PERMISSIONS.TRANSACTIONS_SYNC),
+  async (req, res, next) => {
+    try {
+      const { publicKey } = req.body;
+
+      if (!publicKey) {
+        return res.status(400).json({
+          success: false,
+          error: {
+            code: "MISSING_PUBLIC_KEY",
+            message: "publicKey is required",
+          },
+        });
       }
-    });
-  }
-});
 
-router.post('/sync', async (req, res) => {
-  try {
-    const { publicKey } = req.body;
+      const syncService = new TransactionSyncService();
+      const result = await syncService.syncWalletTransactions(publicKey);
 
-    if (!publicKey) {
-      return res.status(400).json({
-        success: false,
-        error: { code: 'MISSING_PUBLIC_KEY', message: 'publicKey is required' }
+      return res.status(200).json({
+        success: true,
+        data: result,
       });
+    } catch (error) {
+      next(error);
     }
-
-    const syncService = new TransactionSyncService();
-    const result = await syncService.syncWalletTransactions(publicKey);
-
-    return res.status(200).json({
-      success: true,
-      data: result
-    });
-  } catch (error) {
-    return res.status(500).json({
-      success: false,
-      error: { code: 'SYNC_FAILED', message: error.message }
-    });
-  }
-});
+  },
+);
 
 
 module.exports = router;

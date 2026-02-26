@@ -1,5 +1,18 @@
+/**
+ * Permissions Model - Authorization Layer
+ * 
+ * RESPONSIBILITY: Role-based permission management and validation
+ * OWNER: Security Team
+ * DEPENDENCIES: roles.json config, logger
+ * 
+ * Loads and validates role-based permissions from configuration. Provides permission
+ * checking logic for RBAC enforcement across API endpoints.
+ */
+
 const fs = require('fs');
 const path = require('path');
+
+// Internal modules
 const log = require('../utils/log');
 
 const ROLES_CONFIG_PATH = path.join(__dirname, '../config/roles.json');
@@ -26,11 +39,17 @@ function loadRolesConfig() {
           permissions: [
             'donations:create',
             'donations:read',
+            'donations:verify',
             'wallets:read',
             'wallets:create',
+            'wallets:update',
             'stream:create',
             'stream:read',
-            'stats:read'
+            'stream:update',
+            'stream:delete',
+            'stats:read',
+            'transactions:read',
+            'transactions:sync'
           ]
         },
         {
@@ -53,12 +72,12 @@ function loadRolesConfig() {
 function getPermissionsByRole(roleName) {
   const config = loadRolesConfig();
   const role = config.roles.find(r => r.name === roleName);
-  
+
   if (!role) {
     log.warn('PERMISSIONS', 'Role not found, returning empty permissions', { roleName });
     return [];
   }
-  
+
   return role.permissions;
 }
 
@@ -70,21 +89,21 @@ function getPermissionsByRole(roleName) {
  */
 function hasPermission(roleName, permission) {
   const permissions = getPermissionsByRole(roleName);
-  
+
   // Admin wildcard check
   if (permissions.includes('*')) {
     return true;
   }
-  
+
   // Exact permission match
   if (permissions.includes(permission)) {
     return true;
   }
-  
+
   // Wildcard permission check (e.g., 'donations:*' matches 'donations:create')
   const [resource] = permission.split(':');
   const wildcardPermission = `${resource}:*`;
-  
+
   return permissions.includes(wildcardPermission);
 }
 

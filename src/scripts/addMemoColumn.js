@@ -77,13 +77,13 @@ async function main() {
 
   try {
     const result = await addMemoColumn();
-    
+
     if (result.alreadyExists) {
       console.log('\n✓ Migration skipped - memo column already exists');
     } else {
       console.log('\n✓ Migration completed successfully');
     }
-    
+
     process.exit(0);
   } catch (error) {
     console.error('\n✗ Migration failed:', error.message);
