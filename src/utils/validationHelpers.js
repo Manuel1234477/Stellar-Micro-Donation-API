@@ -206,6 +206,32 @@ function validateRole(role) {
   return validateEnum(role, validRoles, { caseInsensitive: false });
 }
 
+/**
+ * Format error response for unknown fields
+ * Creates a standardized error response when unknown fields are detected in a request payload
+ * 
+ * @param {string[]} unknownFields - Array of unknown field names
+ * @param {string[]} allowedFields - Array of allowed field names (optional)
+ * @returns {Object} Formatted error response object
+ */
+function formatUnknownFieldError(unknownFields, allowedFields = null) {
+  const error = {
+    success: false,
+    error: {
+      code: 'UNKNOWN_FIELDS',
+      message: 'Request contains unknown or unexpected fields',
+      unknownFields: unknownFields
+    }
+  };
+
+  // Optionally include allowed fields for better developer experience
+  if (allowedFields && Array.isArray(allowedFields)) {
+    error.error.allowedFields = allowedFields;
+  }
+
+  return error;
+}
+
 module.exports = {
   validateRequiredFields,
   validateNonEmptyString,
@@ -215,4 +241,5 @@ module.exports = {
   validateDifferent,
   validatePagination,
   validateRole,
+  formatUnknownFieldError,
 };
