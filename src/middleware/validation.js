@@ -18,6 +18,60 @@ const {
   isValidDateRange,
   isValidTransactionHash,
 } = require('../utils/validators');
+const { getFieldSchema } = require('../config/fieldSchemas');
+const { detectUnknownFields } = require('../utils/fieldValidator');
+
+/**
+ * Generic middleware to validate request payloads against field schemas
+ * Rejects requests containing unknown/unexpected fields
+ * 
+ * This middleware should be applied to all routes that accept request bodies.
+ * It checks the request payload against the defined field schema for the endpoint
+ * and rejects requests with unknown fields before any business logic executes.
+ * 
+ * @param {Object} req - Express request object
+ * @param {Object} res - Express response object
+ * @param {Function} next - Express next middleware function
+ */
+const validatePayloadFields = (req, res, next) => {
+  // Only validate for methods that typically have request bodies
+  const methodsWithBodies = ['POST', 'PUT', 'PATCH'];
+  if (!methodsWithBodies.includes(req.method)) {
+    return next();
+  }
+
+  // Skip validation if no body present
+  if (!req.body || Object.keys(req.body).length === 0) {
+    return next();
+  }
+
+  // Get the field schema for this endpoint
+  const allowedFields = getFieldSchema(req.method, req.route?.path || req.path);
+
+  // If no schema defined, skip validation (allows gradual rollout)
+  if (!allowedFields) {
+    return next();
+  }
+
+  // Detect unknown fields
+  const unknownFields = detectUnknownFields(req.body, allowedFields);
+
+  // If unknown fields found, reject the request
+  if (unknownFields.length > 0) {
+    return res.status(400).json({
+      success: false,
+      error: {
+        code: 'UNKNOWN_FIELDS',
+        message: 'Request contains unknown or unexpected fields',
+        unknownFields: unknownFields,
+        allowedFields: allowedFields
+      }
+    });
+  }
+
+  // All fields are valid, continue to next middleware
+  next();
+};
 
 /**
  * Validate donation creation request.
@@ -300,6 +354,7 @@ const validatePublicKey = (fieldName = 'publicKey') => {
 };
 
 module.exports = {
+  validatePayloadFields,
   validateDonationCreate,
   validateTransactionVerify,
   validateDateRange,
