@@ -215,18 +215,24 @@ function validateRole(role) {
  * @returns {Object} Formatted error response object
  */
 function formatUnknownFieldError(unknownFields, allowedFields = null) {
+  const isProduction = process.env.NODE_ENV === 'production';
+  
   const error = {
     success: false,
     error: {
       code: 'UNKNOWN_FIELDS',
-      message: 'Request contains unknown or unexpected fields',
-      unknownFields: unknownFields
+      message: 'Request contains unknown or unexpected fields'
     }
   };
 
-  // Optionally include allowed fields for better developer experience
-  if (allowedFields && Array.isArray(allowedFields)) {
-    error.error.allowedFields = allowedFields;
+  // Only include field details in development to prevent enumeration attacks
+  if (!isProduction) {
+    error.error.unknownFields = unknownFields;
+    
+    // Optionally include allowed fields for better developer experience
+    if (allowedFields && Array.isArray(allowedFields)) {
+      error.error.allowedFields = allowedFields;
+    }
   }
 
   return error;

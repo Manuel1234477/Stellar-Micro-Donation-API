@@ -19,7 +19,9 @@ class StellarErrorHandler {
    * @returns {Object} - Formatted error response with code, message, and status
    */
   static handle(error, context = 'operation') {
-    // Log detailed error internally
+    const isProduction = process.env.NODE_ENV === 'production';
+
+    // Log detailed error internally (never exposed to client)
     log.error('STELLAR_ERROR_HANDLER', `Stellar operation failed in ${context}`, {
       message: error.message,
       stack: error.stack,
@@ -27,6 +29,68 @@ class StellarErrorHandler {
       timestamp: new Date().toISOString()
     });
 
+    // In production, use generic messages to prevent information leakage
+    if (isProduction) {
+      // Map all network/infrastructure errors to generic service unavailable
+      if (error.message?.includes('ENOTFOUND') || 
+          error.message?.includes('ECONNREFUSED') ||
+          error.message?.includes('timeout') || 
+          error.message?.includes('ETIMEDOUT')) {
+        return {
+          status: 503,
+          code: 'SERVICE_UNAVAILABLE',
+          message: 'Service temporarily unavailable. Please try again later.'
+        };
+      }
+
+      // Map business logic errors to generic messages
+      if (error.message?.includes('insufficient') || 
+          error.message?.includes('underfunded')) {
+        return {
+          status: 400,
+          code: 'INSUFFICIENT_BALANCE',
+          message: 'Insufficient balance to complete this transaction.'
+        };
+      }
+
+      if (error.message?.includes('destination') || 
+          error.message?.includes('not found') ||
+          error.message?.includes('not funded') || 
+          error.message?.includes('op_no_destination')) {
+        return {
+          status: 400,
+          code: 'INVALID_DESTINATION',
+          message: 'Invalid destination account.'
+        };
+      }
+
+      if (error.message?.includes('Invalid source') || 
+          error.message?.includes('secret key')) {
+        return {
+          status: 400,
+          code: 'INVALID_CREDENTIALS',
+          message: 'Invalid credentials provided.'
+        };
+      }
+
+      if (error.message?.includes('tx_failed') || 
+          error.message?.includes('transaction failed')) {
+        return {
+          status: 400,
+          code: 'TRANSACTION_FAILED',
+          message: 'Transaction failed. Please verify your details.'
+        };
+      }
+
+      // Default production error
+      return {
+        status: 500,
+        code: 'STELLAR_ERROR',
+        message: 'An error occurred while processing your request. Please try again.'
+      };
+    }
+
+    // Development mode - detailed error messages for debugging
     // Network errors
     if (error.message?.includes('ENOTFOUND') || error.message?.includes('ECONNREFUSED')) {
       return {

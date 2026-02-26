@@ -47,13 +47,22 @@ class MemoValidator {
     const byteLength = Buffer.byteLength(sanitized, 'utf8');
 
     if (byteLength > MAX_MEMO_LENGTH) {
-      return {
+      const isProduction = process.env.NODE_ENV === 'production';
+      const errorResponse = {
         valid: false,
-        error: `Memo exceeds maximum length of ${MAX_MEMO_LENGTH} bytes (current: ${byteLength} bytes)`,
+        error: isProduction 
+          ? 'Memo exceeds maximum allowed length'
+          : `Memo exceeds maximum length of ${MAX_MEMO_LENGTH} bytes (current: ${byteLength} bytes)`,
         code: 'MEMO_TOO_LONG',
-        maxLength: MAX_MEMO_LENGTH,
-        currentLength: byteLength
       };
+
+      // Only expose length details in development
+      if (!isProduction) {
+        errorResponse.maxLength = MAX_MEMO_LENGTH;
+        errorResponse.currentLength = byteLength;
+      }
+
+      return errorResponse;
     }
 
     // Check for null bytes (not allowed in Stellar memos)

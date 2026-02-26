@@ -11,45 +11,90 @@
 
 /**
  * Standard error codes used throughout the application
- * Format: CATEGORY_SPECIFIC_CODE (e.g., VALIDATION_MISSING_FIELD)
- * Numeric codes provide stable API error handling
+ * Format: { code: 'STRING_CODE', numeric: NUMBER }
+ * Numeric codes provide stable API error handling and prevent enumeration attacks
+ * 
+ * Numeric Code Ranges:
+ * - 1000-1099: Validation errors
+ * - 2000-2099: Authentication/Authorization errors
+ * - 3000-3099: Not found errors
+ * - 4000-4099: Conflict/Duplicate errors
+ * - 5000-5099: Business logic errors
+ * - 6000-6099: Rate limiting errors
+ * - 7000-7099: Stellar/Blockchain errors
+ * - 8000-8099: Network/Infrastructure errors
+ * - 9000-9099: Internal server errors
  */
 const ERROR_CODES = {
-  // Validation errors (400)
-  VALIDATION_ERROR: 'VALIDATION_ERROR',
-  INVALID_REQUEST: 'INVALID_REQUEST',
-  INVALID_LIMIT: 'INVALID_LIMIT',
-  INVALID_OFFSET: 'INVALID_OFFSET',
-  INVALID_DATE_FORMAT: 'INVALID_DATE_FORMAT',
-  INVALID_AMOUNT: 'INVALID_AMOUNT',
-  INVALID_FREQUENCY: 'INVALID_FREQUENCY',
-  MISSING_REQUIRED_FIELD: 'MISSING_REQUIRED_FIELD',
-  IDEMPOTENCY_KEY_REQUIRED: 'IDEMPOTENCY_KEY_REQUIRED',
+  // Validation errors (1000-1099)
+  VALIDATION_ERROR: { code: 'VALIDATION_ERROR', numeric: 1000 },
+  INVALID_REQUEST: { code: 'INVALID_REQUEST', numeric: 1001 },
+  INVALID_LIMIT: { code: 'INVALID_LIMIT', numeric: 1002 },
+  INVALID_OFFSET: { code: 'INVALID_OFFSET', numeric: 1003 },
+  INVALID_DATE_FORMAT: { code: 'INVALID_DATE_FORMAT', numeric: 1004 },
+  INVALID_AMOUNT: { code: 'INVALID_AMOUNT', numeric: 1005 },
+  INVALID_FREQUENCY: { code: 'INVALID_FREQUENCY', numeric: 1006 },
+  MISSING_REQUIRED_FIELD: { code: 'MISSING_REQUIRED_FIELD', numeric: 1007 },
+  IDEMPOTENCY_KEY_REQUIRED: { code: 'IDEMPOTENCY_KEY_REQUIRED', numeric: 1008 },
+  MISSING_FIELD: { code: 'MISSING_FIELD', numeric: 1009 },
+  UNKNOWN_FIELDS: { code: 'UNKNOWN_FIELDS', numeric: 1010 },
+  INVALID_STELLAR_ADDRESS: { code: 'INVALID_STELLAR_ADDRESS', numeric: 1011 },
+  INVALID_TRANSACTION_HASH: { code: 'INVALID_TRANSACTION_HASH', numeric: 1012 },
+  INVALID_DATE_RANGE: { code: 'INVALID_DATE_RANGE', numeric: 1013 },
+  INVALID_PAGINATION: { code: 'INVALID_PAGINATION', numeric: 1014 },
+  MISSING_PUBLIC_KEY: { code: 'MISSING_PUBLIC_KEY', numeric: 1015 },
+  INVALID_AMOUNT_TYPE: { code: 'INVALID_AMOUNT_TYPE', numeric: 1016 },
+  INVALID_AMOUNT_PRECISION: { code: 'INVALID_AMOUNT_PRECISION', numeric: 1017 },
+  AMOUNT_TOO_LOW: { code: 'AMOUNT_TOO_LOW', numeric: 1018 },
+  AMOUNT_BELOW_MINIMUM: { code: 'AMOUNT_BELOW_MINIMUM', numeric: 1019 },
+  AMOUNT_EXCEEDS_MAXIMUM: { code: 'AMOUNT_EXCEEDS_MAXIMUM', numeric: 1020 },
+  INVALID_MEMO_TYPE: { code: 'INVALID_MEMO_TYPE', numeric: 1021 },
+  MEMO_TOO_LONG: { code: 'MEMO_TOO_LONG', numeric: 1022 },
+  INVALID_MEMO_CONTENT: { code: 'INVALID_MEMO_CONTENT', numeric: 1023 },
+  INVALID_MEMO_FORMAT: { code: 'INVALID_MEMO_FORMAT', numeric: 1024 },
 
-  // Authentication/Authorization errors (401, 403)
-  UNAUTHORIZED: 'UNAUTHORIZED',
-  ACCESS_DENIED: 'ACCESS_DENIED',
-  INSUFFICIENT_PERMISSIONS: 'INSUFFICIENT_PERMISSIONS',
+  // Authentication/Authorization errors (2000-2099)
+  UNAUTHORIZED: { code: 'UNAUTHORIZED', numeric: 2000 },
+  ACCESS_DENIED: { code: 'ACCESS_DENIED', numeric: 2001 },
+  INSUFFICIENT_PERMISSIONS: { code: 'INSUFFICIENT_PERMISSIONS', numeric: 2002 },
+  MISSING_API_KEY: { code: 'MISSING_API_KEY', numeric: 2003 },
+  INVALID_API_KEY: { code: 'INVALID_API_KEY', numeric: 2004 },
 
-  // Not found errors (404)
-  NOT_FOUND: 'NOT_FOUND',
-  WALLET_NOT_FOUND: 'WALLET_NOT_FOUND',
-  TRANSACTION_NOT_FOUND: 'TRANSACTION_NOT_FOUND',
-  USER_NOT_FOUND: 'USER_NOT_FOUND',
-  DONATION_NOT_FOUND: 'DONATION_NOT_FOUND',
-  ENDPOINT_NOT_FOUND: 'ENDPOINT_NOT_FOUND',
+  // Not found errors (3000-3099)
+  NOT_FOUND: { code: 'NOT_FOUND', numeric: 3000 },
+  WALLET_NOT_FOUND: { code: 'WALLET_NOT_FOUND', numeric: 3001 },
+  TRANSACTION_NOT_FOUND: { code: 'TRANSACTION_NOT_FOUND', numeric: 3002 },
+  USER_NOT_FOUND: { code: 'USER_NOT_FOUND', numeric: 3003 },
+  DONATION_NOT_FOUND: { code: 'DONATION_NOT_FOUND', numeric: 3004 },
+  ENDPOINT_NOT_FOUND: { code: 'ENDPOINT_NOT_FOUND', numeric: 3005 },
 
-  // Business logic errors (422)
-  DUPLICATE_TRANSACTION: 'DUPLICATE_TRANSACTION',
-  DUPLICATE_DONATION: 'DUPLICATE_DONATION',
-  INSUFFICIENT_BALANCE: 'INSUFFICIENT_BALANCE',
-  TRANSACTION_FAILED: 'TRANSACTION_FAILED',
+  // Conflict/Duplicate errors (4000-4099)
+  DUPLICATE_TRANSACTION: { code: 'DUPLICATE_TRANSACTION', numeric: 4000 },
+  DUPLICATE_DONATION: { code: 'DUPLICATE_DONATION', numeric: 4001 },
 
-  // Server errors (500)
-  INTERNAL_ERROR: 'INTERNAL_ERROR',
-  DATABASE_ERROR: 'DATABASE_ERROR',
-  VERIFICATION_FAILED: 'VERIFICATION_FAILED',
-  SERVICE_UNAVAILABLE: 'SERVICE_UNAVAILABLE',
+  // Business logic errors (5000-5099)
+  INSUFFICIENT_BALANCE: { code: 'INSUFFICIENT_BALANCE', numeric: 5000 },
+  TRANSACTION_FAILED: { code: 'TRANSACTION_FAILED', numeric: 5001 },
+  DAILY_LIMIT_EXCEEDED: { code: 'DAILY_LIMIT_EXCEEDED', numeric: 5002 },
+
+  // Rate limiting errors (6000-6099)
+  RATE_LIMIT_EXCEEDED: { code: 'RATE_LIMIT_EXCEEDED', numeric: 6000 },
+
+  // Stellar/Blockchain errors (7000-7099)
+  STELLAR_ERROR: { code: 'STELLAR_ERROR', numeric: 7000 },
+  INVALID_DESTINATION: { code: 'INVALID_DESTINATION', numeric: 7001 },
+  ACCOUNT_NOT_FUNDED: { code: 'ACCOUNT_NOT_FUNDED', numeric: 7002 },
+  INVALID_CREDENTIALS: { code: 'INVALID_CREDENTIALS', numeric: 7003 },
+
+  // Network/Infrastructure errors (8000-8099)
+  NETWORK_ERROR: { code: 'NETWORK_ERROR', numeric: 8000 },
+  NETWORK_TIMEOUT: { code: 'NETWORK_TIMEOUT', numeric: 8001 },
+
+  // Server errors (9000-9099)
+  INTERNAL_ERROR: { code: 'INTERNAL_ERROR', numeric: 9000 },
+  DATABASE_ERROR: { code: 'DATABASE_ERROR', numeric: 9001 },
+  VERIFICATION_FAILED: { code: 'VERIFICATION_FAILED', numeric: 9002 },
+  SERVICE_UNAVAILABLE: { code: 'SERVICE_UNAVAILABLE', numeric: 9003 },
 };
 
 /**

@@ -9,18 +9,24 @@
  * @returns {Object} Error response object
  */
 function buildRateLimitError(limit, resetAt) {
-  // Convert Date to ISO string if needed
-  const resetAtString = resetAt instanceof Date ? resetAt.toISOString() : resetAt;
-
-  return {
+  const isProduction = process.env.NODE_ENV === 'production';
+  
+  const errorResponse = {
     success: false,
     error: {
       code: 'RATE_LIMIT_EXCEEDED',
-      message: 'Rate limit exceeded. Please try again later',
-      limit: limit,
-      resetAt: resetAtString
+      message: 'Rate limit exceeded. Please try again later'
     }
   };
+
+  // Only expose rate limit details in development to prevent timing attacks
+  if (!isProduction) {
+    const resetAtString = resetAt instanceof Date ? resetAt.toISOString() : resetAt;
+    errorResponse.error.limit = limit;
+    errorResponse.error.resetAt = resetAtString;
+  }
+
+  return errorResponse;
 }
 
 /**

@@ -18,6 +18,8 @@ class DonationValidator {
    * @returns {{valid: boolean, error?: string}}
    */
   validateAmount(amount) {
+    const isProduction = process.env.NODE_ENV === 'production';
+
     // Check if amount is a valid finite number
     if (typeof amount !== 'number' || !Number.isFinite(amount)) {
       return {
@@ -48,22 +50,38 @@ class DonationValidator {
 
     // Check minimum amount
     if (amount < this.minAmount) {
-      return {
+      const errorResponse = {
         valid: false,
-        error: `Amount must be at least ${this.minAmount} XLM`,
+        error: isProduction 
+          ? 'Amount is below the minimum allowed'
+          : `Amount must be at least ${this.minAmount} XLM`,
         code: 'AMOUNT_BELOW_MINIMUM',
-        minAmount: this.minAmount,
       };
+      
+      // Only expose limits in development
+      if (!isProduction) {
+        errorResponse.minAmount = this.minAmount;
+      }
+      
+      return errorResponse;
     }
 
     // Check maximum amount
     if (amount > this.maxAmount) {
-      return {
+      const errorResponse = {
         valid: false,
-        error: `Amount cannot exceed ${this.maxAmount} XLM`,
+        error: isProduction
+          ? 'Amount exceeds the maximum allowed'
+          : `Amount cannot exceed ${this.maxAmount} XLM`,
         code: 'AMOUNT_EXCEEDS_MAXIMUM',
-        maxAmount: this.maxAmount,
       };
+      
+      // Only expose limits in development
+      if (!isProduction) {
+        errorResponse.maxAmount = this.maxAmount;
+      }
+      
+      return errorResponse;
     }
 
     return { valid: true };
@@ -76,6 +94,8 @@ class DonationValidator {
    * @returns {{valid: boolean, error?: string}}
    */
   validateDailyLimit(amount, dailyTotal) {
+    const isProduction = process.env.NODE_ENV === 'production';
+
     // If no daily limit is set, allow all donations
     if (this.maxDailyPerDonor === 0) {
       return { valid: true };
@@ -84,14 +104,22 @@ class DonationValidator {
     const newTotal = dailyTotal + amount;
 
     if (newTotal > this.maxDailyPerDonor) {
-      return {
+      const errorResponse = {
         valid: false,
-        error: `Daily donation limit exceeded. Maximum ${this.maxDailyPerDonor} XLM per day`,
+        error: isProduction
+          ? 'Daily donation limit exceeded'
+          : `Daily donation limit exceeded. Maximum ${this.maxDailyPerDonor} XLM per day`,
         code: 'DAILY_LIMIT_EXCEEDED',
-        maxDailyAmount: this.maxDailyPerDonor,
-        currentDailyTotal: dailyTotal,
-        remainingDaily: Math.max(0, this.maxDailyPerDonor - dailyTotal),
       };
+
+      // Only expose limit details in development
+      if (!isProduction) {
+        errorResponse.maxDailyAmount = this.maxDailyPerDonor;
+        errorResponse.currentDailyTotal = dailyTotal;
+        errorResponse.remainingDaily = Math.max(0, this.maxDailyPerDonor - dailyTotal);
+      }
+
+      return errorResponse;
     }
 
     return { valid: true };

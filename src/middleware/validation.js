@@ -58,15 +58,22 @@ const validatePayloadFields = (req, res, next) => {
 
   // If unknown fields found, reject the request
   if (unknownFields.length > 0) {
-    return res.status(400).json({
+    // In production, don't expose allowed fields to prevent enumeration attacks
+    const errorResponse = {
       success: false,
       error: {
         code: 'UNKNOWN_FIELDS',
-        message: 'Request contains unknown or unexpected fields',
-        unknownFields: unknownFields,
-        allowedFields: allowedFields
+        message: 'Request contains unknown or unexpected fields'
       }
-    });
+    };
+
+    // Only include field details in development for debugging
+    if (process.env.NODE_ENV !== 'production') {
+      errorResponse.error.unknownFields = unknownFields;
+      errorResponse.error.allowedFields = allowedFields;
+    }
+
+    return res.status(400).json(errorResponse);
   }
 
   // All fields are valid, continue to next middleware
