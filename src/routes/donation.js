@@ -24,6 +24,7 @@ const { TRANSACTION_STATES } = require('../utils/transactionStateMachine');
 
 const { getStellarService } = require('../config/stellar');
 const DonationService = require('../services/DonationService');
+const { LIFECYCLE_STAGES } = require('../middleware/requestLifecycle');
 
 const stellarService = getStellarService();
 const donationService = new DonationService(stellarService);
@@ -141,6 +142,11 @@ router.post('/verify', verificationRateLimiter, checkPermission(PERMISSIONS.DONA
     const { transactionHash } = req.body;
     const verification = await donationService.verifyTransaction(transactionHash);
 
+    // Mark processing complete
+    if (req.markLifecycleStage) {
+      req.markLifecycleStage(LIFECYCLE_STAGES.PROCESSED);
+    }
+
     res.status(200).json({
       success: true,
       data: verification
@@ -216,6 +222,11 @@ router.post('/send', donationRateLimiter, requireIdempotency, sendDonationSchema
       requestId: req.id
     });
 
+    // Mark processing complete
+    if (req.markLifecycleStage) {
+      req.markLifecycleStage(LIFECYCLE_STAGES.PROCESSED);
+    }
+
     const response = {
       success: true,
       data: result
@@ -284,6 +295,11 @@ router.post('/', donationRateLimiter, requireApiKey, requireIdempotency, createD
       idempotencyKey: req.idempotency.key
     });
 
+    // Mark processing complete
+    if (req.markLifecycleStage) {
+      req.markLifecycleStage(LIFECYCLE_STAGES.PROCESSED);
+    }
+
     const response = {
       success: true,
       data: {
@@ -306,6 +322,12 @@ router.post('/', donationRateLimiter, requireApiKey, requireIdempotency, createD
 router.get('/', checkPermission(PERMISSIONS.DONATIONS_READ), (req, res, next) => {
   try {
     const transactions = donationService.getAllDonations();
+    
+    // Mark processing complete
+    if (req.markLifecycleStage) {
+      req.markLifecycleStage(LIFECYCLE_STAGES.PROCESSED);
+    }
+    
     res.json({
       success: true,
       data: transactions,
@@ -323,6 +345,12 @@ router.get('/', checkPermission(PERMISSIONS.DONATIONS_READ), (req, res, next) =>
 router.get('/limits', checkPermission(PERMISSIONS.DONATIONS_READ), (req, res) => {
   try {
     const limits = donationService.getDonationLimits();
+    
+    // Mark processing complete
+    if (req.markLifecycleStage) {
+      req.markLifecycleStage(LIFECYCLE_STAGES.PROCESSED);
+    }
+    
     res.json({
       success: true,
       data: limits
@@ -356,6 +384,11 @@ router.get('/recent', checkPermission(PERMISSIONS.DONATIONS_READ), recentDonatio
 
     const transactions = donationService.getRecentDonations(limitValidation.value);
 
+    // Mark processing complete
+    if (req.markLifecycleStage) {
+      req.markLifecycleStage(LIFECYCLE_STAGES.PROCESSED);
+    }
+
     res.json({
       success: true,
       data: transactions,
@@ -374,6 +407,11 @@ router.get('/recent', checkPermission(PERMISSIONS.DONATIONS_READ), recentDonatio
 router.get('/:id', checkPermission(PERMISSIONS.DONATIONS_READ), donationIdParamSchema, (req, res, next) => {
   try {
     const transaction = donationService.getDonationById(req.params.id);
+
+    // Mark processing complete
+    if (req.markLifecycleStage) {
+      req.markLifecycleStage(LIFECYCLE_STAGES.PROCESSED);
+    }
 
     res.json({
       success: true,
@@ -402,6 +440,11 @@ router.patch('/:id/status', checkPermission(PERMISSIONS.DONATIONS_UPDATE), updat
     if (ledger) stellarData.ledger = ledger;
 
     const updatedTransaction = donationService.updateDonationStatus(id, status, stellarData);
+
+    // Mark processing complete
+    if (req.markLifecycleStage) {
+      req.markLifecycleStage(LIFECYCLE_STAGES.PROCESSED);
+    }
 
     res.json({
       success: true,
