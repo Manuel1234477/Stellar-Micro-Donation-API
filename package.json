@@ -10,6 +10,8 @@
     "test": "jest",
     "test:memo": "node test-memo-feature.js",
     "test:rate-limit": "node test-rate-limit.js",
+    "test:chaos": "jest chaos-testing.test.js",
+    "test:no-chaos": "jest --testPathIgnorePatterns=chaos-testing",
     "dev": "nodemon src/routes/app.js",
     "lint": "eslint ."
   },
