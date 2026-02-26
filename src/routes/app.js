@@ -14,6 +14,7 @@ const { errorHandler, notFoundHandler } = require('../middleware/errorHandler');
 const logger = require('../middleware/logger');
 const { attachUserRole } = require('../middleware/rbac');
 const abuseDetectionMiddleware = require('../middleware/abuseDetection');
+const replayDetectionMiddleware = require('../middleware/replayDetection');
 const Database = require('../utils/database');
 const { initializeApiKeysTable } = require('../models/apiKeys');
 const { validateRBAC } = require('../utils/rbacValidator');
@@ -30,6 +31,9 @@ const app = express();
 const stellarService = getStellarService();
 const reconciliationService = new TransactionReconciliationService(stellarService);
 
+// Initialize replay detection cleanup timer (will be started in startServer)
+let replayCleanupTimer = null;
+
 // Middleware
 app.use(express.json());
 app.use(requestId);
@@ -39,6 +43,9 @@ app.use(logger.middleware());
 
 // Abuse detection (observability only - no blocking)
 app.use(abuseDetectionMiddleware);
+
+// Replay detection (observability only - no blocking)
+app.use(replayDetectionMiddleware);
 
 // Attach user role from authentication (must be before routes)
 app.use(attachUserRole());
@@ -81,6 +88,40 @@ app.get('/abuse-signals', require('../middleware/rbac').requireAdmin(), (req, re
     data: abuseDetector.getStats(),
     timestamp: new Date().toISOString()
   });
+});
+
+// Replay detection stats endpoint (admin only)
+app.get('/admin/replay-stats', require('../middleware/rbac').requireAdmin(), (req, res) => {
+  try {
+    const replayDetectionMiddleware = require('../middleware/replayDetection');
+    const replayConfig = require('../config/replayDetection');
+    
+    // Get stats from tracking store with config for complete information
+    const stats = replayDetectionMiddleware.trackingStore.getStats({
+      windowSeconds: replayConfig.windowSeconds,
+      threshold: replayConfig.threshold
+    });
+    
+    res.json({
+      success: true,
+      data: stats,
+      timestamp: new Date().toISOString()
+    });
+  } catch (error) {
+    log.error('ADMIN', 'Failed to retrieve replay stats', {
+      error: error.message,
+      stack: error.stack
+    });
+    
+    res.status(500).json({
+      success: false,
+      error: {
+        code: 'REPLAY_STATS_ERROR',
+        message: 'Failed to retrieve replay statistics'
+      },
+      timestamp: new Date().toISOString()
+    });
+  }
 });
 
 // Manual reconciliation trigger (admin only)
@@ -139,6 +180,14 @@ async function startServer() {
       // Start background services
       recurringDonationScheduler.start();
       reconciliationService.start();
+      
+      // Start replay detection cleanup timer
+      const { startCleanup } = require('../utils/replayDetector');
+      const replayConfig = require('../config/replayDetection');
+      replayCleanupTimer = startCleanup(
+        replayDetectionMiddleware.trackingStore,
+        replayConfig
+      );
 
       // Final startup confirmation
       log.info("APP", "🌟 Server ready and accepting connections", {
@@ -159,6 +208,12 @@ async function startServer() {
         // Stop background services
         recurringDonationScheduler.stop();
         reconciliationService.stop();
+        
+        // Stop replay detection cleanup timer
+        if (replayCleanupTimer) {
+          clearInterval(replayCleanupTimer);
+          log.info("SHUTDOWN", "Replay detection cleanup timer stopped");
+        }
 
         process.exit(0);
       });
