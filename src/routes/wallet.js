@@ -14,14 +14,73 @@ const router = express.Router();
 const { checkPermission } = require('../middleware/rbac');
 const { PERMISSIONS } = require('../utils/permissions');
 const WalletService = require('../services/WalletService');
+const { validateSchema } = require('../middleware/schemaValidation');
 
 const walletService = new WalletService();
+const walletCreateSchema = validateSchema({
+  body: {
+    fields: {
+      address: {
+        type: 'string',
+        required: true,
+        trim: true,
+        minLength: 1,
+        maxLength: 255,
+      },
+      label: { type: 'string', required: false, maxLength: 255, nullable: true },
+      ownerName: { type: 'string', required: false, maxLength: 255, nullable: true },
+    },
+  },
+});
+
+const walletIdSchema = validateSchema({
+  params: {
+    fields: {
+      id: { type: 'integerString', required: true },
+    },
+  },
+});
+
+const walletUpdateSchema = validateSchema({
+  params: {
+    fields: {
+      id: { type: 'integerString', required: true },
+    },
+  },
+  body: {
+    fields: {
+      label: { type: 'string', required: false, maxLength: 255, nullable: true },
+      ownerName: { type: 'string', required: false, maxLength: 255, nullable: true },
+    },
+    validate: (body) => {
+      const hasLabel = Object.prototype.hasOwnProperty.call(body, 'label');
+      const hasOwnerName = Object.prototype.hasOwnProperty.call(body, 'ownerName');
+      return hasLabel || hasOwnerName
+        ? null
+        : 'At least one field (label or ownerName) is required';
+    },
+  },
+});
+
+const walletPublicKeySchema = validateSchema({
+  params: {
+    fields: {
+      publicKey: {
+        type: 'string',
+        required: true,
+        trim: true,
+        minLength: 1,
+        maxLength: 255,
+      },
+    },
+  },
+});
 
 /**
  * POST /wallets
  * Create a new wallet with metadata
  */
-router.post('/', checkPermission(PERMISSIONS.WALLETS_CREATE), (req, res) => {
+router.post('/', checkPermission(PERMISSIONS.WALLETS_CREATE), walletCreateSchema, (req, res) => {
   try {
     const { address, label, ownerName } = req.body;
 
@@ -78,7 +137,7 @@ router.get('/', checkPermission(PERMISSIONS.WALLETS_READ), (req, res) => {
  * GET /wallets/:id
  * Get a specific wallet
  */
-router.get('/:id', checkPermission(PERMISSIONS.WALLETS_READ), (req, res) => {
+router.get('/:id', checkPermission(PERMISSIONS.WALLETS_READ), walletIdSchema, (req, res) => {
   try {
     const wallet = Wallet.getById(req.params.id);
 
@@ -101,7 +160,7 @@ router.get('/:id', checkPermission(PERMISSIONS.WALLETS_READ), (req, res) => {
  * PATCH /wallets/:id
  * Update wallet metadata
  */
-router.patch('/:id', checkPermission(PERMISSIONS.WALLETS_UPDATE), (req, res) => {
+router.patch('/:id', checkPermission(PERMISSIONS.WALLETS_UPDATE), walletUpdateSchema, (req, res) => {
   try {
     const { label, ownerName } = req.body;
 
@@ -137,7 +196,7 @@ router.patch('/:id', checkPermission(PERMISSIONS.WALLETS_UPDATE), (req, res) => 
  * GET /wallets/:publicKey/transactions
  * Get all transactions (sent and received) for a wallet
  */
-router.get('/:publicKey/transactions', checkPermission(PERMISSIONS.WALLETS_READ), async (req, res) => {
+router.get('/:publicKey/transactions', checkPermission(PERMISSIONS.WALLETS_READ), walletPublicKeySchema, async (req, res) => {
   try {
     const { publicKey } = req.params;
 

@@ -15,12 +15,50 @@ const apiKeysModel = require('../models/apiKeys');
 const { requireAdmin } = require('../middleware/rbac');
 const { ValidationError } = require('../utils/errors');
 const { validateNonEmptyString, validateRole, validateInteger } = require('../utils/validationHelpers');
+const { validateSchema } = require('../middleware/schemaValidation');
+const { API_KEY_STATUS } = require('../constants');
+
+const apiKeyCreateSchema = validateSchema({
+  body: {
+    fields: {
+      name: { type: 'string', required: true, trim: true, minLength: 1, maxLength: 255 },
+      role: { type: 'string', required: false, enum: ['admin', 'user', 'guest'] },
+      expiresInDays: { type: 'integer', required: false, min: 1 },
+      metadata: { type: 'object', required: false, nullable: true },
+    },
+  },
+});
+
+const apiKeyListQuerySchema = validateSchema({
+  query: {
+    fields: {
+      status: { type: 'string', required: false, enum: Object.values(API_KEY_STATUS) },
+      role: { type: 'string', required: false, enum: ['admin', 'user', 'guest'] },
+    },
+  },
+});
+
+const apiKeyIdParamSchema = validateSchema({
+  params: {
+    fields: {
+      id: { type: 'integerString', required: true },
+    },
+  },
+});
+
+const apiKeyCleanupSchema = validateSchema({
+  body: {
+    fields: {
+      retentionDays: { type: 'integer', required: false, min: 1 },
+    },
+  },
+});
 
 /**
  * POST /api/v1/api-keys
  * Create a new API key (admin only)
  */
-router.post('/', requireAdmin(), async (req, res, next) => {
+router.post('/', requireAdmin(), apiKeyCreateSchema, async (req, res, next) => {
   try {
     const { name, role = 'user', expiresInDays, metadata } = req.body;
 
@@ -72,7 +110,7 @@ router.post('/', requireAdmin(), async (req, res, next) => {
  * GET /api/v1/api-keys
  * List all API keys (admin only)
  */
-router.get('/', requireAdmin(), async (req, res, next) => {
+router.get('/', requireAdmin(), apiKeyListQuerySchema, async (req, res, next) => {
   try {
     const { status, role } = req.query;
 
@@ -95,7 +133,7 @@ router.get('/', requireAdmin(), async (req, res, next) => {
  * POST /api/v1/api-keys/:id/deprecate
  * Deprecate an API key (admin only)
  */
-router.post('/:id/deprecate', requireAdmin(), async (req, res, next) => {
+router.post('/:id/deprecate', requireAdmin(), apiKeyIdParamSchema, async (req, res, next) => {
   try {
     const keyIdValidation = validateInteger(req.params.id, { min: 1 });
 
@@ -128,7 +166,7 @@ router.post('/:id/deprecate', requireAdmin(), async (req, res, next) => {
  * DELETE /api/v1/api-keys/:id
  * Revoke an API key (admin only)
  */
-router.delete('/:id', requireAdmin(), async (req, res, next) => {
+router.delete('/:id', requireAdmin(), apiKeyIdParamSchema, async (req, res, next) => {
   try {
     const keyIdValidation = validateInteger(req.params.id, { min: 1 });
 
@@ -161,7 +199,7 @@ router.delete('/:id', requireAdmin(), async (req, res, next) => {
  * POST /api/v1/api-keys/cleanup
  * Clean up old expired and revoked keys (admin only)
  */
-router.post('/cleanup', requireAdmin(), async (req, res, next) => {
+router.post('/cleanup', requireAdmin(), apiKeyCleanupSchema, async (req, res, next) => {
   try {
     const { retentionDays = 90 } = req.body;
 

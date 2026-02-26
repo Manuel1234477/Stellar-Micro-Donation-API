@@ -16,8 +16,48 @@ const TransactionSyncService = require('../services/TransactionSyncService');
 const { checkPermission } = require('../middleware/rbac');
 const { PERMISSIONS } = require('../utils/permissions');
 const { validatePagination } = require('../utils/validationHelpers');
+const { validateSchema } = require('../middleware/schemaValidation');
 
-router.get('/', checkPermission(PERMISSIONS.TRANSACTIONS_READ), async (req, res) => {
+const transactionListQuerySchema = validateSchema({
+  query: {
+    fields: {
+      limit: {
+        type: 'integerString',
+        required: false,
+        validate: (value) => {
+          const parsed = Number(value);
+          return parsed >= 1 && parsed <= 100
+            ? true
+            : 'limit must be an integer between 1 and 100';
+        },
+      },
+      offset: {
+        type: 'integerString',
+        required: false,
+        validate: (value) => {
+          const parsed = Number(value);
+          return parsed >= 0 ? true : 'offset must be a non-negative integer';
+        },
+      },
+    },
+  },
+});
+
+const transactionSyncBodySchema = validateSchema({
+  body: {
+    fields: {
+      publicKey: {
+        type: 'string',
+        required: true,
+        trim: true,
+        minLength: 1,
+        maxLength: 255,
+      },
+    },
+  },
+});
+
+router.get('/', checkPermission(PERMISSIONS.TRANSACTIONS_READ), transactionListQuerySchema, async (req, res) => {
   try {
     const { limit = 10, offset = 0 } = req.query;
 
@@ -52,6 +92,7 @@ router.get('/', checkPermission(PERMISSIONS.TRANSACTIONS_READ), async (req, res)
 router.post(
   "/sync",
   checkPermission(PERMISSIONS.TRANSACTIONS_SYNC),
+  transactionSyncBodySchema,
   async (req, res, next) => {
     try {
       const { publicKey } = req.body;
