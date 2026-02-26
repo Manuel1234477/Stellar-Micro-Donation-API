@@ -483,6 +483,8 @@ The scheduler runs automatically when the server starts and checks for due donat
 
 ## 🤝 Contributing
 
+**New to the project?** Check out our [Onboarding Checklist](ONBOARDING_CHECKLIST.md) for a step-by-step guide to getting started!
+
 1. Fork the repository
 2. Create a feature branch (`git checkout -b feature/amazing-feature`)
 3. Make your changes and add tests
