@@ -73,40 +73,12 @@ const VALID_STELLAR_NETWORKS = Object.freeze([
 ]);
 
 /**
- * Time Periods for Statistics
- */
-const STATS_PERIODS = Object.freeze({
-  DAILY: 'daily',
-  WEEKLY: 'weekly',
-  MONTHLY: 'monthly',
-  YEARLY: 'yearly',
-});
-
-/**
  * Default Horizon URLs
  */
 const HORIZON_URLS = Object.freeze({
   TESTNET: 'https://horizon-testnet.stellar.org',
   MAINNET: 'https://horizon.stellar.org',
   FUTURENET: 'https://horizon-futurenet.stellar.org',
-});
-
-/**
- * HTTP Status Codes (commonly used)
- */
-const HTTP_STATUS = Object.freeze({
-  OK: 200,
-  CREATED: 201,
-  NO_CONTENT: 204,
-  BAD_REQUEST: 400,
-  UNAUTHORIZED: 401,
-  FORBIDDEN: 403,
-  NOT_FOUND: 404,
-  CONFLICT: 409,
-  UNPROCESSABLE_ENTITY: 422,
-  TOO_MANY_REQUESTS: 429,
-  INTERNAL_SERVER_ERROR: 500,
-  SERVICE_UNAVAILABLE: 503,
 });
 
 module.exports = {
@@ -117,7 +89,5 @@ module.exports = {
   API_KEY_STATUS,
   STELLAR_NETWORKS,
   VALID_STELLAR_NETWORKS,
-  STATS_PERIODS,
   HORIZON_URLS,
-  HTTP_STATUS,
 };
