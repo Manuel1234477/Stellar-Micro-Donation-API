@@ -15,6 +15,7 @@ const apiKeysModel = require('../models/apiKeys');
 const { requireAdmin } = require('../middleware/rbac');
 const { ValidationError } = require('../utils/errors');
 const { validateNonEmptyString, validateRole, validateInteger } = require('../utils/validationHelpers');
+const AuditLogService = require('../services/AuditLogService');
 
 /**
  * POST /api/v1/api-keys
@@ -47,6 +48,25 @@ router.post('/', requireAdmin(), async (req, res, next) => {
       expiresInDays,
       createdBy: req.user.id,
       metadata: metadata || {}
+    });
+
+    // Audit log: API key created
+    await AuditLogService.log({
+      category: AuditLogService.CATEGORY.API_KEY_MANAGEMENT,
+      action: AuditLogService.ACTION.API_KEY_CREATED,
+      severity: AuditLogService.SEVERITY.HIGH,
+      result: 'SUCCESS',
+      userId: req.user.id,
+      requestId: req.id,
+      ipAddress: req.ip,
+      resource: `/api/v1/api-keys/${keyInfo.id}`,
+      details: {
+        keyId: keyInfo.id,
+        keyName: name.trim(),
+        role,
+        expiresInDays,
+        createdBy: req.user.id
+      }
     });
 
     res.status(201).json({
@@ -82,6 +102,22 @@ router.get('/', requireAdmin(), async (req, res, next) => {
 
     const keys = await apiKeysModel.listApiKeys(filters);
 
+    // Audit log: API keys listed
+    await AuditLogService.log({
+      category: AuditLogService.CATEGORY.API_KEY_MANAGEMENT,
+      action: AuditLogService.ACTION.API_KEY_LISTED,
+      severity: AuditLogService.SEVERITY.MEDIUM,
+      result: 'SUCCESS',
+      userId: req.user.id,
+      requestId: req.id,
+      ipAddress: req.ip,
+      resource: '/api/v1/api-keys',
+      details: {
+        filters,
+        resultCount: keys.length
+      }
+    });
+
     res.json({
       success: true,
       data: keys
@@ -115,6 +151,22 @@ router.post('/:id/deprecate', requireAdmin(), async (req, res, next) => {
       });
     }
 
+    // Audit log: API key deprecated
+    await AuditLogService.log({
+      category: AuditLogService.CATEGORY.API_KEY_MANAGEMENT,
+      action: AuditLogService.ACTION.API_KEY_DEPRECATED,
+      severity: AuditLogService.SEVERITY.HIGH,
+      result: 'SUCCESS',
+      userId: req.user.id,
+      requestId: req.id,
+      ipAddress: req.ip,
+      resource: `/api/v1/api-keys/${keyIdValidation.value}`,
+      details: {
+        keyId: keyIdValidation.value,
+        deprecatedBy: req.user.id
+      }
+    });
+
     res.json({
       success: true,
       message: 'API key deprecated successfully'
@@ -147,6 +199,22 @@ router.delete('/:id', requireAdmin(), async (req, res, next) => {
         }
       });
     }
+
+    // Audit log: API key revoked
+    await AuditLogService.log({
+      category: AuditLogService.CATEGORY.API_KEY_MANAGEMENT,
+      action: AuditLogService.ACTION.API_KEY_REVOKED,
+      severity: AuditLogService.SEVERITY.HIGH,
+      result: 'SUCCESS',
+      userId: req.user.id,
+      requestId: req.id,
+      ipAddress: req.ip,
+      resource: `/api/v1/api-keys/${keyIdValidation.value}`,
+      details: {
+        keyId: keyIdValidation.value,
+        revokedBy: req.user.id
+      }
+    });
 
     res.json({
       success: true,

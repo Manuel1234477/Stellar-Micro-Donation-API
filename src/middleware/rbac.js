@@ -13,6 +13,7 @@ const { UnauthorizedError, ForbiddenError } = require('../utils/errors');
 const { hasPermission } = require('../models/permissions');
 const { validateApiKey } = require('../models/apiKeys');
 const config = require('../config');
+const AuditLogService = require('../services/AuditLogService');
 
 /**
  * Role-Based Access Control (RBAC) Configuration
@@ -31,7 +32,7 @@ const legacyKeys = config.apiKeys.legacy;
  * 4. Pass control to next middleware if authorized; otherwise, propagate a ForbiddenError.
  */
 exports.checkPermission = (permission) => {
-  return (req, res, next) => {
+  return async (req, res, next) => {
     try {
       if (!req.user) {
         throw new UnauthorizedError('Authentication required');
@@ -40,8 +41,43 @@ exports.checkPermission = (permission) => {
       const userRole = req.user.role || 'guest';
 
       if (!hasPermission(userRole, permission)) {
+        // Audit log: Permission denied
+        await AuditLogService.log({
+          category: AuditLogService.CATEGORY.AUTHORIZATION,
+          action: AuditLogService.ACTION.PERMISSION_DENIED,
+          severity: AuditLogService.SEVERITY.HIGH,
+          result: 'FAILURE',
+          userId: req.user.id,
+          requestId: req.id,
+          ipAddress: req.ip,
+          resource: req.path,
+          reason: `Missing permission: ${permission}`,
+          details: {
+            userRole,
+            requiredPermission: permission,
+            method: req.method
+          }
+        });
+
         throw new ForbiddenError(`Insufficient permissions. Required: ${permission}`);
       }
+
+      // Audit log: Permission granted
+      await AuditLogService.log({
+        category: AuditLogService.CATEGORY.AUTHORIZATION,
+        action: AuditLogService.ACTION.PERMISSION_GRANTED,
+        severity: AuditLogService.SEVERITY.LOW,
+        result: 'SUCCESS',
+        userId: req.user.id,
+        requestId: req.id,
+        ipAddress: req.ip,
+        resource: req.path,
+        details: {
+          userRole,
+          grantedPermission: permission,
+          method: req.method
+        }
+      });
 
       next();
     } catch (error) {
@@ -118,15 +154,48 @@ exports.checkAllPermissions = (permissions) => {
  * Flow: Checks req.user.role strictly. Prevents 'guest' or 'user' roles from accessing management endpoints.
  */
 exports.requireAdmin = () => {
-  return (req, res, next) => {
+  return async (req, res, next) => {
     try {
       if (!req.user || req.user.role === 'guest') {
         throw new UnauthorizedError('Authentication required');
       }
 
       if (req.user.role !== 'admin') {
+        // Audit log: Admin access denied
+        await AuditLogService.log({
+          category: AuditLogService.CATEGORY.AUTHORIZATION,
+          action: AuditLogService.ACTION.ADMIN_ACCESS_DENIED,
+          severity: AuditLogService.SEVERITY.HIGH,
+          result: 'FAILURE',
+          userId: req.user.id,
+          requestId: req.id,
+          ipAddress: req.ip,
+          resource: req.path,
+          reason: 'Non-admin user attempted admin operation',
+          details: {
+            userRole: req.user.role,
+            method: req.method
+          }
+        });
+
         throw new ForbiddenError('Admin access required');
       }
+
+      // Audit log: Admin access granted
+      await AuditLogService.log({
+        category: AuditLogService.CATEGORY.AUTHORIZATION,
+        action: AuditLogService.ACTION.ADMIN_ACCESS_GRANTED,
+        severity: AuditLogService.SEVERITY.MEDIUM,
+        result: 'SUCCESS',
+        userId: req.user.id,
+        requestId: req.id,
+        ipAddress: req.ip,
+        resource: req.path,
+        details: {
+          userRole: req.user.role,
+          method: req.method
+        }
+      });
 
       next();
     } catch (error) {
