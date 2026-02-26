@@ -102,7 +102,15 @@ docs/
 
 ---
 
-## 📊 Summaries
+## � Release & Versioning
+
+**Location**: `docs/`
+
+- **VERSIONING_STRATEGY.md** - SemVer rules, breaking vs. non-breaking change definitions, API URL versioning, release flow, hotfix procedure, deprecation policy, and changelog requirements
+
+---
+
+## �📊 Summaries
 
 **Location**: `docs/summaries/`
 
@@ -122,6 +130,12 @@ docs/
 - [Architecture Overview](architecture/ARCHITECTURE.md)
 - [API Documentation](features/STATS_API.md)
 - [Testing Guide](testing/TEST_COVERAGE_REPORT.md)
+- [Versioning Strategy](VERSIONING_STRATEGY.md) ⭐ NEW
+
+### For Release Management
+- [Versioning Strategy](VERSIONING_STRATEGY.md) — SemVer rules, breaking vs. non-breaking changes, release flow, deprecation policy
+- [Branch Protection & Merge Policy](BRANCH_PROTECTION.md)
+- [CI Pipeline](CI_PIPELINE.md)
 
 ### For Security
 - [Security Audit](security/DONATION_FLOW_SECURITY_AUDIT.md)
