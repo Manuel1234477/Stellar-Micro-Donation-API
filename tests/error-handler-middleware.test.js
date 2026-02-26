@@ -7,12 +7,16 @@ jest.mock('../src/utils/log', () => ({
   warn: jest.fn()
 }));
 
+const log = require('../src/utils/log');
+
 describe('Global Error Handling Middleware', () => {
   let req;
   let res;
   let next;
 
   beforeEach(() => {
+    jest.clearAllMocks();
+
     req = {
       id: "req-test-123",
       path: "/test/path",
@@ -43,7 +47,8 @@ describe('Global Error Handling Middleware', () => {
         expect.objectContaining({
           success: false,
           error: expect.objectContaining({
-            code: ERROR_CODES.INVALID_AMOUNT,
+            code: ERROR_CODES.INVALID_AMOUNT.code,
+            numericCode: ERROR_CODES.INVALID_AMOUNT.numeric,
             message: "Invalid payload",
             details: { field: "amount" },
             requestId: "req-test-123",
@@ -51,6 +56,24 @@ describe('Global Error Handling Middleware', () => {
             debug: expect.objectContaining({
               name: "ValidationError",
             }),
+          }),
+        }),
+      );
+
+      expect(log.error).toHaveBeenCalledTimes(2);
+      expect(log.error).toHaveBeenCalledWith(
+        "ERROR_HANDLER",
+        "Error occurred",
+        expect.objectContaining({
+          requestId: "req-test-123",
+          path: "/test/path",
+          method: "POST",
+          error: expect.objectContaining({
+            name: "ValidationError",
+            message: "Invalid payload",
+            code: ERROR_CODES.INVALID_AMOUNT.code,
+            numericCode: ERROR_CODES.INVALID_AMOUNT.numeric,
+            statusCode: 400,
           }),
         }),
       );
@@ -63,18 +86,35 @@ describe('Global Error Handling Middleware', () => {
       errorHandler(err, req, res, next);
 
       expect(res.status).toHaveBeenCalledWith(504);
-      expect(res.json).toHaveBeenCalledWith({
-        success: false,
-        error: {
-          code: "INTERNAL_ERROR",
-          message: "Gateway timeout",
+      expect(res.json).toHaveBeenCalledWith(
+        expect.objectContaining({
+          success: false,
+          error: expect.objectContaining({
+            code: "INTERNAL_ERROR",
+            numericCode: 9000,
+            message: "Gateway timeout",
+            requestId: "req-test-123",
+            timestamp: expect.any(String),
+            debug: {
+              name: "InternalError",
+            },
+          }),
+        }),
+      );
+
+      expect(log.error).toHaveBeenCalledTimes(2);
+      expect(log.error).toHaveBeenCalledWith(
+        "ERROR_HANDLER",
+        "Error occurred",
+        expect.objectContaining({
           requestId: "req-test-123",
-          timestamp: expect.any(String),
-          debug: {
-            name: "InternalError",
-          },
-        },
-      });
+          path: "/test/path",
+          method: "POST",
+          error: "Gateway timeout",
+          code: undefined,
+          numericCode: undefined,
+        }),
+      );
     });
 
     test('maps named validation errors to VALIDATION_ERROR code', () => {
@@ -84,18 +124,36 @@ describe('Global Error Handling Middleware', () => {
       errorHandler(err, req, res, next);
 
       expect(res.status).toHaveBeenCalledWith(400);
-      expect(res.json).toHaveBeenCalledWith({
-        success: false,
-        error: {
-          code: "VALIDATION_ERROR",
-          message: "Invalid email format",
+      expect(res.json).toHaveBeenCalledWith(
+        expect.objectContaining({
+          success: false,
+          error: expect.objectContaining({
+            code: "VALIDATION_ERROR",
+            numericCode: 1000,
+            message: "Invalid email format",
+            requestId: "req-test-123",
+            timestamp: expect.any(String),
+            debug: {
+              name: "ValidationError",
+            },
+          }),
+        }),
+      );
+
+      expect(log.error).toHaveBeenCalledTimes(2);
+      expect(log.error).toHaveBeenCalledWith(
+        "ERROR_HANDLER",
+        "Error occurred",
+        expect.objectContaining({
           requestId: "req-test-123",
-          timestamp: expect.any(String),
-          debug: {
+          path: "/test/path",
+          method: "POST",
+          error: expect.objectContaining({
             name: "ValidationError",
-          },
-        },
-      });
+            message: "Invalid email format",
+          }),
+        }),
+      );
     });
 
     test('does not leak internal error details in production for non-validation errors', () => {
@@ -106,15 +164,30 @@ describe('Global Error Handling Middleware', () => {
       errorHandler(err, req, res, next);
 
       expect(res.status).toHaveBeenCalledWith(500);
-      expect(res.json).toHaveBeenCalledWith({
-        success: false,
-        error: {
-          code: "INTERNAL_ERROR",
-          message: "An unexpected error occurred. Please try again later.",
+      expect(res.json).toHaveBeenCalledWith(
+        expect.objectContaining({
+          success: false,
+          error: expect.objectContaining({
+            code: "INTERNAL_ERROR",
+            numericCode: 9000,
+            message: "An unexpected error occurred. Please try again later.",
+            requestId: "req-test-123",
+            timestamp: expect.any(String),
+          }),
+        }),
+      );
+
+      expect(log.error).toHaveBeenCalledTimes(2);
+      expect(log.error).toHaveBeenCalledWith(
+        "ERROR_HANDLER",
+        "Error occurred",
+        expect.objectContaining({
           requestId: "req-test-123",
-          timestamp: expect.any(String),
-        },
-      });
+          path: "/test/path",
+          method: "POST",
+          error: "Database connection failed: password=secret123",
+        }),
+      );
     });
   });
 
@@ -126,18 +199,21 @@ describe('Global Error Handling Middleware', () => {
       notFoundHandler(req, res);
 
       expect(res.status).toHaveBeenCalledWith(404);
-      expect(res.json).toHaveBeenCalledWith({
-        success: false,
-        error: {
-          code: "ENDPOINT_NOT_FOUND",
-          message: "Endpoint not found: GET /unknown-route",
-          requestId: "req-test-123",
-          timestamp: expect.any(String),
-          debug: {
-            name: "NotFoundError",
-          },
-        },
-      });
+      expect(res.json).toHaveBeenCalledWith(
+        expect.objectContaining({
+          success: false,
+          error: expect.objectContaining({
+            code: "ENDPOINT_NOT_FOUND",
+            numericCode: 3005,
+            message: "Endpoint not found: GET /unknown-route",
+            requestId: "req-test-123",
+            timestamp: expect.any(String),
+            debug: {
+              name: "NotFoundError",
+            },
+          }),
+        }),
+      );
     });
   });
 });

@@ -198,6 +198,42 @@ describe('Startup Diagnostics', () => {
         expect.any(Object)
       );
     });
+
+    test('should log database failures during startup diagnostics', async () => {
+      jest.resetModules();
+
+      const mockInfo = jest.fn();
+      const mockError = jest.fn();
+      const mockDebug = jest.fn();
+
+      jest.doMock('../src/utils/log', () => ({
+        info: mockInfo,
+        error: mockError,
+        debug: mockDebug
+      }));
+
+      jest.doMock('../src/utils/database', () => ({
+        get: jest.fn().mockRejectedValue(new Error('Database unavailable'))
+      }));
+
+      const isolatedStartupDiagnostics = require('../src/utils/startupDiagnostics');
+      await isolatedStartupDiagnostics.logStartupDiagnostics();
+
+      expect(mockError).toHaveBeenCalledWith(
+        'STARTUP',
+        expect.stringMatching(/Database connection failed/),
+        expect.objectContaining({
+          error: 'Database unavailable',
+          type: expect.any(String)
+        })
+      );
+
+      expect(mockInfo).toHaveBeenCalledWith(
+        'STARTUP',
+        '🎉 Startup complete',
+        expect.any(Object)
+      );
+    });
   });
 
   describe('logShutdownDiagnostics', () => {
