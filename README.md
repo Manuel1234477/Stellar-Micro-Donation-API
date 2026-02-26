@@ -7,6 +7,7 @@ A Node.js/Express API for managing micro-donations on the Stellar blockchain net
 - [Features](#features)
 - [Architecture](#architecture)
 - [Getting Started](#getting-started)
+- [Runtime Configuration](#runtime-configuration)
 - [API Endpoints](#api-endpoints)
 - [Database Schema](#database-schema)
 - [Development](#development)
@@ -122,6 +123,21 @@ npm start
 ```
 
 See [Debug Mode Documentation](docs/features/DEBUG_MODE.md) for details.
+
+## ⚙️ Runtime Configuration
+
+For comprehensive documentation of runtime environment assumptions, timeouts, retry logic, persistence requirements, background services, and operational procedures, see:
+
+**[RUNTIME_ASSUMPTIONS.md](./RUNTIME_ASSUMPTIONS.md)** - Complete runtime environment documentation
+
+This document covers:
+- **Network Configuration**: Timeouts, retry logic, external dependencies
+- **Persistence Layer**: Database paths, storage requirements, backup strategies
+- **Background Services**: Scheduler intervals, service behavior, lifecycle management
+- **Resource Requirements**: Memory, disk, CPU, and network requirements by deployment scale
+- **Configuration Reference**: All environment variables with validation rules
+- **Production Deployment**: Warnings, readiness checklist, monitoring recommendations
+- **Operational Procedures**: Graceful shutdown, troubleshooting guide
 
 ## 📡 API Endpoints
 
