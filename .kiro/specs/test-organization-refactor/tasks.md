@@ -1,0 +1,194 @@
+# Test Organization and Naming Refactor - Tasks
+
+## Task List
+
+### Phase 1: Preparation and Setup
+- [ ] 1.1 Create directory structure
+  - [ ] 1.1.1 Create `tests/unit/` with subdirectories (config, middleware, services, utils, models)
+  - [ ] 1.1.2 Create `tests/integration/` with subdirectories (api, donation, security, stellar, logging, validation, regression)
+  - [ ] 1.1.3 Create `tests/e2e/` directory
+  - [ ] 1.1.4 Verify `tests/helpers/` exists
+- [ ] 1.2 Document baseline test results
+  - [ ] 1.2.1 Run full test suite and capture output
+  - [ ] 1.2.2 Generate coverage report
+  - [ ] 1.2.3 Count total test files
+  - [ ] 1.2.4 Save baseline metrics to file
+- [ ] 1.3 Create migration automation script
+  - [ ] 1.3.1 Create `scripts/migrate-tests.js` with file mapping
+  - [ ] 1.3.2 Implement import path update logic
+  - [ ] 1.3.3 Add validation checks
+  - [ ] 1.3.4 Test script on sample files
+
+### Phase 2: Unit Tests Migration
+- [ ] 2.1 Migrate config tests
+  - [ ] 2.1.1 Move `config.test.js` → `unit/config/config.test.js`
+  - [ ] 2.1.2 Move `fieldSchemas.test.js` → `unit/config/field-schemas.test.js`
+  - [ ] 2.1.3 Move `replayDetectionConfig.test.js` → `unit/config/replay-detection-config.test.js`
+  - [ ] 2.1.4 Move `security-config.test.js` → `unit/config/security-config.test.js`
+  - [ ] 2.1.5 Update import paths in all moved files
+  - [ ] 2.1.6 Run config tests to verify
+- [ ] 2.2 Migrate middleware tests
+  - [ ] 2.2.1 Move `error-handler-middleware.test.js` → `unit/middleware/error-handler.test.js`
+  - [ ] 2.2.2 Move `idempotency.test.js` → `unit/middleware/idempotency.test.js`
+  - [ ] 2.2.3 Move `logger.test.js` → `unit/middleware/logger.test.js`
+  - [ ] 2.2.4 Move `payloadSizeLimit.test.js` → `unit/middleware/payload-size-limit.test.js`
+  - [ ] 2.2.5 Move `rateLimiter.test.js` → `unit/middleware/rate-limiter.test.js`
+  - [ ] 2.2.6 Move `rateLimitHeaders.test.js` → `unit/middleware/rate-limit-headers.test.js`
+  - [ ] 2.2.7 Move `rbac-middleware.test.js` → `unit/middleware/rbac-middleware.test.js`
+  - [ ] 2.2.8 Move `replayDetectionMiddleware.test.js` → `unit/middleware/replay-detection-middleware.test.js`
+  - [ ] 2.2.9 Move `RequestCounter.test.js` → `unit/middleware/request-counter.test.js`
+  - [ ] 2.2.10 Move `validation-middleware.test.js` → `unit/middleware/validation-middleware.test.js`
+  - [ ] 2.2.11 Update import paths in all moved files
+  - [ ] 2.2.12 Run middleware tests to verify
+- [ ] 2.3 Migrate service tests
+  - [ ] 2.3.1 Move `MockStellarService.test.js` → `unit/services/mock-stellar-service.test.js`
+  - [ ] 2.3.2 Move `scheduler-resilience.test.js` → `unit/services/scheduler-resilience.test.js`
+  - [ ] 2.3.3 Move `transaction-reconciliation.test.js` → `unit/services/transaction-reconciliation.test.js`
+  - [ ] 2.3.4 Move `transaction-state-machine.test.js` → `unit/services/transaction-state-machine.test.js`
+  - [ ] 2.3.5 Move `transaction-sync-consistency.test.js` → `unit/services/transaction-sync-consistency.test.js`
+  - [ ] 2.3.6 Update import paths in all moved files
+  - [ ] 2.3.7 Run service tests to verify
+- [ ] 2.4 Migrate utils tests
+  - [ ] 2.4.1 Move `correlation.test.js` → `unit/utils/correlation.test.js`
+  - [ ] 2.4.2 Move `dataMasker.test.js` → `unit/utils/data-masker.test.js`
+  - [ ] 2.4.3 Move `fieldValidator.test.js` → `unit/utils/field-validator.test.js`
+  - [ ] 2.4.4 Move `replayDetectionLogic.test.js` → `unit/utils/replay-detector-logic.test.js`
+  - [ ] 2.4.5 Move `trackingStore.test.js` → `unit/utils/replay-detector-tracking.test.js`
+  - [ ] 2.4.6 Move `fingerprint.test.js` → `unit/utils/replay-detector-fingerprint.test.js`
+  - [ ] 2.4.7 Move `cleanupTimer.test.js` → `unit/utils/replay-detector-cleanup.test.js`
+  - [ ] 2.4.8 Move `sanitizer.test.js` → `unit/utils/sanitizer.test.js`
+  - [ ] 2.4.9 Move `startupDiagnostics.test.js` → `unit/utils/startup-diagnostics.test.js`
+  - [ ] 2.4.10 Move `validation.test.js` → `unit/utils/validators.test.js`
+  - [ ] 2.4.11 Update import paths in all moved files
+  - [ ] 2.4.12 Run utils tests to verify
+- [ ] 2.5 Migrate model tests
+  - [ ] 2.5.1 Move `apiKeys.test.js` → `unit/models/api-keys.test.js`
+  - [ ] 2.5.2 Move `permissions.test.js` → `unit/models/permissions.test.js`
+  - [ ] 2.5.3 Update import paths in all moved files
+  - [ ] 2.5.4 Run model tests to verify
+- [ ] 2.6 Verify all unit tests pass
+  - [ ] 2.6.1 Run `npm run test:unit`
+  - [ ] 2.6.2 Compare results with baseline
+  - [ ] 2.6.3 Fix any import path issues
+
+### Phase 3: Integration Tests Migration
+- [ ] 3.1 Migrate API integration tests
+  - [ ] 3.1.1 Move `api.test.js` → `integration/api/api-routes.test.js`
+  - [ ] 3.1.2 Move `donation-routes-integration.test.js` → `integration/api/donation-routes-integration.test.js`
+  - [ ] 3.1.3 Move `wallet-analytics-integration.test.js` → `integration/api/wallet-analytics-integration.test.js`
+  - [ ] 3.1.4 Move `wallet-analytics.test.js` → `integration/api/wallet-analytics.test.js`
+  - [ ] 3.1.5 Move `integration.test.js` → `integration/api/integration.test.js`
+  - [ ] 3.1.6 Update import paths in all moved files
+  - [ ] 3.1.7 Run API integration tests to verify
+- [ ] 3.2 Migrate donation integration tests
+  - [ ] 3.2.1 Move `donation-boundary.test.js` → `integration/donation/donation-boundary.test.js`
+  - [ ] 3.2.2 Move `donation-limits.test.js` → `integration/donation/donation-limits.test.js`
+  - [ ] 3.2.3 Move `recurring-donation-failures.test.js` → `integration/donation/recurring-donation-failures.test.js`
+  - [ ] 3.2.4 Update import paths in all moved files
+  - [ ] 3.2.5 Run donation integration tests to verify
+- [ ] 3.3 Migrate security integration tests
+  - [ ] 3.3.1 Move `abuse-detection.test.js` → `integration/security/abuse-detection.test.js`
+  - [ ] 3.3.2 Move `idempotency-integration.test.js` → `integration/security/idempotency-integration.test.js`
+  - [ ] 3.3.3 Move `negative-authorization.test.js` → `integration/security/negative-authorization.test.js`
+  - [ ] 3.3.4 Move `payload-field-validation-integration.test.js` → `integration/security/payload-field-validation-integration.test.js`
+  - [ ] 3.3.5 Move `payloadSizeLimit-integration.test.js` → `integration/security/payload-size-limit-integration.test.js`
+  - [ ] 3.3.6 Move `permission-integration.test.js` → `integration/security/permission-integration.test.js`
+  - [ ] 3.3.7 Move `rbac-validation.test.js` → `integration/security/rbac-validation.test.js`
+  - [ ] 3.3.8 Move `sanitization-integration.test.js` → `integration/security/sanitization-integration.test.js`
+  - [ ] 3.3.9 Move `unknownFieldErrorFormat.test.js` → `integration/security/unknown-field-error-format.test.js`
+  - [ ] 3.3.10 Update import paths in all moved files
+  - [ ] 3.3.11 Run security integration tests to verify
+- [ ] 3.4 Migrate stellar integration tests
+  - [ ] 3.4.1 Move `account-funding.test.js` → `integration/stellar/account-funding.test.js`
+  - [ ] 3.4.2 Move `advanced-failure-scenarios.test.js` → `integration/stellar/advanced-failure-scenarios.test.js`
+  - [ ] 3.4.3 Move `failure-scenarios.test.js` → `integration/stellar/failure-scenarios.test.js`
+  - [ ] 3.4.4 Move `network-timeout-scenarios.test.js` → `integration/stellar/network-timeout-scenarios.test.js`
+  - [ ] 3.4.5 Move `stellar-network-failures.test.js` → `integration/stellar/stellar-network-failures.test.js`
+  - [ ] 3.4.6 Move `stellar-retry-logic.test.js` → `integration/stellar/stellar-retry-logic.test.js`
+  - [ ] 3.4.7 Move `transaction-status.test.js` → `integration/stellar/transaction-status.test.js`
+  - [ ] 3.4.8 Move `transaction-sync-failures.test.js` → `integration/stellar/transaction-sync-failures.test.js`
+  - [ ] 3.4.9 Update import paths in all moved files
+  - [ ] 3.4.10 Run stellar integration tests to verify
+- [ ] 3.5 Migrate logging integration tests
+  - [ ] 3.5.1 Move `logger-integration.test.js` → `integration/logging/logger-integration.test.js`
+  - [ ] 3.5.2 Move `logger-masking.test.js` → `integration/logging/logger-masking.test.js`
+  - [ ] 3.5.3 Move `replayLogging.verification.test.js` → `integration/logging/replay-logging-verification.test.js`
+  - [ ] 3.5.4 Move `responseHeaders.verification.test.js` → `integration/logging/response-headers-verification.test.js`
+  - [ ] 3.5.5 Update import paths in all moved files
+  - [ ] 3.5.6 Run logging integration tests to verify
+- [ ] 3.6 Migrate validation integration tests
+  - [ ] 3.6.1 Move `memo-integration.test.js` → `integration/validation/memo-integration.test.js`
+  - [ ] 3.6.2 Move `memo-validation.test.js` → `integration/validation/memo-validation.test.js`
+  - [ ] 3.6.3 Update import paths in all moved files
+  - [ ] 3.6.4 Run validation integration tests to verify
+- [ ] 3.7 Migrate regression tests
+  - [ ] 3.7.1 Move `error-codes.test.js` → `integration/regression/error-codes.test.js`
+  - [ ] 3.7.2 Move `error-hardening.test.js` → `integration/regression/error-hardening.test.js`
+  - [ ] 3.7.3 Move `regression.test.js` → `integration/regression/regression.test.js`
+  - [ ] 3.7.4 Move `regression-additional.test.js` → `integration/regression/regression-additional.test.js`
+  - [ ] 3.7.5 Move `test-isolation.test.js` → `integration/regression/test-isolation.test.js`
+  - [ ] 3.7.6 Update import paths in all moved files
+  - [ ] 3.7.7 Run regression tests to verify
+- [ ] 3.8 Verify all integration tests pass
+  - [ ] 3.8.1 Run `npm run test:integration`
+  - [ ] 3.8.2 Compare results with baseline
+  - [ ] 3.8.3 Fix any import path issues
+
+### Phase 4: E2E Tests Migration
+- [ ] 4.1 Migrate E2E tests
+  - [ ] 4.1.1 Move `debug-mode.test.js` → `e2e/debug-mode.test.js`
+  - [ ] 4.1.2 Move `requestId-correlation.test.js` → `e2e/request-id-correlation.test.js`
+  - [ ] 4.1.3 Update import paths in all moved files
+  - [ ] 4.1.4 Run E2E tests to verify
+- [ ] 4.2 Verify all E2E tests pass
+  - [ ] 4.2.1 Run `npm run test:e2e`
+  - [ ] 4.2.2 Compare results with baseline
+
+### Phase 5: Cleanup and Documentation
+- [ ] 5.1 Review and handle deprecated test files
+  - [ ] 5.1.1 Review `test-edge-cases.js` and integrate or remove
+  - [ ] 5.1.2 Review `test-send-donation.js` and integrate or remove
+  - [ ] 5.1.3 Verify no test files remain in root `tests/` directory
+- [ ] 5.2 Update test configuration
+  - [ ] 5.2.1 Update `jest.config.js` if needed
+  - [ ] 5.2.2 Update `package.json` test scripts
+  - [ ] 5.2.3 Verify test:unit, test:integration, test:e2e scripts work
+- [ ] 5.3 Create documentation
+  - [ ] 5.3.1 Create `tests/README.md` with organization guide
+  - [ ] 5.3.2 Document naming conventions
+  - [ ] 5.3.3 Document where to place new tests
+  - [ ] 5.3.4 Add examples of running specific test suites
+- [ ] 5.4 Final verification
+  - [ ] 5.4.1 Run full test suite `npm test`
+  - [ ] 5.4.2 Generate coverage report
+  - [ ] 5.4.3 Compare with baseline metrics
+  - [ ] 5.4.4 Verify all tests pass
+  - [ ] 5.4.5 Verify test count matches baseline
+  - [ ] 5.4.6 Verify coverage percentage matches baseline
+- [ ] 5.5 Update CI/CD configuration
+  - [ ] 5.5.1 Review CI/CD pipeline configuration
+  - [ ] 5.5.2 Update test paths if needed
+  - [ ] 5.5.3 Verify CI/CD runs successfully
+- [ ] 5.6 Clean up migration artifacts
+  - [ ] 5.6.1 Remove migration script if no longer needed
+  - [ ] 5.6.2 Remove baseline metric files
+  - [ ] 5.6.3 Commit all changes with descriptive message
+
+## Notes
+
+- Use `git mv` for all file moves to preserve Git history
+- Update import paths immediately after moving each group of files
+- Run tests after each phase to catch issues early
+- Keep baseline test results for comparison
+- Do not modify any test logic or assertions
+- All tests must pass before moving to next phase
+
+## Success Criteria
+
+- All 70+ test files successfully moved to new locations
+- All tests pass with same results as baseline
+- No test logic modified (verified via git diff)
+- All import paths correctly updated
+- Test coverage remains at baseline level
+- CI/CD pipeline runs successfully
+- Documentation complete and accurate
