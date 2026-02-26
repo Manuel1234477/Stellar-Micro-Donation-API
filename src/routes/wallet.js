@@ -1,7 +1,12 @@
 /**
- * Wallet Routes
- * Thin controllers that orchestrate service calls
- * All business logic delegated to WalletService
+ * Wallet Routes - API Endpoint Layer
+ * 
+ * RESPONSIBILITY: HTTP request handling for wallet operations
+ * OWNER: Backend Team
+ * DEPENDENCIES: WalletService, middleware (auth, RBAC)
+ * 
+ * Thin controllers that orchestrate service calls for wallet creation, updates,
+ * and transaction history queries. All business logic delegated to WalletService.
  */
 
 const express = require('express');

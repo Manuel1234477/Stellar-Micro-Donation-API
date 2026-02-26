@@ -1,3 +1,14 @@
+/**
+ * API Keys Routes - API Endpoint Layer
+ * 
+ * RESPONSIBILITY: HTTP request handling for API key management operations
+ * OWNER: Security Team
+ * DEPENDENCIES: API Keys model, middleware (auth, RBAC), validation helpers
+ * 
+ * Admin-only endpoints for API key lifecycle management including creation, listing,
+ * rotation, deprecation, and revocation. Supports zero-downtime key rotation.
+ */
+
 const express = require('express');
 const router = express.Router();
 const apiKeysModel = require('../models/apiKeys');

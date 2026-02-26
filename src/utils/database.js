@@ -1,3 +1,14 @@
+/**
+ * Database Utility - Data Access Layer
+ * 
+ * RESPONSIBILITY: SQLite database connection management and query execution
+ * OWNER: Backend Team
+ * DEPENDENCIES: sqlite3, error utilities
+ * 
+ * Provides centralized database access with connection pooling, error handling,
+ * and query helpers for all database operations across the application.
+ */
+
 require('dotenv').config({ path: require('path').join(__dirname, '../../src/.env') });
 
 const sqlite3 = require('sqlite3').verbose();

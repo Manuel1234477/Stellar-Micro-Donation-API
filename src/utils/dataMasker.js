@@ -1,6 +1,12 @@
 /**
- * Data Masking Utility
- * Masks sensitive data in logs to prevent exposure of secrets, API keys, and private values
+ * Data Masker Utility - Security Layer
+ * 
+ * RESPONSIBILITY: Automatic masking of sensitive data in logs and error messages
+ * OWNER: Security Team
+ * DEPENDENCIES: None (foundational utility)
+ * 
+ * Prevents exposure of secrets, API keys, passwords, and private values in logs.
+ * Applies pattern-based detection and masking for comprehensive data protection.
  */
 
 /**

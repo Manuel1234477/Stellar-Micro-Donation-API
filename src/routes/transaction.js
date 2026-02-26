@@ -1,3 +1,14 @@
+/**
+ * Transaction Routes - API Endpoint Layer
+ * 
+ * RESPONSIBILITY: HTTP request handling for transaction queries and synchronization
+ * OWNER: Backend Team
+ * DEPENDENCIES: Transaction model, TransactionSyncService, middleware (auth, RBAC)
+ * 
+ * Handles transaction listing with pagination and blockchain synchronization operations.
+ * Provides endpoints for querying transaction history and syncing with Stellar network.
+ */
+
 const express = require('express');
 const router = express.Router();
 const Transaction = require('./models/transaction');

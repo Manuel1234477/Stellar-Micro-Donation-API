@@ -1,7 +1,12 @@
 /**
- * Donation Service
- * Handles business logic for donation operations
- * Separates concerns from HTTP controllers
+ * Donation Service - Business Logic Layer
+ * 
+ * RESPONSIBILITY: Core donation processing, validation, and transaction management
+ * OWNER: Backend Team
+ * DEPENDENCIES: StellarService, Database, validators, encryption
+ * 
+ * Orchestrates donation workflows including validation, fee calculation, transaction
+ * creation, and state management. Separates business logic from HTTP controllers.
  */
 
 const Database = require('../utils/database');

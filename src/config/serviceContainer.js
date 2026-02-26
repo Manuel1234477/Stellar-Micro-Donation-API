@@ -1,3 +1,14 @@
+/**
+ * Service Container - Dependency Injection Layer
+ * 
+ * RESPONSIBILITY: Centralized service initialization and dependency management
+ * OWNER: Platform Team
+ * DEPENDENCIES: All core services (Stellar, Scheduler, Reconciliation, etc.)
+ * 
+ * Implements dependency injection pattern for service lifecycle management.
+ * Provides singleton instances of services with proper initialization order.
+ */
+
 const StellarService = require('../services/StellarService');
 const MockStellarService = require('../services/MockStellarService');
 const RecurringDonationScheduler = require('../services/RecurringDonationScheduler');

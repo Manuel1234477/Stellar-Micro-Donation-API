@@ -1,7 +1,13 @@
 /**
- * Mock Stellar Service
- * Provides in-memory mock implementation for testing without network calls
- * Simulates Stellar blockchain behavior for development and testing
+ * Mock Stellar Service - Testing and Development Layer
+ * 
+ * RESPONSIBILITY: In-memory mock implementation for testing without network calls
+ * OWNER: QA/Testing Team
+ * DEPENDENCIES: StellarServiceInterface, error utilities
+ * 
+ * Simulates Stellar blockchain behavior for development and testing environments.
+ * Provides realistic error scenarios, failure simulation, and instant responses
+ * without requiring actual blockchain network connectivity.
  * 
  * LIMITATIONS:
  * - No actual blockchain consensus or validation

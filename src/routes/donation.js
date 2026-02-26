@@ -1,7 +1,12 @@
 /**
- * Donation Routes
- * Thin controllers that orchestrate service calls
- * All business logic delegated to DonationService
+ * Donation Routes - API Endpoint Layer
+ * 
+ * RESPONSIBILITY: HTTP request handling for donation operations
+ * OWNER: Backend Team
+ * DEPENDENCIES: DonationService, middleware (auth, validation, rate limiting)
+ * 
+ * Thin controllers that orchestrate service calls for donation creation, verification,
+ * and status management. All business logic delegated to DonationService.
  */
 
 const express = require('express');

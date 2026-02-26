@@ -1,3 +1,14 @@
+/**
+ * Logging Utility - Observability Layer
+ * 
+ * RESPONSIBILITY: Structured logging with correlation tracking and sensitive data masking
+ * OWNER: Platform Team
+ * DEPENDENCIES: Sanitizer, config, correlation utilities
+ * 
+ * Provides centralized logging infrastructure with automatic sensitive data masking,
+ * request correlation, and structured JSON output for log aggregation systems.
+ */
+
 const { sanitizeForLogging } = require('./sanitizer');
 const config = require('../config');
 

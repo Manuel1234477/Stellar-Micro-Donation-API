@@ -1,8 +1,14 @@
 /**
- * Stellar Configuration
- * Now uses centralized ServiceContainer for dependency injection
- * This file is kept for backward compatibility
+ * Stellar Configuration - Blockchain Configuration Layer
+ * 
+ * RESPONSIBILITY: Stellar network configuration and service initialization
+ * OWNER: Blockchain Team
+ * DEPENDENCIES: ServiceContainer, environment validation, logger
+ * 
+ * Configures Stellar network settings (testnet/mainnet), Horizon URLs, and initializes
+ * Stellar service instances. Uses ServiceContainer for dependency injection.
  */
+
 require('dotenv').config({ path: require('path').join(__dirname, '../../.env') });
 const path = require('path');
 const { validateEnvironment } = require('./envValidation');

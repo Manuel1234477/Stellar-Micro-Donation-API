@@ -1,5 +1,12 @@
 /**
- * Validation utilities for API requests
+ * Validators Utility - Input Validation Layer
+ * 
+ * RESPONSIBILITY: Reusable validation functions for Stellar addresses, amounts, and data formats
+ * OWNER: Backend Team
+ * DEPENDENCIES: Transaction model, User model
+ * 
+ * Provides validation helpers for API request data including Stellar public keys,
+ * amounts, date ranges, transaction hashes, and entity existence checks.
  */
 
 const Transaction = require('../routes/models/transaction');

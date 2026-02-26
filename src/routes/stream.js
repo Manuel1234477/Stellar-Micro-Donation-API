@@ -1,3 +1,14 @@
+/**
+ * Stream Routes - API Endpoint Layer
+ * 
+ * RESPONSIBILITY: HTTP request handling for recurring donation schedules
+ * OWNER: Backend Team
+ * DEPENDENCIES: Database, middleware (auth, RBAC), validation helpers
+ * 
+ * Handles creation, retrieval, and cancellation of recurring donation schedules.
+ * Manages schedule lifecycle and status updates for automated donation execution.
+ */
+
 const express = require('express');
 const router = express.Router();
 const Database = require('../utils/database');

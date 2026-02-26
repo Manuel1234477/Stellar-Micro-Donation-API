@@ -1,12 +1,12 @@
 /**
- * Idempotency Service
- * Ensures donation requests are processed only once, even with retries or network issues
+ * Idempotency Service - Request Deduplication Layer
  * 
- * Design:
- * - Uses idempotency keys (client-provided unique identifiers)
- * - Stores request hashes to detect duplicates
- * - Returns cached responses for duplicate requests
- * - Implements TTL for automatic cleanup
+ * RESPONSIBILITY: Ensures donation requests are processed exactly once
+ * OWNER: Backend Team
+ * DEPENDENCIES: Database, crypto
+ * 
+ * Prevents duplicate transaction execution using idempotency keys and request hashing.
+ * Stores cached responses for duplicate requests with automatic TTL-based cleanup.
  */
 
 const crypto = require('crypto');

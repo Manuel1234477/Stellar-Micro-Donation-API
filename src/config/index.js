@@ -1,12 +1,12 @@
 /**
- * Centralized Configuration Module
- * Single source of truth for all environment variables and application configuration
+ * Configuration Module - Application Configuration Layer
  * 
- * This module:
- * - Loads and validates all environment variables
- * - Provides type-safe access to configuration values
- * - Applies sensible defaults
- * - Throws clear errors for misconfiguration
+ * RESPONSIBILITY: Centralized environment variable management and configuration validation
+ * OWNER: Platform Team
+ * DEPENDENCIES: dotenv, constants
+ * 
+ * Single source of truth for all environment variables and application configuration.
+ * Loads, validates, and provides type-safe access to configuration with sensible defaults.
  */
 
 require('dotenv').config({ path: require('path').join(__dirname, '../../.env') });

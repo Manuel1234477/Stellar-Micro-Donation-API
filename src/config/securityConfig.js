@@ -1,7 +1,12 @@
 /**
- * Security Configuration with Safe Defaults
- * Provides secure default values for all security-sensitive configurations
- * Logs misconfigurations while ensuring the app runs safely
+ * Security Configuration - Security Settings Layer
+ * 
+ * RESPONSIBILITY: Security-sensitive configuration with safe defaults and validation
+ * OWNER: Security Team
+ * DEPENDENCIES: Logger, crypto
+ * 
+ * Provides secure default values for API keys, encryption, and security settings.
+ * Logs misconfigurations while ensuring the application runs safely in all environments.
  */
 
 const log = require('../utils/log');

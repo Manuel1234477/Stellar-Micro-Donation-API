@@ -1,8 +1,14 @@
 /**
- * Transaction Sync Service
- * Synchronizes transactions from Stellar Horizon API to local database
- * Fetches transaction history and creates local records for new transactions
+ * Transaction Sync Service - Blockchain Data Synchronization
+ * 
+ * RESPONSIBILITY: Synchronizes transactions from Stellar Horizon API to local database
+ * OWNER: Backend Team
+ * DEPENDENCIES: StellarService, Horizon API, Transaction model
+ * 
+ * Fetches transaction history from Stellar network and creates local records for new
+ * transactions, ensuring local database reflects blockchain state.
  */
+
 const StellarSdk = require('stellar-sdk');
 const Transaction = require('../routes/models/transaction');
 const { HORIZON_URLS } = require('../constants');

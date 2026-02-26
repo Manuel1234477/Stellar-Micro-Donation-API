@@ -1,7 +1,12 @@
 /**
- * Stats Routes
- * Thin controllers that orchestrate service calls
- * All business logic delegated to StatsService
+ * Stats Routes - API Endpoint Layer
+ * 
+ * RESPONSIBILITY: HTTP request handling for donation statistics and analytics
+ * OWNER: Analytics Team
+ * DEPENDENCIES: StatsService, middleware (auth, validation, RBAC)
+ * 
+ * Thin controllers that orchestrate service calls for donation analytics including
+ * daily/weekly stats, donor/recipient reports, and summary analytics.
  */
 
 const express = require('express');

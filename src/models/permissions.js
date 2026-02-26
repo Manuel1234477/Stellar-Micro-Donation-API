@@ -1,3 +1,14 @@
+/**
+ * Permissions Model - Authorization Layer
+ * 
+ * RESPONSIBILITY: Role-based permission management and validation
+ * OWNER: Security Team
+ * DEPENDENCIES: roles.json config, logger
+ * 
+ * Loads and validates role-based permissions from configuration. Provides permission
+ * checking logic for RBAC enforcement across API endpoints.
+ */
+
 const fs = require('fs');
 const path = require('path');
 const log = require('../utils/log');

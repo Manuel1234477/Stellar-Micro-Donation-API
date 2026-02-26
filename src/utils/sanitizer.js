@@ -1,6 +1,12 @@
 /**
- * Input Sanitization Utility
- * Sanitizes user-provided metadata to prevent injection attacks and logging issues
+ * Sanitizer Utility - Input Sanitization Layer
+ * 
+ * RESPONSIBILITY: Input sanitization to prevent injection attacks and data corruption
+ * OWNER: Security Team
+ * DEPENDENCIES: None (foundational utility)
+ * 
+ * Sanitizes user-provided metadata to prevent log injection, SQL injection, XSS attacks,
+ * and removes control characters. Provides defense-in-depth alongside parameterized queries.
  * 
  * Security Considerations:
  * - Prevents log injection (newlines, control characters)

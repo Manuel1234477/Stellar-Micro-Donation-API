@@ -1,3 +1,14 @@
+/**
+ * Stats Service - Analytics and Reporting Layer
+ * 
+ * RESPONSIBILITY: Donation statistics aggregation and analytics calculations
+ * OWNER: Analytics Team
+ * DEPENDENCIES: Transaction model, Database
+ * 
+ * Provides statistical analysis of donation data including daily/weekly aggregations,
+ * donor/recipient analytics, and summary reports for business intelligence.
+ */
+
 const Transaction = require('../models/transaction');
 
 class StatsService {

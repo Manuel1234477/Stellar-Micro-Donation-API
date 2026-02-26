@@ -1,6 +1,12 @@
 /**
- * Validation middleware for API endpoints
+ * Validation Middleware - Input Validation Layer
+ * 
+ * RESPONSIBILITY: Request payload validation and sanitization for all API endpoints
+ * OWNER: Backend Team
+ * DEPENDENCIES: Validators, sanitizers, error utilities
+ * 
  * Handles structural and logic-based checks for donation and wallet operations.
+ * Validates Stellar addresses, amounts, date ranges, and transaction hashes.
  */
 
 const { sanitizeText } = require('../utils/sanitizer');

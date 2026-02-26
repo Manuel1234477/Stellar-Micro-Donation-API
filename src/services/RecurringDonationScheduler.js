@@ -1,13 +1,13 @@
 /**
- * Recurring Donation Scheduler
- * Automatically processes recurring donation schedules at regular intervals
+ * Recurring Donation Scheduler - Background Service
  * 
- * Features:
- * - Automatic execution of due donations
- * - Retry logic with exponential backoff
- * - Duplicate execution prevention
- * - Execution logging and failure tracking
- * - Correlation ID propagation for end-to-end tracing
+ * RESPONSIBILITY: Automated execution of scheduled recurring donations
+ * OWNER: Backend Team
+ * DEPENDENCIES: StellarService, Database, correlation utilities
+ * 
+ * Background service that processes recurring donation schedules at regular intervals.
+ * Features automatic execution, retry logic with exponential backoff, duplicate prevention,
+ * execution logging, failure tracking, and correlation ID propagation for tracing.
  */
 
 const MockStellarService = require('./MockStellarService');

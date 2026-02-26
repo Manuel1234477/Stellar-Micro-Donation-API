@@ -1,7 +1,12 @@
 /**
- * Wallet Service
- * Handles business logic for wallet operations
- * Separates data access and business rules from HTTP controllers
+ * Wallet Service - Wallet Management Layer
+ * 
+ * RESPONSIBILITY: Wallet metadata management and transaction history queries
+ * OWNER: Backend Team
+ * DEPENDENCIES: Database, Wallet model, sanitizers
+ * 
+ * Handles business logic for wallet operations including creation, updates,
+ * and transaction retrieval. Separates data access from HTTP controllers.
  */
 
 const Wallet = require('../routes/models/wallet');

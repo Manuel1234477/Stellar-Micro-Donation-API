@@ -1,8 +1,13 @@
 /**
- * Idempotency Middleware
- * Intent: Guarantee that a single logical operation (like a Stellar donation) is 
- * executed exactly once, even if the client retries the request due to network instability.
- * Flow: Header Check -> Key Validation -> Cache Lookup -> (If New) Hash Request Body -> (If Cached) Return Response.
+ * Idempotency Middleware - Request Deduplication Layer
+ * 
+ * RESPONSIBILITY: Prevents duplicate transaction execution through idempotency key tracking
+ * OWNER: Backend Team
+ * DEPENDENCIES: IdempotencyService, Database, logger
+ * 
+ * Guarantees that a single logical operation (like a Stellar donation) is executed
+ * exactly once, even if the client retries due to network instability.
+ * Flow: Header Check -> Key Validation -> Cache Lookup -> Hash Request Body -> Return Response.
  */
 
 const IdempotencyService = require('../services/IdempotencyService');

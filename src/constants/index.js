@@ -1,6 +1,12 @@
 /**
- * Centralized Application Constants
- * Single source of truth for all shared constants across the application
+ * Application Constants - Configuration Layer
+ * 
+ * RESPONSIBILITY: Centralized constant definitions for application-wide use
+ * OWNER: Platform Team
+ * DEPENDENCIES: None (foundational module)
+ * 
+ * Single source of truth for all shared constants including Stellar networks,
+ * donation frequencies, transaction states, API key statuses, and validation limits.
  */
 
 /**

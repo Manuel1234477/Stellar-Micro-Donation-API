@@ -1,3 +1,14 @@
+/**
+ * Application Entry Point
+ * 
+ * RESPONSIBILITY: Express server initialization, middleware orchestration, and lifecycle management
+ * OWNER: Backend Team
+ * DEPENDENCIES: All middleware, routes, and core services
+ * 
+ * This module bootstraps the Express application, configures middleware pipeline,
+ * registers API routes, and manages graceful startup/shutdown of background services.
+ */
+
 const express = require('express');
 const config = require('../config');
 const stellarConfig = require('../config/stellar');

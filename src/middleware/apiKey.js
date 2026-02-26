@@ -1,7 +1,12 @@
 /**
- * API Key Middleware
- * Validates API keys against both database and legacy environment variables
- * Uses security configuration for safe defaults and validation
+ * API Key Middleware - Authentication Layer
+ * 
+ * RESPONSIBILITY: API key validation and authentication for all protected endpoints
+ * OWNER: Security Team
+ * DEPENDENCIES: API Keys model, security config, logger
+ * 
+ * Validates API keys against both database-backed keys and legacy environment variables.
+ * Supports key rotation, expiration, and role-based access control.
  */
 
 const { securityConfig } = require("../config/securityConfig");

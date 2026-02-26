@@ -1,6 +1,12 @@
 /**
- * Unified Error Handling System
- * Provides consistent error structure across all services
+ * Error Utilities - Error Management Layer
+ * 
+ * RESPONSIBILITY: Centralized error definitions, custom error classes, and error codes
+ * OWNER: Backend Team
+ * DEPENDENCIES: None (foundational utility)
+ * 
+ * Provides consistent error structure across all services with standardized error codes,
+ * custom error classes for different error types, and HTTP status code mapping.
  */
 
 /**

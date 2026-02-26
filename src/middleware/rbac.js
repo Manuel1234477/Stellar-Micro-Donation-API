@@ -1,3 +1,14 @@
+/**
+ * RBAC Middleware - Authorization Layer
+ * 
+ * RESPONSIBILITY: Role-based access control and permission validation
+ * OWNER: Security Team
+ * DEPENDENCIES: Permissions model, API Keys model, config
+ * 
+ * Enforces granular permission checks for API endpoints. Handles transition between
+ * legacy environment-based keys and database-backed API key system with RBAC.
+ */
+
 const { UnauthorizedError, ForbiddenError } = require('../utils/errors');
 const { hasPermission } = require('../models/permissions');
 const { validateApiKey } = require('../models/apiKeys');

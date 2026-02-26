@@ -1,3 +1,14 @@
+/**
+ * Rate Limiter Middleware - API Protection Layer
+ * 
+ * RESPONSIBILITY: Request rate limiting to prevent abuse and protect system resources
+ * OWNER: Security Team
+ * DEPENDENCIES: express-rate-limit, rate limit config
+ * 
+ * Implements sliding window rate limiting for donation endpoints and general API access.
+ * Protects Stellar network from spam and database from brute-force attacks.
+ */
+
 let rateLimit;
 try {
   rateLimit = require('express-rate-limit');
