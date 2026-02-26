@@ -27,7 +27,7 @@
     "express-rate-limit": "^8.2.1",
     "sqlite3": "^5.1.7",
     "stellar-sdk": "^11.0.0",
-    "uuid": "^9.0.0"
+    "uuid": "^9.0.1"
   },
   "devDependencies": {
     "eslint": "^8.57.1",

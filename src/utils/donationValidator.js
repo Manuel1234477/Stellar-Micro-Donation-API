@@ -3,13 +3,13 @@
  * Validates donation amounts against configurable limits
  */
 
-require('dotenv').config({ path: require('path').join(__dirname, '../.env') });
+const config = require('../config');
 
 class DonationValidator {
   constructor() {
-    this.minAmount = parseFloat(process.env.MIN_DONATION_AMOUNT) || 0.01;
-    this.maxAmount = parseFloat(process.env.MAX_DONATION_AMOUNT) || 10000;
-    this.maxDailyPerDonor = parseFloat(process.env.MAX_DAILY_DONATION_PER_DONOR) || 0;
+    this.minAmount = config.donations.minAmount;
+    this.maxAmount = config.donations.maxAmount;
+    this.maxDailyPerDonor = config.donations.maxDailyPerDonor;
   }
 
   /**

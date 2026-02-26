@@ -1,25 +1,25 @@
+/**
+ * Donation Routes
+ * Thin controllers that orchestrate service calls
+ * All business logic delegated to DonationService
+ */
+
 const express = require('express');
 const router = express.Router();
-const Database = require('../utils/database');
-const Transaction = require('./models/transaction');
 const requireApiKey = require('../middleware/apiKey');
 const { requireIdempotency, storeIdempotencyResponse } = require('../middleware/idempotency');
 const { checkPermission } = require('../middleware/rbac');
 const { PERMISSIONS } = require('../utils/permissions');
-const { ValidationError, NotFoundError, ERROR_CODES } = require('../utils/errors');
-const encryption = require('../utils/encryption');
+const { ValidationError, ERROR_CODES } = require('../utils/errors');
 const log = require('../utils/log');
-const { TRANSACTION_STATES } = require('../utils/transactionStateMachine');
 const { donationRateLimiter, verificationRateLimiter } = require('../middleware/rateLimiter');
 const { validateRequiredFields, validateFloat, validateInteger } = require('../utils/validationHelpers');
 
 const { getStellarService } = require('../config/stellar');
-const donationValidator = require('../utils/donationValidator');
-const memoValidator = require('../utils/memoValidator');
-const { calculateAnalyticsFee } = require('../utils/feeCalculator');
-const { sanitizeIdentifier } = require('../utils/sanitizer');
+const DonationService = require('../services/DonationService');
 
 const stellarService = getStellarService();
+const donationService = new DonationService(stellarService);
 
 /**
  * POST /donations/verify
@@ -29,19 +29,13 @@ const stellarService = getStellarService();
 router.post('/verify', verificationRateLimiter, checkPermission(PERMISSIONS.DONATIONS_VERIFY), async (req, res) => {
   try {
     const { transactionHash } = req.body;
-
-    if (!transactionHash) {
-      throw new ValidationError('Transaction hash is required', null, ERROR_CODES.INVALID_REQUEST);
-    }
-
-    const verification = await stellarService.verifyTransaction(transactionHash);
+    const verification = await donationService.verifyTransaction(transactionHash);
 
     res.status(200).json({
       success: true,
       data: verification
     });
   } catch (error) {
-    // Handle Stellar errors with proper status codes
     const status = error.status || 500;
     const code = error.code || 'VERIFICATION_FAILED';
     const message = error.message || 'Failed to verify transaction';
@@ -55,7 +49,6 @@ router.post('/verify', verificationRateLimiter, checkPermission(PERMISSIONS.DONA
     });
   }
 });
-
 
 /**
  * POST /donations/send
@@ -75,7 +68,7 @@ router.post('/send', donationRateLimiter, requireIdempotency, async (req, res) =
       hasMemo: !!memo
     });
 
-    // 1. Validation
+    // Validation
     const requiredValidation = validateRequiredFields(
       { senderId, receiverId, amount },
       ['senderId', 'receiverId', 'amount']
@@ -103,130 +96,37 @@ router.post('/send', donationRateLimiter, requireIdempotency, async (req, res) =
       });
     }
 
-    // 2. Database Lookup
-    const sender = await Database.get('SELECT * FROM users WHERE id = ?', [senderId]);
-    const receiver = await Database.get('SELECT * FROM users WHERE id = ?', [receiverId]);
-
-    log.debug('DONATION_ROUTE', 'Database lookup complete', {
-      requestId: req.id,
-      senderFound: !!sender,
-      receiverFound: !!receiver
-    });
-
-    if (!sender || !receiver) {
-      return res.status(404).json({
-        success: false,
-        error: 'Sender or receiver not found'
-      });
-    }
-
-    if (!sender.encryptedSecret) {
-      return res.status(400).json({
-        success: false,
-        error: 'Sender has no secret key configured'
-      });
-    }
-
-    // 3. Stellar Transaction using custodial secret
-    const secret = encryption.decrypt(sender.encryptedSecret);
-
-    log.debug('DONATION_ROUTE', 'Initiating Stellar transaction', {
+    // Delegate to service
+    const result = await donationService.sendCustodialDonation({
+      senderId,
+      receiverId,
+      amount: amountValidation.value,
+      memo,
+      idempotencyKey: req.idempotency.key,
       requestId: req.id
-    });
-
-    const stellarResult = await stellarService.sendDonation({
-      sourceSecret: secret,
-      destinationPublic: receiver.publicKey,
-      amount: amount,
-      memo: memo
-    });
-
-    const transactionId = stellarResult.hash;
-
-    log.debug('DONATION_ROUTE', 'Stellar transaction successful', {
-      requestId: req.id,
-      transactionId,
-      ledger: stellarResult.ledger
-    });
-
-    // 4. Record in SQLite with idempotency key
-    const dbResult = await Database.run(
-      'INSERT INTO transactions (senderId, receiverId, amount, memo, timestamp, idempotencyKey) VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP, ?)',
-      [senderId, receiverId, amount, memo, req.idempotency.key]
-    );
-
-    // 5. Record in JSON with explicit lifecycle transitions
-    const transaction = Transaction.create({
-      id: dbResult.id.toString(),
-      amount: parseFloat(amount),
-      donor: sender.publicKey,
-      recipient: receiver.publicKey,
-      status: TRANSACTION_STATES.PENDING
-    });
-
-    Transaction.updateStatus(transaction.id, TRANSACTION_STATES.SUBMITTED, {
-      transactionId: stellarResult.transactionId,
-      ledger: stellarResult.ledger,
-    });
-
-    Transaction.updateStatus(transaction.id, TRANSACTION_STATES.CONFIRMED, {
-      transactionId: stellarResult.transactionId,
-      ledger: stellarResult.ledger,
-      confirmedAt: new Date().toISOString(),
     });
 
     const response = {
       success: true,
-      data: {
-        id: dbResult.id,
-        stellarTxId: stellarResult.transactionId,
-        ledger: stellarResult.ledger,
-        amount: amount,
-        sender: sender.publicKey,
-        receiver: receiver.publicKey,
-        timestamp: new Date().toISOString()
-      }
+      data: result
     };
 
-    // Store idempotency response
     await storeIdempotencyResponse(req, response);
-
     res.status(201).json(response);
   } catch (error) {
-    log.error('DONATION_ROUTE', 'Failed to send donation', { 
-      requestId: req.id,
-      error: error.message,
-      stack: error.stack
-    });
-    
-    // Handle duplicate donation gracefully
-    if (error.name === 'DuplicateError') {
-      return res.status(409).json({
-        success: false,
-        error: {
-          code: error.code,
-          message: error.message
-        }
-      });
-    }
-    
-    res.status(500).json({
-      success: false,
-      error: 'Failed to send donation',
-      message: error.message
-    });
+    next(error);
   }
 });
 
 /**
- * POST /donations/verify
- * Verify a donation transaction by hash
+ * POST /donations
+ * Create a non-custodial donation record
  */
 router.post('/', donationRateLimiter, requireApiKey, requireIdempotency, async (req, res, next) => {
   try {
-
     const { amount, donor, recipient, memo } = req.body;
 
+    // Basic validation
     if (!amount || !recipient) {
       throw new ValidationError('Missing required fields: amount, recipient', null, ERROR_CODES.MISSING_REQUIRED_FIELD);
     }
@@ -237,89 +137,20 @@ router.post('/', donationRateLimiter, requireApiKey, requireIdempotency, async (
       });
     }
 
-    // Validate memo if provided
-    if (memo !== undefined && memo !== null) {
-      const memoValidation = memoValidator.validate(memo);
-      if (!memoValidation.valid) {
-        return res.status(400).json({
-          success: false,
-          error: {
-            code: memoValidation.code,
-            message: memoValidation.error,
-            maxLength: memoValidation.maxLength,
-            currentLength: memoValidation.currentLength
-          }
-        });
-      }
-    }
-
     const amountValidation = validateFloat(amount);
     if (!amountValidation.valid) {
       return res.status(400).json({
         error: `Invalid amount: ${amountValidation.error}`
       });
     }
-    
-    const parsedAmount = amountValidation.value;
 
-    // Validate amount against configured limits
-    const limitsValidation = donationValidator.validateAmount(parsedAmount);
-    if (!limitsValidation.valid) {
-      return res.status(400).json({
-        success: false,
-        error: {
-          code: limitsValidation.code,
-          message: limitsValidation.error,
-          limits: {
-            min: limitsValidation.minAmount,
-            max: amountValidation.maxAmount,
-          },
-        },
-      });
-    }
-
-    // Sanitize user-provided identifiers
-    const sanitizedDonor = donor ? sanitizeIdentifier(donor) : '';
-    const sanitizedRecipient = sanitizeIdentifier(recipient);
-
-    // Validate daily limit if donor is specified
-    if (sanitizedDonor && sanitizedDonor !== 'Anonymous') {
-      const dailyTotal = Transaction.getDailyTotalByDonor(sanitizedDonor);
-      const dailyValidation = donationValidator.validateDailyLimit(parsedAmount, dailyTotal);
-
-      if (!dailyValidation.valid) {
-        return res.status(400).json({
-          success: false,
-          error: {
-            code: dailyValidation.code,
-            message: dailyValidation.error,
-            dailyLimit: dailyValidation.maxDailyAmount,
-            currentDailyTotal: dailyValidation.currentDailyTotal,
-            remainingDaily: dailyValidation.remainingDaily,
-          },
-        });
-      }
-    }
-
-    if (sanitizedDonor && sanitizedRecipient && sanitizedDonor === sanitizedRecipient) {
-      throw new ValidationError('Sender and recipient wallets must be different');
-    }
-
-    // Calculate analytics fee (not deducted on-chain)
-    const donationAmount = parseFloat(amount);
-    const feeCalculation = calculateAnalyticsFee(donationAmount);
-
-    // Sanitize memo for storage
-    const sanitizedMemo = memo ? memoValidator.sanitize(memo) : '';
-
-    const transaction = Transaction.create({
-      amount: parsedAmount,
-      donor: sanitizedDonor || 'Anonymous',
-      recipient: sanitizedRecipient,
-      memo: sanitizedMemo,
-      idempotencyKey: req.idempotency.key,
-      analyticsFee: feeCalculation.fee,
-      analyticsFeePercentage: feeCalculation.feePercentage
+    // Delegate to service
+    const transaction = await donationService.createDonationRecord({
+      amount: amountValidation.value,
+      donor,
+      recipient,
+      memo,
+      idempotencyKey: req.idempotency.key
     });
 
     const response = {
@@ -343,7 +174,7 @@ router.post('/', donationRateLimiter, requireApiKey, requireIdempotency, async (
  */
 router.get('/', checkPermission(PERMISSIONS.DONATIONS_READ), (req, res, next) => {
   try {
-    const transactions = Transaction.getAll();
+    const transactions = donationService.getAllDonations();
     res.json({
       success: true,
       data: transactions,
@@ -360,21 +191,13 @@ router.get('/', checkPermission(PERMISSIONS.DONATIONS_READ), (req, res, next) =>
  */
 router.get('/limits', checkPermission(PERMISSIONS.DONATIONS_READ), (req, res) => {
   try {
-    const limits = donationValidator.getLimits();
+    const limits = donationService.getDonationLimits();
     res.json({
       success: true,
-      data: {
-        minAmount: limits.minAmount,
-        maxAmount: limits.maxAmount,
-        maxDailyPerDonor: limits.maxDailyPerDonor,
-        currency: 'XLM',
-      },
+      data: limits
     });
   } catch (error) {
-    res.status(500).json({
-      error: 'Failed to retrieve limits',
-      message: error.message
-    });
+    next(error);
   }
 });
 
@@ -400,30 +223,13 @@ router.get('/recent', checkPermission(PERMISSIONS.DONATIONS_READ), (req, res, ne
       );
     }
 
-    const limit = limitValidation.value;
-
-    const transactions = Transaction.getAll();
-
-    // Sort by timestamp descending (most recent first)
-    const sortedTransactions = transactions
-      .sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp))
-      .slice(0, limit);
-
-    // Remove sensitive data: stellarTxId is not exposed
-    const sanitizedTransactions = sortedTransactions.map(tx => ({
-      id: tx.id,
-      amount: tx.amount,
-      donor: tx.donor,
-      recipient: tx.recipient,
-      timestamp: tx.timestamp,
-      status: tx.status
-    }));
+    const transactions = donationService.getRecentDonations(limitValidation.value);
 
     res.json({
       success: true,
-      data: sanitizedTransactions,
-      count: sanitizedTransactions.length,
-      limit: limit
+      data: transactions,
+      count: transactions.length,
+      limit: limitValidation.value
     });
   } catch (error) {
     next(error);
@@ -436,11 +242,7 @@ router.get('/recent', checkPermission(PERMISSIONS.DONATIONS_READ), (req, res, ne
  */
 router.get('/:id', checkPermission(PERMISSIONS.DONATIONS_READ), (req, res, next) => {
   try {
-    const transaction = Transaction.getById(req.params.id);
-
-    if (!transaction) {
-      throw new NotFoundError('Donation not found', ERROR_CODES.DONATION_NOT_FOUND);
-    }
+    const transaction = donationService.getDonationById(req.params.id);
 
     res.json({
       success: true,
@@ -464,17 +266,11 @@ router.patch('/:id/status', checkPermission(PERMISSIONS.DONATIONS_UPDATE), async
       throw new ValidationError('Missing required field: status', null, ERROR_CODES.MISSING_REQUIRED_FIELD);
     }
 
-    const validStatuses = Object.values(TRANSACTION_STATES);
-    if (!validStatuses.includes(status)) {
-      throw new ValidationError(`Invalid status. Must be one of: ${validStatuses.join(', ')}`);
-    }
-
     const stellarData = {};
     if (stellarTxId) stellarData.transactionId = stellarTxId;
     if (ledger) stellarData.ledger = ledger;
-    if (status === 'confirmed') stellarData.confirmedAt = new Date().toISOString();
 
-    const updatedTransaction = Transaction.updateStatus(id, status, stellarData);
+    const updatedTransaction = donationService.updateDonationStatus(id, status, stellarData);
 
     res.json({
       success: true,

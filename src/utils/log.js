@@ -1,15 +1,16 @@
 const { sanitizeForLogging } = require('./sanitizer');
+const config = require('../config');
 
-const isDebugMode = process.env.DEBUG_MODE === 'true';
+const isDebugMode = config.logging.debugMode;
 
 /**
  * Standard log fields for structured logging
  * These fields provide consistent context across all logs
  */
 const STANDARD_FIELDS = {
-  SERVICE_NAME: 'stellar-micro-donation-api',
-  ENVIRONMENT: process.env.NODE_ENV || 'development',
-  VERSION: process.env.npm_package_version || '1.0.0'
+  SERVICE_NAME: config.app.name,
+  ENVIRONMENT: config.server.env,
+  VERSION: config.app.version
 };
 
 /**
@@ -56,6 +57,20 @@ function setContext(context) {
   }
   const currentContext = contextStorage.getStore() || {};
   contextStorage.enterWith({ ...currentContext, ...context });
+}
+
+/**
+ * Run a function with an isolated request context
+ * @param {Object} context - Context data (requestId, userId, transactionId, etc.)
+ * @param {Function} callback - Function to run within context
+ * @returns {any} Result of callback
+ */
+function runWithContext(context, callback) {
+  if (!contextStorage) {
+    return callback();
+  }
+  const currentContext = contextStorage.getStore() || {};
+  return contextStorage.run({ ...currentContext, ...context }, callback);
 }
 
 /**
@@ -195,6 +210,7 @@ module.exports = {
   child,
   setContext,
   getContext,
+  runWithContext,
   isDebugMode,
   STANDARD_FIELDS,
 };

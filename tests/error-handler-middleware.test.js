@@ -14,18 +14,18 @@ describe('Global Error Handling Middleware', () => {
 
   beforeEach(() => {
     req = {
-      id: 'req-test-123',
-      path: '/test/path',
-      method: 'POST'
+      id: "req-test-123",
+      path: "/test/path",
+      method: "POST",
     };
 
     res = {
       status: jest.fn().mockReturnThis(),
-      json: jest.fn()
+      json: jest.fn(),
     };
 
     next = jest.fn();
-    process.env.NODE_ENV = 'test';
+    process.env.NODE_ENV = "test"; // 'test' should behave like development for debugging
   });
 
   describe('errorHandler', () => {
@@ -44,12 +44,15 @@ describe('Global Error Handling Middleware', () => {
           success: false,
           error: expect.objectContaining({
             code: ERROR_CODES.INVALID_AMOUNT,
-            message: 'Invalid payload',
-            details: { field: 'amount' },
-            requestId: 'req-test-123',
-            timestamp: expect.any(String)
-          })
-        })
+            message: "Invalid payload",
+            details: { field: "amount" },
+            requestId: "req-test-123",
+            timestamp: expect.any(String),
+            debug: expect.objectContaining({
+              name: "ValidationError",
+            }),
+          }),
+        }),
       );
     });
 
@@ -63,18 +66,20 @@ describe('Global Error Handling Middleware', () => {
       expect(res.json).toHaveBeenCalledWith({
         success: false,
         error: {
-          code: 'INTERNAL_ERROR',
-          message: 'Gateway timeout',
-          requestId: 'req-test-123',
-          timestamp: expect.any(String)
-        }
+          code: "INTERNAL_ERROR",
+          message: "Gateway timeout",
+          requestId: "req-test-123",
+          timestamp: expect.any(String),
+          debug: {
+            name: "InternalError",
+          },
+        },
       });
     });
 
     test('maps named validation errors to VALIDATION_ERROR code', () => {
       const err = new Error('Invalid email format');
-      err.name = 'ValidationError';
-      err.status = 400;
+      err.name = "ValidationError";
 
       errorHandler(err, req, res, next);
 
@@ -82,17 +87,21 @@ describe('Global Error Handling Middleware', () => {
       expect(res.json).toHaveBeenCalledWith({
         success: false,
         error: {
-          code: 'VALIDATION_ERROR',
-          message: 'Invalid email format',
-          requestId: 'req-test-123',
-          timestamp: expect.any(String)
-        }
+          code: "VALIDATION_ERROR",
+          message: "Invalid email format",
+          requestId: "req-test-123",
+          timestamp: expect.any(String),
+          debug: {
+            name: "ValidationError",
+          },
+        },
       });
     });
 
     test('does not leak internal error details in production for non-validation errors', () => {
       process.env.NODE_ENV = 'production';
-      const err = new Error('DB password is invalid');
+      const err = new Error("Database connection failed: password=secret123");
+      err.statusCode = 500;
 
       errorHandler(err, req, res, next);
 
@@ -100,11 +109,11 @@ describe('Global Error Handling Middleware', () => {
       expect(res.json).toHaveBeenCalledWith({
         success: false,
         error: {
-          code: 'INTERNAL_ERROR',
-          message: 'An unexpected error occurred',
-          requestId: 'req-test-123',
-          timestamp: expect.any(String)
-        }
+          code: "INTERNAL_ERROR",
+          message: "An unexpected error occurred. Please try again later.",
+          requestId: "req-test-123",
+          timestamp: expect.any(String),
+        },
       });
     });
   });
@@ -120,10 +129,14 @@ describe('Global Error Handling Middleware', () => {
       expect(res.json).toHaveBeenCalledWith({
         success: false,
         error: {
-          code: 'ENDPOINT_NOT_FOUND',
-          message: 'Endpoint not found: GET /unknown-route',
-          timestamp: expect.any(String)
-        }
+          code: "ENDPOINT_NOT_FOUND",
+          message: "Endpoint not found: GET /unknown-route",
+          requestId: "req-test-123",
+          timestamp: expect.any(String),
+          debug: {
+            name: "NotFoundError",
+          },
+        },
       });
     });
   });

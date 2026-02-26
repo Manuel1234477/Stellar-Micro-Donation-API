@@ -1,6 +1,12 @@
+/**
+ * Stats Routes
+ * Thin controllers that orchestrate service calls
+ * All business logic delegated to StatsService
+ */
+
 const express = require('express');
 const router = express.Router();
-const StatsService = require('./services/StatsService');
+const StatsService = require('../services/StatsService');
 const { validateDateRange } = require('../middleware/validation');
 const { checkPermission } = require('../middleware/rbac');
 const { PERMISSIONS } = require('../utils/permissions');
@@ -31,13 +37,7 @@ router.get('/daily', checkPermission(PERMISSIONS.STATS_READ), validateDateRange,
       }
     });
   } catch (error) {
-    res.status(500).json({
-      success: false,
-      error: {
-        code: 'STATS_FAILED',
-        message: error.message
-      }
-    });
+    next(error);
   }
 });
 
@@ -46,164 +46,141 @@ router.get('/daily', checkPermission(PERMISSIONS.STATS_READ), validateDateRange,
  * Get weekly aggregated donation volume
  * Query params: startDate, endDate (ISO format)
  */
-router.get('/weekly', checkPermission(PERMISSIONS.STATS_READ), validateDateRange, (req, res) => {
-  try {
-    const { startDate, endDate } = req.query;
-    const start = new Date(startDate);
-    const end = new Date(endDate);
+router.get(
+  "/weekly",
+  checkPermission(PERMISSIONS.STATS_READ),
+  validateDateRange,
+  (req, res, next) => {
+    try {
+      const { startDate, endDate } = req.query;
+      const start = new Date(startDate);
+      const end = new Date(endDate);
 
-    const stats = StatsService.getWeeklyStats(start, end);
+      const stats = StatsService.getWeeklyStats(start, end);
 
-    res.json({
-      success: true,
-      data: stats,
-      metadata: {
-        dateRange: {
-          start: start.toISOString(),
-          end: end.toISOString()
+      res.json({
+        success: true,
+        data: stats,
+        metadata: {
+          dateRange: {
+            start: start.toISOString(),
+            end: end.toISOString(),
+          },
+          totalWeeks: stats.length,
+          aggregationType: "weekly",
         },
-        totalWeeks: stats.length,
-        aggregationType: 'weekly'
-      }
-    });
-  } catch (error) {
-    res.status(500).json({
-      success: false,
-      error: {
-        code: 'STATS_FAILED',
-        message: error.message
-      }
-    });
-  }
-});
+      });
+    } catch (error) {
+      next(error);
+    }
+  },
+);
 
 /**
  * GET /stats/summary
  * Get overall summary statistics
  * Query params: startDate, endDate (ISO format)
  */
-router.get('/summary', checkPermission(PERMISSIONS.STATS_READ), validateDateRange, (req, res) => {
-  try {
-    const { startDate, endDate } = req.query;
-    const start = new Date(startDate);
-    const end = new Date(endDate);
+router.get(
+  "/summary",
+  checkPermission(PERMISSIONS.STATS_READ),
+  validateDateRange,
+  (req, res, next) => {
+    try {
+      const { startDate, endDate } = req.query;
+      const start = new Date(startDate);
+      const end = new Date(endDate);
 
-    const stats = StatsService.getSummaryStats(start, end);
+      const stats = StatsService.getSummaryStats(start, end);
 
-    res.json({
-      success: true,
-      data: stats
-    });
-  } catch (error) {
-    res.status(500).json({
-      success: false,
-      error: {
-        code: 'STATS_FAILED',
-        message: error.message
-      }
-    });
-  }
-});
+      res.json({
+        success: true,
+        data: stats,
+      });
+    } catch (error) {
+      next(error);
+    }
+  },
+);
 
 /**
  * GET /stats/donors
  * Get aggregated stats by donor
  * Query params: startDate, endDate (ISO format)
  */
-router.get('/donors', checkPermission(PERMISSIONS.STATS_READ), validateDateRange, (req, res) => {
-  try {
-    const { startDate, endDate } = req.query;
-    const start = new Date(startDate);
-    const end = new Date(endDate);
+router.get(
+  "/donors",
+  checkPermission(PERMISSIONS.STATS_READ),
+  validateDateRange,
+  (req, res, next) => {
+    try {
+      const { startDate, endDate } = req.query;
+      const start = new Date(startDate);
+      const end = new Date(endDate);
 
-    const stats = StatsService.getDonorStats(start, end);
+      const stats = StatsService.getDonorStats(start, end);
 
-    res.json({
-      success: true,
-      data: stats,
-      metadata: {
-        dateRange: {
-          start: start.toISOString(),
-          end: end.toISOString()
+      res.json({
+        success: true,
+        data: stats,
+        metadata: {
+          dateRange: {
+            start: start.toISOString(),
+            end: end.toISOString(),
+          },
+          totalDonors: stats.length,
         },
-        totalDonors: stats.length
-      }
-    });
-  } catch (error) {
-    res.status(500).json({
-      success: false,
-      error: {
-        code: 'STATS_FAILED',
-        message: error.message
-      }
-    });
-  }
-});
+      });
+    } catch (error) {
+      next(error);
+    }
+  },
+);
 
 /**
  * GET /stats/recipients
  * Get aggregated stats by recipient
  * Query params: startDate, endDate (ISO format)
  */
-router.get('/recipients', checkPermission(PERMISSIONS.STATS_READ), validateDateRange, (req, res) => {
-  try {
-    const { startDate, endDate } = req.query;
-    const start = new Date(startDate);
-    const end = new Date(endDate);
+router.get(
+  "/recipients",
+  checkPermission(PERMISSIONS.STATS_READ),
+  validateDateRange,
+  (req, res, next) => {
+    try {
+      const { startDate, endDate } = req.query;
+      const start = new Date(startDate);
+      const end = new Date(endDate);
 
-    const stats = StatsService.getRecipientStats(start, end);
+      const stats = StatsService.getRecipientStats(start, end);
 
-    res.json({
-      success: true,
-      data: stats,
-      metadata: {
-        dateRange: {
-          start: start.toISOString(),
-          end: end.toISOString()
+      res.json({
+        success: true,
+        data: stats,
+        metadata: {
+          dateRange: {
+            start: start.toISOString(),
+            end: end.toISOString(),
+          },
+          totalRecipients: stats.length,
         },
-        totalRecipients: stats.length
-      }
-    });
-  } catch (error) {
-    res.status(500).json({
-      success: false,
-      error: {
-        code: 'STATS_FAILED',
-        message: error.message
-      }
-    });
-  }
-});
+      });
+    } catch (error) {
+      next(error);
+    }
+  },
+);
 
 /**
  * GET /stats/analytics-fees
  * Get analytics fee summary for reporting
  * Query params: startDate, endDate (ISO format)
  */
-router.get('/analytics-fees', checkPermission(PERMISSIONS.STATS_READ), (req, res) => {
+router.get('/analytics-fees', checkPermission(PERMISSIONS.STATS_READ), validateDateRange, (req, res) => {
   try {
     const { startDate, endDate } = req.query;
-
-    if (!startDate || !endDate) {
-      return res.status(400).json({
-        error: 'Missing required query parameters: startDate, endDate (ISO format)'
-      });
-    }
-
     const start = new Date(startDate);
     const end = new Date(endDate);
-
-    if (isNaN(start.getTime()) || isNaN(end.getTime())) {
-      return res.status(400).json({
-        error: 'Invalid date format. Use ISO format (YYYY-MM-DD or ISO 8601)'
-      });
-    }
-
-    if (start > end) {
-      return res.status(400).json({
-        error: 'startDate must be before endDate'
-      });
-    }
 
     const stats = StatsService.getAnalyticsFeeStats(start, end);
 
@@ -215,10 +192,7 @@ router.get('/analytics-fees', checkPermission(PERMISSIONS.STATS_READ), (req, res
       }
     });
   } catch (error) {
-    res.status(500).json({
-      error: 'Failed to retrieve analytics fee stats',
-      message: error.message
-    });
+    next(error);
   }
 });
 
@@ -272,10 +246,7 @@ router.get('/wallet/:walletAddress/analytics', checkPermission(PERMISSIONS.STATS
       data: analytics
     });
   } catch (error) {
-    res.status(500).json({
-      error: 'Failed to retrieve wallet analytics',
-      message: error.message
-    });
+    next(error);
   }
 });
 
@@ -297,10 +268,7 @@ router.get('/wallet/:walletAddress/analytics', checkPermission(PERMISSIONS.STATS
       }
     });
   } catch (error) {
-    res.status(500).json({
-      error: 'Failed to retrieve wallet analytics',
-      message: error.message
-    });
+    next(error);
   }
 });
 
