@@ -17,12 +17,55 @@ const { PERMISSIONS } = require('../utils/permissions');
 const { VALID_FREQUENCIES, SCHEDULE_STATUS } = require('../constants');
 const { validateRequiredFields, validateFloat, validateEnum } = require('../utils/validationHelpers');
 const log = require('../utils/log');
+const { validateSchema } = require('../middleware/schemaValidation');
+
+const streamCreateSchema = validateSchema({
+  body: {
+    fields: {
+      donorPublicKey: {
+        type: 'string',
+        required: true,
+        trim: true,
+        minLength: 1,
+        maxLength: 255,
+      },
+      recipientPublicKey: {
+        type: 'string',
+        required: true,
+        trim: true,
+        minLength: 1,
+        maxLength: 255,
+      },
+      amount: { type: 'number', required: true, min: 0.0000001 },
+      frequency: {
+        type: 'string',
+        required: true,
+        validate: (value) => {
+          if (typeof value !== 'string') {
+            return 'frequency must be a string';
+          }
+          return VALID_FREQUENCIES.includes(value.toLowerCase())
+            ? true
+            : `frequency must be one of: ${VALID_FREQUENCIES.join(', ')}`;
+        },
+      },
+    },
+  },
+});
+
+const streamScheduleIdSchema = validateSchema({
+  params: {
+    fields: {
+      id: { type: 'integerString', required: true },
+    },
+  },
+});
 
 /**
  * POST /stream/create
  * Create a recurring donation schedule
  */
-router.post('/create', checkPermission(PERMISSIONS.STREAM_CREATE), async (req, res) => {
+router.post('/create', checkPermission(PERMISSIONS.STREAM_CREATE), streamCreateSchema, async (req, res) => {
   try {
     const { donorPublicKey, recipientPublicKey, amount, frequency } = req.body;
 
@@ -191,7 +234,7 @@ router.get('/schedules', checkPermission(PERMISSIONS.STREAM_READ), async (req, r
  * GET /stream/schedules/:id
  * Get a specific recurring donation schedule
  */
-router.get('/schedules/:id', checkPermission(PERMISSIONS.STREAM_READ), async (req, res) => {
+router.get('/schedules/:id', checkPermission(PERMISSIONS.STREAM_READ), streamScheduleIdSchema, async (req, res) => {
   try {
     const schedule = await Database.get(
       `SELECT
@@ -237,7 +280,7 @@ router.get('/schedules/:id', checkPermission(PERMISSIONS.STREAM_READ), async (re
  * DELETE /stream/schedules/:id
  * Cancel a recurring donation schedule
  */
-router.delete('/schedules/:id', checkPermission(PERMISSIONS.STREAM_DELETE), async (req, res) => {
+router.delete('/schedules/:id', checkPermission(PERMISSIONS.STREAM_DELETE), streamScheduleIdSchema, async (req, res) => {
   try {
     const schedule = await Database.get(
       'SELECT id, status FROM recurring_donations WHERE id = ?',

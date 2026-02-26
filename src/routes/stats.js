@@ -15,13 +15,49 @@ const StatsService = require('../services/StatsService');
 const { validateDateRange } = require('../middleware/validation');
 const { checkPermission } = require('../middleware/rbac');
 const { PERMISSIONS } = require('../utils/permissions');
+const { validateSchema } = require('../middleware/schemaValidation');
+
+const strictDateRangeQuerySchema = validateSchema({
+  query: {
+    fields: {
+      startDate: { type: 'dateString', required: true },
+      endDate: { type: 'dateString', required: true },
+    },
+  },
+});
+
+const walletAnalyticsSchema = validateSchema({
+  params: {
+    fields: {
+      walletAddress: {
+        type: 'string',
+        required: true,
+        trim: true,
+        minLength: 1,
+      },
+    },
+  },
+  query: {
+    fields: {
+      startDate: { type: 'dateString', required: false },
+      endDate: { type: 'dateString', required: false },
+    },
+    validate: (query) => {
+      const hasStart = Object.prototype.hasOwnProperty.call(query, 'startDate');
+      const hasEnd = Object.prototype.hasOwnProperty.call(query, 'endDate');
+      return hasStart === hasEnd
+        ? null
+        : 'Both startDate and endDate are required when filtering by date';
+    },
+  },
+});
 
 /**
  * GET /stats/daily
  * Get daily aggregated donation volume
  * Query params: startDate, endDate (ISO format)
  */
-router.get('/daily', checkPermission(PERMISSIONS.STATS_READ), validateDateRange, (req, res) => {
+router.get('/daily', checkPermission(PERMISSIONS.STATS_READ), strictDateRangeQuerySchema, validateDateRange, (req, res) => {
   try {
     const { startDate, endDate } = req.query;
     const start = new Date(startDate);
@@ -54,6 +90,7 @@ router.get('/daily', checkPermission(PERMISSIONS.STATS_READ), validateDateRange,
 router.get(
   "/weekly",
   checkPermission(PERMISSIONS.STATS_READ),
+  strictDateRangeQuerySchema,
   validateDateRange,
   (req, res, next) => {
     try {
@@ -89,6 +126,7 @@ router.get(
 router.get(
   "/summary",
   checkPermission(PERMISSIONS.STATS_READ),
+  strictDateRangeQuerySchema,
   validateDateRange,
   (req, res, next) => {
     try {
@@ -116,6 +154,7 @@ router.get(
 router.get(
   "/donors",
   checkPermission(PERMISSIONS.STATS_READ),
+  strictDateRangeQuerySchema,
   validateDateRange,
   (req, res, next) => {
     try {
@@ -150,6 +189,7 @@ router.get(
 router.get(
   "/recipients",
   checkPermission(PERMISSIONS.STATS_READ),
+  strictDateRangeQuerySchema,
   validateDateRange,
   (req, res, next) => {
     try {
@@ -181,7 +221,7 @@ router.get(
  * Get analytics fee summary for reporting
  * Query params: startDate, endDate (ISO format)
  */
-router.get('/analytics-fees', checkPermission(PERMISSIONS.STATS_READ), validateDateRange, (req, res) => {
+router.get('/analytics-fees', checkPermission(PERMISSIONS.STATS_READ), strictDateRangeQuerySchema, validateDateRange, (req, res) => {
   try {
     const { startDate, endDate } = req.query;
     const start = new Date(startDate);
@@ -206,7 +246,7 @@ router.get('/analytics-fees', checkPermission(PERMISSIONS.STATS_READ), validateD
  * Get donation analytics for a specific wallet
  * Query params: startDate, endDate (optional, ISO format)
  */
-router.get('/wallet/:walletAddress/analytics', checkPermission(PERMISSIONS.STATS_READ), (req, res) => {
+router.get('/wallet/:walletAddress/analytics', checkPermission(PERMISSIONS.STATS_READ), walletAnalyticsSchema, (req, res) => {
   try {
     const { walletAddress } = req.params;
     const { startDate, endDate } = req.query;
@@ -255,7 +295,7 @@ router.get('/wallet/:walletAddress/analytics', checkPermission(PERMISSIONS.STATS
   }
 });
 
-router.get('/wallet/:walletAddress/analytics', checkPermission(PERMISSIONS.STATS_READ), async (req, res) => {
+router.get('/wallet/:walletAddress/analytics', checkPermission(PERMISSIONS.STATS_READ), walletAnalyticsSchema, async (req, res) => {
   try {
     const { walletAddress } = req.params;
 
