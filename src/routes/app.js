@@ -61,6 +61,9 @@ app.use(abuseDetectionMiddleware);
 // Replay detection (observability only - no blocking)
 app.use(replayDetectionMiddleware);
 
+// Suspicious pattern detection (observability only - no blocking)
+app.use(require('../middleware/suspiciousPatternDetection'));
+
 // Attach user role from authentication (must be before routes)
 app.use(attachUserRole());
 
@@ -99,6 +102,17 @@ app.get('/abuse-signals', require('../middleware/rbac').requireAdmin(), (req, re
   res.json({
     success: true,
     data: abuseDetector.getStats(),
+    timestamp: new Date().toISOString()
+  });
+});
+
+// Suspicious pattern metrics endpoint (admin only)
+app.get('/suspicious-patterns', require('../middleware/rbac').requireAdmin(), (req, res) => {
+  const suspiciousPatternDetector = require('../utils/suspiciousPatternDetector');
+
+  res.json({
+    success: true,
+    data: suspiciousPatternDetector.getMetrics(),
     timestamp: new Date().toISOString()
   });
 });
