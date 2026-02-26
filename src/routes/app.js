@@ -7,9 +7,6 @@ const statsRoutes = require('./stats');
 const streamRoutes = require('./stream');
 const transactionRoutes = require('./transaction');
 const apiKeysRoutes = require('./apiKeys');
-const recurringDonationScheduler = require('../services/RecurringDonationScheduler');
-const TransactionReconciliationService = require('../services/TransactionReconciliationService');
-const { getStellarService } = require('../config/stellar');
 const { errorHandler, notFoundHandler } = require('../middleware/errorHandler');
 const logger = require('../middleware/logger');
 const { attachUserRole } = require('../middleware/rbac');
@@ -27,9 +24,10 @@ const {
 
 const app = express();
 
-// Initialize reconciliation service
-const stellarService = getStellarService();
-const reconciliationService = new TransactionReconciliationService(stellarService);
+// Initialize services from container
+const stellarService = serviceContainer.getStellarService();
+const reconciliationService = serviceContainer.getTransactionReconciliationService();
+const recurringDonationScheduler = serviceContainer.getRecurringDonationScheduler();
 
 // Middleware
 app.use(requestId);
@@ -50,8 +48,8 @@ app.use(abuseDetectionMiddleware);
 app.use(attachUserRole());
 
 // Routes
-app.use('/donations', donationRoutes);
 app.use('/wallets', walletRoutes);
+app.use('/donations', donationRoutes);
 app.use('/stats', statsRoutes);
 app.use('/stream', streamRoutes);
 app.use('/transactions', transactionRoutes);
@@ -61,7 +59,6 @@ app.use('/api-keys', apiKeysRoutes);
 app.get('/health', async (req, res) => {
   try {
     await Database.get('SELECT 1 as ok');
-
     return res.status(200).json({
       status: 'ok',
       timestamp: new Date().toISOString(),
@@ -98,12 +95,10 @@ app.post('/reconcile', require('../middleware/rbac').requireAdmin(), async (req,
         error: 'Reconciliation already in progress'
       });
     }
-
     // Trigger reconciliation without waiting
     reconciliationService.reconcile().catch(error => {
       log.error('APP', 'Manual reconciliation failed', { error: error.message });
     });
-
     res.json({
       success: true,
       message: 'Reconciliation started',

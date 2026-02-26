@@ -25,14 +25,16 @@
  */
 
 const crypto = require('crypto');
+const StellarServiceInterface = require('./interfaces/StellarServiceInterface');
 const { NotFoundError, ValidationError, BusinessLogicError, ERROR_CODES } = require('../utils/errors');
 // eslint-disable-next-line no-unused-vars -- Imported for future error handling
 const StellarErrorHandler = require('../utils/stellarErrorHandler');
 const log = require('../utils/log');
 
-class MockStellarService {
+class MockStellarService extends StellarServiceInterface {
   constructor(config = {}) {
     // In-memory storage for mock data
+    super();
     this.wallets = new Map(); // publicKey -> { publicKey, secretKey, balance }
     this.transactions = new Map(); // publicKey -> [transactions]
     this.streamListeners = new Map(); // publicKey -> [callbacks]

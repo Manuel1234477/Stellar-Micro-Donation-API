@@ -3,6 +3,7 @@
  * Handles structural and logic-based checks for donation and wallet operations.
  */
 
+const { sanitizeText } = require('../utils/sanitizer');
 const {
   isValidStellarPublicKey,
   isValidAmount,
@@ -10,7 +11,6 @@ const {
   walletAddressExists,
   isValidDateRange,
   isValidTransactionHash,
-  sanitizeString
 } = require('../utils/validators');
 
 /**
@@ -57,8 +57,8 @@ const validateDonationCreate = (req, res, next) => {
   }
 
   // Sanitize strings: Removes malicious or extra characters from input
-  const normalizedDonor = sanitizeString(donor);
-  const normalizedRecipient = sanitizeString(recipient);
+  const normalizedDonor = sanitizeText(donor);
+  const normalizedRecipient = sanitizeText(recipient);
 
   // Logical check: Prevents a user from donating to themselves
   if (normalizedDonor && normalizedRecipient && normalizedDonor === normalizedRecipient) {

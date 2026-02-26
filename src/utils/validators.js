@@ -103,10 +103,6 @@ const isValidTransactionHash = (hash) => {
 /**
  * Sanitize string input
  */
-const sanitizeString = (str) => {
-  if (typeof str !== 'string') return '';
-  return str.trim();
-};
 
 module.exports = {
   isValidStellarPublicKey,
@@ -118,5 +114,4 @@ module.exports = {
   isValidDate,
   isValidDateRange,
   isValidTransactionHash,
-  sanitizeString
 };

@@ -1,6 +1,6 @@
 const fs = require('fs');
 const path = require('path');
-const config = require('../../config/stellar');
+const dbPath = process.env.DB_JSON_PATH || require('path').join(__dirname, '../../data/donations.json');
 const {
   TRANSACTION_STATES,
   normalizeState,
@@ -11,7 +11,7 @@ const {
 class Transaction {
   static eventEmitter = donationEvents;
   static getDbPath() {
-    return config.dbPath;
+    return dbPath;
   }
 
   static ensureDbDir() {

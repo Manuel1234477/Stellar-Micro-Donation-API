@@ -10,7 +10,6 @@
  * - Correlation ID propagation for end-to-end tracing
  */
 
-const Database = require('../utils/database');
 const MockStellarService = require('./MockStellarService');
 const { SCHEDULE_STATUS, DONATION_FREQUENCIES } = require('../constants');
 const log = require('../utils/log');
@@ -25,11 +24,12 @@ class RecurringDonationScheduler {
    * Create a new RecurringDonationScheduler instance
    * Initializes with default configuration for retry logic and execution tracking
    */
-  constructor() {
+  constructor(stellarService) {
+    if (!stellarService) throw new Error('stellarService is required');
+    this.stellarService = stellarService;
     this.intervalId = null;
     this.isRunning = false;
     this.checkInterval = 60000; // Check every minute
-    this.stellarService = new MockStellarService();
     
     // Retry configuration
     this.maxRetries = 3;
@@ -581,7 +581,4 @@ class RecurringDonationScheduler {
   }
 }
 
-// Create singleton instance
-const scheduler = new RecurringDonationScheduler();
-
-module.exports = scheduler;
+module.exports = RecurringDonationScheduler;
