@@ -12,6 +12,7 @@
 const { securityConfig } = require("../config/securityConfig");
 const { validateKey } = require("../models/apiKeys");
 const log = require("../utils/log");
+const AuditLogService = require("../services/AuditLogService");
 
 /**
  * Legacy Support Configuration
@@ -42,6 +43,23 @@ const requireApiKey = async (req, res, next) => {
       userAgent: req.get("User-Agent"),
       path: req.path,
     });
+
+    // Audit log: Missing API key
+    await AuditLogService.log({
+      category: AuditLogService.CATEGORY.AUTHENTICATION,
+      action: AuditLogService.ACTION.API_KEY_VALIDATION_FAILED,
+      severity: AuditLogService.SEVERITY.HIGH,
+      result: 'FAILURE',
+      requestId: req.id,
+      ipAddress: req.ip,
+      resource: req.path,
+      reason: 'Missing API key header',
+      details: {
+        userAgent: req.get("User-Agent"),
+        method: req.method
+      }
+    });
+
     return res.status(401).json({
       success: false,
       error: {
@@ -55,10 +73,27 @@ const requireApiKey = async (req, res, next) => {
 
   try {
     // Stage 1: Attempt Database-backed validation (Supports key rotation & granular roles)
-    const keyInfo = await validateApiKey(key);
+    const keyInfo = await validateKey(apiKey);
 
     if (keyInfo) {
       req.apiKey = keyInfo;
+
+      // Audit log: Successful API key validation
+      await AuditLogService.log({
+        category: AuditLogService.CATEGORY.AUTHENTICATION,
+        action: AuditLogService.ACTION.API_KEY_VALIDATED,
+        severity: AuditLogService.SEVERITY.LOW,
+        result: 'SUCCESS',
+        userId: keyInfo.id?.toString(),
+        requestId: req.id,
+        ipAddress: req.ip,
+        resource: req.path,
+        details: {
+          role: keyInfo.role,
+          isDeprecated: keyInfo.isDeprecated || false,
+          keyPrefix: apiKey.substring(0, 8) + '...'
+        }
+      });
 
       // Proactive rotation warning for client-side automated systems
       if (keyInfo.isDeprecated) {
@@ -73,10 +108,26 @@ const requireApiKey = async (req, res, next) => {
     }
 
     // Stage 2: Attempt Legacy Fallback (Static keys defined in environment variables)
-    if (legacyKeys.length > 0 && legacyKeys.includes(key)) {
+    if (legacyKeys.length > 0 && legacyKeys.includes(apiKey)) {
       log.warn("API_KEY_AUTH", "Using legacy environment-based API key", {
         message:
           "Consider migrating to database-backed keys for rotation support",
+      });
+
+      // Audit log: Legacy key usage
+      await AuditLogService.log({
+        category: AuditLogService.CATEGORY.AUTHENTICATION,
+        action: AuditLogService.ACTION.LEGACY_KEY_USED,
+        severity: AuditLogService.SEVERITY.MEDIUM,
+        result: 'SUCCESS',
+        requestId: req.id,
+        ipAddress: req.ip,
+        resource: req.path,
+        details: {
+          role: 'user',
+          isLegacy: true,
+          warning: 'Consider migrating to database-backed keys'
+        }
       });
 
       req.apiKey = {
@@ -88,6 +139,21 @@ const requireApiKey = async (req, res, next) => {
     }
 
     // Stage 3: Rejection (Key is either invalid, revoked, or expired)
+    // Audit log: Invalid API key
+    await AuditLogService.log({
+      category: AuditLogService.CATEGORY.AUTHENTICATION,
+      action: AuditLogService.ACTION.API_KEY_VALIDATION_FAILED,
+      severity: AuditLogService.SEVERITY.HIGH,
+      result: 'FAILURE',
+      requestId: req.id,
+      ipAddress: req.ip,
+      resource: req.path,
+      reason: 'Invalid or expired API key',
+      details: {
+        keyPrefix: apiKey.substring(0, 8) + '...'
+      }
+    });
+
     return res.status(401).json({
       success: false,
       error: {

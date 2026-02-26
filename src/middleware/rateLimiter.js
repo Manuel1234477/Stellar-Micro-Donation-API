@@ -17,6 +17,8 @@ try {
   rateLimit = () => (req, res, next) => next();
 }
 
+const AuditLogService = require('../services/AuditLogService');
+
 /**
  * Donation Creation Limiter (Strict)
  * Intent: Protect the Stellar network from spam and the local database from brute-force donation entries.
@@ -41,6 +43,25 @@ const donationRateLimiter = rateLimit({
   standardHeaders: true,
   legacyHeaders: false,
   handler: (req, res) => {
+    // Audit log: Rate limit exceeded
+    AuditLogService.log({
+      category: AuditLogService.CATEGORY.RATE_LIMITING,
+      action: AuditLogService.ACTION.RATE_LIMIT_EXCEEDED,
+      severity: AuditLogService.SEVERITY.HIGH,
+      result: 'FAILURE',
+      requestId: req.id,
+      ipAddress: req.ip,
+      resource: req.path,
+      reason: 'Donation rate limit exceeded',
+      details: {
+        limit: 10,
+        window: '60s',
+        resetTime: req.rateLimit.resetTime
+      }
+    }).catch(err => {
+      console.error('Audit log failed:', err);
+    });
+
     res.status(429).json({
       success: false,
       error: {
@@ -82,6 +103,25 @@ const verificationRateLimiter = rateLimit({
   standardHeaders: true,
   legacyHeaders: false,
   handler: (req, res) => {
+    // Audit log: Verification rate limit exceeded
+    AuditLogService.log({
+      category: AuditLogService.CATEGORY.RATE_LIMITING,
+      action: AuditLogService.ACTION.RATE_LIMIT_EXCEEDED,
+      severity: AuditLogService.SEVERITY.MEDIUM,
+      result: 'FAILURE',
+      requestId: req.id,
+      ipAddress: req.ip,
+      resource: req.path,
+      reason: 'Verification rate limit exceeded',
+      details: {
+        limit: 30,
+        window: '60s',
+        resetTime: req.rateLimit.resetTime
+      }
+    }).catch(err => {
+      console.error('Audit log failed:', err);
+    });
+
     res.status(429).json({
       success: false,
       error: {
