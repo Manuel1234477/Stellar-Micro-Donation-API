@@ -42,7 +42,11 @@ async function runCheck(name, checkFn) {
  * @returns {Promise<{status: string, responseTime: number, error?: string}>}
  */
 async function checkDatabase() {
-  return runCheck('database', () => Database.get('SELECT 1 as ok'));
+  const result = await runCheck('database', () => Database.get('SELECT 1 as ok'));
+  return {
+    ...result,
+    pool: Database.getPoolMetrics(),
+  };
 }
 
 /**

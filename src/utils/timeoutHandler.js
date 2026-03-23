@@ -57,8 +57,11 @@ function withTimeout(promise, timeoutMs, operation = 'operation') {
         reject(error);
       }, timeoutMs);
       
-      // Clean up timer if promise resolves first
-      promise.finally(() => clearTimeout(timer));
+      // Clean up timer without creating an unhandled rejection branch.
+      promise.then(
+        () => clearTimeout(timer),
+        () => clearTimeout(timer)
+      );
     })
   ]);
 }

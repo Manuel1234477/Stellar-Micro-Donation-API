@@ -325,7 +325,7 @@ async function startServer() {
     const gracefulShutdown = async (signal) => {
       logShutdownDiagnostics(signal);
 
-      server.close(() => {
+      server.close(async () => {
         log.info("SHUTDOWN", "HTTP server closed");
         recurringDonationScheduler.stop();
         reconciliationService.stop();
@@ -334,6 +334,9 @@ async function startServer() {
           clearInterval(replayCleanupTimer);
           log.info("SHUTDOWN", "Replay detection cleanup timer stopped");
         }
+
+        await Database.close();
+        log.info("SHUTDOWN", "Database pool closed");
 
         process.exit(0);
       });
