@@ -31,6 +31,7 @@ const log = require('../utils/log');
 const requestId = require('../middleware/requestId');
 const serviceContainer = require('../config/serviceContainer');
 const { payloadSizeLimiter } = require('../middleware/payloadSizeLimit');
+const { createCompressionMiddleware } = require('../middleware/compression');
 const {
   logStartupDiagnostics,
   logShutdownDiagnostics,
@@ -48,6 +49,12 @@ let replayCleanupTimer = null;
 
 // Middleware
 app.use(requestId);
+
+// Response compression (Brotli / Gzip) — applied before routes so all JSON responses are eligible
+app.use(createCompressionMiddleware({
+  threshold: parseInt(process.env.COMPRESSION_THRESHOLD || '1024', 10),
+  level: parseInt(process.env.COMPRESSION_LEVEL || '6', 10),
+}));
 
 // Payload size limit (must be before body parsers)
 app.use(payloadSizeLimiter);
