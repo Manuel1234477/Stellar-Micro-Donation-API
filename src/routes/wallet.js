@@ -143,10 +143,33 @@ router.get('/', checkPermission(PERMISSIONS.WALLETS_READ), (req, res, next) => {
 });
 
 /**
+ * GET /wallets/:id/balance
+ * Get wallet balance natively bypassing horizon load via TTL
+ */
+router.get('/:id/balance', checkPermission(PERMISSIONS.WALLETS_READ), walletIdSchema, async (req, res, next) => {
+  try {
+    const forceRefresh = req.query.refresh === 'true';
+    const result = await walletService.getBalance(req.params.id, forceRefresh);
+    
+    res.setHeader('X-Cache', result.cached ? 'HIT' : 'MISS');
+    
+    res.json({
+      success: true,
+      data: {
+        balance: result.balance,
+        asset: result.asset
+      }
+    });
+  } catch (error) {
+    next(error);
+  }
+});
+
+/**
  * GET /wallets/:id
  * Get a specific wallet
  */
-router.get('/:id', checkPermission(PERMISSIONS.WALLETS_READ), walletIdSchema, (req, res) => {
+router.get('/:id', checkPermission(PERMISSIONS.WALLETS_READ), walletIdSchema, (req, res, next) => {
   try {
     const wallet = Wallet.getById(req.params.id);
 

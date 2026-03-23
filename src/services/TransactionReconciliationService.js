@@ -150,6 +150,23 @@ class TransactionReconciliationService {
           ledger: result.transaction.ledger,
           confirmedAt: new Date().toISOString(),
         });
+        
+        // Invalidate caching for wallets involved in this transaction
+        const Cache = require('../utils/cache');
+        const Database = require('../utils/database');
+        
+        try {
+          if (tx.senderId) {
+            const sender = await Database.get('SELECT publicKey FROM users WHERE id = ?', [tx.senderId]);
+            if (sender) Cache.delete(`wallet_balance_${sender.publicKey}`);
+          }
+          if (tx.receiverId) {
+            const receiver = await Database.get('SELECT publicKey FROM users WHERE id = ?', [tx.receiverId]);
+            if (receiver) Cache.delete(`wallet_balance_${receiver.publicKey}`);
+          }
+        } catch (cacheErr) {
+          log.warn('RECONCILIATION', 'Failed to clear cache for confirmed transaction', { error: cacheErr.message });
+        }
 
         log.info('RECONCILIATION', 'Transaction corrected to confirmed', {
           id: tx.id,

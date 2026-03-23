@@ -196,6 +196,33 @@ class WalletService {
       count: formattedTransactions.length
     };
   }
+  /**
+   * Get wallet balance with caching support
+   * @param {string} id - Wallet ID
+   * @param {boolean} forceRefresh - Bypass cache request
+   * @returns {Promise<Object>} Balance data with cache meta
+   */
+  async getBalance(id, forceRefresh = false) {
+    const wallet = this.getWalletById(id);
+    const cacheKey = `wallet_balance_${wallet.address}`;
+    const cacheTtl = parseInt(process.env.WALLET_BALANCE_CACHE_TTL, 10) || 30000;
+    
+    const Cache = require('../utils/cache');
+    const serviceContainer = require('../config/serviceContainer');
+    const stellarService = serviceContainer.getStellarService();
+
+    if (!forceRefresh) {
+      const cached = Cache.get(cacheKey);
+      if (cached !== null) {
+         return { ...cached, cached: true };
+      }
+    }
+
+    const liveBalance = await stellarService.getBalance(wallet.address);
+    Cache.set(cacheKey, liveBalance, cacheTtl);
+
+    return { ...liveBalance, cached: false };
+  }
 }
 
 module.exports = WalletService;
