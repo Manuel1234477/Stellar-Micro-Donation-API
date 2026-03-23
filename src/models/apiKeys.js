@@ -17,7 +17,9 @@ const CREATE_TABLE_SQL = `
     last_used_at INTEGER,
     deprecated_at INTEGER,
     revoked_at INTEGER,
-    created_at INTEGER NOT NULL
+    created_at INTEGER NOT NULL,
+    grace_period_days INTEGER NOT NULL DEFAULT 30,
+    rotated_to_id INTEGER
   )
 `;
 
@@ -25,7 +27,7 @@ async function initializeApiKeysTable() {
   await db.run(CREATE_TABLE_SQL);
 }
 
-async function createApiKey({ name, role = 'user', expiresInDays, createdBy, metadata = {} }) {
+async function createApiKey({ name, role = 'user', expiresInDays, createdBy, metadata = {}, gracePeriodDays = 30 }) {
   await initializeApiKeysTable();
   const rawKey = crypto.randomBytes(32).toString('hex');
   const keyHash = crypto.createHash('sha256').update(rawKey).digest('hex');
@@ -34,9 +36,9 @@ async function createApiKey({ name, role = 'user', expiresInDays, createdBy, met
   const expiresAt = expiresInDays ? now + expiresInDays * 24 * 60 * 60 * 1000 : null;
 
   const result = await db.run(
-    `INSERT INTO api_keys (key_hash, key_prefix, name, role, status, created_by, metadata, expires_at, created_at)
-     VALUES (?, ?, ?, ?, 'active', ?, ?, ?, ?)`,
-    [keyHash, keyPrefix, name, role, createdBy || null, JSON.stringify(metadata), expiresAt, now]
+    `INSERT INTO api_keys (key_hash, key_prefix, name, role, status, created_by, metadata, expires_at, created_at, grace_period_days)
+     VALUES (?, ?, ?, ?, 'active', ?, ?, ?, ?, ?)`,
+    [keyHash, keyPrefix, name, role, createdBy || null, JSON.stringify(metadata), expiresAt, now, gracePeriodDays]
   );
 
   return {
@@ -48,6 +50,7 @@ async function createApiKey({ name, role = 'user', expiresInDays, createdBy, met
     status: API_KEY_STATUS.ACTIVE,
     createdAt: new Date(now).toISOString(),
     expiresAt: expiresAt ? new Date(expiresAt).toISOString() : null,
+    gracePeriodDays,
   };
 }
 
@@ -77,6 +80,8 @@ async function validateApiKey(rawKey) {
     isDeprecated: row.status === API_KEY_STATUS.DEPRECATED,
     last_used_at: now,
     metadata: row.metadata ? JSON.parse(row.metadata) : {},
+    gracePeriodDays: row.grace_period_days || 30,
+    createdAt: row.created_at,
   };
 }
 
@@ -125,12 +130,109 @@ async function revokeApiKey(id) {
   return result.changes > 0;
 }
 
+async function rotateApiKey(oldKeyId, { gracePeriodDays = 30 } = {}) {
+  await initializeApiKeysTable();
+  const oldRow = await db.get(`SELECT * FROM api_keys WHERE id = ?`, [oldKeyId]);
+  if (!oldRow) return null;
+  if (oldRow.status === API_KEY_STATUS.REVOKED) return null;
+
+  const newKey = await createApiKey({
+    name: `${oldRow.name} (rotated)`,
+    role: oldRow.role,
+    createdBy: oldRow.created_by,
+    metadata: oldRow.metadata ? JSON.parse(oldRow.metadata) : {},
+    gracePeriodDays,
+  });
+
+  const now = Date.now();
+  await db.run(
+    `UPDATE api_keys SET status = 'deprecated', deprecated_at = ?, rotated_to_id = ?, grace_period_days = ? WHERE id = ?`,
+    [now, newKey.id, gracePeriodDays, oldKeyId]
+  );
+
+  return {
+    newKey,
+    oldKeyId,
+    deprecatedAt: new Date(now).toISOString(),
+    gracePeriodDays,
+    autoRevokeAt: new Date(now + gracePeriodDays * 24 * 60 * 60 * 1000).toISOString(),
+  };
+}
+
+async function revokeExpiredDeprecatedKeys() {
+  await initializeApiKeysTable();
+  const now = Date.now();
+  const result = await db.run(
+    `UPDATE api_keys SET status = 'revoked', revoked_at = ?
+     WHERE status = 'deprecated'
+       AND deprecated_at IS NOT NULL
+       AND (deprecated_at + (grace_period_days * 86400000)) <= ?`,
+    [now, now]
+  );
+  return result.changes;
+}
+
 async function cleanupOldKeys(retentionDays = 90) {
   await initializeApiKeysTable();
   const cutoff = Date.now() - retentionDays * 24 * 60 * 60 * 1000;
   const result = await db.run(
     `DELETE FROM api_keys WHERE status = 'revoked' AND revoked_at < ?`,
     [cutoff]
+  );
+  return result.changes;
+}
+
+/**
+ * Atomically create a new key and deprecate the old one.
+ * If new key creation fails, the old key remains active.
+ */
+async function rotateApiKey(oldKeyId, { gracePeriodDays = 30 } = {}) {
+  await initializeApiKeysTable();
+
+  const oldRow = await db.get(`SELECT * FROM api_keys WHERE id = ?`, [oldKeyId]);
+  if (!oldRow) return null;
+  if (oldRow.status === API_KEY_STATUS.REVOKED) return null;
+
+  // Create the new key first — if this throws, old key is untouched
+  const newKey = await createApiKey({
+    name: `${oldRow.name} (rotated)`,
+    role: oldRow.role,
+    createdBy: oldRow.created_by,
+    metadata: oldRow.metadata ? JSON.parse(oldRow.metadata) : {},
+    gracePeriodDays,
+  });
+
+  // Deprecate old key, set its grace period for auto-revoke, and link it to the new one
+  const now = Date.now();
+  await db.run(
+    `UPDATE api_keys SET status = 'deprecated', deprecated_at = ?, rotated_to_id = ?, grace_period_days = ? WHERE id = ?`,
+    [now, newKey.id, gracePeriodDays, oldKeyId]
+  );
+
+  return {
+    newKey,
+    oldKeyId,
+    deprecatedAt: new Date(now).toISOString(),
+    gracePeriodDays,
+    autoRevokeAt: new Date(now + gracePeriodDays * 24 * 60 * 60 * 1000).toISOString(),
+  };
+}
+
+/**
+ * Revoke deprecated keys whose grace period has elapsed.
+ * Called by the background scheduler.
+ */
+async function revokeExpiredDeprecatedKeys() {
+  await initializeApiKeysTable();
+  const now = Date.now();
+  // deprecated_at + grace_period_days * ms_per_day <= now
+  const result = await db.run(
+    `UPDATE api_keys
+     SET status = 'revoked', revoked_at = ?
+     WHERE status = 'deprecated'
+       AND deprecated_at IS NOT NULL
+       AND (deprecated_at + (grace_period_days * 86400000)) <= ?`,
+    [now, now]
   );
   return result.changes;
 }
@@ -144,4 +246,6 @@ module.exports = {
   deprecateApiKey,
   revokeApiKey,
   cleanupOldKeys,
+  rotateApiKey,
+  revokeExpiredDeprecatedKeys,
 };

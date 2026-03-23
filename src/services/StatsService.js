@@ -364,7 +364,113 @@ class StatsService {
   }
 
   /**
-   * Task: Implement donation analytics aggregation service
+   * Get orphaned transaction stats from the database
+   * @returns {Promise<{count: number, totalAmount: number}>}
+   */
+  static async getOrphanStats() {
+    const Database = require('../utils/database');
+    const rows = await Database.query(
+      'SELECT COUNT(*) as count, COALESCE(SUM(amount), 0) as totalAmount FROM transactions WHERE is_orphan = 1',
+      []
+    );
+    const row = rows[0] || { count: 0, totalAmount: 0 };
+    return { count: row.count, totalAmount: row.totalAmount };
+  }
+
+  /**
+   * Get memo collision statistics — flagged and suspicious transactions.
+   *
+   * @param {Date|null} [startDate]
+   * @param {Date|null} [endDate]
+   * @returns {{
+   *   totalCollisions: number,
+   *   totalSuspicious: number,
+   *   transactions: Array
+   * }}
+   */
+  static getMemoCollisionStats(startDate = null, endDate = null) {
+    const Transaction = require('../routes/models/transaction');
+    let transactions = Transaction.getAll();
+
+    if (startDate || endDate) {
+      transactions = transactions.filter(t => {
+        const ts = new Date(t.timestamp);
+        if (startDate && ts < startDate) return false;
+        if (endDate && ts > endDate) return false;
+        return true;
+      });
+    }
+
+    const collisions = transactions.filter(t => t.memoCollision === true);
+    const suspicious = collisions.filter(t => t.memoSuspicious === true);
+
+    return {
+      totalCollisions: collisions.length,
+      totalSuspicious: suspicious.length,
+      transactions: collisions.map(t => ({
+        id: t.id,
+        memo: t.memo,
+        donor: t.donor,
+        recipient: t.recipient,
+        amount: t.amount,
+        memoSuspicious: t.memoSuspicious,
+        memoCollisionReason: t.memoCollisionReason,
+        timestamp: t.timestamp,
+      })),
+    };
+  }
+   * Reads from the JSON transaction store and aggregates flagged overpayments.
+   *
+   * @param {Date|null} [startDate] - Optional start of date range
+   * @param {Date|null} [endDate]   - Optional end of date range
+   * @returns {{
+   *   totalOverpayments: number,
+   *   totalExcessAmount: number,
+   *   averageExcessAmount: number,
+   *   transactions: Array
+   * }}
+   */
+  static getOverpaymentStats(startDate = null, endDate = null) {
+    const Transaction = require('../routes/models/transaction');
+    let transactions = Transaction.getAll();
+
+    // Apply optional date filter
+    if (startDate || endDate) {
+      transactions = transactions.filter(t => {
+        const ts = new Date(t.timestamp);
+        if (startDate && ts < startDate) return false;
+        if (endDate && ts > endDate) return false;
+        return true;
+      });
+    }
+
+    const overpaid = transactions.filter(t => t.overpaymentFlagged === true);
+
+    const totalExcessAmount = parseFloat(
+      overpaid.reduce((sum, t) => sum + (t.overpaymentDetails?.excessAmount || 0), 0).toFixed(7)
+    );
+
+    return {
+      totalOverpayments: overpaid.length,
+      totalExcessAmount,
+      averageExcessAmount: overpaid.length > 0
+        ? parseFloat((totalExcessAmount / overpaid.length).toFixed(7))
+        : 0,
+      transactions: overpaid.map(t => ({
+        id: t.id,
+        donor: t.donor,
+        recipient: t.recipient,
+        donationAmount: t.amount,
+        analyticsFee: t.analyticsFee,
+        expectedTotal: t.overpaymentDetails?.expectedTotal,
+        receivedAmount: t.overpaymentDetails?.receivedAmount,
+        excessAmount: t.overpaymentDetails?.excessAmount,
+        overpaymentPercentage: t.overpaymentDetails?.overpaymentPercentage,
+        detectedAt: t.overpaymentDetails?.detectedAt,
+        timestamp: t.timestamp,
+      })),
+    };
+  }
    * Fetches live data from Stellar and persists it for performance.
    * 
    * TODO: Uncomment and implement when needed

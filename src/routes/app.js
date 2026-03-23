@@ -18,6 +18,7 @@ const statsRoutes = require('./stats');
 const streamRoutes = require('./stream');
 const transactionRoutes = require('./transaction');
 const apiKeysRoutes = require('./apiKeys');
+const feesRoutes = require('./fees');
 const { errorHandler, notFoundHandler } = require('../middleware/errorHandler');
 const logger = require('../middleware/logger');
 const { attachUserRole } = require('../middleware/rbac');
@@ -31,8 +32,7 @@ const log = require('../utils/log');
 const requestId = require('../middleware/requestId');
 const serviceContainer = require('../config/serviceContainer');
 const { payloadSizeLimiter } = require('../middleware/payloadSizeLimit');
-const AuditLogService = require('../services/AuditLogService');
-const { parseCursorPaginationQuery } = require('../utils/pagination');
+const { createCorsMiddleware } = require('../middleware/cors');
 const {
   logStartupDiagnostics,
   logShutdownDiagnostics,
@@ -50,6 +50,9 @@ let replayCleanupTimer = null;
 
 // Middleware
 app.use(requestId);
+
+// CORS (must be before body parsers and route handlers)
+app.use(createCorsMiddleware());
 
 // Payload size limit (must be before body parsers)
 app.use(payloadSizeLimiter);
@@ -79,6 +82,7 @@ app.use('/stats', statsRoutes);
 app.use('/stream', streamRoutes);
 app.use('/transactions', transactionRoutes);
 app.use('/api-keys', apiKeysRoutes);
+app.use('/fees', feesRoutes);
 
 // Health check endpoints
 app.get('/health', async (req, res) => {
@@ -184,7 +188,7 @@ app.get('/admin/audit-logs', require('../middleware/rbac').requireAdmin(), async
 });
 
 // Manual reconciliation trigger (admin only)
-app.post('/reconcile', require('../middleware/rbac').requireAdmin(), async (req, res) => {
+app.post('/reconcile', require('../middleware/rbac').requireAdmin(), async (req, res, next) => {
   try {
     if (reconciliationService.reconciliationInProgress) {
       return res.status(409).json({
@@ -192,13 +196,54 @@ app.post('/reconcile', require('../middleware/rbac').requireAdmin(), async (req,
         error: 'Reconciliation already in progress'
       });
     }
-    // Trigger reconciliation without waiting
-    reconciliationService.reconcile().catch(error => {
-      log.error('APP', 'Manual reconciliation failed', { error: error.message });
-    });
+    // Trigger reconciliation and wait for result
+    const result = await reconciliationService.reconcile();
     res.json({
       success: true,
-      message: 'Reconciliation started',
+      message: 'Reconciliation complete',
+      data: result,
+      timestamp: new Date().toISOString()
+    });
+  } catch (error) {
+    next(error);
+  }
+});
+
+// Admin reconcile endpoint (canonical path)
+app.post('/admin/reconcile', require('../middleware/rbac').requireAdmin(), async (req, res, next) => {
+  try {
+    if (reconciliationService.reconciliationInProgress) {
+      return res.status(409).json({
+        success: false,
+        error: 'Reconciliation already in progress'
+      });
+    }
+    const result = await reconciliationService.reconcile();
+    res.json({
+      success: true,
+      message: 'Reconciliation complete',
+      data: result,
+      timestamp: new Date().toISOString()
+    });
+  } catch (error) {
+    next(error);
+  }
+});
+
+// Orphaned transactions stats (admin only)
+app.get('/admin/orphaned-transactions', require('../middleware/rbac').requireAdmin(), async (req, res, next) => {
+  try {
+    const rows = await Database.query(
+      'SELECT id, senderId, receiverId, amount, memo, timestamp, stellar_tx_id FROM transactions WHERE is_orphan = 1 ORDER BY timestamp DESC',
+      []
+    );
+    res.json({
+      success: true,
+      data: {
+        count: rows.length,
+        transactions: rows,
+        lifetimeDetected: reconciliationService.getOrphanedTransactionCount(),
+      },
       timestamp: new Date().toISOString()
     });
   } catch (error) {
