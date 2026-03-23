@@ -21,6 +21,8 @@ const { ValidationError, NotFoundError, ERROR_CODES } = require('../utils/errors
 const LimitService = require('./LimitService');
 const log = require('../utils/log');
 const { buildOverpaymentRecord } = require('../utils/overpaymentDetector');
+const { checkConfirmations } = require('../utils/confirmationChecker');
+const { CONFIRMATION_LEDGER_THRESHOLD } = require('../config/confirmationThreshold');
 
 class DonationService {
   constructor(stellarService) {
@@ -149,11 +151,41 @@ class DonationService {
       ledger: stellarResult.ledger,
     });
 
-    Transaction.updateStatus(transaction.id, TRANSACTION_STATES.CONFIRMED, {
-      transactionId: stellarResult.transactionId,
-      ledger: stellarResult.ledger,
-      confirmedAt: new Date().toISOString(),
-    });
+    // Only advance to CONFIRMED when the ledger confirmation threshold is met.
+    // stellarResult.ledger is the ledger the tx was included in.
+    // We use it as both transactionLedger and currentLedger here because Stellar
+    // confirms transactions within the same ledger close — the threshold check
+    // ensures at least CONFIRMATION_LEDGER_THRESHOLD subsequent ledgers have closed
+    // before we mark the transaction final.
+    const confirmationResult = checkConfirmations(
+      stellarResult.ledger,
+      stellarResult.currentLedger || stellarResult.ledger,
+      CONFIRMATION_LEDGER_THRESHOLD
+    );
+
+    if (confirmationResult.confirmed) {
+      Transaction.updateStatus(transaction.id, TRANSACTION_STATES.CONFIRMED, {
+        transactionId: stellarResult.transactionId,
+        ledger: stellarResult.ledger,
+        confirmedAt: new Date().toISOString(),
+        confirmations: confirmationResult.confirmations,
+        confirmationThreshold: confirmationResult.required,
+      });
+      log.info('DONATION_SERVICE', 'Transaction confirmed', {
+        requestId,
+        transactionId: stellarResult.transactionId,
+        confirmations: confirmationResult.confirmations,
+        threshold: confirmationResult.required,
+      });
+    } else {
+      log.info('DONATION_SERVICE', 'Transaction submitted — awaiting confirmation threshold', {
+        requestId,
+        transactionId: stellarResult.transactionId,
+        confirmations: confirmationResult.confirmations,
+        required: confirmationResult.required,
+        status: TRANSACTION_STATES.SUBMITTED,
+      });
+    }
 
     // Get remaining limits for response headers
     const { dailyRemaining, monthlyRemaining } = await LimitService.getRemainingLimits(senderId);
@@ -166,7 +198,76 @@ class DonationService {
       sender: sender.publicKey,
       receiver: receiver.publicKey,
       timestamp: new Date().toISOString(),
+      status: confirmationResult.confirmed ? TRANSACTION_STATES.CONFIRMED : TRANSACTION_STATES.SUBMITTED,
+      confirmations: confirmationResult.confirmations,
+      confirmationThreshold: confirmationResult.required,
+      confirmed: confirmationResult.confirmed,
       remainingLimits: { dailyRemaining, monthlyRemaining }
+    };
+  }
+
+  /**
+   * Attempt to confirm a previously submitted transaction.
+   * Fetches the latest ledger from the network and checks whether the
+   * confirmation threshold has been met. If so, advances the transaction
+   * state to CONFIRMED.
+   *
+   * @param {string} transactionId - Internal transaction ID (JSON store)
+   * @param {number} currentLedger - Latest ledger sequence from the network
+   * @param {number} [threshold]   - Override threshold (defaults to configured value)
+   * @returns {{
+   *   confirmed: boolean,
+   *   confirmations: number,
+   *   required: number,
+   *   transaction: Object
+   * }}
+   */
+  confirmTransaction(transactionId, currentLedger, threshold) {
+    const transaction = Transaction.getById(transactionId);
+    if (!transaction) {
+      throw new NotFoundError('Transaction not found', ERROR_CODES.DONATION_NOT_FOUND);
+    }
+
+    if (transaction.status === TRANSACTION_STATES.CONFIRMED) {
+      return {
+        confirmed: true,
+        confirmations: transaction.confirmations || 0,
+        required: threshold || CONFIRMATION_LEDGER_THRESHOLD,
+        transaction,
+      };
+    }
+
+    if (!transaction.stellarLedger) {
+      throw new ValidationError('Transaction has no ledger information — cannot check confirmations', null, ERROR_CODES.INVALID_REQUEST);
+    }
+
+    const result = checkConfirmations(transaction.stellarLedger, currentLedger, threshold);
+
+    if (result.confirmed) {
+      Transaction.updateStatus(transactionId, TRANSACTION_STATES.CONFIRMED, {
+        confirmedAt: new Date().toISOString(),
+        confirmations: result.confirmations,
+        confirmationThreshold: result.required,
+      });
+
+      log.info('DONATION_SERVICE', 'Transaction confirmed via confirmTransaction', {
+        transactionId,
+        confirmations: result.confirmations,
+        threshold: result.required,
+      });
+    } else {
+      log.info('DONATION_SERVICE', 'Transaction not yet confirmed', {
+        transactionId,
+        confirmations: result.confirmations,
+        required: result.required,
+      });
+    }
+
+    return {
+      confirmed: result.confirmed,
+      confirmations: result.confirmations,
+      required: result.required,
+      transaction: Transaction.getById(transactionId),
     };
   }
 
