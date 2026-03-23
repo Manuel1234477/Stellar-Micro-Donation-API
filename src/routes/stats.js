@@ -318,6 +318,43 @@ router.get('/wallet/:walletAddress/analytics', checkPermission(PERMISSIONS.STATS
 });
 
 /**
+ * GET /stats/overpayments
+ * Get all flagged overpayment transactions with excess amounts
+ * Query params: startDate, endDate (optional, ISO format)
+ */
+router.get('/overpayments', checkPermission(PERMISSIONS.STATS_READ), (req, res, next) => {
+  try {
+    const { startDate, endDate } = req.query;
+    const start = startDate ? new Date(startDate) : null;
+    const end = endDate ? new Date(endDate) : null;
+
+    if (start && isNaN(start.getTime())) {
+      return res.status(400).json({ success: false, error: { code: 'INVALID_DATE', message: 'Invalid startDate' } });
+    }
+    if (end && isNaN(end.getTime())) {
+      return res.status(400).json({ success: false, error: { code: 'INVALID_DATE', message: 'Invalid endDate' } });
+    }
+    if (start && end && start > end) {
+      return res.status(400).json({ success: false, error: { code: 'INVALID_DATE_RANGE', message: 'startDate must be before endDate' } });
+    }
+
+    const stats = StatsService.getOverpaymentStats(start, end);
+
+    res.json({
+      success: true,
+      data: stats,
+      metadata: {
+        note: 'Overpayments occur when received amount exceeds donation + analytics fee',
+        ...(start && { startDate: start.toISOString() }),
+        ...(end && { endDate: end.toISOString() }),
+      },
+    });
+  } catch (error) {
+    next(error);
+  }
+});
+
+/**
  * GET /stats/orphaned-transactions
  * Get count and total amount of orphaned transactions detected by reconciliation
  */

@@ -20,6 +20,7 @@ const { TRANSACTION_STATES } = require('../utils/transactionStateMachine');
 const { ValidationError, NotFoundError, ERROR_CODES } = require('../utils/errors');
 const LimitService = require('./LimitService');
 const log = require('../utils/log');
+const { buildOverpaymentRecord } = require('../utils/overpaymentDetector');
 
 class DonationService {
   constructor(stellarService) {
@@ -255,7 +256,7 @@ class DonationService {
    * @param {string} params.idempotencyKey - Idempotency key
    * @returns {Object} Created transaction
    */
-  async createDonationRecord({ amount, donor, recipient, memo, idempotencyKey }) {
+  async createDonationRecord({ amount, donor, recipient, memo, idempotencyKey, receivedAmount }) {
     // Sanitize identifiers
     const sanitizedDonor = donor ? sanitizeIdentifier(donor) : 'Anonymous';
     const sanitizedRecipient = sanitizeIdentifier(recipient);
@@ -274,6 +275,26 @@ class DonationService {
     // Calculate analytics fee
     const feeCalculation = calculateAnalyticsFee(amount);
 
+    // Detect overpayment — compare received amount vs (donation + expected fee)
+    // receivedAmount defaults to amount when not explicitly provided (no overpayment)
+    const effectiveReceived = (typeof receivedAmount === 'number' && Number.isFinite(receivedAmount))
+      ? receivedAmount
+      : amount;
+
+    const overpayment = buildOverpaymentRecord(effectiveReceived, amount, feeCalculation.fee);
+
+    if (overpayment) {
+      log.warn('DONATION_SERVICE', 'Overpayment detected', {
+        donor: sanitizedDonor,
+        donationAmount: amount,
+        expectedFee: feeCalculation.fee,
+        expectedTotal: overpayment.expectedTotal,
+        receivedAmount: overpayment.receivedAmount,
+        excessAmount: overpayment.excessAmount,
+        overpaymentPercentage: overpayment.overpaymentPercentage,
+      });
+    }
+
     // Create transaction record
     const transaction = Transaction.create({
       amount: amount,
@@ -282,7 +303,10 @@ class DonationService {
       memo: memoResult.sanitized,
       idempotencyKey: idempotencyKey,
       analyticsFee: feeCalculation.fee,
-      analyticsFeePercentage: feeCalculation.feePercentage
+      analyticsFeePercentage: feeCalculation.feePercentage,
+      // Overpayment fields (null when no overpayment)
+      overpaymentFlagged: overpayment ? true : false,
+      overpaymentDetails: overpayment || null,
     });
 
     return transaction;
