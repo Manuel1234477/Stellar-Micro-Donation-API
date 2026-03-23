@@ -18,6 +18,7 @@ const { calculateAnalyticsFee } = require('../utils/feeCalculator');
 const { sanitizeIdentifier } = require('../utils/sanitizer');
 const { TRANSACTION_STATES } = require('../utils/transactionStateMachine');
 const { ValidationError, NotFoundError, ERROR_CODES } = require('../utils/errors');
+const LimitService = require('./LimitService');
 const log = require('../utils/log');
 
 class DonationService {
@@ -103,6 +104,9 @@ class DonationService {
     // Validate sender has secret key
     this.validateSenderSecret(sender);
 
+    // Check per-wallet donation limits
+    await LimitService.checkLimits(senderId, amount);
+
     // Decrypt sender's secret key
     const secret = encryption.decrypt(sender.encryptedSecret);
 
@@ -150,6 +154,9 @@ class DonationService {
       confirmedAt: new Date().toISOString(),
     });
 
+    // Get remaining limits for response headers
+    const { dailyRemaining, monthlyRemaining } = await LimitService.getRemainingLimits(senderId);
+
     return {
       id: dbResult.id,
       stellarTxId: stellarResult.transactionId,
@@ -157,7 +164,8 @@ class DonationService {
       amount: amount,
       sender: sender.publicKey,
       receiver: receiver.publicKey,
-      timestamp: new Date().toISOString()
+      timestamp: new Date().toISOString(),
+      remainingLimits: { dailyRemaining, monthlyRemaining }
     };
   }
 

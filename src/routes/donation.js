@@ -221,6 +221,13 @@ router.post('/send', donationRateLimiter, requireIdempotency, sendDonationSchema
       requestId: req.id
     });
 
+    // Inject remaining limit headers if available
+    if (result.remainingLimits) {
+      const { dailyRemaining, monthlyRemaining } = result.remainingLimits;
+      if (dailyRemaining !== null) res.setHeader('X-Donation-Daily-Remaining', dailyRemaining);
+      if (monthlyRemaining !== null) res.setHeader('X-Donation-Monthly-Remaining', monthlyRemaining);
+    }
+
     // Mark processing complete
     if (req.markLifecycleStage) {
       req.markLifecycleStage(LIFECYCLE_STAGES.PROCESSED);
@@ -249,6 +256,11 @@ router.post('/send', donationRateLimiter, requireIdempotency, sendDonationSchema
           message: error.message
         }
       });
+    }
+
+    // Pass business logic and other structured errors to the global error handler
+    if (error.statusCode) {
+      return next(error);
     }
 
     res.status(500).json({

@@ -33,7 +33,10 @@ function createUsersTable(db) {
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         publicKey TEXT NOT NULL UNIQUE,
         encryptedSecret TEXT,
-        createdAt DATETIME DEFAULT CURRENT_TIMESTAMP
+        createdAt DATETIME DEFAULT CURRENT_TIMESTAMP,
+        daily_limit REAL DEFAULT NULL,
+        monthly_limit REAL DEFAULT NULL,
+        per_transaction_limit REAL DEFAULT NULL
       )
     `;
 
