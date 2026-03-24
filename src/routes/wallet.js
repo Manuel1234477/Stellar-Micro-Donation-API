@@ -21,6 +21,7 @@ const { validateSchema } = require('../middleware/schemaValidation');
 const { parseCursorPaginationQuery } = require('../utils/pagination');
 
 const walletService = new WalletService();
+const AuditLogService = require('../services/AuditLogService');
 const walletCreateSchema = validateSchema({
   body: {
     fields: {
@@ -84,7 +85,7 @@ const walletPublicKeySchema = validateSchema({
  * POST /wallets
  * Create a new wallet with metadata
  */
-router.post('/', checkPermission(PERMISSIONS.WALLETS_CREATE), walletCreateSchema, (req, res) => {
+router.post('/', checkPermission(PERMISSIONS.WALLETS_CREATE), walletCreateSchema, async (req, res) => {
   try {
     const { address, label, ownerName } = req.body;
 
@@ -109,6 +110,18 @@ router.post('/', checkPermission(PERMISSIONS.WALLETS_CREATE), walletCreateSchema
       address,
       label: sanitizedLabel,
       ownerName: sanitizedOwnerName
+    });
+
+    await AuditLogService.log({
+      category: AuditLogService.CATEGORY.WALLET_OPERATION,
+      action: AuditLogService.ACTION.WALLET_CREATED,
+      severity: AuditLogService.SEVERITY.MEDIUM,
+      result: 'SUCCESS',
+      userId: req.user && req.user.id,
+      requestId: req.id,
+      ipAddress: req.ip,
+      resource: `/wallets/${wallet.id}`,
+      details: { address, label: sanitizedLabel, ownerName: sanitizedOwnerName }
     });
 
     res.status(201).json({
@@ -192,7 +205,7 @@ router.get('/:id', checkPermission(PERMISSIONS.WALLETS_READ), walletIdSchema, (r
  * PATCH /wallets/:id
  * Update wallet metadata
  */
-router.patch('/:id', checkPermission(PERMISSIONS.WALLETS_UPDATE), walletUpdateSchema, (req, res) => {
+router.patch('/:id', checkPermission(PERMISSIONS.WALLETS_UPDATE), walletUpdateSchema, async (req, res) => {
   try {
     const { label, ownerName } = req.body;
 
@@ -214,6 +227,18 @@ router.patch('/:id', checkPermission(PERMISSIONS.WALLETS_UPDATE), walletUpdateSc
         error: 'Wallet not found'
       });
     }
+
+    await AuditLogService.log({
+      category: AuditLogService.CATEGORY.WALLET_OPERATION,
+      action: AuditLogService.ACTION.WALLET_UPDATED,
+      severity: AuditLogService.SEVERITY.MEDIUM,
+      result: 'SUCCESS',
+      userId: req.user && req.user.id,
+      requestId: req.id,
+      ipAddress: req.ip,
+      resource: `/wallets/${req.params.id}`,
+      details: { walletId: req.params.id, updates }
+    });
 
     res.json({
       success: true,
@@ -334,6 +359,18 @@ router.patch('/:id/limits', requireAdmin(), async (req, res, next) => {
       'SELECT id, publicKey, daily_limit, monthly_limit, per_transaction_limit FROM users WHERE id = ?',
       [userId]
     );
+
+    await AuditLogService.log({
+      category: AuditLogService.CATEGORY.WALLET_OPERATION,
+      action: AuditLogService.ACTION.WALLET_UPDATED,
+      severity: AuditLogService.SEVERITY.HIGH,
+      result: 'SUCCESS',
+      userId: req.user && req.user.id,
+      requestId: req.id,
+      ipAddress: req.ip,
+      resource: `/wallets/${userId}/limits`,
+      details: { walletId: userId, limits, updatedBy: req.user && req.user.id }
+    });
 
     res.json({ success: true, data: updated });
   } catch (error) {

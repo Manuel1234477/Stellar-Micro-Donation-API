@@ -37,6 +37,9 @@ const {
   logStartupDiagnostics,
   logShutdownDiagnostics,
 } = require("../utils/startupDiagnostics");
+const { parseCursorPaginationQuery } = require('../utils/pagination');
+const AuditLogService = require('../services/AuditLogService');
+const auditLogRetentionService = require('../services/AuditLogRetentionService');
 
 const app = express();
 
@@ -331,6 +334,7 @@ async function startServer() {
     const server = app.listen(PORT, () => {
       recurringDonationScheduler.start();
       reconciliationService.start();
+      auditLogRetentionService.start();
 
       const { startCleanup } = require('../utils/replayDetector');
       const replayConfig = require('../config/replayDetection');
@@ -360,6 +364,7 @@ async function startServer() {
         log.info("SHUTDOWN", "HTTP server closed");
         recurringDonationScheduler.stop();
         reconciliationService.stop();
+        auditLogRetentionService.stop();
 
         if (replayCleanupTimer) {
           clearInterval(replayCleanupTimer);

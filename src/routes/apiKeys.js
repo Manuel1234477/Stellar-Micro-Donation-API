@@ -353,6 +353,18 @@ router.post('/cleanup', requireAdmin(), apiKeyCleanupSchema, async (req, res, ne
 
     const deletedCount = await apiKeysModel.cleanupOldKeys(retentionDays);
 
+    await AuditLogService.log({
+      category: AuditLogService.CATEGORY.API_KEY_MANAGEMENT,
+      action: 'API_KEY_CLEANUP',
+      severity: AuditLogService.SEVERITY.HIGH,
+      result: 'SUCCESS',
+      userId: req.user.id,
+      requestId: req.id,
+      ipAddress: req.ip,
+      resource: '/api/v1/api-keys/cleanup',
+      details: { retentionDays, deletedCount, performedBy: req.user.id }
+    });
+
     res.json({
       success: true,
       data: {
