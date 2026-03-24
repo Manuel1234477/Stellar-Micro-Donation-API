@@ -33,6 +33,13 @@ class StellarService extends StellarServiceInterface {
     this.network = config.network || STELLAR_NETWORKS.TESTNET;
     this.horizonUrl = config.horizonUrl || HORIZON_URLS.TESTNET;
     this.serviceSecretKey = config.serviceSecretKey;
+    this.environment = config.environment;
+    
+    // Default to SDK definitions if environment config is missing
+    this.baseFee = this.environment?.baseFee || StellarSdk.BASE_FEE;
+    this.networkPassphrase = this.environment?.networkPassphrase || 
+      (this.network === 'mainnet' || this.network === 'public' 
+        ? StellarSdk.Networks.PUBLIC : StellarSdk.Networks.TESTNET);
 
     this.server = new StellarSdk.Horizon.Server(this.horizonUrl);
     
@@ -46,6 +53,10 @@ class StellarService extends StellarServiceInterface {
 
   getNetwork() {
     return this.network;
+  }
+
+  getEnvironment() {
+    return this.environment || { name: this.network };
   }
 
   getHorizonUrl() {
@@ -349,7 +360,7 @@ class StellarService extends StellarServiceInterface {
    * @param {string} [params.memo] - Optional transaction memo (max 28 bytes)
    * @returns {Promise<{transactionId: string, ledger: number}>}
    */
-  async sendDonation({ sourceSecret, destinationPublic, amount, memo = '' }) {
+  async sendDonation({ sourceSecret, destinationPublic, amount, memo = '', memoType = 'text' }) {
     return StellarErrorHandler.wrap(async () => {
       const sourceKeypair = StellarSdk.Keypair.fromSecret(sourceSecret);
       const sourceAccount = await this._executeWithRetry(
@@ -358,8 +369,8 @@ class StellarService extends StellarServiceInterface {
       );
 
       const transaction = new StellarSdk.TransactionBuilder(sourceAccount, {
-        fee: StellarSdk.BASE_FEE,
-        networkPassphrase: this.network === 'public' ? StellarSdk.Networks.PUBLIC : StellarSdk.Networks.TESTNET,
+        fee: this.baseFee,
+        networkPassphrase: this.networkPassphrase,
       })
         .addOperation(StellarSdk.Operation.payment({
           destination: destinationPublic,
@@ -369,7 +380,19 @@ class StellarService extends StellarServiceInterface {
         .setTimeout(30);
 
       if (memo) {
-        transaction.addMemo(StellarSdk.Memo.text(memo));
+        switch (memoType) {
+          case 'hash':
+            transaction.addMemo(StellarSdk.Memo.hash(Buffer.from(memo, 'hex')));
+            break;
+          case 'return':
+            transaction.addMemo(StellarSdk.Memo.return(Buffer.from(memo, 'hex')));
+            break;
+          case 'id':
+            transaction.addMemo(StellarSdk.Memo.id(memo.toString()));
+            break;
+          default: // 'text'
+            transaction.addMemo(StellarSdk.Memo.text(memo));
+        }
       }
 
       const builtTx = transaction.build();
@@ -538,9 +561,7 @@ class StellarService extends StellarServiceInterface {
         'loadAccountForClaimableBalance'
       );
 
-      const networkPassphrase = this.network === 'public'
-        ? StellarSdk.Networks.PUBLIC
-        : StellarSdk.Networks.TESTNET;
+      const networkPassphrase = this.networkPassphrase;
 
       const stellarClaimants = claimants.map(c => {
         let stellarPredicate = StellarSdk.Claimant.predicateUnconditional();
@@ -566,7 +587,7 @@ class StellarService extends StellarServiceInterface {
       });
 
       const tx = new StellarSdk.TransactionBuilder(sourceAccount, {
-        fee: StellarSdk.BASE_FEE,
+        fee: this.baseFee,
         networkPassphrase,
       })
         .addOperation(StellarSdk.Operation.createClaimableBalance({
@@ -654,12 +675,10 @@ class StellarService extends StellarServiceInterface {
         'loadAccountForClaim'
       );
 
-      const networkPassphrase = this.network === 'public'
-        ? StellarSdk.Networks.PUBLIC
-        : StellarSdk.Networks.TESTNET;
+      const networkPassphrase = this.networkPassphrase;
 
       const tx = new StellarSdk.TransactionBuilder(claimantAccount, {
-        fee: StellarSdk.BASE_FEE,
+        fee: this.baseFee,
         networkPassphrase,
       })
         .addOperation(StellarSdk.Operation.claimClaimableBalance({ balanceId }))

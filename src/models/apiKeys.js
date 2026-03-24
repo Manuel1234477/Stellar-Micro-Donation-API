@@ -222,7 +222,6 @@ module.exports = {
   listApiKeys,
   deprecateApiKey,
   revokeApiKey,
-  updateApiKey,
   cleanupOldKeys,
   rotateApiKey,
   revokeExpiredDeprecatedKeys,

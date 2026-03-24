@@ -358,9 +358,11 @@ class DonationService {
    * @param {string} params.donor - Donor identifier
    * @param {string} params.recipient - Recipient identifier
    * @param {string} params.memo - Optional memo
+   * @param {string} [params.memoType='text'] - Stellar memo type: 'text', 'hash', 'id', or 'return'
    * @param {string} params.idempotencyKey - Idempotency key
    * @returns {Object} Created transaction
    */
+  async createDonationRecord({ amount, donor, recipient, memo, memoType = 'text', idempotencyKey, receivedAmount, sessionId }) {
   async createDonationRecord({ amount, currency = 'XLM', donor, recipient, memo, idempotencyKey, receivedAmount, sessionId }) {
     // Sanitize identifiers
     const sanitizedDonor = donor ? sanitizeIdentifier(donor) : 'Anonymous';
@@ -390,8 +392,14 @@ class DonationService {
     // Validate XLM amount and limits
     this.validateDonationAmount(xlmAmount, sanitizedDonor);
 
-    // Validate and sanitize memo
-    const memoResult = this.validateAndSanitizeMemo(memo);
+    // Validate memo with type-aware validation
+    const memoResult = memoType && memoType !== 'text'
+      ? memoValidator.validateWithType(memo, memoType)
+      : this.validateAndSanitizeMemo(memo);
+
+    if (!memoResult.valid) {
+      throw new ValidationError(memoResult.error, null, memoResult.code);
+    }
 
     // Calculate analytics fee
     const feeCalculation = calculateAnalyticsFee(xlmAmount);
@@ -424,6 +432,7 @@ class DonationService {
       donor: sanitizedDonor,
       recipient: sanitizedRecipient,
       memo: memoResult.sanitized,
+      memoType: memoType || 'text',
       idempotencyKey: idempotencyKey,
       analyticsFee: feeCalculation.fee,
       analyticsFeePercentage: feeCalculation.feePercentage,
@@ -642,6 +651,159 @@ class DonationService {
       maxAmount: limits.maxAmount,
       maxDailyPerDonor: limits.maxDailyPerDonor,
       currency: 'XLM',
+    };
+  }
+
+  /**
+   * Refund a confirmed donation by creating a reverse Stellar transaction
+   * @param {string} donationId - ID of the donation to refund
+   * @param {Object} params - Refund parameters
+   * @param {string} params.reason - Reason for refund
+   * @param {string} params.requestId - Request ID for logging
+   * @returns {Promise<Object>} Refund result with reverse transaction details
+   * @throws {NotFoundError} If donation not found
+   * @throws {ValidationError} If donation is not eligible for refund
+   * @throws {BusinessLogicError} If refund fails
+   */
+  async refundDonation(donationId, { reason, requestId }) {
+    const { BusinessLogicError } = require('../utils/errors');
+    const config = require('../config');
+    const AuditLogService = require('./AuditLogService');
+
+    log.debug('DONATION_SERVICE', 'Processing refund request', {
+      requestId,
+      donationId,
+      reason
+    });
+
+    // Get the original donation
+    const donation = this.getDonationById(donationId);
+
+    // Check if donation is already refunded
+    if (donation.status === 'refunded') {
+      throw new BusinessLogicError(
+        ERROR_CODES.TRANSACTION_FAILED,
+        'Donation has already been refunded',
+        { donationId, currentStatus: donation.status }
+      );
+    }
+
+    // Check if donation is confirmed
+    if (donation.status !== TRANSACTION_STATES.CONFIRMED) {
+      throw new BusinessLogicError(
+        ERROR_CODES.TRANSACTION_FAILED,
+        `Cannot refund donation with status "${donation.status}". Only confirmed donations can be refunded.`,
+        { donationId, currentStatus: donation.status }
+      );
+    }
+
+    // Check refund eligibility window
+    const donationTimestamp = new Date(donation.timestamp);
+    const now = new Date();
+    const daysSinceDonation = (now - donationTimestamp) / (1000 * 60 * 60 * 24);
+    const eligibilityWindowDays = config.donations.refundEligibilityWindowDays;
+
+    if (daysSinceDonation > eligibilityWindowDays) {
+      throw new BusinessLogicError(
+        ERROR_CODES.TRANSACTION_FAILED,
+        `Refund window has expired. Donations can only be refunded within ${eligibilityWindowDays} days of creation.`,
+        {
+          donationId,
+          donationDate: donation.timestamp,
+          daysSinceDonation: Math.floor(daysSinceDonation),
+          eligibilityWindowDays
+        }
+      );
+    }
+
+    // Get sender (original recipient becomes sender for reverse transaction)
+    const sender = await this.getUserById(donation.senderId || 1, 'Sender');
+    this.validateSenderSecret(sender);
+
+    // Decrypt sender's secret key
+    const secret = encryption.decrypt(sender.encryptedSecret);
+
+    log.debug('DONATION_SERVICE', 'Creating reverse Stellar transaction', {
+      requestId,
+      donationId,
+      amount: donation.amount,
+      originalTxId: donation.stellarTxId
+    });
+
+    // Create reverse Stellar transaction
+    const reverseResult = await this.stellarService.sendDonation({
+      sourceSecret: secret,
+      destinationPublic: donation.donor,
+      amount: donation.amount,
+      memo: `REFUND:${donationId}`
+    });
+
+    log.debug('DONATION_SERVICE', 'Reverse transaction successful', {
+      requestId,
+      reverseTxId: reverseResult.transactionId,
+      ledger: reverseResult.ledger
+    });
+
+    // Record refund in database
+    const refundRecord = await Database.run(
+      `INSERT INTO refunds (
+        original_donation_id, reverse_transaction_id, amount, reason, 
+        refunded_at, stellar_ledger, status
+      ) VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP, ?, ?)`,
+      [
+        donationId,
+        reverseResult.transactionId,
+        donation.amount,
+        reason || 'No reason provided',
+        reverseResult.ledger,
+        'pending'
+      ]
+    );
+
+    // Update original donation status to refunded
+    Transaction.updateStatus(donationId, 'refunded', {
+      refundId: refundRecord.id,
+      reverseTxId: reverseResult.transactionId,
+      reverseLedger: reverseResult.ledger,
+      refundedAt: new Date().toISOString()
+    });
+
+    // Log refund in audit trail
+    await AuditLogService.log({
+      category: AuditLogService.CATEGORY.FINANCIAL_OPERATION,
+      action: AuditLogService.ACTION.DONATION_CREATED, // Reusing for refund tracking
+      severity: AuditLogService.SEVERITY.MEDIUM,
+      result: 'SUCCESS',
+      userId: sender.id,
+      requestId,
+      resource: `donation:${donationId}`,
+      details: {
+        operation: 'refund',
+        originalDonationId: donationId,
+        refundId: refundRecord.id,
+        amount: donation.amount,
+        reason,
+        reverseTxId: reverseResult.transactionId,
+        originalTxId: donation.stellarTxId
+      }
+    });
+
+    log.info('DONATION_SERVICE', 'Refund processed successfully', {
+      requestId,
+      donationId,
+      refundId: refundRecord.id,
+      reverseTxId: reverseResult.transactionId
+    });
+
+    return {
+      refundId: refundRecord.id,
+      originalDonationId: donationId,
+      reverseTxId: reverseResult.transactionId,
+      reverseLedger: reverseResult.ledger,
+      amount: donation.amount,
+      reason,
+      refundedAt: new Date().toISOString(),
+      status: 'pending'
     };
   }
 }

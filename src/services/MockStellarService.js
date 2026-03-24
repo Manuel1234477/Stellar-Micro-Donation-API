@@ -532,7 +532,7 @@ class MockStellarService extends StellarServiceInterface {
    * @param {string} params.memo - Transaction memo
    * @returns {Promise<{transactionId: string, ledger: number, status: string, confirmedAt: string}>}
    */
-  async sendDonation({ sourceSecret, destinationPublic, amount, memo }) {
+  async sendDonation({ sourceSecret, destinationPublic, amount, memo, memoType = 'text' }) {
     return this._executeWithRetry(async () => {
       await this._simulateNetworkDelay();
       this._checkRateLimit();
@@ -541,6 +541,15 @@ class MockStellarService extends StellarServiceInterface {
       this._validateAmount(amount);
       this._simulateFailure(); // New failure simulation
       this._simulateRandomFailure();
+
+      // Validate memo type
+      const MemoValidator = require('../utils/memoValidator');
+      if (memo) {
+        const memoValidation = MemoValidator.validateWithType(memo, memoType);
+        if (!memoValidation.valid) {
+          throw new ValidationError(memoValidation.error);
+        }
+      }
 
     // Find source wallet by secret key
     let sourceWallet = null;
@@ -605,6 +614,7 @@ class MockStellarService extends StellarServiceInterface {
       destination: destinationPublic,
       amount: amountNum.toFixed(7),
       memo: memo || '',
+      memoType: memoType || 'text',
       timestamp: new Date().toISOString(),
       ledger: Math.floor(Math.random() * 1000000) + 1000000,
       status: 'confirmed',

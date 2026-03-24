@@ -72,6 +72,7 @@ class Transaction {
       donor: transactionData.donor,
       recipient: transactionData.recipient,
       memo: transactionData.memo || '',
+      memoType: transactionData.memoType || 'text',
       timestamp: transactionData.timestamp || nowIso,
       status: normalizedStatus,
       stellarTxId: transactionData.stellarTxId || null,

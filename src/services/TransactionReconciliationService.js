@@ -18,6 +18,7 @@ const Database = require('../utils/database');
 const Transaction = require('../routes/models/transaction');
 const { TRANSACTION_STATES } = require('../utils/transactionStateMachine');
 const log = require('../utils/log');
+const WebhookService = require('./WebhookService');
 
 /** Orphan count threshold that triggers an alert */
 const ORPHAN_ALERT_THRESHOLD = parseInt(process.env.ORPHAN_ALERT_THRESHOLD || '1', 10);
@@ -173,6 +174,16 @@ class TransactionReconciliationService {
           stellarTxId: tx.stellarTxId,
           previousStatus: tx.status,
         });
+
+        // Deliver webhook for state change
+        WebhookService.deliver('transaction.confirmed', {
+          id: tx.id,
+          stellarTxId: tx.stellarTxId,
+          previousStatus: tx.status,
+          status: TRANSACTION_STATES.CONFIRMED,
+          ledger: result.transaction && result.transaction.ledger,
+          confirmedAt: new Date().toISOString(),
+        }).catch(err => log.warn('RECONCILIATION', 'Webhook delivery error', { error: err.message }));
 
         return true;
       }

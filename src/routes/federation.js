@@ -55,7 +55,7 @@ router.get('/.well-known/stellar.toml', (req, res) => {
   res.send([
     `# Stellar TOML for ${domain}`,
     `FEDERATION_SERVER="${federationUrl}"`,
-    `NETWORK_PASSPHRASE="${process.env.STELLAR_NETWORK === 'mainnet' ? 'Public Global Stellar Network ; September 2015' : 'Test SDF Network ; September 2015'}"`,
+    `NETWORK_PASSPHRASE="${config.stellar.environment.networkPassphrase}"`,
   ].join('\n'));
 });
 

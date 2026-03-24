@@ -71,6 +71,7 @@ async function checkStellar(stellarService) {
   return {
     ...result,
     network: stellarService.getNetwork ? stellarService.getNetwork() : undefined,
+    environment: stellarService.getEnvironment ? stellarService.getEnvironment().name : undefined,
     horizonUrl: stellarService.getHorizonUrl ? stellarService.getHorizonUrl() : undefined,
   };
 }
@@ -88,6 +89,26 @@ async function checkIdempotency() {
 }
 
 /**
+ * Check network status via NetworkStatusService
+ * @param {Object} networkStatusService - NetworkStatusService instance
+ * @returns {Promise<{status: string, responseTime: number, networkStatus?: string, error?: string}>}
+ */
+async function checkNetworkStatus(networkStatusService) {
+  const result = await runCheck('network', async () => {
+    if (networkStatusService && typeof networkStatusService.getStatus === 'function') {
+      const status = networkStatusService.getStatus();
+      // Network status is informational, not critical
+      return status;
+    }
+  });
+
+  return {
+    ...result,
+    networkStatus: result.status === 'healthy' ? 'unknown' : undefined,
+  };
+}
+
+/**
  * Aggregate all dependency checks and compute an overall status.
  *
  * Overall rules:
@@ -96,18 +117,28 @@ async function checkIdempotency() {
  *  - "unhealthy" → database is unhealthy (critical dependency)
  *
  * @param {Object} stellarService - StellarService or MockStellarService instance
+ * @param {Object} [networkStatusService] - Optional NetworkStatusService instance
  * @returns {Promise<{status: string, dependencies: Object, timestamp: string}>}
  */
-async function getFullHealth(stellarService) {
+async function getFullHealth(stellarService, networkStatusService) {
   // Call through module.exports so Jest spies can intercept individual checks
   const self = module.exports;
-  const [database, stellar, idempotency] = await Promise.all([
+  const checks = [
     self.checkDatabase(),
     self.checkStellar(stellarService),
     self.checkIdempotency(),
-  ]);
+  ];
+
+  if (networkStatusService) {
+    checks.push(self.checkNetworkStatus(networkStatusService));
+  }
+
+  const [database, stellar, idempotency, network] = await Promise.all(checks);
 
   const dependencies = { database, stellar, idempotency };
+  if (network) {
+    dependencies.network = network;
+  }
 
   let status;
   if (database.status === 'unhealthy') {
@@ -137,10 +168,11 @@ function getLiveness() {
  * to signal whether the instance should receive traffic.
  *
  * @param {Object} stellarService
+ * @param {Object} [networkStatusService] - Optional NetworkStatusService instance
  * @returns {Promise<{ready: boolean, status: string, dependencies: Object, timestamp: string}>}
  */
-async function getReadiness(stellarService) {
-  const health = await getFullHealth(stellarService);
+async function getReadiness(stellarService, networkStatusService) {
+  const health = await getFullHealth(stellarService, networkStatusService);
   const ready = health.status === 'healthy';
   return { ready, ...health };
 }
@@ -149,6 +181,7 @@ module.exports = {
   checkDatabase,
   checkStellar,
   checkIdempotency,
+  checkNetworkStatus,
   getFullHealth,
   getLiveness,
   getReadiness,

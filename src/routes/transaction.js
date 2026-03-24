@@ -19,6 +19,7 @@ const { PERMISSIONS } = require('../utils/permissions');
 const { validatePagination } = require('../utils/validationHelpers');
 const { validateSchema } = require('../middleware/schemaValidation');
 const serviceContainer = require('../config/serviceContainer');
+const { payloadSizeLimiter, ENDPOINT_LIMITS } = require('../middleware/payloadSizeLimiter');
 
 const multiSigService = new MultiSigService(serviceContainer.getStellarService());
 
@@ -95,6 +96,7 @@ router.get('/', checkPermission(PERMISSIONS.TRANSACTIONS_READ), transactionListQ
 
 router.post(
   "/sync",
+  payloadSizeLimiter(ENDPOINT_LIMITS.transaction),
   checkPermission(PERMISSIONS.TRANSACTIONS_SYNC),
   transactionSyncBodySchema,
   async (req, res, next) => {
