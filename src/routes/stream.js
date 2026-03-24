@@ -20,6 +20,7 @@ const { validateSchema } = require('../middleware/schemaValidation');
 const SseManager = require('../services/SseManager');
 const donationEvents = require('../events/donationEvents');
 const { payloadSizeLimiter, ENDPOINT_LIMITS } = require('../middleware/payloadSizeLimiter');
+const { requestTimeout, TIMEOUTS } = require('../middleware/requestTimeout');
 
 const streamCreateSchema = validateSchema({
   body: {
@@ -67,7 +68,7 @@ const streamScheduleIdSchema = validateSchema({
  * POST /stream/create
  * Create a recurring donation schedule
  */
-router.post('/create', payloadSizeLimiter(ENDPOINT_LIMITS.stream), checkPermission(PERMISSIONS.STREAM_CREATE), streamCreateSchema, async (req, res) => {
+router.post('/create', payloadSizeLimiter(ENDPOINT_LIMITS.stream), requestTimeout(TIMEOUTS.stream), checkPermission(PERMISSIONS.STREAM_CREATE), streamCreateSchema, async (req, res) => {
   try {
     const { donorPublicKey, recipientPublicKey, amount, frequency } = req.body;
 
