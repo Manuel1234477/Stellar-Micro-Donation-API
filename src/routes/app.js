@@ -60,7 +60,9 @@ app.use(createCorsMiddleware());
 // Payload size limit (must be before body parsers)
 app.use(payloadSizeLimiter);
 
-app.use(express.json());
+app.use(express.json({
+  verify: (req, _res, buf) => { req.rawBody = buf.toString('utf8'); }
+}));
 app.use(express.urlencoded({ extended: true }));
 
 // Request/Response logging middleware
