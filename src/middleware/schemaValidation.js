@@ -1,4 +1,16 @@
 const { ERROR_CODES } = require('../utils/errors');
+const {
+  formatTypeError,
+  formatEnumError,
+  formatLengthError,
+  formatRangeError,
+  formatPatternError,
+  formatRequiredError,
+  formatNullError,
+  formatUnknownFieldsError,
+  formatCustomError,
+  formatSegmentError,
+} = require('../utils/validationErrorFormatter');
 
 function isPlainObject(value) {
   return value !== null && typeof value === 'object' && !Array.isArray(value);
@@ -101,70 +113,46 @@ function validateField(value, rules, fieldPath) {
 
   const typeMatched = expectedTypes.some((type) => matchesType(value, type));
   if (!typeMatched) {
-    return {
-      path: fieldPath,
-      message: `Invalid type. Expected ${expectedTypes.join(' or ')}, received ${getValueType(value)}`,
-    };
+    return formatTypeError(fieldPath, value, expectedTypes, rules);
   }
 
   if (rules.enum && !rules.enum.includes(value)) {
-    return {
-      path: fieldPath,
-      message: `Invalid value. Must be one of: ${rules.enum.join(', ')}`,
-    };
+    return formatEnumError(fieldPath, value, rules.enum);
   }
 
   if (typeof value === 'string') {
     const normalized = rules.trim === true ? value.trim() : value;
 
     if (rules.minLength !== undefined && normalized.length < rules.minLength) {
-      return {
-        path: fieldPath,
-        message: `Must be at least ${rules.minLength} characters`,
-      };
+      return formatLengthError(fieldPath, normalized, rules.minLength, rules.maxLength);
     }
 
     if (rules.maxLength !== undefined && normalized.length > rules.maxLength) {
-      return {
-        path: fieldPath,
-        message: `Must be at most ${rules.maxLength} characters`,
-      };
+      return formatLengthError(fieldPath, normalized, rules.minLength, rules.maxLength);
     }
 
     if (rules.pattern && !rules.pattern.test(normalized)) {
-      return {
-        path: fieldPath,
-        message: 'Invalid format',
-      };
+      return formatPatternError(fieldPath, normalized, rules.pattern, rules);
     }
   }
 
   if (typeof value === 'number') {
     if (rules.min !== undefined && value < rules.min) {
-      return {
-        path: fieldPath,
-        message: `Must be greater than or equal to ${rules.min}`,
-      };
+      return formatRangeError(fieldPath, value, rules.min, rules.max);
     }
 
     if (rules.max !== undefined && value > rules.max) {
-      return {
-        path: fieldPath,
-        message: `Must be less than or equal to ${rules.max}`,
-      };
+      return formatRangeError(fieldPath, value, rules.min, rules.max);
     }
   }
 
   if (typeof rules.validate === 'function') {
     const customResult = rules.validate(value);
     if (customResult !== true) {
-      return {
-        path: fieldPath,
-        message:
-          typeof customResult === 'string'
-            ? customResult
-            : 'Custom validation failed',
-      };
+      const message = typeof customResult === 'string'
+        ? customResult
+        : 'Custom validation failed';
+      return formatCustomError(fieldPath, value, message);
     }
   }
 
@@ -178,20 +166,16 @@ function validateSegment(data, segmentSchema, segmentName) {
 
   if (!isPlainObject(data)) {
     return [
-      {
-        path: segmentName,
-        message: `Invalid ${segmentName}. Expected an object`,
-      },
+      formatSegmentError(segmentName, `Invalid ${segmentName}. Expected an object, received ${getValueType(data)}.`),
     ];
   }
 
   if (!allowUnknown) {
     const unknownFields = Object.keys(data).filter((key) => !Object.prototype.hasOwnProperty.call(fields, key));
     if (unknownFields.length > 0) {
-      errors.push({
-        path: segmentName,
-        message: `Unknown field(s): ${unknownFields.join(', ')}`,
-      });
+      errors.push(
+        formatUnknownFieldsError(segmentName, unknownFields, Object.keys(fields))
+      );
     }
   }
 
@@ -201,19 +185,13 @@ function validateSegment(data, segmentSchema, segmentName) {
 
     if (isMissing) {
       if (rules.required) {
-        errors.push({
-          path: `${segmentName}.${fieldName}`,
-          message: 'Field is required',
-        });
+        errors.push(formatRequiredError(`${segmentName}.${fieldName}`, rules));
       }
       continue;
     }
 
     if (value === null && rules.nullable !== true) {
-      errors.push({
-        path: `${segmentName}.${fieldName}`,
-        message: 'Field cannot be null',
-      });
+      errors.push(formatNullError(`${segmentName}.${fieldName}`, rules));
       continue;
     }
 
@@ -226,10 +204,12 @@ function validateSegment(data, segmentSchema, segmentName) {
   if (typeof segmentSchema.validate === 'function') {
     const segmentError = segmentSchema.validate(data);
     if (segmentError) {
-      errors.push({
-        path: segmentName,
-        message: typeof segmentError === 'string' ? segmentError : 'Invalid input',
-      });
+      errors.push(
+        formatSegmentError(
+          segmentName,
+          typeof segmentError === 'string' ? segmentError : 'Invalid input'
+        )
+      );
     }
   }
 
