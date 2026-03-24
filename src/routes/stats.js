@@ -410,4 +410,38 @@ router.get('/orphaned-transactions', checkPermission(PERMISSIONS.STATS_READ), as
   }
 });
 
+/**
+ * GET /stats/dashboard
+ * Comprehensive analytics dashboard data with configurable time range.
+ *
+ * Query params:
+ *   period       {string}  - Time range: e.g. 7d, 24h, 4w, 3m, 1y (default: 30d)
+ *   granularity  {string}  - hourly|daily|weekly|monthly (auto-selected if omitted)
+ *   topN         {number}  - Number of top donors/recipients (default: 10)
+ */
+router.get('/dashboard', checkPermission(PERMISSIONS.STATS_READ), (req, res, next) => {
+  try {
+    const { period = '30d', granularity, topN, movingAvgWindow } = req.query;
+
+    const topNParsed = topN !== undefined ? parseInt(topN, 10) : 10;
+    const windowParsed = movingAvgWindow !== undefined ? parseInt(movingAvgWindow, 10) : 3;
+
+    if (topN !== undefined && (!Number.isInteger(topNParsed) || topNParsed < 1)) {
+      return res.status(400).json({ success: false, error: { code: 'INVALID_PARAM', message: 'topN must be a positive integer' } });
+    }
+    if (granularity && !['hourly', 'daily', 'weekly', 'monthly'].includes(granularity)) {
+      return res.status(400).json({ success: false, error: { code: 'INVALID_PARAM', message: 'granularity must be hourly, daily, weekly, or monthly' } });
+    }
+
+    const data = StatsService.getDashboardData({ period, granularity, topN: topNParsed, movingAvgWindow: windowParsed });
+
+    res.json({ success: true, data });
+  } catch (error) {
+    if (error.statusCode === 400) {
+      return res.status(400).json({ success: false, error: { code: 'INVALID_PARAM', message: error.message } });
+    }
+    next(error);
+  }
+});
+
 module.exports = router;
