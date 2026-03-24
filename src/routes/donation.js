@@ -314,6 +314,14 @@ router.post('/', donationRateLimiter, requireApiKey, requireIdempotency, createD
       idempotencyKey: req.idempotency.key
     });
 
+    // Estimate fee for informational purposes (non-blocking)
+    let feeEstimate = null;
+    try {
+      feeEstimate = await stellarService.estimateFee(1);
+    } catch (_err) {
+      // Fee estimation is best-effort; don't fail the request
+    }
+
     // Mark processing complete
     if (req.markLifecycleStage) {
       req.markLifecycleStage(LIFECYCLE_STAGES.PROCESSED);
@@ -323,12 +331,53 @@ router.post('/', donationRateLimiter, requireApiKey, requireIdempotency, createD
       success: true,
       data: {
         verified: true,
-        transactionHash: transaction.stellarTxId || transaction.id
+        transactionHash: transaction.stellarTxId || transaction.id,
+        ...(feeEstimate && {
+          estimatedFee: feeEstimate.feeStroops,
+          estimatedFeeXLM: feeEstimate.feeXLM,
+          ...(feeEstimate.surgeProtection && {
+            feeWarning: 'Network fees are elevated (surge pricing active).'
+          }),
+        }),
       }
     };
 
     await storeIdempotencyResponse(req, response);
     res.status(201).json(response);
+  } catch (error) {
+    next(error);
+  }
+});
+
+/**
+ * GET /donations/fee-estimate
+ * Returns the current estimated transaction fee from the Stellar network.
+ * Query params:
+ *   - operations: number of operations (default: 1)
+ */
+router.get('/fee-estimate', checkPermission(PERMISSIONS.DONATIONS_READ), async (req, res, next) => {
+  try {
+    const operationCount = Math.max(1, parseInt(req.query.operations, 10) || 1);
+    const estimate = await stellarService.estimateFee(operationCount);
+
+    if (req.markLifecycleStage) {
+      req.markLifecycleStage(LIFECYCLE_STAGES.PROCESSED);
+    }
+
+    res.json({
+      success: true,
+      data: {
+        estimatedFee: estimate.feeStroops,
+        estimatedFeeXLM: estimate.feeXLM,
+        baseFee: estimate.baseFee,
+        operationCount,
+        surgeProtection: estimate.surgeProtection,
+        surgeMultiplier: estimate.surgeMultiplier,
+        ...(estimate.surgeProtection && {
+          warning: 'Network fees are elevated (surge pricing active). Fees are significantly above baseline.'
+        }),
+      }
+    });
   } catch (error) {
     next(error);
   }

@@ -1037,6 +1037,32 @@ class MockStellarService extends StellarServiceInterface {
   }
 
   /**
+   * Estimate the transaction fee for a given number of operations.
+   * Simulates fee variations including surge pricing.
+   * @param {number} [operationCount=1]
+   * @returns {Promise<{feeStroops: number, feeXLM: string, baseFee: number, surgeProtection: boolean, surgeMultiplier: number}>}
+   */
+  async estimateFee(operationCount = 1) {
+    await this._simulateNetworkDelay();
+    this._simulateFailure();
+
+    const BASE_FEE_STROOPS = 100;
+    // Simulate fee multiplier: normally 1x, occasionally surge (configurable via config.feeMultiplier)
+    const multiplier = this.config.feeMultiplier !== undefined ? this.config.feeMultiplier : 1;
+    const recommendedFee = Math.round(BASE_FEE_STROOPS * multiplier);
+    const totalFeeStroops = recommendedFee * operationCount;
+    const surgeProtection = multiplier >= 5;
+
+    return {
+      feeStroops: totalFeeStroops,
+      feeXLM: (totalFeeStroops / 1e7).toFixed(7),
+      baseFee: BASE_FEE_STROOPS,
+      surgeProtection,
+      surgeMultiplier: parseFloat(multiplier.toFixed(2)),
+    };
+  }
+
+  /**
    * Derive a mock public key from a secret key (deterministic for test consistency).
    * @private
    */

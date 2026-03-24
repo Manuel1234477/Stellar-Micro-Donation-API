@@ -280,6 +280,46 @@ class StellarService extends StellarServiceInterface {
   }
 
   /**
+   * Estimate the transaction fee for a given number of operations.
+   * Queries Horizon fee stats and returns the recommended fee.
+   * @param {number} [operationCount=1] - Number of operations in the transaction
+   * @returns {Promise<{feeStroops: number, feeXLM: string, baseFee: number, surgeProtection: boolean, surgeMultiplier: number}>}
+   */
+  async estimateFee(operationCount = 1) {
+    return StellarErrorHandler.wrap(async () => {
+      const BASE_FEE_STROOPS = parseInt(StellarSdk.BASE_FEE, 10); // 100 stroops
+      let recommendedFee = BASE_FEE_STROOPS;
+      let surgeMultiplier = 1;
+
+      try {
+        const feeStats = await withTimeout(
+          this.server.feeStats(),
+          this.timeouts.api,
+          'feeStats'
+        );
+        // Use the p70 fee as a reasonable recommendation
+        const p70 = parseInt(feeStats.fee_charged?.p70 || feeStats.max_fee?.p70 || BASE_FEE_STROOPS, 10);
+        recommendedFee = Math.max(p70, BASE_FEE_STROOPS);
+        surgeMultiplier = recommendedFee / BASE_FEE_STROOPS;
+      } catch (_err) {
+        // Fall back to base fee if Horizon is unreachable
+        log.warn('STELLAR_SERVICE', 'Could not fetch fee stats, using base fee', { error: _err.message });
+      }
+
+      const totalFeeStroops = recommendedFee * operationCount;
+      const surgeProtection = surgeMultiplier >= 5;
+
+      return {
+        feeStroops: totalFeeStroops,
+        feeXLM: (totalFeeStroops / 1e7).toFixed(7),
+        baseFee: BASE_FEE_STROOPS,
+        surgeProtection,
+        surgeMultiplier: parseFloat(surgeMultiplier.toFixed(2)),
+      };
+    }, 'estimateFee');
+  }
+
+  /**
    * Send a donation transaction
    * @param {Object} params
    * @param {string} params.sourceSecret - Source account secret key

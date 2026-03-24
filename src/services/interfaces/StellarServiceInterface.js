@@ -50,6 +50,10 @@ class StellarServiceInterface {
   getHorizonUrl() {
     throw new Error('getHorizonUrl() must be implemented');
   }
+
+  async estimateFee(operationCount = 1) {
+    throw new Error('estimateFee() must be implemented');
+  }
 }
 
 module.exports = StellarServiceInterface;
