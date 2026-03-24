@@ -219,6 +219,11 @@ const buildConfig = (env, isProduction, isTest) => {
 
   // Stellar configuration
   const envName = process.env.STELLAR_ENVIRONMENT || process.env.STELLAR_NETWORK || 'testnet';
+  
+  if (!process.env.STELLAR_ENVIRONMENT && process.env.STELLAR_NETWORK) {
+    console.warn('\x1b[33m[DEPRECATION WARNING] STELLAR_NETWORK is deprecated and will be removed in a future release. Please update your .env file to use STELLAR_ENVIRONMENT instead.\x1b[0m');
+  }
+  
   const environmentConfig = getStellarEnvironment(envName);
   
   const stellar = {
@@ -280,7 +285,7 @@ const buildConfig = (env, isProduction, isTest) => {
     version: process.env.npm_package_version || '1.0.0',
   };
 
-  return {
+  const configObj = {
     server,
     stellar,
     database,
@@ -291,6 +296,8 @@ const buildConfig = (env, isProduction, isTest) => {
     encryption,
     app,
   };
+  
+  return configObj;
 };
 
 // Load configuration once at module initialization

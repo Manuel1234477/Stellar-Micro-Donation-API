@@ -419,6 +419,8 @@ class StatsService {
       })),
     };
   }
+
+  /**
    * Reads from the JSON transaction store and aggregates flagged overpayments.
    *
    * @param {Date|null} [startDate] - Optional start of date range
@@ -471,6 +473,8 @@ class StatsService {
       })),
     };
   }
+
+  /**
    * Fetches live data from Stellar and persists it for performance.
    * 
    * TODO: Uncomment and implement when needed

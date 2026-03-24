@@ -19,7 +19,6 @@ const {
   withAsyncContext,
   getCorrelationSummary,
 } = require("../utils/correlation");
-const { revokeExpiredDeprecatedKeys } = require('../models/apiKeys');
 
 class RecurringDonationScheduler {
   /**

@@ -63,16 +63,15 @@ class ServiceContainer {
   }
 }
 
+const appConfig = require('./index');
+
 let _instance = null;
 
 function getInstance() {
   if (!_instance) {
     _instance = new ServiceContainer({
-      useMockStellar: process.env.USE_MOCK_STELLAR === 'true' || process.env.MOCK_STELLAR === 'true',
-      stellar: {
-        network: process.env.STELLAR_NETWORK || 'testnet',
-        horizonUrl: process.env.HORIZON_URL
-      }
+      useMockStellar: appConfig.stellar.mockEnabled,
+      stellar: appConfig.stellar
     });
   }
   return _instance;
