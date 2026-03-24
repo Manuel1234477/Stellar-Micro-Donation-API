@@ -50,10 +50,6 @@ class WalletService {
     const sanitizedLabel = label ? sanitizeLabel(label) : null;
     const sanitizedOwnerName = ownerName ? sanitizeName(ownerName) : null;
 
-    return Wallet.create({ 
-      address: sanitizedAddress, 
-      label: sanitizedLabel, 
-      ownerName: sanitizedOwnerName 
     const wallet = Wallet.create({
       address,
       label: sanitizedLabel,

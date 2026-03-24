@@ -25,6 +25,7 @@
     "dotenv": "^16.0.3",
     "express": "^4.18.2",
     "express-rate-limit": "^8.2.1",
+    "helmet": "^8.1.0",
     "nodemailer": "^8.0.3",
     "pdfkit": "^0.18.0",
     "qrcode": "^1.5.4",

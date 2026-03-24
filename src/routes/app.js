@@ -10,6 +10,7 @@
  */
 
 const express = require('express');
+const helmet = require('helmet');
 const config = require('../config');
 const stellarConfig = require('../config/stellar');
 const donationRoutes = require('./donation');
@@ -63,6 +64,25 @@ app.use(requestId);
 
 // Attach res.success / res.failure envelope helpers (must be after requestId)
 app.use(responseFormatterMiddleware());
+// Security headers (helmet must be early, before routes)
+app.use(helmet({
+  contentSecurityPolicy: {
+    directives: {
+      defaultSrc: ["'none'"],
+      frameAncestors: ["'none'"],
+    },
+  },
+  frameguard: { action: 'deny' },
+  noSniff: true,
+  referrerPolicy: { policy: 'no-referrer' },
+  hsts: {
+    maxAge: 31536000,       // 1 year
+    includeSubDomains: true,
+    preload: true,
+  },
+  xssFilter: false,         // deprecated header — omit for API servers
+  hidePoweredBy: true,
+}));
 
 // CORS (must be before body parsers and route handlers)
 app.use(createCorsMiddleware());
@@ -116,19 +136,12 @@ app.get('/exchange-rates', async (req, res) => {
         supportedCurrencies: ['XLM', ...priceOracle.SUPPORTED_CURRENCIES.map(c => c.toUpperCase())],
         cachedAt: new Date().toISOString(),
       },
-        cachedAt: new Date().toISOString()
-      }
     });
   } catch (err) {
     log.error('APP', 'Failed to fetch exchange rates', { error: err.message });
     res.status(503).json({
       success: false,
       error: { code: 'EXCHANGE_RATE_UNAVAILABLE', message: err.message },
-    });
-  }
-});
-
-      error: { code: 'EXCHANGE_RATE_UNAVAILABLE', message: err.message }
     });
   }
 });
