@@ -12,7 +12,7 @@
 require('dotenv').config({ path: require('path').join(__dirname, '../../.env') });
 const path = require('path');
 const { VALID_STELLAR_NETWORKS, HORIZON_URLS } = require('../constants');
-const { getStellarEnvironment } = require('./stellarEnvironments');
+const { getActiveEnvironment } = require('./stellarEnvironments');
 
 /**
  * Configuration error class for clear error messages
@@ -221,15 +221,15 @@ const buildConfig = (env, isProduction, isTest) => {
   const envName = process.env.STELLAR_ENVIRONMENT || process.env.STELLAR_NETWORK || 'testnet';
   
   if (!process.env.STELLAR_ENVIRONMENT && process.env.STELLAR_NETWORK) {
-    console.warn('\x1b[33m[DEPRECATION WARNING] STELLAR_NETWORK is deprecated and will be removed in a future release. Please update your .env file to use STELLAR_ENVIRONMENT instead.\x1b[0m');
+    console.warn('\x1b[33m[DEPRECATION WARNING] ... Please update your .env file to use STELLAR_ENVIRONMENT instead.\x1b[0m');
   }
   
-  const environmentConfig = getStellarEnvironment(envName);
+  const environmentConfig = getActiveEnvironment();
   
   const stellar = {
-    network: environmentConfig.name,
+    network: environmentConfig.environment,
     environment: environmentConfig,
-    horizonUrl: process.env.HORIZON_URL || environmentConfig.horizonUrl,
+    horizonUrl: environmentConfig.horizonUrl,
     mockEnabled: parseBoolean(process.env.MOCK_STELLAR, false),
     serviceSecretKey: process.env.STELLAR_SECRET || process.env.SERVICE_SECRET_KEY || null,
   };

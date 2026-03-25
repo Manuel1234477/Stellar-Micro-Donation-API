@@ -1,57 +1,39 @@
-# Stellar Environment Switching
+# Stellar Testnet/Mainnet Environment Switching
 
 ## Overview
+This feature introduces automatic pre-configuration for deploying nodes across the Stellar `testnet` and `mainnet` topologies simultaneously via a single deterministic environmental flag.
 
-We have introduced a simplified and secure environment switching mechanism for Stellar configurations. You can now use a single `STELLAR_ENVIRONMENT` variable to configure networks (testnet/mainnet). This mechanism automatically resolves to the correct Horizon URL, network passphrase, and fee settings.
+## Implementation Details
 
-## Configuration
+### Configuration Variables
+To switch operational networks natively, set the environmental variable `STELLAR_ENVIRONMENT`:
 
-To set up the API for a specific Stellar network, set the `STELLAR_ENVIRONMENT` variable in your `.env` file or environment.
-
-### Supported Environments
-- `testnet` (default)
-- `mainnet`
-
-### Examples
-**Testnet Setup:**
-```shell
-STELLAR_ENVIRONMENT=testnet
-# Automatically uses Test SDF Network passphrase and horizon-testnet URL.
+```bash
+STELLAR_ENVIRONMENT=testnet  # Operates completely natively accessing Horizon-Testnet.
+# or
+STELLAR_ENVIRONMENT=mainnet  # Transitions strictly onto real Public Global Network.
 ```
 
-**Mainnet Setup:**
-```shell
-STELLAR_ENVIRONMENT=mainnet
-# Automatically uses Public Global Stellar Network passphrase and horizon mainnet URL.
-```
+If left undefined, implementations fallback inherently securely to `testnet` deployments preventing erroneous fund drains.
 
-If you need a custom Horizon URL, you can still override it manually by setting `HORIZON_URL` in your environment.
+### Automatic Parameters
+Once defined natively:
+- `network` natively maps securely resolving.
+- `horizonUrl` is swapped reliably.
+- `networkPassphrase` aligns strictly to target topologies.
+- Standard operating `feeMultiplier` configs bind natively avoiding excess expenditures dynamically on Test instances.
 
-## Security Features
+Overrides explicitly provided (e.g. `$HORIZON_URL`) inside the local environmental space strictly prioritize locally over the pre-built `environments` object allowing custom sandbox configurations smoothly.
 
-To prevent accidental mainnet operations during testing:
-- **Strict Network Fencing:** If `NODE_ENV=test` and `STELLAR_ENVIRONMENT=mainnet`, the application configuration will intentionally throw a `ConfigurationError` and the application will fail to start.
+### Testing Context Protections
+For absolute security: the application natively triggers an explicit error during `NODE_ENV=test` initialization periods if `STELLAR_ENVIRONMENT` indicates a `mainnet` state. This prevents localized test suites from executing physical mutations upon external ledgers natively.
 
-## Health Checks
-
-The health check endpoint (`/health` and `/health/ready`) includes the current configured Stellar environment and Horizon URL to help operators verify that the API is connected to the right network.
-
+### Integrations
+You can inspect the active topologies through standard `/health` pings securely yielding:
 ```json
 {
-  "status": "healthy",
-  "dependencies": {
-    "stellar": {
-      "status": "healthy",
-      "network": "testnet",
-      "environment": "testnet",
-      "horizonUrl": "https://horizon-testnet.stellar.org"
-    }
-  }
+  "stellarEnvironment": "testnet",
+  "stellarNetwork": "testnet",
+  ...
 }
 ```
-
-## Internal Architecture
-
-- `src/config/stellarEnvironments.js`: Contains hardcoded configuration presets for testnet and mainnet.
-- `src/config/index.js`: Responsible for parsing `STELLAR_ENVIRONMENT` and assembling the application configuration. Employs the security validation that blocks mainnet use during test.
-- `src/services/StellarService.js`: Initializes connection to Stellar Horizon using the configuration object and its preset settings. Avoids inline conditionals scattered throughout the file.

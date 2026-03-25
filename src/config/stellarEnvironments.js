@@ -1,57 +1,56 @@
 /**
- * Stellar Environments Configuration
- * 
- * RESPONSIBILITY: Provide clean and secure pre-configured settings for Stellar networks
- * OWNER: Blockchain Team
- * 
- * Defines the default settings for different Stellar environments (testnet, mainnet).
- * Used by the main configuration module to set up appropriate connections and fees.
+ * @fileoverview Stellar environment presets providing auto-configuration defaults 
+ * for testnet and mainnet deployments dynamically.
  */
 
-const { HORIZON_URLS } = require('../constants');
-
-/**
- * Default fee in stroops (1 stroop = 0.0000001 XLM)
- */
-const DEFAULT_BASE_FEE = 100;
-
-/**
- * Pre-configured Stellar environments
- */
-const STELLAR_ENVIRONMENTS = {
+const environments = {
   testnet: {
-    name: 'testnet',
-    horizonUrl: HORIZON_URLS.TESTNET,
+    network: 'testnet',
+    horizonUrl: 'https://horizon-testnet.stellar.org',
     networkPassphrase: 'Test SDF Network ; September 2015',
-    baseFee: DEFAULT_BASE_FEE
+    baseReserve: '0.5',
+    feeMultiplier: 100,
   },
   mainnet: {
-    name: 'mainnet',
-    horizonUrl: HORIZON_URLS.MAINNET,
+    network: 'mainnet',
+    horizonUrl: 'https://horizon.stellar.org',
     networkPassphrase: 'Public Global Stellar Network ; September 2015',
-    baseFee: DEFAULT_BASE_FEE
+    baseReserve: '0.5',
+    feeMultiplier: 100,
   }
 };
 
 /**
- * Get environment configuration by name
+ * Retrieves the currently configured Stellar environmental variables securely overriding 
+ * preset rules where locally prioritized. Blocks mainnet on `NODE_ENV=test`.
  * 
- * @param {string} envName - The name of the environment ('testnet' or 'mainnet')
- * @returns {Object} Environment configuration object
+ * @returns {object} The dynamically formatted environment parameters
  */
-const getStellarEnvironment = (envName) => {
-  const env = (envName || 'testnet').toLowerCase();
+function getActiveEnvironment() {
+  const rawEnv = process.env.STELLAR_ENVIRONMENT || 'testnet';
+  const envName = rawEnv.toLowerCase();
   
-  if (!STELLAR_ENVIRONMENTS[env]) {
-    // Fallback to testnet if an invalid environment is provided
-    return STELLAR_ENVIRONMENTS.testnet;
+  if (!['testnet', 'mainnet'].includes(envName)) {
+    throw new Error(`Invalid STELLAR_ENVIRONMENT provided: '${envName}'. Must be strictly 'testnet' or 'mainnet'.`);
   }
-  
-  return STELLAR_ENVIRONMENTS[env];
-};
+
+  if (envName === 'mainnet' && process.env.NODE_ENV === 'test') {
+    throw new Error('SECURITY BLOCK: Mainnet operations are explicitly prevented when NODE_ENV is set to "test".');
+  }
+
+  const preset = environments[envName];
+
+  return {
+    environment: envName,
+    network: process.env.STELLAR_NETWORK || preset.network,
+    horizonUrl: process.env.HORIZON_URL || preset.horizonUrl,
+    networkPassphrase: process.env.STELLAR_NETWORK_PASSPHRASE || preset.networkPassphrase,
+    baseReserve: process.env.STELLAR_BASE_RESERVE || preset.baseReserve,
+    feeMultiplier: parseInt(process.env.STELLAR_FEE_MULTIPLIER || preset.feeMultiplier.toString(), 10)
+  };
+}
 
 module.exports = {
-  STELLAR_ENVIRONMENTS,
-  getStellarEnvironment,
-  DEFAULT_BASE_FEE
+  environments,
+  getActiveEnvironment
 };

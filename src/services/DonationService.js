@@ -18,6 +18,12 @@ const { calculateAnalyticsFee } = require('../utils/feeCalculator');
 const { sanitizeIdentifier, sanitizeMemo } = require('../utils/sanitizer');
 const { TRANSACTION_STATES } = require('../utils/transactionStateMachine');
 const { ValidationError, NotFoundError, ERROR_CODES } = require('../utils/errors');
+const { PREDEFINED_TAGS } = require('../constants/tags');
+const { paginateCollection } = require('../utils/pagination');
+const { checkConfirmations } = require('../utils/confirmationChecker');
+const { CONFIRMATION_LEDGER_THRESHOLD } = require('../config/confirmationThreshold');
+
+const MAX_MEMO_LENGTH = 28;
 const LimitService = require('./LimitService');
 const log = require('../utils/log');
 const priceOracle = require('./PriceOracleService');
@@ -86,13 +92,15 @@ class DonationService {
    * @param {string} params.requestId - Request ID for logging
    * @returns {Promise<Object>} Donation result with transaction details
    */
-  async sendCustodialDonation({ senderId, receiverId, amount, memo, idempotencyKey, requestId }) {
+  async sendCustodialDonation({ senderId, receiverId, amount, memo, notes, tags, apiKeyId, apiKeyRole = 'user', idempotencyKey, requestId }) {
     log.debug('DONATION_SERVICE', 'Processing custodial donation', {
       requestId,
       senderId,
       receiverId,
       amount,
-      hasMemo: !!memo
+      hasMemo: !!memo,
+      hasNotes: !!notes,
+      tagsCount: tags ? tags.length : 0
     });
 
     // Get sender and receiver
@@ -137,9 +145,15 @@ class DonationService {
 
     // Record in database with sanitized memo
     const dbResult = await Database.run(
-      'INSERT INTO transactions (senderId, receiverId, amount, memo, timestamp, idempotencyKey, stellar_tx_id) VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP, ?, ?)',
-      [senderId, receiverId, amount, sanitizedMemo, idempotencyKey, stellarResult.transactionId]
+      'INSERT INTO transactions (senderId, receiverId, amount, memo, notes, tags, timestamp, idempotencyKey, stellar_tx_id) VALUES (?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, ?, ?)',
+      [senderId, receiverId, amount, sanitizedMemo, notes || null, JSON.stringify(tags || []), idempotencyKey, stellarResult.transactionId]
     );
+
+    if (campaign_id) {
+      await this.processCampaignContribution(campaign_id, amount).catch(err => {
+        log.error('DONATION_SERVICE', 'Failed to update campaign contribution', { error: err.message });
+      });
+    }
 
     // Record in JSON with state transitions
     const transaction = Transaction.create({
@@ -147,7 +161,10 @@ class DonationService {
       amount: parseFloat(amount),
       donor: sender.publicKey,
       recipient: receiver.publicKey,
-      status: TRANSACTION_STATES.PENDING
+      status: TRANSACTION_STATES.PENDING,
+      notes: notes || null,
+      tags: tags || [],
+      apiKeyId: apiKeyId || null
     });
 
     Transaction.updateStatus(transaction.id, TRANSACTION_STATES.SUBMITTED, {
@@ -359,11 +376,10 @@ class DonationService {
    * @param {string} params.donor - Donor identifier
    * @param {string} params.recipient - Recipient identifier
    * @param {string} params.memo - Optional memo
-   * @param {string} [params.memoType='text'] - Stellar memo type: 'text', 'hash', 'id', or 'return'
    * @param {string} params.idempotencyKey - Idempotency key
    * @returns {Object} Created transaction
    */
-  async createDonationRecord({ amount, currency = 'XLM', donor, recipient, memo, memoType = 'text', idempotencyKey, receivedAmount, sessionId }) {
+  async createDonationRecord({ amount, currency = 'XLM', donor, recipient, memo, notes, tags, memoType = 'text', apiKeyId, apiKeyRole = 'user', idempotencyKey, receivedAmount, sessionId }) {
     // Sanitize identifiers
     const sanitizedDonor = donor ? sanitizeIdentifier(donor) : 'Anonymous';
     const sanitizedRecipient = sanitizeIdentifier(recipient);
@@ -372,6 +388,22 @@ class DonationService {
     if (sanitizedDonor && sanitizedRecipient && sanitizedDonor === sanitizedRecipient) {
       throw new ValidationError('Sender and recipient wallets must be different');
     }
+
+    // Validate memo with type-aware validation
+    const memoResult = memoType && memoType !== 'text'
+      ? memoValidator.validateWithType(memo, memoType)
+      : this.validateAndSanitizeMemo(memo);
+
+    if (!memoResult.valid) {
+      throw new ValidationError(memoResult.error, null, memoResult.code);
+    }
+
+    if (amount <= 0) {
+      throw new ValidationError('Amount must be positive');
+    }
+
+    // Validate tags against taxonomy
+    this._validateTags(tags, apiKeyRole);
 
     // Currency conversion
     const normalizedCurrency = currency.toUpperCase();
@@ -391,15 +423,6 @@ class DonationService {
 
     // Validate XLM amount and limits
     this.validateDonationAmount(xlmAmount, sanitizedDonor);
-
-    // Validate memo with type-aware validation
-    const memoResult = memoType && memoType !== 'text'
-      ? memoValidator.validateWithType(memo, memoType)
-      : this.validateAndSanitizeMemo(memo);
-
-    if (!memoResult.valid) {
-      throw new ValidationError(memoResult.error, null, memoResult.code);
-    }
 
     // Calculate analytics fee
     const feeCalculation = calculateAnalyticsFee(xlmAmount);
@@ -433,13 +456,23 @@ class DonationService {
       recipient: sanitizedRecipient,
       memo: memoResult.sanitized,
       memoType: memoType || 'text',
+      notes: notes || null,
+      tags: tags || [],
+      apiKeyId: apiKeyId || null,
       idempotencyKey: idempotencyKey,
       analyticsFee: feeCalculation.fee,
       analyticsFeePercentage: feeCalculation.feePercentage,
       // Overpayment fields (null when no overpayment)
       overpaymentFlagged: overpayment ? true : false,
       overpaymentDetails: overpayment || null,
+      campaign_id: campaign_id || null
     });
+
+    if (campaign_id) {
+      await this.processCampaignContribution(campaign_id, xlmAmount).catch(err => {
+        log.error('DONATION_SERVICE', 'Failed to update campaign contribution', { error: err.message });
+      });
+    }
 
     // Detect memo collision after the record is created so we have a transactionId
     const collisionResult = memoCollisionDetector.check({
@@ -470,6 +503,37 @@ class DonationService {
     }
 
     return transaction;
+  }
+
+  /**
+   * Update campaign progress and trigger Webhooks if goal met
+   */
+  async processCampaignContribution(campaignId, amount) {
+    const WebhookService = require('./WebhookService');
+    const updateResult = await Database.run(
+      `UPDATE campaigns 
+       SET current_amount = current_amount + ? 
+       WHERE id = ? AND status = 'active'`,
+      [amount, campaignId]
+    );
+
+    if (updateResult && updateResult.changes > 0) {
+      const campaign = await Database.get('SELECT * FROM campaigns WHERE id = ?', [campaignId]);
+      
+      if (campaign && campaign.current_amount >= campaign.goal_amount) {
+        await Database.run(`UPDATE campaigns SET status = 'completed' WHERE id = ?`, [campaignId]);
+        
+        await WebhookService.deliver('campaign.completed', {
+          campaign_id: campaignId,
+          name: campaign.name,
+          goal_amount: campaign.goal_amount,
+          final_amount: campaign.current_amount,
+          completed_at: new Date().toISOString()
+        });
+        
+        log.info('CAMPAIGN', `Campaign ${campaignId} reached its goal and is now completed`);
+      }
+    }
   }
 
   /**
@@ -680,18 +744,11 @@ class DonationService {
    * @returns {{ data: Array, totalCount: number, meta: Object, appliedFilters: Object }} Paginated donations.
    */
   getPaginatedDonations(pagination, filters = {}) {
-    const { sortBy, order, ...filterParams } = filters;
-    const hasFilters = Object.values(filters).some(v => v !== undefined && v !== null && v !== '');
-
-    const allTransactions = Transaction.getAll();
-    const filtered = hasFilters
-      ? this.applyFilters(allTransactions, filters)
-      : allTransactions;
-
-    // When a custom sort is applied, preserve that order through pagination
-    // by using the first item's sort field as the pagination timestamp field.
-    const useCustomSort = sortBy && sortBy !== 'timestamp';
-    const result = paginateCollection(filtered, {
+    let transactions = Transaction.getAll();
+    if (filters.tag) {
+      transactions = transactions.filter(tx => tx.tags && tx.tags.includes(filters.tag));
+    }
+    return paginateCollection(transactions, {
       ...pagination,
       timestampField: 'timestamp',
       idField: 'id',
@@ -717,6 +774,17 @@ class DonationService {
       appliedFilters,
       resultCount: result.totalCount,
     };
+  }
+
+  _validateTags(tags, apiKeyRole) {
+    if (!tags || !Array.isArray(tags)) return;
+    for (const tag of tags) {
+      if (!PREDEFINED_TAGS.includes(tag)) {
+        if (apiKeyRole !== 'premium' && apiKeyRole !== 'admin') {
+          throw new ValidationError(`Custom tags are only allowed for premium or admin accounts. Invalid tag: ${tag}`);
+        }
+      }
+    }
   }
 
   /**

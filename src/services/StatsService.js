@@ -211,6 +211,39 @@ class StatsService {
     );
   }
 
+  /**
+   * Get stats by tag
+   * @param {Date} startDate - Start date for aggregation
+   * @param {Date} endDate - End date for aggregation
+   * @returns {Array} Array of tag stats sorted by total donated
+   */
+  static getTagStats(startDate, endDate) {
+    const transactions = Transaction.getByDateRange(startDate, endDate);
+    const tagMap = new Map();
+
+    transactions.forEach(tx => {
+      if (!tx.tags || !Array.isArray(tx.tags)) return;
+      
+      tx.tags.forEach(tag => {
+        if (!tagMap.has(tag)) {
+          tagMap.set(tag, {
+            tag,
+            totalDonated: 0,
+            donationCount: 0
+          });
+        }
+        
+        const tagStats = tagMap.get(tag);
+        tagStats.totalDonated += parseFloat(tx.amount) || 0;
+        tagStats.donationCount += 1;
+      });
+    });
+
+    return Array.from(tagMap.values()).sort((a, b) => 
+      b.totalDonated - a.totalDonated
+    );
+  }
+
   // Helper methods
   static getDateKey(date) {
     return date.toISOString().split('T')[0];

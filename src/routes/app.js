@@ -24,7 +24,9 @@ const featureFlagsAdminRoutes = require('./admin/featureFlags');
 const retentionAdminRoutes = require('./admin/retention');
 const networkRoutes = require('./network');
 const webhooksRoutes = require('./webhooks');
+const campaignsRoutes = require('./campaigns');
 const offersRoutes = require('./offers');
+const tagsRoutes = require('./tags');
 const { errorHandler, notFoundHandler } = require('../middleware/errorHandler');
 const logger = require('../middleware/logger');
 const { attachUserRole } = require('../middleware/rbac');
@@ -59,6 +61,35 @@ const networkStatusService = serviceContainer.getNetworkStatusService();
 
 // Initialize replay detection cleanup timer (will be started in startServer)
 let replayCleanupTimer = null;
+
+// Graceful shutdown state
+let isShuttingDown = false;
+let inFlightRequests = 0;
+
+// In-flight request tracking and graceful shutdown rejection middleware
+app.use((req, res, next) => {
+  if (isShuttingDown) {
+    if (req.path.startsWith('/health')) return next();
+    res.set('Connection', 'close');
+    return res.status(503).json({
+      success: false,
+      error: { code: 'SERVICE_UNAVAILABLE', message: 'Server is shutting down' }
+    });
+  }
+  
+  inFlightRequests++;
+  let handled = false;
+  const decrement = () => {
+    if (!handled) {
+      handled = true;
+      inFlightRequests--;
+    }
+  };
+  
+  res.on('finish', decrement);
+  res.on('close', decrement);
+  next();
+});
 
 // Middleware
 app.use(requestId);
@@ -123,7 +154,9 @@ app.use('/admin/feature-flags', featureFlagsAdminRoutes);
 app.use('/admin/retention', retentionAdminRoutes);
 app.use('/network', networkRoutes);
 app.use('/webhooks', webhooksRoutes);
+app.use('/campaigns', campaignsRoutes);
 app.use('/offers', offersRoutes);
+app.use('/tags', tagsRoutes);
 
 // Exchange rates endpoint
 app.get('/exchange-rates', async (req, res) => {
@@ -137,6 +170,7 @@ app.get('/exchange-rates', async (req, res) => {
         rates,
         supportedCurrencies: ['XLM', ...priceOracle.SUPPORTED_CURRENCIES.map(c => c.toUpperCase())],
         cachedAt: new Date().toISOString(),
+      }
       },
     });
   } catch (err) {
@@ -152,6 +186,10 @@ app.get('/exchange-rates', async (req, res) => {
 // Health check endpoints
 app.get('/health', async (req, res) => {
   const health = await HealthCheckService.getFullHealth(stellarService, networkStatusService);
+  const stellarConfig = require('../config/stellar');
+  health.stellarEnvironment = stellarConfig.environment || 'testnet';
+  health.stellarNetwork = stellarConfig.network || 'testnet';
+  
   const httpStatus = health.status === 'unhealthy' ? 503 : 200;
   return res.status(httpStatus).json(health);
 });
@@ -407,38 +445,52 @@ async function startServer() {
     });
 
     const gracefulShutdown = async (signal) => {
+      if (isShuttingDown) return;
+      isShuttingDown = true;
+      log.info("SHUTDOWN", `Received ${signal}, starting graceful shutdown`);
       logShutdownDiagnostics(signal);
 
-      server.close(async () => {
-        log.info("SHUTDOWN", "HTTP server closed");
-        recurringDonationScheduler.stop();
-        reconciliationService.stop();
-        auditLogRetentionService.stop();
-        
-        // Shutdown network status service
-        try {
-          await networkStatusService.shutdown();
-        } catch (err) {
-          log.error("SHUTDOWN", "Error shutting down NetworkStatusService", {
-            error: err.message,
-          });
-        }
-
-        if (replayCleanupTimer) {
-          clearInterval(replayCleanupTimer);
-          log.info("SHUTDOWN", "Replay detection cleanup timer stopped");
-        }
-
-        await Database.close();
-        log.info("SHUTDOWN", "Database pool closed");
-
-        process.exit(0);
-      });
-
-      setTimeout(() => {
-        log.error("SHUTDOWN", "Forced shutdown after timeout");
+      const timeoutMs = parseInt(process.env.SHUTDOWN_TIMEOUT || '30000', 10);
+      const forceExit = setTimeout(() => {
+        log.error("SHUTDOWN", `Forced shutdown after ${timeoutMs}ms timeout`);
         process.exit(1);
-      }, 10000);
+      }, timeoutMs);
+
+      server.close(async () => {
+        log.info("SHUTDOWN", "HTTP server closed to new connections");
+
+        const waitInterval = setInterval(async () => {
+          if (inFlightRequests > 0) {
+            log.info("SHUTDOWN", `Waiting for ${inFlightRequests} in-flight requests to complete...`);
+            return;
+          }
+          
+          clearInterval(waitInterval);
+          clearTimeout(forceExit);
+          log.info("SHUTDOWN", "All in-flight requests completed.");
+
+          recurringDonationScheduler.stop();
+          reconciliationService.stop();
+          auditLogRetentionService.stop();
+          
+          try {
+            await networkStatusService.shutdown();
+          } catch (err) {
+            log.error("SHUTDOWN", "Error shutting down NetworkStatusService", { error: err.message });
+          }
+
+          if (replayCleanupTimer) {
+            clearInterval(replayCleanupTimer);
+            log.info("SHUTDOWN", "Replay detection cleanup timer stopped");
+          }
+
+          await Database.close();
+          log.info("SHUTDOWN", "Database pool closed");
+
+          log.info("SHUTDOWN", "Graceful shutdown complete.");
+          process.exit(0);
+        }, 500);
+      });
     };
 
     process.on('SIGTERM', () => gracefulShutdown('SIGTERM'));

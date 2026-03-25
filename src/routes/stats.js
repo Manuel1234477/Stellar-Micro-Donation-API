@@ -70,6 +70,34 @@ const walletAnalyticsSchema = validateSchema({
 });
 
 /**
+ * GET /stats/tags
+ * Get tag aggregated donation volume
+ * Query params: startDate, endDate (ISO format)
+ */
+router.get('/tags', checkPermission(PERMISSIONS.STATS_READ), auditStatsAccess, strictDateRangeQuerySchema, validateDateRange, (req, res, next) => {
+  try {
+    const { startDate, endDate } = req.query;
+    const start = new Date(startDate);
+    const end = new Date(endDate);
+
+    const stats = StatsService.getTagStats(start, end);
+
+    res.json({
+      success: true,
+      data: stats,
+      metadata: {
+        startDate,
+        endDate,
+        totalTagsCount: stats.length,
+        generatedAt: new Date().toISOString()
+      }
+    });
+  } catch (error) {
+    next(error);
+  }
+});
+
+/**
  * GET /stats/daily
  * Get daily aggregated donation volume
  * Query params: startDate, endDate (ISO format)

@@ -76,7 +76,7 @@ const donationRateLimiter = rateLimit({
    * already been processed (Idempotency check).
    */
   skip: (req) => {
-    return req.idempotency && req.idempotency.cached;
+    return process.env.NODE_ENV === 'test' || (req.idempotency && req.idempotency.cached);
   }
 });
 

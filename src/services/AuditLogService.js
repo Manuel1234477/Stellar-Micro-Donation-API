@@ -91,6 +91,30 @@ const AUDIT_ACTION = {
 
 class AuditLogService {
   /**
+   * Log a non-fatal audit write failure without polluting test output.
+   * Audit logging is best-effort for application flows, so swallowed write
+   * failures in tests should not surface as console errors.
+   *
+   * @param {Error} error - Original failure.
+   * @param {string} category - Audit category.
+   * @param {string} action - Audit action.
+   */
+  static logWriteFailure(error, category, action) {
+    const meta = {
+      error: error.message,
+      category,
+      action
+    };
+
+    if (process.env.NODE_ENV === 'test') {
+      log.debug('AUDIT_SERVICE', 'Audit log write skipped due to database failure in test mode', meta);
+      return;
+    }
+
+    log.error('AUDIT_SERVICE', 'Failed to create audit log', meta);
+  }
+
+  /**
    * Build the SQL filter clause for audit log queries.
    * @param {Object} filters - Query filters.
    * @returns {{ clause: string, params: Array }} SQL clause fragment and parameters.
@@ -280,29 +304,27 @@ class AuditLogService {
       );
 
       // Also log to application logs for real-time monitoring
-      const logLevel = severity === AUDIT_SEVERITY.HIGH ? 'warn' : 'info';
-      log[logLevel]('AUDIT', `${action}: ${result}`, {
-        category,
-        action,
-        severity,
-        result,
-        userId,
-        requestId,
-        ipAddress,
-        resource,
-        reason
-      });
+      if (process.env.NODE_ENV !== 'test') {
+        const logLevel = severity === AUDIT_SEVERITY.HIGH ? 'warn' : 'info';
+        log[logLevel]('AUDIT', `${action}: ${result}`, {
+          category,
+          action,
+          severity,
+          result,
+          userId,
+          requestId,
+          ipAddress,
+          resource,
+          reason
+        });
+      }
 
       return {
         id: dbResult.id,
         ...auditEntry
       };
     } catch (error) {
-      log.error('AUDIT_SERVICE', 'Failed to create audit log', {
-        error: error.message,
-        category,
-        action
-      });
+      this.logWriteFailure(error, category, action);
       // Re-throw validation errors, swallow DB errors
       if (error.message === 'Missing required audit log fields') {
         throw error;

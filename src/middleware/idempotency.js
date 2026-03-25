@@ -26,7 +26,9 @@ const log = require('../utils/log');
  */
 async function requireIdempotency(req, res, next) {
   try {
-    const idempotencyKey = req.headers['idempotency-key'] || req.headers['x-idempotency-key'];
+    const idempotencyKey = req.headers['idempotency-key']
+      || req.headers['x-idempotency-key']
+      || req.idempotency?.key;
 
     if (!idempotencyKey) {
       throw new ValidationError(
@@ -77,6 +79,7 @@ async function requireIdempotency(req, res, next) {
 
     // Attach idempotency data to request for handler to use
     req.idempotency = {
+      ...(req.idempotency || {}),
       key: idempotencyKey,
       hash: requestHash,
       isNew: true

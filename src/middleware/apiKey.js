@@ -37,6 +37,10 @@ const legacyKeys = securityConfig.API_KEYS || [];
  * 6. Final Disposition: Calls next() on success, or returns 401 Unauthorized if all checks fail.
  */
 const requireApiKey = async (req, res, next) => {
+  if (req.apiKey) {
+    return next();
+  }
+
   const apiKey = req.get("x-api-key");
 
   if (!apiKey) {

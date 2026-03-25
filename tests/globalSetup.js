@@ -80,6 +80,7 @@ module.exports = async () => {
     )`);
     await Database.run(`CREATE TABLE IF NOT EXISTS audit_logs (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
+      timestamp TEXT NOT NULL,
       category TEXT NOT NULL,
       action TEXT NOT NULL,
       severity TEXT NOT NULL,
@@ -88,8 +89,9 @@ module.exports = async () => {
       requestId TEXT,
       ipAddress TEXT,
       resource TEXT,
+      reason TEXT,
       details TEXT,
-      timestamp DATETIME DEFAULT CURRENT_TIMESTAMP
+      integrityHash TEXT NOT NULL
     )`);
     await Database.run(`CREATE TABLE IF NOT EXISTS multisig_transactions (
       id INTEGER PRIMARY KEY AUTOINCREMENT,

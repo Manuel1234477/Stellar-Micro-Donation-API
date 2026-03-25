@@ -32,6 +32,19 @@ const federation = require('../utils/federation');
 const stellarService = getStellarService();
 const donationService = new DonationService(stellarService);
 
+// Helper to enforce note privacy
+function applyNotePrivacy(req, tx) {
+  if (!tx) return tx;
+  const isOwner = req.apiKey && tx.apiKeyId === req.apiKey.id;
+  const isAdmin = req.apiKey && req.apiKey.role === 'admin';
+  
+  if (!isOwner && !isAdmin && tx.notes !== undefined) {
+    const { notes, ...rest } = tx;
+    return rest;
+  }
+  return tx;
+}
+
 const verifyDonationSchema = validateSchema({
   body: {
     fields: {
@@ -51,6 +64,7 @@ const sendDonationSchema = validateSchema({
       receiverId: { type: 'integer', required: true, min: 1 },
       amount: { type: 'number', required: true, min: 0.0000001 },
       memo: { type: 'string', required: false, maxLength: 255, nullable: true },
+      campaign_id: { type: 'integer', required: false, min: 1, nullable: true },
     },
   },
 });
@@ -88,6 +102,17 @@ const createDonationSchema = validateSchema({
         nullable: true,
         enum: ['text', 'hash', 'id', 'return'],
       },
+      notes: {
+        type: 'string',
+        required: false,
+        maxLength: 1000,
+        nullable: true,
+      },
+      tags: {
+        type: 'array',
+        required: false,
+        nullable: true,
+      },
     },
   },
 });
@@ -95,7 +120,7 @@ const createDonationSchema = validateSchema({
 const donationIdParamSchema = validateSchema({
   params: {
     fields: {
-      id: { type: 'integerString', required: true },
+      id: { type: 'string', required: true, trim: true, minLength: 1 },
     },
   },
 });
@@ -120,7 +145,7 @@ const recentDonationsQuerySchema = validateSchema({
 const updateDonationStatusSchema = validateSchema({
   params: {
     fields: {
-      id: { type: 'integerString', required: true },
+      id: { type: 'string', required: true, trim: true, minLength: 1 },
     },
   },
   body: {
@@ -140,6 +165,17 @@ const updateDonationStatusSchema = validateSchema({
         type: 'integer',
         required: false,
         min: 1,
+        nullable: true,
+      },
+      notes: {
+        type: 'string',
+        required: false,
+        maxLength: 1000,
+        nullable: true,
+      },
+      tags: {
+        type: 'array',
+        required: false,
         nullable: true,
       },
     },
@@ -186,9 +222,9 @@ router.post('/verify', payloadSizeLimiter(ENDPOINT_LIMITS.singleDonation), verif
  * Requires idempotency key to prevent duplicate transactions
  * Rate limited: 10 requests per minute per IP
  */
-router.post('/send', payloadSizeLimiter(ENDPOINT_LIMITS.singleDonation), donationRateLimiter, requireIdempotency, sendDonationSchema, async (req, res) => {
+router.post('/send', payloadSizeLimiter(ENDPOINT_LIMITS.singleDonation), donationRateLimiter, requireIdempotency, sendDonationSchema, async (req, res, next) => {
   try {
-    const { senderId, receiverId, amount, memo } = req.body;
+    const { senderId, receiverId, amount, memo, campaign_id } = req.body;
 
     log.debug('DONATION_ROUTE', 'Processing donation request', {
       requestId: req.id,
@@ -232,8 +268,11 @@ router.post('/send', payloadSizeLimiter(ENDPOINT_LIMITS.singleDonation), donatio
       receiverId,
       amount: amountValidation.value,
       memo,
+      campaign_id,
       idempotencyKey: req.idempotency.key,
-      requestId: req.id
+      requestId: req.id,
+      apiKeyId: req.apiKey ? req.apiKey.id : null,
+      apiKeyRole: req.apiKey ? req.apiKey.role : (req.user?.role || 'user')
     });
 
     // Inject remaining limit headers if available
@@ -342,7 +381,7 @@ router.post('/batch', payloadSizeLimiter(ENDPOINT_LIMITS.batchDonation), batchRa
  */
 router.post('/', payloadSizeLimiter(ENDPOINT_LIMITS.singleDonation), donationRateLimiter, requireApiKey, requireIdempotency, createDonationSchema, async (req, res, next) => {
   try {
-    const { amount, currency, donor, recipient, memo, memoType } = req.body;
+    const { amount, currency, donor, recipient, memo, memoType, notes, tags } = req.body;
 
     // Basic validation
     if (!amount || !recipient) {
@@ -388,7 +427,11 @@ router.post('/', payloadSizeLimiter(ENDPOINT_LIMITS.singleDonation), donationRat
       recipient: resolvedRecipient,
       memo,
       memoType: memoType || 'text',
-      idempotencyKey: req.idempotency.key
+      notes,
+      tags,
+      idempotencyKey: req.idempotency.key,
+      apiKeyId: req.apiKey ? req.apiKey.id : null,
+      apiKeyRole: req.apiKey ? req.apiKey.role : (req.user?.role || 'user')
     });
 
     // Estimate fee for informational purposes (non-blocking)
@@ -497,27 +540,24 @@ const listDonationsQuerySchema = validateSchema({
  */
 router.get('/', checkPermission(PERMISSIONS.DONATIONS_READ), listDonationsQuerySchema, (req, res, next) => {
   try {
+    const { tag } = req.query;
     const pagination = parseCursorPaginationQuery(req.query);
-
-    const { startDate, endDate, minAmount, maxAmount, status, donor, recipient, memo, sortBy, order } = req.query;
-    const filters = { startDate, endDate, minAmount, maxAmount, status, donor, recipient, memo, sortBy, order };
-
-    const result = donationService.getPaginatedDonations(pagination, filters);
-
+    const result = donationService.getPaginatedDonations(pagination, { tag });
+    
     // Mark processing complete
     if (req.markLifecycleStage) {
       req.markLifecycleStage(LIFECYCLE_STAGES.PROCESSED);
     }
 
     res.setHeader('X-Total-Count', String(result.totalCount));
+    
+    const protectedData = result.data.map(tx => applyNotePrivacy(req, tx));
 
     res.json({
       success: true,
-      data: result.data,
-      count: result.data.length,
-      meta: result.meta,
-      filters: result.appliedFilters,
-      resultCount: result.resultCount,
+      data: protectedData,
+      count: protectedData.length,
+      meta: result.meta
     });
   } catch (error) {
     next(error);
@@ -649,7 +689,7 @@ router.get('/:id', checkPermission(PERMISSIONS.DONATIONS_READ), donationIdParamS
 
     res.json({
       success: true,
-      data: transaction
+      data: applyNotePrivacy(req, transaction)
     });
   } catch (error) {
     next(error);
@@ -663,7 +703,7 @@ router.get('/:id', checkPermission(PERMISSIONS.DONATIONS_READ), donationIdParamS
 router.patch('/:id/status', checkPermission(PERMISSIONS.DONATIONS_UPDATE), updateDonationStatusSchema, async (req, res, next) => {
   try {
     const { id } = req.params;
-    const { status, stellarTxId, ledger } = req.body;
+    const { status, stellarTxId, ledger, notes, tags } = req.body;
 
     if (!status) {
       throw new ValidationError('Missing required field: status', null, ERROR_CODES.MISSING_REQUIRED_FIELD);
@@ -672,6 +712,8 @@ router.patch('/:id/status', checkPermission(PERMISSIONS.DONATIONS_UPDATE), updat
     const stellarData = {};
     if (stellarTxId) stellarData.transactionId = stellarTxId;
     if (ledger) stellarData.ledger = ledger;
+    if (notes !== undefined) stellarData.notes = notes;
+    if (tags !== undefined) stellarData.tags = tags;
 
     const updatedTransaction = donationService.updateDonationStatus(id, status, stellarData);
 
@@ -682,7 +724,7 @@ router.patch('/:id/status', checkPermission(PERMISSIONS.DONATIONS_UPDATE), updat
 
     res.json({
       success: true,
-      data: updatedTransaction
+      data: applyNotePrivacy(req, updatedTransaction)
     });
   } catch (error) {
     next(error);

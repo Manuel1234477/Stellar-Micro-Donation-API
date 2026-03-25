@@ -73,6 +73,9 @@ class Transaction {
       recipient: transactionData.recipient,
       memo: transactionData.memo || '',
       memoType: transactionData.memoType || 'text',
+      notes: transactionData.notes || null,
+      tags: transactionData.tags || [],
+      apiKeyId: transactionData.apiKeyId || null,
       timestamp: transactionData.timestamp || nowIso,
       status: normalizedStatus,
       stellarTxId: transactionData.stellarTxId || null,
@@ -153,6 +156,12 @@ class Transaction {
     }
     if (stellarData.confirmedAt) {
       transactions[index].confirmedAt = stellarData.confirmedAt;
+    }
+    if (Object.prototype.hasOwnProperty.call(stellarData, 'notes')) {
+      transactions[index].notes = stellarData.notes;
+    }
+    if (Object.prototype.hasOwnProperty.call(stellarData, 'tags')) {
+      transactions[index].tags = Array.isArray(stellarData.tags) ? stellarData.tags : [];
     }
 
     this.saveTransactions(transactions);
