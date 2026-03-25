@@ -2,11 +2,14 @@ const express = require('express');
 const config = require('../config/stellar');
 const donationRoutes = require('./donation');
 const statsRoutes = require('./stats');
+const apiKeyUsageRoutes = require('./apiKeyUsage');
+const apiKeyUsageTracker = require('../middleware/apiKeyUsageTracker');
 
 const app = express();
 
 // Middleware
 app.use(express.json());
+app.use(apiKeyUsageTracker);
 
 // Request logging middleware
 app.use((req, res, next) => {
@@ -17,6 +20,7 @@ app.use((req, res, next) => {
 // Routes
 app.use('/donations', donationRoutes);
 app.use('/stats', statsRoutes);
+app.use('/api-keys', apiKeyUsageRoutes);
 
 // Health check endpoint
 app.get('/health', (req, res) => {
