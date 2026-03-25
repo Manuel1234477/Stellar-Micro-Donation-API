@@ -402,3 +402,126 @@ describe('FeeBumpService', () => {
     });
   });
 });
+
+describe('POST /admin/transactions/:id/fee-bump', () => {
+  const express = require('express');
+  const request = require('supertest');
+  const Transaction = require('../src/routes/models/transaction');
+  const path = require('path');
+  const fs = require('fs');
+
+  const TEST_DB = path.join(__dirname, '../data/test-fee-bump-admin.json');
+  let app;
+  let mockStellarService;
+  let mockAuditLog;
+
+  beforeEach(() => {
+    process.env.DB_JSON_PATH = TEST_DB;
+    Transaction._clearAllData();
+
+    mockStellarService = {
+      estimateFee: jest.fn().mockResolvedValue({ feeStroops: 200, surgeMultiplier: 1 }),
+      buildAndSubmitFeeBumpTransaction: jest.fn().mockResolvedValue({
+        hash: 'bump_hash_123', ledger: 999, fee: 200, envelopeXdr: 'bumped_xdr',
+      }),
+    };
+
+    mockAuditLog = {
+      log: jest.fn().mockResolvedValue(undefined),
+      CATEGORY: { ADMIN: 'ADMIN' },
+      ACTION: { FEE_BUMP_APPLIED: 'FEE_BUMP_APPLIED', FEE_BUMP_FAILED: 'FEE_BUMP_FAILED' },
+      SEVERITY: { MEDIUM: 'MEDIUM', HIGH: 'HIGH' },
+    };
+
+    const FeeBumpService = require('../src/services/FeeBumpService');
+    const feeBumpService = new FeeBumpService(mockStellarService, mockAuditLog);
+
+    const feeBumpRouter = require('../src/routes/admin/feeBump');
+
+    app = express();
+    app.use(express.json());
+    // Simulate admin auth — attach user and skip RBAC for test
+    app.use((req, res, next) => {
+      req.user = { id: 'admin-1', role: 'admin' };
+      req.apiKey = { id: 'key-1' };
+      req.id = 'req-1';
+      next();
+    });
+    app.use('/admin/transactions', feeBumpRouter(feeBumpService));
+    // Error handler must be registered to map AppError.statusCode to HTTP responses
+    const { errorHandler } = require('../src/middleware/errorHandler');
+    app.use(errorHandler);
+  });
+
+  afterAll(() => {
+    delete process.env.DB_JSON_PATH;
+    if (fs.existsSync(TEST_DB)) fs.unlinkSync(TEST_DB);
+  });
+
+  test('successfully bumps fee with auto fee', async () => {
+    const tx = Transaction.create({
+      amount: 10, donor: 'GDONOR', recipient: 'GRECIP',
+      status: 'submitted', envelopeXdr: 'xdr',
+      feeBumpCount: 0, originalFee: 100, currentFee: 100,
+    });
+
+    const res = await request(app)
+      .post(`/admin/transactions/${tx.id}/fee-bump`)
+      .send({});
+
+    expect(res.status).toBe(200);
+    expect(res.body.success).toBe(true);
+    expect(res.body.data.newFee).toBe(200);
+    expect(res.body.data.hash).toBe('bump_hash_123');
+  });
+
+  test('successfully bumps fee with manual fee', async () => {
+    const tx = Transaction.create({
+      amount: 10, donor: 'GDONOR', recipient: 'GRECIP',
+      status: 'submitted', envelopeXdr: 'xdr',
+      feeBumpCount: 0, originalFee: 100, currentFee: 100,
+    });
+
+    const res = await request(app)
+      .post(`/admin/transactions/${tx.id}/fee-bump`)
+      .send({ fee: 500 });
+
+    expect(res.status).toBe(200);
+    expect(res.body.data.newFee).toBe(500);
+  });
+
+  test('returns 404 for nonexistent transaction', async () => {
+    const res = await request(app)
+      .post('/admin/transactions/nonexistent/fee-bump')
+      .send({});
+
+    expect(res.status).toBe(404);
+  });
+
+  test('returns 422 for non-submitted transaction', async () => {
+    const tx = Transaction.create({
+      amount: 10, donor: 'GDONOR', recipient: 'GRECIP',
+      status: 'pending', envelopeXdr: 'xdr',
+    });
+
+    const res = await request(app)
+      .post(`/admin/transactions/${tx.id}/fee-bump`)
+      .send({});
+
+    expect(res.status).toBe(422);
+  });
+
+  test('returns 422 when fee exceeds cap', async () => {
+    const tx = Transaction.create({
+      amount: 10, donor: 'GDONOR', recipient: 'GRECIP',
+      status: 'submitted', envelopeXdr: 'xdr',
+      feeBumpCount: 0, originalFee: 100, currentFee: 100,
+    });
+
+    const res = await request(app)
+      .post(`/admin/transactions/${tx.id}/fee-bump`)
+      .send({ fee: 2000000 });
+
+    expect(res.status).toBe(422);
+  });
+});
