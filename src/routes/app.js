@@ -21,6 +21,7 @@ const transactionRoutes = require('./transaction');
 const apiKeysRoutes = require('./apiKeys');
 const feesRoutes = require('./fees');
 const featureFlagsAdminRoutes = require('./admin/featureFlags');
+const createFeeBumpRouter = require('./admin/feeBump');
 const retentionAdminRoutes = require('./admin/retention');
 const networkRoutes = require('./network');
 const webhooksRoutes = require('./webhooks');
@@ -152,6 +153,13 @@ app.use('/api-keys', apiKeysRoutes);
 app.use('/fees', feesRoutes);
 app.use('/admin/feature-flags', featureFlagsAdminRoutes);
 app.use('/admin/retention', retentionAdminRoutes);
+
+// Fee bump admin route — lazy access to serviceContainer
+app.use('/admin/transactions', (req, res, next) => {
+  const serviceContainer = require('../config/serviceContainer');
+  const feeBumpRouter = createFeeBumpRouter(serviceContainer.getFeeBumpService());
+  feeBumpRouter(req, res, next);
+});
 app.use('/network', networkRoutes);
 app.use('/webhooks', webhooksRoutes);
 app.use('/campaigns', campaignsRoutes);

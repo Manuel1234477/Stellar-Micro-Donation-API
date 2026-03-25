@@ -16,6 +16,8 @@ const TransactionReconciliationService = require('../services/TransactionReconci
 const IdempotencyService = require('../services/IdempotencyService');
 const TransactionSyncService = require('../services/TransactionSyncService');
 const NetworkStatusService = require('../services/NetworkStatusService');
+const FeeBumpService = require('../services/FeeBumpService');
+const AuditLogService = require('../services/AuditLogService');
 
 class ServiceContainer {
   constructor(config = {}) {
@@ -37,6 +39,14 @@ class ServiceContainer {
     this.transactionReconciliationService = new TransactionReconciliationService(
       this.stellarService
     );
+
+    this.feeBumpService = new FeeBumpService(
+      this.stellarService,
+      AuditLogService,
+      { feeSourceSecret: config.stellar?.serviceSecretKey }
+    );
+
+    this.transactionReconciliationService.setFeeBumpService(this.feeBumpService);
 
     this.transactionSyncService = new TransactionSyncService(
       this.stellarService
@@ -68,6 +78,10 @@ class ServiceContainer {
 
   getNetworkStatusService() {
     return this.networkStatusService;
+  }
+
+  getFeeBumpService() {
+    return this.feeBumpService;
   }
 }
 
