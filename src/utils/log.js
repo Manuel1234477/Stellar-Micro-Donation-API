@@ -6,14 +6,28 @@
  * DEPENDENCIES: Sanitizer, config, correlation utilities
  * 
  * Provides centralized logging infrastructure with automatic sensitive data masking,
- * request correlation, and structured JSON output for log aggregation systems.
+ * request correlation, structured JSON output, log levels, file rotation, and sampling.
  */
 
 const { sanitizeForLogging } = require('./sanitizer');
 const { maskSensitiveData } = require('./dataMasker');
 const config = require('../config');
+const fs = require('fs');
+const path = require('path');
 
 const isDebugMode = config.logging.debugMode;
+
+const LEVELS = {
+  DEBUG: 10,
+  INFO: 20,
+  WARN: 30,
+  ERROR: 40
+};
+
+const LOG_LEVEL = config.logging.level ? config.logging.level.toUpperCase() : 'INFO';
+const CURRENT_LEVEL = LEVELS[LOG_LEVEL] || LEVELS.INFO;
+const LOG_FORMAT = config.logging.format || 'text'; // json | text
+const SAMPLE_RATE = typeof config.logging.sampleRate === 'number' ? config.logging.sampleRate : 1.0;
 
 /**
  * Standard log fields for structured logging
@@ -38,9 +52,88 @@ try {
   contextStorage = null;
 }
 
+// File Logging Setup
+let logStream = null;
+let currentLogDate = null;
+let currentLogSize = 0;
+const MAX_LOG_SIZE = parseInt(process.env.LOG_MAX_SIZE, 10) || 10 * 1024 * 1024; // 10MB
+let logRotations = 0;
+
+function ensureLogDirectory() {
+  if (config.logging.toFile) {
+    if (!fs.existsSync(config.logging.directory)) {
+      fs.mkdirSync(config.logging.directory, { recursive: true });
+    }
+  }
+}
+
+function rotateLogStream(forceSizeRotate = false) {
+  if (!config.logging.toFile) return;
+
+  const now = new Date();
+  const dateStr = now.toISOString().split('T')[0];
+
+  if (logStream) {
+    if (!forceSizeRotate && currentLogDate === dateStr) {
+      return; // Still valid
+    }
+    logStream.end();
+    logStream = null;
+  }
+
+  ensureLogDirectory();
+  currentLogDate = dateStr;
+  
+  if (forceSizeRotate) {
+    logRotations++;
+  } else {
+    logRotations = 0;
+  }
+
+  const filename = logRotations > 0 
+    ? `app-${dateStr}.${logRotations}.log`
+    : `app-${dateStr}.log`;
+  
+  const filepath = path.join(config.logging.directory, filename);
+  
+  // Initialize size tracker
+  if (fs.existsSync(filepath)) {
+    const stats = fs.statSync(filepath);
+    currentLogSize = stats.size;
+  } else {
+    currentLogSize = 0;
+  }
+
+  logStream = fs.createWriteStream(filepath, { flags: 'a' });
+}
+
+function writeToFile(output) {
+  if (!config.logging.toFile) return;
+  
+  const msg = output + '\n';
+  const size = Buffer.byteLength(msg, 'utf8');
+
+  // Time-based rotation check
+  const today = new Date().toISOString().split('T')[0];
+  if (currentLogDate !== today) {
+    rotateLogStream();
+  } else if (currentLogSize + size > MAX_LOG_SIZE) {
+    // Size-based rotation
+    rotateLogStream(true);
+  }
+
+  if (!logStream) {
+    rotateLogStream();
+  }
+
+  if (logStream) {
+    logStream.write(msg);
+    currentLogSize += size;
+  }
+}
+
 function safeStringify(value) {
   try {
-    // Sanitize before stringifying to prevent log injection
     const sanitized = sanitizeForLogging(value);
     return JSON.stringify(sanitized);
   } catch (error) {
@@ -50,7 +143,6 @@ function safeStringify(value) {
 
 /**
  * Get current request context (requestId, userId, etc.)
- * @returns {Object} Context object with request-scoped data
  */
 function getContext() {
   if (!contextStorage) {
@@ -61,7 +153,6 @@ function getContext() {
 
 /**
  * Set request context for structured logging
- * @param {Object} context - Context data (requestId, userId, transactionId, etc.)
  */
 function setContext(context) {
   if (!contextStorage) {
@@ -73,9 +164,6 @@ function setContext(context) {
 
 /**
  * Run a function with an isolated request context
- * @param {Object} context - Context data (requestId, userId, transactionId, etc.)
- * @param {Function} callback - Function to run within context
- * @returns {any} Result of callback
  */
 function runWithContext(context, callback) {
   if (!contextStorage) {
@@ -87,46 +175,40 @@ function runWithContext(context, callback) {
 
 /**
  * Build structured log entry with standard and custom fields
- * @param {string} level - Log level (INFO, WARN, ERROR, DEBUG)
- * @param {string} scope - Log scope/component (e.g., 'DONATION_ROUTE', 'STELLAR_SERVICE')
- * @param {string} message - Log message
- * @param {Object} meta - Additional metadata
- * @returns {Object} Structured log entry
  */
 function buildLogEntry(level, scope, message, meta = {}) {
   const timestamp = new Date().toISOString();
   const context = getContext();
 
-  // Sanitize scope and message to prevent log injection
-  // eslint-disable-next-line no-control-regex
   const sanitizedScope = typeof scope === 'string' ? scope.replace(/[\x00-\x1F\x7F]/g, '') : scope;
-  // eslint-disable-next-line no-control-regex
   const sanitizedMessage = typeof message === 'string' ? message.replace(/[\x00-\x1F\x7F]/g, '') : message;
 
-  const logEntry = {
+  return {
     timestamp,
     level,
-    scope: sanitizedScope,
-    message: sanitizedMessage,
-    serviceName: STANDARD_FIELDS.SERVICE_NAME,
+    service: STANDARD_FIELDS.SERVICE_NAME,
     environment: STANDARD_FIELDS.ENVIRONMENT,
     version: STANDARD_FIELDS.VERSION,
+    scope: sanitizedScope,
+    message: sanitizedMessage,
     ...context,
     ...maskSensitiveData(meta)
   };
-
-  return logEntry;
 }
 
 /**
- * Format log entry for console output
- * @param {Object} logEntry - Structured log entry
- * @returns {string} Formatted log string
+ * Format log entry as structured JSON
  */
-function formatMessage(logEntry) {
-  const { timestamp, level, scope, message, requestId, transactionId, userId } = logEntry;
+function formatJson(logEntry) {
+  return safeStringify(logEntry);
+}
 
-  // Build context string with available IDs
+/**
+ * Format log entry for human-readable text output
+ */
+function formatText(logEntry) {
+  const { timestamp, level, scope, message, requestId, transactionId, userId, service, environment, version, ...metaData } = logEntry;
+
   const contextParts = [];
   if (requestId) contextParts.push(`reqId=${requestId.substring(0, 8)}`);
   if (transactionId) contextParts.push(`txId=${transactionId.substring(0, 8)}`);
@@ -135,10 +217,8 @@ function formatMessage(logEntry) {
 
   const base = `[${timestamp}] [${level}] [${scope}]${contextStr} ${message}`;
 
-  // Extract metadata (exclude standard fields and context)
-  const metaKeys = Object.keys(logEntry).filter(key =>
-    !['timestamp', 'level', 'scope', 'message', 'serviceName', 'environment', 'version',
-      'requestId', 'transactionId', 'userId', 'walletAddress', 'sessionId'].includes(key)
+  const metaKeys = Object.keys(metaData).filter(key =>
+    !['walletAddress', 'sessionId'].includes(key)
   );
 
   if (metaKeys.length === 0) {
@@ -147,63 +227,82 @@ function formatMessage(logEntry) {
 
   const meta = {};
   metaKeys.forEach(key => {
-    meta[key] = logEntry[key];
+    meta[key] = metaData[key];
   });
 
   return `${base} ${safeStringify(meta)}`;
 }
 
 /**
- * Log info level message
- * @param {string} scope - Log scope/component
- * @param {string} message - Log message
- * @param {Object} meta - Additional metadata
+ * Process and dispatch a log event globally
  */
-function info(scope, message, meta) {
-  const logEntry = buildLogEntry('INFO', scope, message, meta);
-  console.log(formatMessage(logEntry));
-}
+function dispatchLog(levelsKey, scope, message, meta) {
+  const targetLevelValue = LEVELS[levelsKey];
+  if (targetLevelValue < CURRENT_LEVEL && !(levelsKey === 'DEBUG' && isDebugMode)) {
+    return; // Filter out below current level
+  }
 
-/**
- * Log warning level message
- * @param {string} scope - Log scope/component
- * @param {string} message - Log message
- * @param {Object} meta - Additional metadata
- */
-function warn(scope, message, meta) {
-  const logEntry = buildLogEntry('WARN', scope, message, meta);
-  console.warn(formatMessage(logEntry));
-}
+  // Sampling for debug logs
+  if (levelsKey === 'DEBUG' && SAMPLE_RATE < 1.0) {
+    if (Math.random() > SAMPLE_RATE) {
+      return; // Drop based on sample rate
+    }
+  }
 
-/**
- * Log error level message
- * @param {string} scope - Log scope/component
- * @param {string} message - Log message
- * @param {Object} meta - Additional metadata (should include error details)
- */
-function error(scope, message, meta) {
-  const logEntry = buildLogEntry('ERROR', scope, message, meta);
-  console.error(formatMessage(logEntry));
-}
+  const logEntry = buildLogEntry(levelsKey, scope, message, meta);
+  
+  let formattedOutput;
+  if (LOG_FORMAT.toLowerCase() === 'json') {
+    formattedOutput = formatJson(logEntry);
+  } else {
+    formattedOutput = formatText(logEntry);
+  }
 
-/**
- * Log debug level message (only in debug mode)
- * @param {string} scope - Log scope/component
- * @param {string} message - Log message
- * @param {Object} meta - Additional metadata
- */
-function debug(scope, message, meta) {
-  if (isDebugMode) {
-    const logEntry = buildLogEntry('DEBUG', scope, message, meta);
-    console.log(formatMessage(logEntry));
+  // Output conditionally to console
+  if (levelsKey === 'ERROR') {
+    console.error(formattedOutput);
+  } else if (levelsKey === 'WARN') {
+    console.warn(formattedOutput);
+  } else {
+    console.log(formattedOutput);
+  }
+
+  // File logging
+  if (config.logging.toFile) {
+    writeToFile(formattedOutput);
   }
 }
 
 /**
+ * Log info level message
+ */
+function info(scope, message, meta) {
+  dispatchLog('INFO', scope, message, meta);
+}
+
+/**
+ * Log warning level message
+ */
+function warn(scope, message, meta) {
+  dispatchLog('WARN', scope, message, meta);
+}
+
+/**
+ * Log error level message
+ */
+function error(scope, message, meta) {
+  dispatchLog('ERROR', scope, message, meta);
+}
+
+/**
+ * Log debug level message
+ */
+function debug(scope, message, meta) {
+  dispatchLog('DEBUG', scope, message, meta);
+}
+
+/**
  * Create a child logger with preset context
- * Useful for maintaining context across multiple log calls
- * @param {Object} context - Context to include in all logs
- * @returns {Object} Logger instance with preset context
  */
 function child(context) {
   return {
@@ -225,4 +324,6 @@ module.exports = {
   runWithContext,
   isDebugMode,
   STANDARD_FIELDS,
+  formatJson,
+  formatText
 };

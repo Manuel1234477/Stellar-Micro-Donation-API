@@ -113,13 +113,13 @@ describe('Negative Authorization Tests', () => {
     test('should block guest from creating donations', async () => {
       app.use(attachUserRole());
       app.use(checkPermission(PERMISSIONS.DONATIONS_CREATE));
-      app.post('/donations', (req, res) => res.json({ success: true }));
+      app.post('/api/v1/donations', (req, res) => res.json({ success: true }));
       addErrorHandler();
 
       validateApiKey.mockResolvedValue({ id: 1, role: ROLES.GUEST });
 
       const response = await request(app)
-        .post('/donations')
+        .post('/api/v1/donations')
         .set('x-api-key', 'guest-key');
 
       expect(response.status).toBe(403);
@@ -130,13 +130,13 @@ describe('Negative Authorization Tests', () => {
     test('should block user from deleting wallets', async () => {
       app.use(attachUserRole());
       app.use(checkPermission(PERMISSIONS.WALLETS_DELETE));
-      app.delete('/wallets/:id', (req, res) => res.json({ success: true }));
+      app.delete('/api/v1/wallets/:id', (req, res) => res.json({ success: true }));
       addErrorHandler();
 
       validateApiKey.mockResolvedValue({ id: 2, role: ROLES.USER });
 
       const response = await request(app)
-        .delete('/wallets/123')
+        .delete('/api/v1/wallets/123')
         .set('x-api-key', 'user-key');
 
       expect(response.status).toBe(403);
@@ -147,13 +147,13 @@ describe('Negative Authorization Tests', () => {
     test('should block guest from updating wallets', async () => {
       app.use(attachUserRole());
       app.use(checkPermission(PERMISSIONS.WALLETS_UPDATE));
-      app.patch('/wallets/:id', (req, res) => res.json({ success: true }));
+      app.patch('/api/v1/wallets/:id', (req, res) => res.json({ success: true }));
       addErrorHandler();
 
       validateApiKey.mockResolvedValue({ id: 3, role: ROLES.GUEST });
 
       const response = await request(app)
-        .patch('/wallets/123')
+        .patch('/api/v1/wallets/123')
         .set('x-api-key', 'guest-key');
 
       expect(response.status).toBe(403);
@@ -197,10 +197,10 @@ describe('Negative Authorization Tests', () => {
   describe('Unauthenticated Access', () => {
     test('should block unauthenticated access to protected endpoint', async () => {
       app.use(checkPermission(PERMISSIONS.DONATIONS_CREATE));
-      app.post('/donations', (req, res) => res.json({ success: true }));
+      app.post('/api/v1/donations', (req, res) => res.json({ success: true }));
       addErrorHandler();
 
-      const response = await request(app).post('/donations');
+      const response = await request(app).post('/api/v1/donations');
 
       expect(response.status).toBe(401);
       expect(response.body.error.code).toBe('UNAUTHORIZED');
@@ -212,10 +212,10 @@ describe('Negative Authorization Tests', () => {
         next();
       });
       app.use(checkPermission(PERMISSIONS.WALLETS_READ));
-      app.get('/wallets', (req, res) => res.json({ success: true }));
+      app.get('/api/v1/wallets', (req, res) => res.json({ success: true }));
       addErrorHandler();
 
-      const response = await request(app).get('/wallets');
+      const response = await request(app).get('/api/v1/wallets');
 
       expect(response.status).toBe(401);
       expect(response.body.error.code).toBe('UNAUTHORIZED');

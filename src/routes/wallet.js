@@ -19,8 +19,11 @@ const { ValidationError, NotFoundError, ERROR_CODES } = require('../utils/errors
 const WalletService = require('../services/WalletService');
 const { validateSchema } = require('../middleware/schemaValidation');
 const { parseCursorPaginationQuery } = require('../utils/pagination');
+const { sanitizeLabel, sanitizeName } = require('../utils/sanitizer');
+const { payloadSizeLimiter, ENDPOINT_LIMITS } = require('../middleware/payloadSizeLimiter');
 
-const walletService = new WalletService();
+const walletService = new WalletService(require('../config/serviceContainer').getStellarService());
+const AuditLogService = require('../services/AuditLogService');
 const walletCreateSchema = validateSchema({
   body: {
     fields: {
@@ -33,6 +36,7 @@ const walletCreateSchema = validateSchema({
       },
       label: { type: 'string', required: false, maxLength: 255, nullable: true },
       ownerName: { type: 'string', required: false, maxLength: 255, nullable: true },
+      sponsored: { type: 'boolean', required: false, nullable: true },
     },
   },
 });
@@ -82,33 +86,25 @@ const walletPublicKeySchema = validateSchema({
 
 /**
  * POST /wallets
- * Create a new wallet with metadata
+ * Create a new wallet with metadata. Auto-funds via Friendbot on testnet.
  */
-router.post('/', checkPermission(PERMISSIONS.WALLETS_CREATE), walletCreateSchema, (req, res) => {
+router.post('/', checkPermission(PERMISSIONS.WALLETS_CREATE), walletCreateSchema, async (req, res) => {
+router.post('/', payloadSizeLimiter(ENDPOINT_LIMITS.wallet), checkPermission(PERMISSIONS.WALLETS_CREATE), walletCreateSchema, async (req, res, next) => {
   try {
-    const { address, label, ownerName } = req.body;
+    const { address, label, ownerName, sponsored } = req.body;
 
-    if (!address) {
-      return res.status(400).json({
-        error: 'Missing required field: address'
-      });
-    }
+    const wallet = await walletService.createWallet({ address, label, ownerName, sponsored: !!sponsored });
 
-    const existingWallet = Wallet.getByAddress(address);
-    if (existingWallet) {
-      return res.status(409).json({
-        error: 'Wallet with this address already exists'
-      });
-    }
-
-    // Sanitize user-provided metadata
-    const sanitizedLabel = label ? sanitizeLabel(label) : null;
-    const sanitizedOwnerName = ownerName ? sanitizeName(ownerName) : null;
-
-    const wallet = Wallet.create({
-      address,
-      label: sanitizedLabel,
-      ownerName: sanitizedOwnerName
+    await AuditLogService.log({
+      category: AuditLogService.CATEGORY.WALLET_OPERATION,
+      action: AuditLogService.ACTION.WALLET_CREATED,
+      severity: AuditLogService.SEVERITY.MEDIUM,
+      result: 'SUCCESS',
+      userId: req.user && req.user.id,
+      requestId: req.id,
+      ipAddress: req.ip,
+      resource: `/wallets/${wallet.id}`,
+      details: { address, funded: wallet.funded }
     });
 
     res.status(201).json({
@@ -143,23 +139,39 @@ router.get('/', checkPermission(PERMISSIONS.WALLETS_READ), (req, res, next) => {
 });
 
 /**
+ * GET /wallets/:id/balance
+ * Get wallet balance natively bypassing horizon load via TTL
+ */
+router.get('/:id/balance', checkPermission(PERMISSIONS.WALLETS_READ), walletIdSchema, async (req, res, next) => {
+  try {
+    const forceRefresh = req.query.refresh === 'true';
+    const result = await walletService.getBalance(req.params.id, forceRefresh);
+    
+    res.setHeader('X-Cache', result.cached ? 'HIT' : 'MISS');
+    
+    res.json({
+      success: true,
+      data: {
+        balance: result.balance,
+        asset: result.asset
+      }
+    });
+  } catch (error) {
+    next(error);
+  }
+});
+
+/**
  * GET /wallets/:id
  * Get a specific wallet
  */
-router.get('/:id', checkPermission(PERMISSIONS.WALLETS_READ), walletIdSchema, (req, res) => {
+router.get('/:id', checkPermission(PERMISSIONS.WALLETS_READ), walletIdSchema, async (req, res, next) => {
   try {
-    const wallet = Wallet.getById(req.params.id);
-
+    const wallet = await walletService.getWalletById(req.params.id);
     if (!wallet) {
-      return res.status(404).json({
-        error: 'Wallet not found'
-      });
+      return res.status(404).json({ success: false, error: 'Wallet not found' });
     }
-
-    res.json({
-      success: true,
-      data: wallet
-    });
+    res.json({ success: true, data: wallet });
   } catch (error) {
     next(error);
   }
@@ -169,7 +181,7 @@ router.get('/:id', checkPermission(PERMISSIONS.WALLETS_READ), walletIdSchema, (r
  * PATCH /wallets/:id
  * Update wallet metadata
  */
-router.patch('/:id', checkPermission(PERMISSIONS.WALLETS_UPDATE), walletUpdateSchema, (req, res) => {
+router.patch('/:id', checkPermission(PERMISSIONS.WALLETS_UPDATE), walletUpdateSchema, async (req, res, next) => {
   try {
     const { label, ownerName } = req.body;
 
@@ -179,23 +191,21 @@ router.patch('/:id', checkPermission(PERMISSIONS.WALLETS_UPDATE), walletUpdateSc
       });
     }
 
-    // Sanitize user-provided metadata
-    const updates = {};
-    if (label !== undefined) updates.label = sanitizeLabel(label);
-    if (ownerName !== undefined) updates.ownerName = sanitizeName(ownerName);
+    const wallet = await walletService.updateWallet(req.params.id, { label, ownerName });
 
-    const wallet = Wallet.update(req.params.id, updates);
-
-    if (!wallet) {
-      return res.status(404).json({
-        error: 'Wallet not found'
-      });
-    }
-
-    res.json({
-      success: true,
-      data: wallet
+    await AuditLogService.log({
+      category: AuditLogService.CATEGORY.WALLET_OPERATION,
+      action: AuditLogService.ACTION.WALLET_UPDATED,
+      severity: AuditLogService.SEVERITY.MEDIUM,
+      result: 'SUCCESS',
+      userId: req.user && req.user.id,
+      requestId: req.id,
+      ipAddress: req.ip,
+      resource: `/wallets/${req.params.id}`,
+      details: { walletId: req.params.id, updates: { label, ownerName } }
     });
+
+    res.json({ success: true, data: wallet });
   } catch (error) {
     next(error);
   }
@@ -312,7 +322,46 @@ router.patch('/:id/limits', requireAdmin(), async (req, res, next) => {
       [userId]
     );
 
+    await AuditLogService.log({
+      category: AuditLogService.CATEGORY.WALLET_OPERATION,
+      action: AuditLogService.ACTION.WALLET_UPDATED,
+      severity: AuditLogService.SEVERITY.HIGH,
+      result: 'SUCCESS',
+      userId: req.user && req.user.id,
+      requestId: req.id,
+      ipAddress: req.ip,
+      resource: `/wallets/${userId}/limits`,
+      details: { walletId: userId, limits, updatedBy: req.user && req.user.id }
+    });
+
     res.json({ success: true, data: updated });
+  } catch (error) {
+    next(error);
+  }
+});
+
+/**
+ * POST /wallets/:id/revoke-sponsorship
+ * Revoke platform sponsorship for a wallet.
+ * Requires SPONSOR_SECRET to be configured in environment.
+ */
+router.post('/:id/revoke-sponsorship', checkPermission(PERMISSIONS.WALLETS_UPDATE), walletIdSchema, async (req, res, next) => {
+  try {
+    const result = await walletService.revokeSponsoredAccount(req.params.id);
+
+    await AuditLogService.log({
+      category: AuditLogService.CATEGORY.WALLET_OPERATION,
+      action: 'SPONSORSHIP_REVOKED',
+      severity: AuditLogService.SEVERITY.HIGH,
+      result: 'SUCCESS',
+      userId: req.user && req.user.id,
+      requestId: req.id,
+      ipAddress: req.ip,
+      resource: `/wallets/${req.params.id}/revoke-sponsorship`,
+      details: { walletId: req.params.id }
+    });
+
+    res.json({ success: true, data: result });
   } catch (error) {
     next(error);
   }

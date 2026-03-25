@@ -15,6 +15,7 @@ const RecurringDonationScheduler = require('../services/RecurringDonationSchedul
 const TransactionReconciliationService = require('../services/TransactionReconciliationService');
 const IdempotencyService = require('../services/IdempotencyService');
 const TransactionSyncService = require('../services/TransactionSyncService');
+const NetworkStatusService = require('../services/NetworkStatusService');
 
 class ServiceContainer {
   constructor(config = {}) {
@@ -40,6 +41,9 @@ class ServiceContainer {
     this.transactionSyncService = new TransactionSyncService(
       this.stellarService
     );
+
+    // Initialize Network Status Service
+    this.networkStatusService = new NetworkStatusService(this.stellarService);
   }
 
   getStellarService() {
@@ -61,19 +65,24 @@ class ServiceContainer {
   getTransactionSyncService() {
     return this.transactionSyncService;
   }
+
+  getNetworkStatusService() {
+    return this.networkStatusService;
+  }
 }
+
+const appConfig = require('./index');
 
 let _instance = null;
 
 function getInstance() {
   if (!_instance) {
     _instance = new ServiceContainer({
-      useMockStellar: process.env.USE_MOCK_STELLAR === 'true' || process.env.MOCK_STELLAR === 'true',
+      useMockStellar: appConfig.stellar.mockEnabled,
       stellar: {
-        network: process.env.STELLAR_NETWORK || 'testnet',
-        horizonUrl: process.env.HORIZON_URL,
-        serviceSecretKey: process.env.STELLAR_SECRET || process.env.SERVICE_SECRET_KEY || null,
-      }
+        ...appConfig.stellar,
+        serviceSecretKey: appConfig.stellar.serviceSecretKey || process.env.STELLAR_SECRET || process.env.SERVICE_SECRET_KEY || null,
+      },
     });
   }
   return _instance;

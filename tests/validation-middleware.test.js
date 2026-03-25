@@ -15,7 +15,7 @@ describe('Validation Middleware - Integration Tests', () => {
   describe('Donation Creation Validation', () => {
     test('should reject request with missing amount field', async () => {
       const response = await request(app)
-        .post('/donations')
+        .post('/api/v1/donations')
         .send({ recipient: 'test-recipient' });
 
       expect(response.status).toBe(400);
@@ -26,7 +26,7 @@ describe('Validation Middleware - Integration Tests', () => {
 
     test('should reject missing recipient', async () => {
       const response = await request(app)
-        .post('/donations')
+        .post('/api/v1/donations')
         .send({ amount: 10 });
 
       expect(response.status).toBe(400);
@@ -37,7 +37,7 @@ describe('Validation Middleware - Integration Tests', () => {
 
     test('should reject zero amount', async () => {
       const response = await request(app)
-        .post('/donations')
+        .post('/api/v1/donations')
         .send({ amount: 0, recipient: 'test-recipient' });
 
       expect(response.status).toBe(400);
@@ -47,7 +47,7 @@ describe('Validation Middleware - Integration Tests', () => {
 
     test('should reject negative amount', async () => {
       const response = await request(app)
-        .post('/donations')
+        .post('/api/v1/donations')
         .send({ amount: -10, recipient: 'test-recipient' });
 
       expect(response.status).toBe(400);
@@ -57,7 +57,7 @@ describe('Validation Middleware - Integration Tests', () => {
 
     test('should reject invalid amount format', async () => {
       const response = await request(app)
-        .post('/donations')
+        .post('/api/v1/donations')
         .send({ amount: 'not-a-number', recipient: 'test-recipient' });
 
       expect(response.status).toBe(400);
@@ -67,7 +67,7 @@ describe('Validation Middleware - Integration Tests', () => {
 
     test('should reject same donor and recipient', async () => {
       const response = await request(app)
-        .post('/donations')
+        .post('/api/v1/donations')
         .send({
           amount: 10,
           donor: 'same-wallet',
@@ -81,7 +81,7 @@ describe('Validation Middleware - Integration Tests', () => {
 
     test('should reject invalid Stellar address for recipient', async () => {
       const response = await request(app)
-        .post('/donations')
+        .post('/api/v1/donations')
         .send({
           amount: 10,
           recipient: 'GINVALID123'
@@ -95,7 +95,7 @@ describe('Validation Middleware - Integration Tests', () => {
 
     test('should accept valid donation', async () => {
       const response = await request(app)
-        .post('/donations')
+        .post('/api/v1/donations')
         .send({
           amount: 10.5,
           donor: 'Anonymous',
@@ -111,7 +111,7 @@ describe('Validation Middleware - Integration Tests', () => {
     test('should accept valid Stellar address', async () => {
       const validAddress = 'GBRPYHIL2CI3FNQ4BXLFMNDLFJUNPU2HY3ZMFSHONUCEOASW7QC7OX2H';
       const response = await request(app)
-        .post('/donations')
+        .post('/api/v1/donations')
         .send({
           amount: 10,
           recipient: validAddress
@@ -125,7 +125,7 @@ describe('Validation Middleware - Integration Tests', () => {
   describe('Transaction Verification Validation', () => {
     test('should reject request with missing transaction hash', async () => {
       const response = await request(app)
-        .post('/donations/verify')
+        .post('/api/v1/donations/verify')
         .send({});
 
       expect(response.status).toBe(400);
@@ -136,7 +136,7 @@ describe('Validation Middleware - Integration Tests', () => {
 
     test('should reject invalid transaction hash format', async () => {
       const response = await request(app)
-        .post('/donations/verify')
+        .post('/api/v1/donations/verify')
         .send({ transactionHash: 'invalid-hash' });
 
       expect(response.status).toBe(400);
@@ -147,7 +147,7 @@ describe('Validation Middleware - Integration Tests', () => {
     test('should accept valid transaction hash', async () => {
       const validHash = 'a'.repeat(64);
       const response = await request(app)
-        .post('/donations/verify')
+        .post('/api/v1/donations/verify')
         .send({ transactionHash: validHash });
 
       expect(response.status).toBe(200);
@@ -158,7 +158,7 @@ describe('Validation Middleware - Integration Tests', () => {
   describe('Date Range Validation', () => {
     test('should reject request with missing startDate parameter', async () => {
       const response = await request(app)
-        .get('/stats/daily')
+        .get('/api/v1/stats/daily')
         .query({ endDate: '2024-12-31' });
 
       expect(response.status).toBe(400);
@@ -168,7 +168,7 @@ describe('Validation Middleware - Integration Tests', () => {
 
     test('should reject missing endDate', async () => {
       const response = await request(app)
-        .get('/stats/daily')
+        .get('/api/v1/stats/daily')
         .query({ startDate: '2024-01-01' });
 
       expect(response.status).toBe(400);
@@ -178,7 +178,7 @@ describe('Validation Middleware - Integration Tests', () => {
 
     test('should reject invalid date format', async () => {
       const response = await request(app)
-        .get('/stats/daily')
+        .get('/api/v1/stats/daily')
         .query({ startDate: 'invalid', endDate: '2024-12-31' });
 
       expect(response.status).toBe(400);
@@ -188,7 +188,7 @@ describe('Validation Middleware - Integration Tests', () => {
 
     test('should reject start date after end date', async () => {
       const response = await request(app)
-        .get('/stats/daily')
+        .get('/api/v1/stats/daily')
         .query({ startDate: '2024-12-31', endDate: '2024-01-01' });
 
       expect(response.status).toBe(400);
@@ -198,7 +198,7 @@ describe('Validation Middleware - Integration Tests', () => {
 
     test('should accept valid date range', async () => {
       const response = await request(app)
-        .get('/stats/daily')
+        .get('/api/v1/stats/daily')
         .query({ startDate: '2024-01-01', endDate: '2024-12-31' });
 
       expect(response.status).toBe(200);
@@ -209,7 +209,7 @@ describe('Validation Middleware - Integration Tests', () => {
   describe('Wallet Creation Validation', () => {
     test('should reject request with missing name field', async () => {
       const response = await request(app)
-        .post('/wallets')
+        .post('/api/v1/wallets')
         .send({ walletAddress: 'GBRPYHIL2CI3FNQ4BXLFMNDLFJUNPU2HY3ZMFSHONUCEOASW7QC7OX2H' });
 
       expect(response.status).toBe(400);
@@ -220,7 +220,7 @@ describe('Validation Middleware - Integration Tests', () => {
 
     test('should reject missing wallet address', async () => {
       const response = await request(app)
-        .post('/wallets')
+        .post('/api/v1/wallets')
         .send({ name: 'Test User' });
 
       expect(response.status).toBe(400);
@@ -231,7 +231,7 @@ describe('Validation Middleware - Integration Tests', () => {
 
     test('should reject invalid Stellar address', async () => {
       const response = await request(app)
-        .post('/wallets')
+        .post('/api/v1/wallets')
         .send({
           name: 'Test User',
           walletAddress: 'INVALID123'
@@ -245,7 +245,7 @@ describe('Validation Middleware - Integration Tests', () => {
     test('should accept valid wallet creation', async () => {
       const validAddress = 'GBRPYHIL2CI3FNQ4BXLFMNDLFJUNPU2HY3ZMFSHONUCEOASW7QC7OX2H';
       const response = await request(app)
-        .post('/wallets')
+        .post('/api/v1/wallets')
         .send({
           name: 'Test User',
           walletAddress: validAddress
@@ -259,7 +259,7 @@ describe('Validation Middleware - Integration Tests', () => {
   describe('Wallet Lookup Validation', () => {
     test('should reject request with missing wallet address', async () => {
       const response = await request(app)
-        .post('/wallets/lookup')
+        .post('/api/v1/wallets/lookup')
         .send({});
 
       expect(response.status).toBe(400);
@@ -269,7 +269,7 @@ describe('Validation Middleware - Integration Tests', () => {
 
     test('should reject invalid Stellar address', async () => {
       const response = await request(app)
-        .post('/wallets/lookup')
+        .post('/api/v1/wallets/lookup')
         .send({ walletAddress: 'INVALID' });
 
       expect(response.status).toBe(400);

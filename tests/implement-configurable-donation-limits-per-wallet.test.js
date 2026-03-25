@@ -196,7 +196,7 @@ describe('LimitService.setWalletLimits', () => {
 describe('PATCH /wallets/:id/limits', () => {
   test('admin can set limits', async () => {
     const res = await request(app)
-      .patch(`/wallets/${senderId}/limits`)
+      .patch(`/api/v1/wallets/${senderId}/limits`)
       .set('x-api-key', ADMIN_KEY)
       .send({ daily_limit: 1000, monthly_limit: 10000, per_transaction_limit: 200 });
 
@@ -209,7 +209,7 @@ describe('PATCH /wallets/:id/limits', () => {
 
   test('admin can set partial limits', async () => {
     const res = await request(app)
-      .patch(`/wallets/${senderId}/limits`)
+      .patch(`/api/v1/wallets/${senderId}/limits`)
       .set('x-api-key', ADMIN_KEY)
       .send({ daily_limit: 500 });
 
@@ -221,7 +221,7 @@ describe('PATCH /wallets/:id/limits', () => {
     await LimitService.setWalletLimits(senderId, { daily_limit: 500 });
 
     const res = await request(app)
-      .patch(`/wallets/${senderId}/limits`)
+      .patch(`/api/v1/wallets/${senderId}/limits`)
       .set('x-api-key', ADMIN_KEY)
       .send({ daily_limit: null });
 
@@ -231,7 +231,7 @@ describe('PATCH /wallets/:id/limits', () => {
 
   test('non-admin gets 403', async () => {
     const res = await request(app)
-      .patch(`/wallets/${senderId}/limits`)
+      .patch(`/api/v1/wallets/${senderId}/limits`)
       .set('x-api-key', USER_KEY)
       .send({ daily_limit: 100 });
 
@@ -240,7 +240,7 @@ describe('PATCH /wallets/:id/limits', () => {
 
   test('unauthenticated gets 401', async () => {
     const res = await request(app)
-      .patch(`/wallets/${senderId}/limits`)
+      .patch(`/api/v1/wallets/${senderId}/limits`)
       .send({ daily_limit: 100 });
 
     expect(res.status).toBe(401);
@@ -248,7 +248,7 @@ describe('PATCH /wallets/:id/limits', () => {
 
   test('returns 404 for non-existent wallet', async () => {
     const res = await request(app)
-      .patch('/wallets/999999/limits')
+      .patch('/api/v1/wallets/999999/limits')
       .set('x-api-key', ADMIN_KEY)
       .send({ daily_limit: 100 });
 
@@ -257,7 +257,7 @@ describe('PATCH /wallets/:id/limits', () => {
 
   test('rejects negative limit value', async () => {
     const res = await request(app)
-      .patch(`/wallets/${senderId}/limits`)
+      .patch(`/api/v1/wallets/${senderId}/limits`)
       .set('x-api-key', ADMIN_KEY)
       .send({ daily_limit: -100 });
 
@@ -266,7 +266,7 @@ describe('PATCH /wallets/:id/limits', () => {
 
   test('rejects zero limit value', async () => {
     const res = await request(app)
-      .patch(`/wallets/${senderId}/limits`)
+      .patch(`/api/v1/wallets/${senderId}/limits`)
       .set('x-api-key', ADMIN_KEY)
       .send({ per_transaction_limit: 0 });
 
@@ -275,7 +275,7 @@ describe('PATCH /wallets/:id/limits', () => {
 
   test('rejects body with no recognized limit fields', async () => {
     const res = await request(app)
-      .patch(`/wallets/${senderId}/limits`)
+      .patch(`/api/v1/wallets/${senderId}/limits`)
       .set('x-api-key', ADMIN_KEY)
       .send({ unknown_field: 100 });
 
@@ -284,7 +284,7 @@ describe('PATCH /wallets/:id/limits', () => {
 
   test('rejects invalid wallet ID', async () => {
     const res = await request(app)
-      .patch('/wallets/abc/limits')
+      .patch('/api/v1/wallets/abc/limits')
       .set('x-api-key', ADMIN_KEY)
       .send({ daily_limit: 100 });
 
@@ -299,7 +299,7 @@ describe('POST /donations/send — limit enforcement', () => {
     await LimitService.setWalletLimits(senderId, { per_transaction_limit: 500 });
 
     const res = await request(app)
-      .post('/donations/send')
+      .post('/api/v1/donations/send')
       .set('Idempotency-Key', nextKey())
       .send({ senderId, receiverId, amount: 100 });
 
@@ -311,7 +311,7 @@ describe('POST /donations/send — limit enforcement', () => {
     await LimitService.setWalletLimits(senderId, { per_transaction_limit: 50 });
 
     const res = await request(app)
-      .post('/donations/send')
+      .post('/api/v1/donations/send')
       .set('Idempotency-Key', nextKey())
       .send({ senderId, receiverId, amount: 100 });
 
@@ -329,7 +329,7 @@ describe('POST /donations/send — limit enforcement', () => {
     );
 
     const res = await request(app)
-      .post('/donations/send')
+      .post('/api/v1/donations/send')
       .set('Idempotency-Key', nextKey())
       .send({ senderId, receiverId, amount: 30 });
 
@@ -346,7 +346,7 @@ describe('POST /donations/send — limit enforcement', () => {
     );
 
     const res = await request(app)
-      .post('/donations/send')
+      .post('/api/v1/donations/send')
       .set('Idempotency-Key', nextKey())
       .send({ senderId, receiverId, amount: 30 });
 
@@ -358,7 +358,7 @@ describe('POST /donations/send — limit enforcement', () => {
     await LimitService.setWalletLimits(senderId, { per_transaction_limit: 10 });
 
     const res = await request(app)
-      .post('/donations/send')
+      .post('/api/v1/donations/send')
       .set('Idempotency-Key', nextKey())
       .send({ senderId, receiverId, amount: 100 });
 
@@ -380,7 +380,7 @@ describe('Response headers — X-Donation-Daily-Remaining / X-Donation-Monthly-R
     await LimitService.setWalletLimits(senderId, { daily_limit: 500 });
 
     const res = await request(app)
-      .post('/donations/send')
+      .post('/api/v1/donations/send')
       .set('Idempotency-Key', nextKey())
       .send({ senderId, receiverId, amount: 100 });
 
@@ -393,7 +393,7 @@ describe('Response headers — X-Donation-Daily-Remaining / X-Donation-Monthly-R
     await LimitService.setWalletLimits(senderId, { monthly_limit: 1000 });
 
     const res = await request(app)
-      .post('/donations/send')
+      .post('/api/v1/donations/send')
       .set('Idempotency-Key', nextKey())
       .send({ senderId, receiverId, amount: 200 });
 
@@ -404,7 +404,7 @@ describe('Response headers — X-Donation-Daily-Remaining / X-Donation-Monthly-R
 
   test('headers are absent when no limits are set', async () => {
     const res = await request(app)
-      .post('/donations/send')
+      .post('/api/v1/donations/send')
       .set('Idempotency-Key', nextKey())
       .send({ senderId, receiverId, amount: 50 });
 
@@ -417,14 +417,14 @@ describe('Response headers — X-Donation-Daily-Remaining / X-Donation-Monthly-R
     await LimitService.setWalletLimits(senderId, { daily_limit: 300 });
 
     const res1 = await request(app)
-      .post('/donations/send')
+      .post('/api/v1/donations/send')
       .set('Idempotency-Key', nextKey())
       .send({ senderId, receiverId, amount: 100 });
 
     expect(Number(res1.headers['x-donation-daily-remaining'])).toBe(200);
 
     const res2 = await request(app)
-      .post('/donations/send')
+      .post('/api/v1/donations/send')
       .set('Idempotency-Key', nextKey())
       .send({ senderId, receiverId, amount: 50 });
 

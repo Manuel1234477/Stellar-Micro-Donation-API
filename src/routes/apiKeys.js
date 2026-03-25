@@ -28,6 +28,8 @@ const apiKeyCreateSchema = validateSchema({
       role: { type: 'string', required: false, enum: ['admin', 'user', 'guest'] },
       expiresInDays: { type: 'integer', required: false, min: 1 },
       metadata: { type: 'object', required: false, nullable: true },
+      rateLimit: { type: 'integer', required: false, min: 1 },
+      rateLimitWindowSeconds: { type: 'integer', required: false, min: 1 },
     },
   },
 });
@@ -64,7 +66,7 @@ const apiKeyCleanupSchema = validateSchema({
  */
 router.post('/', requireAdmin(), apiKeyCreateSchema, async (req, res, next) => {
   try {
-    const { name, role = 'user', expiresInDays, metadata } = req.body;
+    const { name, role = 'user', expiresInDays, metadata, rateLimit, rateLimitWindowSeconds } = req.body;
 
     const nameValidation = validateNonEmptyString(name, 'Name');
     if (!nameValidation.valid) {
@@ -88,7 +90,9 @@ router.post('/', requireAdmin(), apiKeyCreateSchema, async (req, res, next) => {
       role,
       expiresInDays,
       createdBy: req.user.id,
-      metadata: metadata || {}
+      metadata: metadata || {},
+      rateLimit: rateLimit || null,
+      rateLimitWindowSeconds: rateLimitWindowSeconds || null,
     });
 
     // Audit log: API key created
@@ -121,6 +125,8 @@ router.post('/', requireAdmin(), apiKeyCreateSchema, async (req, res, next) => {
         status: keyInfo.status,
         createdAt: keyInfo.createdAt,
         expiresAt: keyInfo.expiresAt,
+        rateLimit: keyInfo.rateLimit,
+        rateLimitWindowSeconds: keyInfo.rateLimitWindowSeconds,
         warning: 'Store this key securely. It will not be shown again.'
       }
     });
@@ -168,10 +174,77 @@ router.get('/', requireAdmin(), apiKeyListQuerySchema, async (req, res, next) =>
   }
 });
 
+const apiKeyRotateSchema = validateSchema({
+  body: {
+    fields: {
+      gracePeriodDays: { type: 'integer', required: false, min: 1 },
+    },
+  },
+});
+
 /**
- * POST /api/v1/api-keys/:id/deprecate
- * Deprecate an API key (admin only)
+ * POST /api/v1/api-keys/:id/rotate
+ * Atomically rotate an API key: creates a new key and deprecates the old one (admin only)
  */
+router.post('/:id/rotate', requireAdmin(), apiKeyIdParamSchema, apiKeyRotateSchema, async (req, res, next) => {
+  try {
+    const keyIdValidation = validateInteger(req.params.id, { min: 1 });
+    if (!keyIdValidation.valid) {
+      throw new ValidationError(`Invalid key ID: ${keyIdValidation.error}`);
+    }
+
+    const gracePeriodDays = req.body.gracePeriodDays ?? 30;
+
+    const result = await apiKeysModel.rotateApiKey(keyIdValidation.value, { gracePeriodDays });
+
+    if (!result) {
+      return res.status(404).json({
+        success: false,
+        error: { code: 'NOT_FOUND', message: 'API key not found or already revoked' }
+      });
+    }
+
+    await AuditLogService.log({
+      category: AuditLogService.CATEGORY.API_KEY_MANAGEMENT,
+      action: AuditLogService.ACTION.API_KEY_CREATED,
+      severity: AuditLogService.SEVERITY.HIGH,
+      result: 'SUCCESS',
+      userId: req.user.id,
+      requestId: req.id,
+      ipAddress: req.ip,
+      resource: `/api/v1/api-keys/${keyIdValidation.value}/rotate`,
+      details: {
+        oldKeyId: result.oldKeyId,
+        newKeyId: result.newKey.id,
+        gracePeriodDays,
+        autoRevokeAt: result.autoRevokeAt,
+        rotatedBy: req.user.id,
+      }
+    });
+
+    res.status(201).json({
+      success: true,
+      data: {
+        newKey: {
+          id: result.newKey.id,
+          key: result.newKey.key,
+          keyPrefix: result.newKey.keyPrefix,
+          name: result.newKey.name,
+          role: result.newKey.role,
+          status: result.newKey.status,
+          createdAt: result.newKey.createdAt,
+          warning: 'Store this key securely. It will not be shown again.',
+        },
+        oldKeyId: result.oldKeyId,
+        deprecatedAt: result.deprecatedAt,
+        gracePeriodDays: result.gracePeriodDays,
+        autoRevokeAt: result.autoRevokeAt,
+      }
+    });
+  } catch (error) {
+    next(error);
+  }
+});
 router.post('/:id/deprecate', requireAdmin(), apiKeyIdParamSchema, async (req, res, next) => {
   try {
     const keyIdValidation = validateInteger(req.params.id, { min: 1 });
@@ -279,6 +352,18 @@ router.post('/cleanup', requireAdmin(), apiKeyCleanupSchema, async (req, res, ne
     }
 
     const deletedCount = await apiKeysModel.cleanupOldKeys(retentionDays);
+
+    await AuditLogService.log({
+      category: AuditLogService.CATEGORY.API_KEY_MANAGEMENT,
+      action: 'API_KEY_CLEANUP',
+      severity: AuditLogService.SEVERITY.HIGH,
+      result: 'SUCCESS',
+      userId: req.user.id,
+      requestId: req.id,
+      ipAddress: req.ip,
+      resource: '/api/v1/api-keys/cleanup',
+      details: { retentionDays, deletedCount, performedBy: req.user.id }
+    });
 
     res.json({
       success: true,

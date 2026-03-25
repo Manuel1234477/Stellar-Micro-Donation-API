@@ -485,6 +485,29 @@ class MockStellarService extends StellarServiceInterface {
     });
   }
 
+  /**
+   * Fund a new account via Friendbot (testnet only).
+   * On mainnet, logs a warning and returns { funded: false }.
+   * @param {string} publicKey - Stellar public key
+   * @returns {Promise<{funded: boolean, balance?: string}>}
+   */
+  async fundWithFriendbot(publicKey) {
+    if (this.network !== 'testnet') {
+      return { funded: false };
+    }
+    try {
+      const result = await this.fundTestnetWallet(publicKey);
+      return { funded: true, balance: result.balance };
+    } catch (err) {
+      return { funded: false, error: err.message };
+    }
+  }
+
+  /**
+   * Check if an account is funded
+   * @param {string} publicKey - Stellar public key
+   * @returns {Promise<{funded: boolean, balance: string, exists: boolean}>}
+   */
   async isAccountFunded(publicKey) {
     await this._simulateNetworkDelay();
     this._checkRateLimit();
@@ -504,7 +527,18 @@ class MockStellarService extends StellarServiceInterface {
     };
   }
 
-  async sendDonation({ sourceSecret, destinationPublic, amount, memo, asset = NATIVE_ASSET }) {
+  /**
+   * Send a mock donation transaction.
+   * @param {Object} params
+   * @param {string} params.sourceSecret - Source account secret key
+   * @param {string} params.destinationPublic - Destination public key
+   * @param {string} params.amount - Amount to transfer
+   * @param {string} [params.memo] - Transaction memo
+   * @param {string} [params.memoType='text'] - Stellar memo type
+   * @param {Object} [params.asset=NATIVE_ASSET] - Asset to transfer
+   * @returns {Promise<{transactionId: string, ledger: number, status: string, confirmedAt: string}>}
+   */
+  async sendDonation({ sourceSecret, destinationPublic, amount, memo, memoType = 'text', asset = NATIVE_ASSET }) {
     return this._executeWithRetry(async () => {
       await this._simulateNetworkDelay();
       this._checkRateLimit();
@@ -513,6 +547,14 @@ class MockStellarService extends StellarServiceInterface {
       this._validateAmount(amount);
       this._simulateFailure();
       this._simulateRandomFailure();
+
+      const MemoValidator = require('../utils/memoValidator');
+      if (memo) {
+        const memoValidation = MemoValidator.validateWithType(memo, memoType);
+        if (!memoValidation.valid) {
+          throw new ValidationError(memoValidation.error);
+        }
+      }
 
       const sourceWallet = this._findWalletBySecret(sourceSecret);
       if (!sourceWallet) {
@@ -548,6 +590,7 @@ class MockStellarService extends StellarServiceInterface {
         amount: Number(amount).toFixed(7),
         asset: serializeAsset(asset),
         memo: memo || '',
+        memoType,
         timestamp: new Date().toISOString(),
         ledger: Math.floor(Math.random() * 1000000) + 1000000,
         status: 'confirmed',
@@ -565,6 +608,15 @@ class MockStellarService extends StellarServiceInterface {
     });
   }
 
+  /**
+   * Discover a deterministic mock path quote between two assets.
+   * @param {Object} params
+   * @param {Object} params.sourceAsset - Source asset
+   * @param {string} [params.sourceAmount] - Source amount
+   * @param {Object} params.destAsset - Destination asset
+   * @param {string} [params.destAmount] - Destination amount
+   * @returns {Promise<Object|null>} Path estimate or null when unavailable
+   */
   async discoverBestPath({ sourceAsset, sourceAmount, destAsset, destAmount }) {
     return this._executeWithRetry(async () => {
       await this._simulateNetworkDelay();
@@ -597,6 +649,16 @@ class MockStellarService extends StellarServiceInterface {
     });
   }
 
+  /**
+   * Execute a mock path payment using the deterministic quote produced by discoverBestPath.
+   * @param {Object} sourceAsset - Source asset
+   * @param {string} sourceAmount - Source amount
+   * @param {Object} destAsset - Destination asset
+   * @param {string} destAmount - Destination amount
+   * @param {Array<Object>} path - Submitted path
+   * @param {Object} [options={}] - Execution options
+   * @returns {Promise<{transactionId: string, ledger: number, status: string, confirmedAt: string}>}
+   */
   async pathPayment(sourceAsset, sourceAmount, destAsset, destAmount, path, options = {}) {
     return this._executeWithRetry(async () => {
       await this._simulateNetworkDelay();
@@ -692,6 +754,31 @@ class MockStellarService extends StellarServiceInterface {
     });
   }
 
+  /**
+   * Send multiple payments from the same source in a single mock batch transaction.
+   * @param {string} sourceSecret - Source account secret key
+   * @param {Array<{destinationPublic: string, amount: string, memo?: string}>} payments - Payment list
+   * @returns {Promise<{transactionId: string, ledger: number}>}
+   */
+  async sendBatchDonations(sourceSecret, payments) {
+    let lastResult;
+    for (const payment of payments) {
+      lastResult = await this.sendDonation({
+        sourceSecret,
+        destinationPublic: payment.destinationPublic,
+        amount: payment.amount,
+        memo: payment.memo,
+      });
+    }
+    return { transactionId: lastResult.transactionId, ledger: lastResult.ledger };
+  }
+
+  /**
+   * Get mock transaction history
+   * @param {string} publicKey - Stellar public key
+   * @param {number} limit - Number of transactions to retrieve
+   * @returns {Promise<Array>}
+   */
   async getTransactionHistory(publicKey, limit = 10) {
     await this._simulateNetworkDelay();
     this._checkRateLimit();
@@ -877,10 +964,17 @@ class MockStellarService extends StellarServiceInterface {
     this._setWalletAssetBalance(wallet, asset, Number(amount));
   }
 
+  /**
+   * Clear all mock data (useful for testing).
+   * @private
+   */
   _clearAllData() {
     this.wallets.clear();
     this.transactions.clear();
     this.streamListeners.clear();
+    if (this.claimableBalances) this.claimableBalances.clear();
+    if (this.offers) this.offers.clear();
+    if (this.sponsorships) this.sponsorships.clear();
   }
 
   _getState() {
@@ -889,6 +983,423 @@ class MockStellarService extends StellarServiceInterface {
       transactions: Object.fromEntries(this.transactions),
       streamListeners: this.streamListeners.size,
     };
+  }
+
+  /**
+   * Create a claimable balance on the mock Stellar network.
+   *
+   * @param {Object} params
+   * @param {string} params.sourceSecret - Funding account secret key
+   * @param {string} params.amount - Amount in XLM
+   * @param {Array<{destination: string, predicate?: Object}>} params.claimants - List of claimants
+   * @param {Object} [params.predicate] - Optional time-based predicate applied to all claimants
+   * @returns {Promise<{balanceId: string, transactionId: string, ledger: number}>}
+   */
+  async createClaimableBalance({ sourceSecret, amount, claimants, predicate = null }) {
+    await this._simulateNetworkDelay();
+    this._checkRateLimit();
+    this._simulateFailure();
+
+    this._validateSecretKey(sourceSecret);
+    this._validateAmount(amount);
+
+    if (!Array.isArray(claimants) || claimants.length === 0) {
+      throw new ValidationError('At least one claimant is required');
+    }
+    if (claimants.length > 10) {
+      throw new ValidationError('Maximum 10 claimants allowed');
+    }
+    for (const c of claimants) {
+      this._validatePublicKey(c.destination);
+    }
+
+    // Derive source public key from secret (mock: just look it up or derive)
+    const sourcePublic = this._secretToPublic(sourceSecret);
+    const wallet = this.wallets.get(sourcePublic);
+    if (!wallet) {
+      throw new NotFoundError('Source account not found', ERROR_CODES.WALLET_NOT_FOUND);
+    }
+
+    const amountNum = parseFloat(amount);
+    const balanceNum = parseFloat(wallet.balance);
+    if (balanceNum < amountNum) {
+      throw new BusinessLogicError(
+        ERROR_CODES.TRANSACTION_FAILED,
+        'Insufficient balance for claimable balance creation'
+      );
+    }
+
+    // Deduct from source
+    wallet.balance = (balanceNum - amountNum).toFixed(7);
+
+    const balanceId = `00000000${crypto.randomBytes(28).toString('hex')}`;
+    const txId = crypto.randomBytes(32).toString('hex');
+    const ledger = Math.floor(Math.random() * 1000000) + 1000000;
+
+    if (!this.claimableBalances) this.claimableBalances = new Map();
+
+    this.claimableBalances.set(balanceId, {
+      balanceId,
+      amount,
+      claimants: claimants.map(c => ({ destination: c.destination, predicate: c.predicate || predicate || null })),
+      sponsor: sourcePublic,
+      claimed: false,
+      claimedBy: null,
+      createdAt: new Date().toISOString(),
+      predicate,
+    });
+
+    return { balanceId, transactionId: txId, ledger };
+  }
+
+  /**
+   * Claim a claimable balance.
+   *
+   * @param {Object} params
+   * @param {string} params.balanceId - Claimable balance ID
+   * @param {string} params.claimantSecret - Claimant account secret key
+   * @returns {Promise<{transactionId: string, ledger: number, amount: string}>}
+   */
+  async claimBalance({ balanceId, claimantSecret }) {
+    await this._simulateNetworkDelay();
+    this._checkRateLimit();
+    this._simulateFailure();
+
+    this._validateSecretKey(claimantSecret);
+
+    if (!this.claimableBalances) this.claimableBalances = new Map();
+
+    const balance = this.claimableBalances.get(balanceId);
+    if (!balance) {
+      throw new NotFoundError('Claimable balance not found', ERROR_CODES.NOT_FOUND);
+    }
+    if (balance.claimed) {
+      throw new BusinessLogicError(
+        ERROR_CODES.TRANSACTION_FAILED,
+        'Claimable balance has already been claimed'
+      );
+    }
+
+    const claimantPublic = this._secretToPublic(claimantSecret);
+    const eligible = balance.claimants.find(c => c.destination === claimantPublic);
+    if (!eligible) {
+      throw new BusinessLogicError(
+        ERROR_CODES.TRANSACTION_FAILED,
+        'Account is not an eligible claimant for this balance'
+      );
+    }
+
+    // Check time predicate if present
+    const pred = eligible.predicate || balance.predicate;
+    if (pred) {
+      const now = Date.now();
+      if (pred.notBefore && now < pred.notBefore) {
+        throw new BusinessLogicError(
+          ERROR_CODES.TRANSACTION_FAILED,
+          'Claimable balance is not yet available (notBefore condition not met)'
+        );
+      }
+      if (pred.notAfter && now > pred.notAfter) {
+        throw new BusinessLogicError(
+          ERROR_CODES.TRANSACTION_FAILED,
+          'Claimable balance has expired (notAfter condition exceeded)'
+        );
+      }
+    }
+
+    // Credit claimant
+    let claimantWallet = this.wallets.get(claimantPublic);
+    if (!claimantWallet) {
+      // Auto-create wallet for unactivated accounts (the main use-case)
+      claimantWallet = { publicKey: claimantPublic, balance: '0', createdAt: new Date().toISOString() };
+      this.wallets.set(claimantPublic, claimantWallet);
+    }
+    claimantWallet.balance = (parseFloat(claimantWallet.balance) + parseFloat(balance.amount)).toFixed(7);
+
+    balance.claimed = true;
+    balance.claimedBy = claimantPublic;
+    balance.claimedAt = new Date().toISOString();
+
+    const txId = crypto.randomBytes(32).toString('hex');
+    const ledger = Math.floor(Math.random() * 1000000) + 1000000;
+
+    return { transactionId: txId, ledger, amount: balance.amount };
+  }
+
+  /**
+   * Simulate submitting a fully-signed multi-sig transaction.
+   *
+   * @param {Object} params
+   * @param {string}   params.transaction_xdr    - Base-64 XDR of the unsigned transaction
+   * @param {string}   params.network_passphrase - Stellar network passphrase
+   * @param {Object[]} params.signatures         - [{signer, signed_xdr}]
+   * @returns {Promise<{transactionId: string, ledger: number}>}
+   */
+  async submitMultiSigTransaction({ transaction_xdr, network_passphrase, signatures }) {
+    this._simulateFailure();
+
+    if (!transaction_xdr || !network_passphrase) {
+      throw new ValidationError('transaction_xdr and network_passphrase are required');
+    }
+    if (!Array.isArray(signatures) || signatures.length === 0) {
+      throw new ValidationError('At least one signature is required');
+    }
+
+    const txId = crypto.randomBytes(32).toString('hex');
+    const ledger = Math.floor(Math.random() * 1000000) + 1000000;
+
+    log.info('MOCK_STELLAR_SERVICE', 'Multi-sig transaction submitted', {
+      txId,
+      ledger,
+      signerCount: signatures.length,
+    });
+
+    return { transactionId: txId, ledger };
+  }
+
+  /**
+   * Estimate the transaction fee for a given number of operations.
+   * Simulates fee variations including surge pricing.
+   * @param {number} [operationCount=1]
+   * @returns {Promise<{feeStroops: number, feeXLM: string, baseFee: number, surgeProtection: boolean, surgeMultiplier: number}>}
+   */
+  async estimateFee(operationCount = 1) {
+    await this._simulateNetworkDelay();
+    this._simulateFailure();
+
+    const BASE_FEE_STROOPS = 100;
+    // Simulate fee multiplier: normally 1x, occasionally surge (configurable via config.feeMultiplier)
+    const multiplier = this.config.feeMultiplier !== undefined ? this.config.feeMultiplier : 1;
+    const recommendedFee = Math.round(BASE_FEE_STROOPS * multiplier);
+    const totalFeeStroops = recommendedFee * operationCount;
+    const surgeProtection = multiplier >= 5;
+
+    return {
+      feeStroops: totalFeeStroops,
+      feeXLM: (totalFeeStroops / 1e7).toFixed(7),
+      baseFee: BASE_FEE_STROOPS,
+      surgeProtection,
+      surgeMultiplier: parseFloat(multiplier.toFixed(2)),
+    };
+  }
+
+  /**
+   * Create a mock DEX offer.
+   *
+   * @param {Object} params
+   * @param {string} params.sourceSecret - Source account secret key
+   * @param {string} params.sellingAsset - Asset being sold ('XLM' or 'CODE:ISSUER')
+   * @param {string} params.buyingAsset  - Asset being bought ('XLM' or 'CODE:ISSUER')
+   * @param {string} params.amount       - Amount of selling asset
+   * @param {string} params.price        - Price ratio 'n/d' or decimal string
+   * @param {number} [params.offerId=0]  - 0 to create; existing ID to update/cancel
+   * @returns {Promise<{offerId: number, transactionId: string, ledger: number}>}
+   */
+  async createOffer({ sourceSecret, sellingAsset, buyingAsset, amount, price, offerId = 0 }) {
+    await this._simulateNetworkDelay();
+    this._checkRateLimit();
+    this._simulateFailure();
+    this._validateSecretKey(sourceSecret);
+
+    if (!sellingAsset || !buyingAsset) throw new ValidationError('sellingAsset and buyingAsset are required');
+    if (sellingAsset === buyingAsset) throw new ValidationError('sellingAsset and buyingAsset must be different');
+
+    const amountNum = parseFloat(amount);
+    if (isNaN(amountNum) || amountNum < 0) throw new ValidationError('amount must be a non-negative number');
+
+    const priceNum = typeof price === 'string' && price.includes('/')
+      ? parseInt(price.split('/')[0], 10) / parseInt(price.split('/')[1], 10)
+      : parseFloat(price);
+    if (isNaN(priceNum) || priceNum <= 0) throw new ValidationError('price must be a positive number');
+
+    const sourcePublic = this._secretToPublic(sourceSecret);
+    const wallet = this.wallets.get(sourcePublic);
+    if (!wallet) throw new NotFoundError('Source account not found', ERROR_CODES.WALLET_NOT_FOUND);
+
+    if (!this.offers) this.offers = new Map();
+
+    // Cancel (amount=0) or update existing offer
+    if (offerId !== 0) {
+      const existing = this.offers.get(offerId);
+      if (!existing) throw new NotFoundError(`Offer ${offerId} not found`, ERROR_CODES.NOT_FOUND);
+      if (existing.seller !== sourcePublic) throw new BusinessLogicError(ERROR_CODES.TRANSACTION_FAILED, 'Not the offer owner');
+      if (amountNum === 0) {
+        this.offers.delete(offerId);
+      } else {
+        existing.amount = amountNum.toFixed(7);
+        existing.price = priceNum.toFixed(7);
+      }
+      const txId = crypto.randomBytes(32).toString('hex');
+      const ledger = Math.floor(Math.random() * 1000000) + 1000000;
+      return { offerId, transactionId: txId, ledger };
+    }
+
+    // Create new offer
+    const newOfferId = Date.now() * 1000 + (this._offerCounter = ((this._offerCounter || 0) + 1) % 1000);
+    this.offers.set(newOfferId, {
+      id: newOfferId,
+      seller: sourcePublic,
+      sellingAsset,
+      buyingAsset,
+      amount: amountNum.toFixed(7),
+      price: priceNum.toFixed(7),
+      createdAt: new Date().toISOString(),
+    });
+
+    const txId = crypto.randomBytes(32).toString('hex');
+    const ledger = Math.floor(Math.random() * 1000000) + 1000000;
+    return { offerId: newOfferId, transactionId: txId, ledger };
+  }
+
+  /**
+   * Cancel a mock DEX offer.
+   *
+   * @param {Object} params
+   * @param {string} params.sourceSecret - Source account secret key
+   * @param {string} params.sellingAsset - Asset being sold in the offer
+   * @param {string} params.buyingAsset  - Asset being bought in the offer
+   * @param {number} params.offerId      - ID of the offer to cancel
+   * @returns {Promise<{transactionId: string, ledger: number}>}
+   */
+  async cancelOffer({ sourceSecret, sellingAsset, buyingAsset, offerId }) {
+    const result = await this.createOffer({ sourceSecret, sellingAsset, buyingAsset, amount: '0', price: '1', offerId });
+    return { transactionId: result.transactionId, ledger: result.ledger };
+  }
+
+  /**
+   * Get the mock order book for a trading pair.
+   *
+   * @param {string} sellingAsset - Base asset ('XLM' or 'CODE:ISSUER')
+   * @param {string} buyingAsset  - Counter asset ('XLM' or 'CODE:ISSUER')
+   * @param {number} [limit=20]   - Max entries per side
+   * @returns {Promise<{bids: Array, asks: Array, base: Object, counter: Object}>}
+   */
+  async getOrderBook(sellingAsset, buyingAsset, limit = 20) {
+    await this._simulateNetworkDelay();
+    this._checkRateLimit();
+    this._simulateFailure();
+
+    if (!sellingAsset || !buyingAsset) throw new ValidationError('sellingAsset and buyingAsset are required');
+
+    if (!this.offers) this.offers = new Map();
+
+    const asks = Array.from(this.offers.values())
+      .filter(o => o.sellingAsset === sellingAsset && o.buyingAsset === buyingAsset)
+      .slice(0, limit)
+      .map(o => ({ price: o.price, amount: o.amount, price_r: { n: 1, d: 1 } }));
+
+    const bids = Array.from(this.offers.values())
+      .filter(o => o.sellingAsset === buyingAsset && o.buyingAsset === sellingAsset)
+      .slice(0, limit)
+      .map(o => ({ price: o.price, amount: o.amount, price_r: { n: 1, d: 1 } }));
+
+    return {
+      bids,
+      asks,
+      base: { asset_type: sellingAsset === 'XLM' ? 'native' : 'credit_alphanum4', asset_code: sellingAsset },
+      counter: { asset_type: buyingAsset === 'XLM' ? 'native' : 'credit_alphanum4', asset_code: buyingAsset },
+    };
+  }
+
+  /**
+   * Create a sponsored account in the mock service.
+   *
+   * @param {string} sponsorSecret    - Secret key of the sponsoring account
+   * @param {string} newAccountPublic - Public key of the new account to sponsor
+   * @returns {Promise<{transactionId: string, ledger: number, sponsored: true}>}
+   */
+  async createSponsoredAccount(sponsorSecret, newAccountPublic) {
+    await this._simulateNetworkDelay();
+    this._checkRateLimit();
+    this._simulateFailure();
+    this._validateSecretKey(sponsorSecret);
+    this._validatePublicKey(newAccountPublic);
+
+    const sponsorPublic = this._secretToPublic(sponsorSecret);
+    if (!this.wallets.has(sponsorPublic)) {
+      throw new NotFoundError('Sponsor account not found', ERROR_CODES.WALLET_NOT_FOUND);
+    }
+    if (this.wallets.has(newAccountPublic)) {
+      throw new BusinessLogicError(ERROR_CODES.TRANSACTION_FAILED, 'Account already exists');
+    }
+
+    // Create the new account with zero balance — sponsor covers the reserve
+    this.wallets.set(newAccountPublic, {
+      publicKey: newAccountPublic,
+      balance: '0.0000000',
+      sponsored: true,
+      sponsoredBy: sponsorPublic,
+      createdAt: new Date().toISOString(),
+      sequence: '0',
+    });
+    this.transactions.set(newAccountPublic, []);
+
+    if (!this.sponsorships) this.sponsorships = new Map();
+    this.sponsorships.set(newAccountPublic, { sponsor: sponsorPublic, revokedAt: null });
+
+    const txId = crypto.randomBytes(32).toString('hex');
+    const ledger = Math.floor(Math.random() * 1000000) + 1000000;
+    return { transactionId: txId, ledger, sponsored: true };
+  }
+
+  /**
+   * Revoke sponsorship for an account in the mock service.
+   *
+   * @param {string} sponsorSecret   - Secret key of the current sponsor
+   * @param {string} sponsoredPublic - Public key of the sponsored account
+   * @returns {Promise<{transactionId: string, ledger: number, revoked: true}>}
+   */
+  async revokeSponsoredAccount(sponsorSecret, sponsoredPublic) {
+    await this._simulateNetworkDelay();
+    this._checkRateLimit();
+    this._simulateFailure();
+    this._validateSecretKey(sponsorSecret);
+    this._validatePublicKey(sponsoredPublic);
+
+    const sponsorPublic = this._secretToPublic(sponsorSecret);
+    if (!this.wallets.has(sponsorPublic)) {
+      throw new NotFoundError('Sponsor account not found', ERROR_CODES.WALLET_NOT_FOUND);
+    }
+
+    if (!this.sponsorships) this.sponsorships = new Map();
+    const record = this.sponsorships.get(sponsoredPublic);
+    if (!record) {
+      throw new NotFoundError('No sponsorship record found for this account', ERROR_CODES.NOT_FOUND);
+    }
+    if (record.sponsor !== sponsorPublic) {
+      throw new BusinessLogicError(ERROR_CODES.TRANSACTION_FAILED, 'Account is not sponsored by this sponsor');
+    }
+    if (record.revokedAt) {
+      throw new BusinessLogicError(ERROR_CODES.TRANSACTION_FAILED, 'Sponsorship already revoked');
+    }
+
+    record.revokedAt = new Date().toISOString();
+    const wallet = this.wallets.get(sponsoredPublic);
+    if (wallet) { wallet.sponsored = false; wallet.sponsoredBy = null; }
+
+    const txId = crypto.randomBytes(32).toString('hex');
+    const ledger = Math.floor(Math.random() * 1000000) + 1000000;
+    return { transactionId: txId, ledger, revoked: true };
+  }
+
+  /**
+   * Derive a mock public key from a secret key (deterministic for test consistency).
+   * @private
+   */
+  _secretToPublic(secretKey) {
+    // Check if we have a wallet with this secret
+    for (const [pub, wallet] of this.wallets.entries()) {
+      if (wallet.secretKey === secretKey) return pub;
+    }
+    // Deterministic derivation for unknown secrets: hash S→G
+    const hash = crypto.createHash('sha256').update(secretKey).digest('hex');
+    // eslint-disable-next-line no-secrets/no-secrets
+    const base32 = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ234567';
+    let pub = 'G';
+    for (let i = 0; i < 55; i++) {
+      pub += base32[parseInt(hash[i % 64], 16) % 32];
+    }
+    return pub;
   }
 }
 

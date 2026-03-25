@@ -25,11 +25,13 @@ const getStellarService = () => {
   return service;
 };
 
+const { getActiveEnvironment } = require('./stellarEnvironments');
+const activeEnv = getActiveEnvironment();
+
 module.exports = {
   getStellarService,
   useMockStellar: process.env.USE_MOCK_STELLAR === 'true',
   port: process.env.PORT || 3000,
-  network: process.env.STELLAR_NETWORK || 'testnet',
-  horizonUrl: process.env.HORIZON_URL,
+  ...activeEnv,
   dbPath: process.env.DB_JSON_PATH || path.join(__dirname, '../../data/donations.json'),
 };

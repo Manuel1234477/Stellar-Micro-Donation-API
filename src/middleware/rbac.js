@@ -14,6 +14,7 @@ const { hasPermission } = require('../models/permissions');
 const { validateApiKey } = require('../models/apiKeys');
 const config = require('../config');
 const AuditLogService = require('../services/AuditLogService');
+const perKeyRateLimit = require('./perKeyRateLimit');
 
 /**
  * Role-Based Access Control (RBAC) Configuration
@@ -251,6 +252,15 @@ exports.attachUserRole = () => {
             res.setHeader('X-API-Key-Deprecated', 'true');
             res.setHeader('Warning', '299 - "API key is deprecated and will be revoked soon"');
           }
+
+          // Suggest rotation when key age exceeds 80% of its grace period
+          if (!keyInfo.isDeprecated && keyInfo.createdAt && keyInfo.gracePeriodDays) {
+            const ageMs = Date.now() - keyInfo.createdAt;
+            const thresholdMs = keyInfo.gracePeriodDays * 0.8 * 24 * 60 * 60 * 1000;
+            if (ageMs >= thresholdMs) {
+              res.setHeader('X-Rotation-Suggested', 'true');
+            }
+          }
         }
         // Priority 3: Legacy Environment variable support
         else if (legacyKeys.includes(apiKey)) {
@@ -275,6 +285,11 @@ exports.attachUserRole = () => {
       // Default: Unauthenticated Guest access
       else {
         req.user = { id: 'guest', role: 'guest', name: 'Guest' };
+      }
+
+      // Apply per-key rate limiting if a DB-backed key is present
+      if (req.apiKey && !req.apiKey.isLegacy && req.apiKey.id) {
+        return perKeyRateLimit(req, res, next);
       }
 
       next();

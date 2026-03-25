@@ -40,7 +40,9 @@ module.exports = async () => {
       amount REAL NOT NULL,
       memo TEXT,
       timestamp DATETIME DEFAULT CURRENT_TIMESTAMP,
-      idempotencyKey TEXT UNIQUE
+      idempotencyKey TEXT UNIQUE,
+      stellar_tx_id TEXT UNIQUE,
+      is_orphan INTEGER NOT NULL DEFAULT 0
     )`);
     await Database.run(`CREATE TABLE IF NOT EXISTS api_keys (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -55,10 +57,30 @@ module.exports = async () => {
       last_used_at INTEGER,
       deprecated_at INTEGER,
       revoked_at INTEGER,
-      created_at INTEGER NOT NULL
+      created_at INTEGER NOT NULL,
+      grace_period_days INTEGER NOT NULL DEFAULT 30,
+      rotated_to_id INTEGER
+    )`);
+    await Database.run(`CREATE TABLE IF NOT EXISTS student_fees (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      studentId TEXT NOT NULL,
+      description TEXT NOT NULL,
+      totalAmount REAL NOT NULL,
+      paidAmount REAL NOT NULL DEFAULT 0,
+      createdAt DATETIME DEFAULT CURRENT_TIMESTAMP,
+      updatedAt DATETIME DEFAULT CURRENT_TIMESTAMP
+    )`);
+    await Database.run(`CREATE TABLE IF NOT EXISTS fee_payments (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      feeId INTEGER NOT NULL,
+      amount REAL NOT NULL,
+      note TEXT,
+      paidAt DATETIME DEFAULT CURRENT_TIMESTAMP,
+      FOREIGN KEY (feeId) REFERENCES student_fees(id)
     )`);
     await Database.run(`CREATE TABLE IF NOT EXISTS audit_logs (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
+      timestamp TEXT NOT NULL,
       category TEXT NOT NULL,
       action TEXT NOT NULL,
       severity TEXT NOT NULL,
@@ -67,8 +89,23 @@ module.exports = async () => {
       requestId TEXT,
       ipAddress TEXT,
       resource TEXT,
+      reason TEXT,
       details TEXT,
-      timestamp DATETIME DEFAULT CURRENT_TIMESTAMP
+      integrityHash TEXT NOT NULL
+    )`);
+    await Database.run(`CREATE TABLE IF NOT EXISTS multisig_transactions (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      transaction_xdr TEXT NOT NULL,
+      network_passphrase TEXT NOT NULL,
+      required_signers INTEGER NOT NULL,
+      signer_keys TEXT NOT NULL,
+      collected_signatures TEXT NOT NULL DEFAULT '[]',
+      status TEXT NOT NULL DEFAULT 'pending',
+      stellar_tx_hash TEXT,
+      stellar_ledger INTEGER,
+      metadata TEXT,
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+      updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
     )`);
   } catch (e) {
     // Ignore errors - tables may already exist

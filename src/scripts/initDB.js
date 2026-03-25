@@ -60,8 +60,14 @@ function createTransactionsTable(db) {
         receiverId INTEGER NOT NULL,
         amount REAL NOT NULL,
         memo TEXT,
+        notes TEXT,
+        tags TEXT,
         timestamp DATETIME DEFAULT CURRENT_TIMESTAMP,
         idempotencyKey TEXT UNIQUE,
+        stellar_tx_id TEXT UNIQUE,
+        is_orphan INTEGER NOT NULL DEFAULT 0,
+        campaign_id INTEGER,
+        FOREIGN KEY (campaign_id) REFERENCES campaigns(id),
         FOREIGN KEY (senderId) REFERENCES users(id),
         FOREIGN KEY (receiverId) REFERENCES users(id)
       )
@@ -90,6 +96,36 @@ function createIndexes(db) {
         reject(err);
       } else {
         console.log('✓ Created index on idempotencyKey');
+        resolve();
+      }
+    });
+  });
+}
+
+function createCampaignsTable(db) {
+  return new Promise((resolve, reject) => {
+    const createTableSQL = `
+      CREATE TABLE IF NOT EXISTS campaigns (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        name TEXT NOT NULL,
+        description TEXT,
+        goal_amount REAL NOT NULL,
+        current_amount REAL DEFAULT 0,
+        start_date DATETIME,
+        end_date DATETIME,
+        status TEXT DEFAULT 'active',
+        created_by INTEGER,
+        createdAt DATETIME DEFAULT CURRENT_TIMESTAMP,
+        updatedAt DATETIME DEFAULT CURRENT_TIMESTAMP,
+        FOREIGN KEY (created_by) REFERENCES users(id)
+      )
+    `;
+
+    db.run(createTableSQL, (err) => {
+      if (err) {
+        reject(err);
+      } else {
+        console.log('✓ Created campaigns table');
         resolve();
       }
     });
@@ -180,6 +216,35 @@ function verifyTables(db) {
   });
 }
 
+function createStudentFeeTables(db) {
+  return new Promise((resolve, reject) => {
+    db.serialize(() => {
+      db.run(`CREATE TABLE IF NOT EXISTS student_fees (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        studentId TEXT NOT NULL,
+        description TEXT NOT NULL,
+        totalAmount REAL NOT NULL,
+        paidAmount REAL NOT NULL DEFAULT 0,
+        createdAt DATETIME DEFAULT CURRENT_TIMESTAMP,
+        updatedAt DATETIME DEFAULT CURRENT_TIMESTAMP
+      )`, (err) => { if (err) return reject(err); });
+
+      db.run(`CREATE TABLE IF NOT EXISTS fee_payments (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        feeId INTEGER NOT NULL,
+        amount REAL NOT NULL,
+        note TEXT,
+        paidAt DATETIME DEFAULT CURRENT_TIMESTAMP,
+        FOREIGN KEY (feeId) REFERENCES student_fees(id)
+      )`, (err) => {
+        if (err) return reject(err);
+        console.log('✓ Created student_fees and fee_payments tables');
+        resolve();
+      });
+    });
+  });
+}
+
 async function main() {
   console.log('Initializing Stellar Micro-Donation API Database...\n');
 
@@ -190,6 +255,8 @@ async function main() {
     await createUsersTable(db);
     await createTransactionsTable(db);
     await createIndexes(db);
+    await createCampaignsTable(db);
+    await createStudentFeeTables(db);
     await insertSampleUsers(db);
     await insertSampleTransactions(db);
     await verifyTables(db);

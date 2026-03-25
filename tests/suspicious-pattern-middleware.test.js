@@ -31,12 +31,12 @@ describe('Suspicious Pattern Middleware Integration', () => {
     app.use(suspiciousPatternMiddleware);
 
     // Mock donation endpoint
-    app.post('/donations/send', (req, res) => {
+    app.post('/api/v1/donations/send', (req, res) => {
       res.json({ success: true, data: { id: 1 } });
     });
 
     // Mock error endpoint
-    app.post('/donations/fail', (req, res) => {
+    app.post('/api/v1/donations/fail', (req, res) => {
       res.status(400).json({ success: false, error: { code: 'VALIDATION_ERROR' } });
     });
   });
@@ -48,7 +48,7 @@ describe('Suspicious Pattern Middleware Integration', () => {
   describe('Request Processing', () => {
     it('should not block successful requests', async () => {
       const response = await request(app)
-        .post('/donations/send')
+        .post('/api/v1/donations/send')
         .send({ amount: 10, senderId: 'SENDER', receiverId: 'RECEIVER' });
 
       expect(response.status).toBe(200);
@@ -57,7 +57,7 @@ describe('Suspicious Pattern Middleware Integration', () => {
 
     it('should not block failed requests', async () => {
       const response = await request(app)
-        .post('/donations/fail')
+        .post('/api/v1/donations/fail')
         .send({ amount: 10 });
 
       expect(response.status).toBe(400);
@@ -66,7 +66,7 @@ describe('Suspicious Pattern Middleware Integration', () => {
 
     it('should track donation patterns on success', async () => {
       await request(app)
-        .post('/donations/send')
+        .post('/api/v1/donations/send')
         .send({ amount: 10, senderId: 'SENDER', receiverId: 'RECEIVER' });
 
       const metrics = suspiciousPatternDetector.getMetrics();
@@ -75,7 +75,7 @@ describe('Suspicious Pattern Middleware Integration', () => {
 
     it('should track failures', async () => {
       await request(app)
-        .post('/donations/fail')
+        .post('/api/v1/donations/fail')
         .send({ amount: 10 });
 
       const metrics = suspiciousPatternDetector.getMetrics();
@@ -88,7 +88,7 @@ describe('Suspicious Pattern Middleware Integration', () => {
       // Simulate rapid requests
       for (let i = 0; i < 6; i++) {
         await request(app)
-          .post('/donations/send')
+          .post('/api/v1/donations/send')
           .send({ amount: 10, senderId: 'SENDER', receiverId: 'RECEIVER' });
       }
 
@@ -103,7 +103,7 @@ describe('Suspicious Pattern Middleware Integration', () => {
       // Same amount multiple times
       for (let i = 0; i < 4; i++) {
         await request(app)
-          .post('/donations/send')
+          .post('/api/v1/donations/send')
           .send({ amount: 5.5, senderId: 'SENDER', receiverId: 'RECEIVER' });
       }
 
@@ -118,7 +118,7 @@ describe('Suspicious Pattern Middleware Integration', () => {
       // Many different recipients
       for (let i = 0; i < 11; i++) {
         await request(app)
-          .post('/donations/send')
+          .post('/api/v1/donations/send')
           .send({ amount: 10, senderId: 'DONOR1', receiverId: `RECIPIENT_${i}` });
       }
 
@@ -133,7 +133,7 @@ describe('Suspicious Pattern Middleware Integration', () => {
       // Multiple failures
       for (let i = 0; i < 6; i++) {
         await request(app)
-          .post('/donations/fail')
+          .post('/api/v1/donations/fail')
           .send({ amount: 10 });
       }
 
@@ -148,7 +148,7 @@ describe('Suspicious Pattern Middleware Integration', () => {
   describe('Error Handling', () => {
     it('should not crash on malformed request body', async () => {
       const response = await request(app)
-        .post('/donations/send')
+        .post('/api/v1/donations/send')
         .send({ invalid: 'data' });
 
       expect(response.status).toBe(200);
@@ -156,7 +156,7 @@ describe('Suspicious Pattern Middleware Integration', () => {
 
     it('should handle missing request body', async () => {
       const response = await request(app)
-        .post('/donations/send')
+        .post('/api/v1/donations/send')
         .send();
 
       expect(response.status).toBe(200);
@@ -164,7 +164,7 @@ describe('Suspicious Pattern Middleware Integration', () => {
 
     it('should handle missing IP address', async () => {
       const response = await request(app)
-        .post('/donations/send')
+        .post('/api/v1/donations/send')
         .send({ amount: 10 });
 
       expect(response.status).toBe(200);
@@ -177,7 +177,7 @@ describe('Suspicious Pattern Middleware Integration', () => {
       suspiciousPatternDetector.velocityTracking.set('test', null);
 
       const response = await request(app)
-        .post('/donations/send')
+        .post('/api/v1/donations/send')
         .send({ amount: 10, senderId: 'SENDER', receiverId: 'RECEIVER' });
 
       expect(response.status).toBe(200);
@@ -190,7 +190,7 @@ describe('Suspicious Pattern Middleware Integration', () => {
       for (let i = 0; i < 100; i++) {
         requests.push(
           request(app)
-            .post('/donations/send')
+            .post('/api/v1/donations/send')
             .send({ amount: 10, senderId: 'SENDER', receiverId: 'RECEIVER' })
         );
       }
@@ -209,7 +209,7 @@ describe('Suspicious Pattern Middleware Integration', () => {
       // Failures
       for (let i = 0; i < 3; i++) {
         await request(app)
-          .post('/donations/fail')
+          .post('/api/v1/donations/fail')
           .send({ amount: 10 });
       }
 
@@ -217,7 +217,7 @@ describe('Suspicious Pattern Middleware Integration', () => {
 
       // Success
       await request(app)
-        .post('/donations/send')
+        .post('/api/v1/donations/send')
         .send({ amount: 10, senderId: 'SENDER', receiverId: 'RECEIVER' });
 
       expect(suspiciousPatternDetector.sequentialFailures.size).toBe(0);

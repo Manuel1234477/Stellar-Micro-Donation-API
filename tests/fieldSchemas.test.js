@@ -22,7 +22,7 @@ describe('Field Schema Registry', () => {
 
     it('should return schema for POST /donations', () => {
       const schema = getFieldSchema('POST', '/donations');
-      expect(schema).toEqual(['amount', 'donor', 'recipient', 'memo', 'sourceAsset', 'sourceAmount']);
+      expect(schema).toEqual(['amount', 'currency', 'donor', 'recipient', 'memo', 'memoType', 'notes', 'tags', 'sourceAsset', 'sourceAmount']);
     });
 
     it('should return schema for POST /donations/verify', () => {
@@ -164,12 +164,16 @@ describe('Field Schema Registry', () => {
     it('POST /donations should have correct fields', () => {
       const schema = fieldSchemas['POST /donations'];
       expect(schema).toContain('amount');
+      expect(schema).toContain('currency');
       expect(schema).toContain('donor');
       expect(schema).toContain('recipient');
       expect(schema).toContain('memo');
+      expect(schema).toContain('memoType');
+      expect(schema).toContain('notes');
+      expect(schema).toContain('tags');
       expect(schema).toContain('sourceAsset');
       expect(schema).toContain('sourceAmount');
-      expect(schema.length).toBe(6);
+      expect(schema.length).toBe(10);
     });
 
     it('POST /donations/verify should have correct fields', () => {

@@ -10,7 +10,7 @@ describe('Permission Integration Tests', () => {
   describe('Donation Routes', () => {
     it('should block guest from creating donations', async () => {
       const response = await request(app)
-        .post('/donations')
+        .post('/api/v1/donations')
         .send({
           amount: 10,
           recipient: 'GTEST123',
@@ -23,7 +23,7 @@ describe('Permission Integration Tests', () => {
 
     it('should allow user to create donations', async () => {
       const response = await request(app)
-        .post('/donations')
+        .post('/api/v1/donations')
         .set('x-api-key', 'user-key-123')
         .set('idempotency-key', 'test-key-' + Date.now())
         .send({
@@ -37,7 +37,7 @@ describe('Permission Integration Tests', () => {
 
     it('should allow guest to read donations', async () => {
       const response = await request(app)
-        .get('/donations/recent');
+        .get('/api/v1/donations/recent');
 
       expect(response.status).toBe(200);
     });
@@ -46,7 +46,7 @@ describe('Permission Integration Tests', () => {
   describe('Wallet Routes', () => {
     it('should block guest from creating wallets', async () => {
       const response = await request(app)
-        .post('/wallets')
+        .post('/api/v1/wallets')
         .send({
           address: 'GTEST123',
           label: 'Test Wallet'
@@ -58,7 +58,7 @@ describe('Permission Integration Tests', () => {
 
     it('should allow user to create wallets', async () => {
       const response = await request(app)
-        .post('/wallets')
+        .post('/api/v1/wallets')
         .set('x-api-key', 'user-key-123')
         .send({
           address: 'GTEST' + Date.now(),
@@ -70,7 +70,7 @@ describe('Permission Integration Tests', () => {
 
     it('should allow user to read wallets', async () => {
       const response = await request(app)
-        .get('/wallets')
+        .get('/api/v1/wallets')
         .set('x-api-key', 'user-key-123');
 
       expect(response.status).toBe(200);
@@ -80,7 +80,7 @@ describe('Permission Integration Tests', () => {
   describe('Stream Routes', () => {
     it('should block guest from creating streams', async () => {
       const response = await request(app)
-        .post('/stream/create')
+        .post('/api/v1/stream/create')
         .send({
           donorPublicKey: 'GTEST123',
           recipientPublicKey: 'GTEST456',
@@ -94,7 +94,7 @@ describe('Permission Integration Tests', () => {
 
     it('should allow user to read streams', async () => {
       const response = await request(app)
-        .get('/stream/schedules')
+        .get('/api/v1/stream/schedules')
         .set('x-api-key', 'user-key-123');
 
       expect(response.status).toBe(200);
@@ -104,7 +104,7 @@ describe('Permission Integration Tests', () => {
   describe('Stats Routes', () => {
     it('should allow guest to read stats', async () => {
       const response = await request(app)
-        .get('/stats/summary')
+        .get('/api/v1/stats/summary')
         .query({
           startDate: '2024-01-01',
           endDate: '2024-12-31'
@@ -115,7 +115,7 @@ describe('Permission Integration Tests', () => {
 
     it('should allow user to read stats', async () => {
       const response = await request(app)
-        .get('/stats/daily')
+        .get('/api/v1/stats/daily')
         .set('x-api-key', 'user-key-123')
         .query({
           startDate: '2024-01-01',
@@ -149,7 +149,7 @@ describe('Permission Integration Tests', () => {
     it('should differentiate between admin and user permissions', async () => {
       // User should be able to create donations
       const userResponse = await request(app)
-        .post('/donations')
+        .post('/api/v1/donations')
         .set('x-api-key', 'user-key-123')
         .set('idempotency-key', 'test-key-' + Date.now())
         .send({
@@ -162,7 +162,7 @@ describe('Permission Integration Tests', () => {
 
       // Admin should also be able to create donations
       const adminResponse = await request(app)
-        .post('/donations')
+        .post('/api/v1/donations')
         .set('x-api-key', 'admin-key-123')
         .set('idempotency-key', 'test-key-admin-' + Date.now())
         .send({

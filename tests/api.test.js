@@ -7,7 +7,7 @@ describe('Stellar Micro-Donation API', () => {
     it('should enforce wallet creation permissions', async () => {
       const address = 'G'.concat('A'.repeat(55));
       const res = await request(app)
-        .post('/wallets')
+        .post('/api/v1/wallets')
         .send({ address, label: 'My Wallet' });
 
       expect(res.status).toBe(403);
@@ -23,7 +23,7 @@ describe('Stellar Micro-Donation API', () => {
       };
 
       const res = await request(app)
-        .post('/donations')
+        .post('/api/v1/donations')
         .send(donationData);
 
       expect([401, 400]).toContain(res.status);

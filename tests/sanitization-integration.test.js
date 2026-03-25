@@ -53,7 +53,7 @@ describe('Sanitization Integration Tests', () => {
       });
 
       await request(app)
-        .post('/donations')
+        .post('/api/v1/donations')
         .send({
           amount: 100,
           recipient: 'GBRPYHIL2CI3FNQ4BXLFMNDLFJUNPU2HY3ZMFSHONUCEOASW7QC7OX2H',
@@ -67,7 +67,7 @@ describe('Sanitization Integration Tests', () => {
 
     test('should reject memo with control characters', async () => {
       const response = await request(app)
-        .post('/donations')
+        .post('/api/v1/donations')
         .send({
           amount: 100,
           recipient: 'GBRPYHIL2CI3FNQ4BXLFMNDLFJUNPU2HY3ZMFSHONUCEOASW7QC7OX2H',
@@ -90,7 +90,7 @@ describe('Sanitization Integration Tests', () => {
       jest.spyOn(Transaction, 'getDailyTotalByDonor').mockReturnValue(0);
 
       await request(app)
-        .post('/donations')
+        .post('/api/v1/donations')
         .send({
           amount: 100,
           donor: 'donor<script>123',
@@ -113,7 +113,7 @@ describe('Sanitization Integration Tests', () => {
       });
 
       await request(app)
-        .post('/donations')
+        .post('/api/v1/donations')
         .send({
           amount: 100,
           recipient: 'recipient\n123'
@@ -137,7 +137,7 @@ describe('Sanitization Integration Tests', () => {
       jest.spyOn(Wallet, 'getByAddress').mockReturnValue(null);
 
       await request(app)
-        .post('/wallets')
+        .post('/api/v1/wallets')
         .send({
           address: 'GBRPYHIL2CI3FNQ4BXLFMNDLFJUNPU2HY3ZMFSHONUCEOASW7QC7OX2H',
           label: 'My\nWallet\x00'
@@ -160,7 +160,7 @@ describe('Sanitization Integration Tests', () => {
       jest.spyOn(Wallet, 'getByAddress').mockReturnValue(null);
 
       await request(app)
-        .post('/wallets')
+        .post('/api/v1/wallets')
         .send({
           address: 'GBRPYHIL2CI3FNQ4BXLFMNDLFJUNPU2HY3ZMFSHONUCEOASW7QC7OX2H',
           ownerName: 'John\x01Doe'
@@ -180,7 +180,7 @@ describe('Sanitization Integration Tests', () => {
       });
 
       await request(app)
-        .patch('/wallets/1')
+        .patch('/api/v1/wallets/1')
         .send({
           label: 'Updated\nLabel\x00'
         });
@@ -206,7 +206,7 @@ describe('Sanitization Integration Tests', () => {
       const maliciousMemo = 'safe\n[2024-01-01] [ERROR] Fake log entry';
 
       const response = await request(app)
-        .post('/donations')
+        .post('/api/v1/donations')
         .send({
           amount: 100,
           recipient: 'GBRPYHIL2CI3FNQ4BXLFMNDLFJUNPU2HY3ZMFSHONUCEOASW7QC7OX2H',
@@ -228,7 +228,7 @@ describe('Sanitization Integration Tests', () => {
       jest.spyOn(Wallet, 'getByAddress').mockReturnValue(null);
 
       await request(app)
-        .post('/wallets')
+        .post('/api/v1/wallets')
         .send({
           address: 'GBRPYHIL2CI3FNQ4BXLFMNDLFJUNPU2HY3ZMFSHONUCEOASW7QC7OX2H',
           label: '\x1B[31mRed Label\x1B[0m'
@@ -252,7 +252,7 @@ describe('Sanitization Integration Tests', () => {
       jest.spyOn(Transaction, 'getDailyTotalByDonor').mockReturnValue(0);
 
       await request(app)
-        .post('/donations')
+        .post('/api/v1/donations')
         .send({
           amount: 100,
           donor: '<script>alert(1)</script>',
@@ -276,7 +276,7 @@ describe('Sanitization Integration Tests', () => {
       jest.spyOn(Wallet, 'getByAddress').mockReturnValue(null);
 
       await request(app)
-        .post('/wallets')
+        .post('/api/v1/wallets')
         .send({
           address: 'GBRPYHIL2CI3FNQ4BXLFMNDLFJUNPU2HY3ZMFSHONUCEOASW7QC7OX2H',
           label: 'safe\x00label',

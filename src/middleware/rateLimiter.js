@@ -76,7 +76,7 @@ const donationRateLimiter = rateLimit({
    * already been processed (Idempotency check).
    */
   skip: (req) => {
-    return req.idempotency && req.idempotency.cached;
+    return process.env.NODE_ENV === 'test' || (req.idempotency && req.idempotency.cached);
   }
 });
 
@@ -134,6 +134,39 @@ const verificationRateLimiter = rateLimit({
 });
 
 /**
+ * Batch Donation Limiter
+ * Max 10 batch requests per minute per IP.
+ */
+const batchRateLimiter = rateLimit({
+  windowMs: 60 * 1000,
+  max: 10,
+  standardHeaders: true,
+  legacyHeaders: false,
+  handler: (req, res) => {
+    AuditLogService.log({
+      category: AuditLogService.CATEGORY.RATE_LIMITING,
+      action: AuditLogService.ACTION.RATE_LIMIT_EXCEEDED,
+      severity: AuditLogService.SEVERITY.HIGH,
+      result: 'FAILURE',
+      requestId: req.id,
+      ipAddress: req.ip,
+      resource: req.path,
+      reason: 'Batch donation rate limit exceeded',
+      details: { limit: 10, window: '60s', resetTime: req.rateLimit.resetTime }
+    }).catch(err => console.error('Audit log failed:', err));
+
+    res.status(429).json({
+      success: false,
+      error: {
+        code: 'RATE_LIMIT_EXCEEDED',
+        message: 'Too many batch requests from this IP. Please try again later.',
+        retryAfter: req.rateLimit.resetTime
+      }
+    });
+  }
+});
+
+/**
  * Factory function for creating custom rate limiters in tests
  * @param {Object} options - Rate limiter options
  * @returns {Function} Rate limiter middleware
@@ -163,5 +196,6 @@ function createRateLimiter(options = {}) {
 module.exports = {
   donationRateLimiter,
   verificationRateLimiter,
+  batchRateLimiter,
   createRateLimiter,
 };

@@ -4,20 +4,127 @@
  *
  * Stellar Memo Types:
  * - MEMO_TEXT: Up to 28 bytes of UTF-8 text
- * - MEMO_ID: 64-bit unsigned integer
- * - MEMO_HASH: 32-byte hash
- * - MEMO_RETURN: 32-byte hash for returns
+ * - MEMO_ID: 64-bit unsigned integer (0 to 2^64-1, stored as string)
+ * - MEMO_HASH: 32-byte hash (64 hex chars or 32-byte Buffer/base64)
+ * - MEMO_RETURN: 32-byte hash for return payments (same format as MEMO_HASH)
  *
- * This implementation focuses on MEMO_TEXT for simplicity
+ * This implementation supports all four Stellar memo types.
  */
 
 const { sanitizeMemo } = require('./sanitizer');
 
 const MAX_MEMO_LENGTH = 28; // Stellar MEMO_TEXT limit in bytes
 
+/** Valid memo type values */
+const MEMO_TYPES = Object.freeze(['text', 'hash', 'id', 'return']);
+
+/** Max 64-bit unsigned integer */
+const MAX_UINT64 = BigInt('18446744073709551615');
+
 class MemoValidator {
   /**
-   * Validate memo according to Stellar specifications
+   * Validate a memo value for a given Stellar memo type.
+   *
+   * @param {string} memo - The memo value to validate
+   * @param {string} [memoType='text'] - One of: 'text', 'hash', 'id', 'return'
+   * @returns {{ valid: boolean, sanitized?: string, error?: string, code?: string }}
+   */
+  static validateWithType(memo, memoType = 'text') {
+    if (!MEMO_TYPES.includes(memoType)) {
+      return {
+        valid: false,
+        error: `Invalid memo type '${memoType}'. Must be one of: ${MEMO_TYPES.join(', ')}`,
+        code: 'INVALID_MEMO_TYPE',
+      };
+    }
+
+    // Empty memo is always valid (means no memo)
+    if (memo === undefined || memo === null || memo === '') {
+      return { valid: true, sanitized: '' };
+    }
+
+    switch (memoType) {
+      case 'text':
+        return this.validate(memo);
+
+      case 'id':
+        return this._validateId(memo);
+
+      case 'hash':
+      case 'return':
+        return this._validateHash(memo, memoType);
+
+      default:
+        return { valid: false, error: 'Unknown memo type', code: 'INVALID_MEMO_TYPE' };
+    }
+  }
+
+  /**
+   * Validate a MEMO_ID value.
+   * Must be a non-negative integer representable as a 64-bit unsigned integer.
+   * @private
+   * @param {string|number} value
+   * @returns {{ valid: boolean, sanitized?: string, error?: string, code?: string }}
+   */
+  static _validateId(value) {
+    const str = String(value).trim();
+
+    if (!/^\d+$/.test(str)) {
+      return {
+        valid: false,
+        error: 'ID memo must be a non-negative integer',
+        code: 'INVALID_MEMO_ID',
+      };
+    }
+
+    try {
+      const bigVal = BigInt(str);
+      if (bigVal < BigInt(0) || bigVal > MAX_UINT64) {
+        return {
+          valid: false,
+          error: 'ID memo must be a valid 64-bit unsigned integer (0 to 18446744073709551615)',
+          code: 'INVALID_MEMO_ID',
+        };
+      }
+    } catch {
+      return { valid: false, error: 'ID memo is not a valid integer', code: 'INVALID_MEMO_ID' };
+    }
+
+    return { valid: true, sanitized: str };
+  }
+
+  /**
+   * Validate a MEMO_HASH or MEMO_RETURN value.
+   * Must be exactly 32 bytes, supplied as a 64-character hex string.
+   * @private
+   * @param {string} value
+   * @param {string} type - 'hash' or 'return'
+   * @returns {{ valid: boolean, sanitized?: string, error?: string, code?: string }}
+   */
+  static _validateHash(value, type) {
+    if (typeof value !== 'string') {
+      return {
+        valid: false,
+        error: `${type} memo must be a string`,
+        code: 'INVALID_MEMO_HASH',
+      };
+    }
+
+    const hex = value.trim().toLowerCase();
+
+    if (!/^[0-9a-f]{64}$/.test(hex)) {
+      return {
+        valid: false,
+        error: `${type} memo must be exactly 32 bytes represented as a 64-character hex string`,
+        code: 'INVALID_MEMO_HASH',
+      };
+    }
+
+    return { valid: true, sanitized: hex };
+  }
+
+  /**
+   * Validate memo according to Stellar specifications (text type only).
    * @param {string} memo - The memo to validate
    * @returns {Object} Validation result with valid flag and error message
    */
@@ -132,3 +239,4 @@ class MemoValidator {
 }
 
 module.exports = MemoValidator;
+module.exports.MEMO_TYPES = MEMO_TYPES;

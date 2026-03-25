@@ -6,13 +6,15 @@
  * DEPENDENCIES: API Keys model, security config, logger
  * 
  * Validates API keys against both database-backed keys and legacy environment variables.
- * Supports key rotation, expiration, and role-based access control.
+ * Supports key rotation, expiration, role-based access control, and optional request signing.
  */
 
 const { securityConfig } = require("../config/securityConfig");
 const { validateKey } = require("../models/apiKeys");
 const log = require("../utils/log");
 const AuditLogService = require("../services/AuditLogService");
+const perKeyRateLimit = require("./perKeyRateLimit");
+const { verify: verifySignature } = require("../utils/requestSigner");
 
 /**
  * Legacy Support Configuration
@@ -35,6 +37,10 @@ const legacyKeys = securityConfig.API_KEYS || [];
  * 6. Final Disposition: Calls next() on success, or returns 401 Unauthorized if all checks fail.
  */
 const requireApiKey = async (req, res, next) => {
+  if (req.apiKey) {
+    return next();
+  }
+
   const apiKey = req.get("x-api-key");
 
   if (!apiKey) {
@@ -78,6 +84,41 @@ const requireApiKey = async (req, res, next) => {
     if (keyInfo) {
       req.apiKey = keyInfo;
 
+      // --- Request Signing Verification ---
+      if (keyInfo.signingRequired) {
+        const timestamp = req.get('x-timestamp');
+        const signature = req.get('x-signature');
+        const rawBody = req.rawBody || '';
+        const fullPath = req.originalUrl || req.url;
+
+        const result = verifySignature({
+          secret: keyInfo.keySecret,
+          method: req.method,
+          path: fullPath,
+          timestamp,
+          signature,
+          body: rawBody,
+        });
+
+        if (!result.valid) {
+          log.warn('API_KEY_AUTH', 'Request signature verification failed', {
+            reason: result.reason,
+            path: req.path,
+            keyPrefix: keyInfo.keyPrefix,
+          });
+          return res.status(401).json({
+            success: false,
+            error: {
+              code: 'INVALID_SIGNATURE',
+              message: result.reason || 'Invalid or missing request signature',
+              requestId: req.id,
+              timestamp: new Date().toISOString(),
+            },
+          });
+        }
+      }
+      // --- End Request Signing Verification ---
+
       // Audit log: Successful API key validation
       AuditLogService.log({
         category: AuditLogService.CATEGORY.AUTHENTICATION,
@@ -102,6 +143,15 @@ const requireApiKey = async (req, res, next) => {
           "Warning",
           '299 - "API key is deprecated and will be revoked soon"',
         );
+      }
+
+      // Suggest rotation when key age exceeds 80% of its grace period
+      if (!keyInfo.isDeprecated && keyInfo.createdAt && keyInfo.gracePeriodDays) {
+        const ageMs = Date.now() - keyInfo.createdAt;
+        const thresholdMs = keyInfo.gracePeriodDays * 0.8 * 24 * 60 * 60 * 1000;
+        if (ageMs >= thresholdMs) {
+          res.setHeader("X-Rotation-Suggested", "true");
+        }
       }
 
       return next();

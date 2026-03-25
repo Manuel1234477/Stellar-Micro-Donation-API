@@ -57,7 +57,7 @@ describe('Wallet Analytics API Integration Tests', () => {
   describe('GET /stats/wallet/:walletAddress/analytics', () => {
     test('should return wallet analytics without date filtering', async () => {
       const response = await request(app)
-        .get('/stats/wallet/GALICE123/analytics')
+        .get('/api/v1/stats/wallet/GALICE123/analytics')
         .expect(200);
 
       expect(response.body.success).toBe(true);
@@ -74,7 +74,7 @@ describe('Wallet Analytics API Integration Tests', () => {
 
     test('should return wallet analytics with date filtering', async () => {
       const response = await request(app)
-        .get('/stats/wallet/GALICE123/analytics')
+        .get('/api/v1/stats/wallet/GALICE123/analytics')
         .query({
           startDate: '2024-02-11T00:00:00.000Z',
           endDate: '2024-02-13T23:59:59.999Z'
@@ -96,7 +96,7 @@ describe('Wallet Analytics API Integration Tests', () => {
 
     test('should return 400 if only startDate is provided', async () => {
       const response = await request(app)
-        .get('/stats/wallet/GALICE123/analytics')
+        .get('/api/v1/stats/wallet/GALICE123/analytics')
         .query({ startDate: '2024-02-11T00:00:00.000Z' })
         .expect(400);
 
@@ -105,7 +105,7 @@ describe('Wallet Analytics API Integration Tests', () => {
 
     test('should return 400 if only endDate is provided', async () => {
       const response = await request(app)
-        .get('/stats/wallet/GALICE123/analytics')
+        .get('/api/v1/stats/wallet/GALICE123/analytics')
         .query({ endDate: '2024-02-13T23:59:59.999Z' })
         .expect(400);
 
@@ -114,7 +114,7 @@ describe('Wallet Analytics API Integration Tests', () => {
 
     test('should return 400 for invalid date format', async () => {
       const response = await request(app)
-        .get('/stats/wallet/GALICE123/analytics')
+        .get('/api/v1/stats/wallet/GALICE123/analytics')
         .query({
           startDate: 'invalid-date',
           endDate: '2024-02-13T23:59:59.999Z'
@@ -126,7 +126,7 @@ describe('Wallet Analytics API Integration Tests', () => {
 
     test('should return 400 if startDate is after endDate', async () => {
       const response = await request(app)
-        .get('/stats/wallet/GALICE123/analytics')
+        .get('/api/v1/stats/wallet/GALICE123/analytics')
         .query({
           startDate: '2024-02-20T00:00:00.000Z',
           endDate: '2024-02-10T23:59:59.999Z'
@@ -138,7 +138,7 @@ describe('Wallet Analytics API Integration Tests', () => {
 
     test('should return empty analytics for non-existent wallet', async () => {
       const response = await request(app)
-        .get('/stats/wallet/GNONEXISTENT/analytics')
+        .get('/api/v1/stats/wallet/GNONEXISTENT/analytics')
         .expect(200);
 
       expect(response.body.success).toBe(true);
@@ -154,7 +154,7 @@ describe('Wallet Analytics API Integration Tests', () => {
 
     test('should include transaction details in response', async () => {
       const response = await request(app)
-        .get('/stats/wallet/GALICE123/analytics')
+        .get('/api/v1/stats/wallet/GALICE123/analytics')
         .expect(200);
 
       expect(response.body.data.sentTransactions).toHaveLength(2);
@@ -167,7 +167,7 @@ describe('Wallet Analytics API Integration Tests', () => {
 
     test('should handle wallet with only sent transactions', async () => {
       const response = await request(app)
-        .get('/stats/wallet/GCHARLIE789/analytics')
+        .get('/api/v1/stats/wallet/GCHARLIE789/analytics')
         .expect(200);
 
       expect(response.body.data).toMatchObject({
@@ -182,7 +182,7 @@ describe('Wallet Analytics API Integration Tests', () => {
 
     test('should handle wallet with only received transactions', async () => {
       const response = await request(app)
-        .get('/stats/wallet/GBOB456/analytics')
+        .get('/api/v1/stats/wallet/GBOB456/analytics')
         .expect(200);
 
       expect(response.body.data).toMatchObject({
@@ -197,7 +197,7 @@ describe('Wallet Analytics API Integration Tests', () => {
 
     test('should handle empty result when no transactions in date range', async () => {
       const response = await request(app)
-        .get('/stats/wallet/GALICE123/analytics')
+        .get('/api/v1/stats/wallet/GALICE123/analytics')
         .query({
           startDate: '2024-01-01T00:00:00.000Z',
           endDate: '2024-01-31T23:59:59.999Z'
