@@ -19,7 +19,9 @@
     "keys:create": "node src/scripts/manageApiKeys.js create",
     "keys:list": "node src/scripts/manageApiKeys.js list",
     "keys:help": "node src/scripts/manageApiKeys.js help",
-    "validate:rbac": "node scripts/validate-rbac.js"
+    "validate:rbac": "node scripts/validate-rbac.js",
+    "test:load": "node tests/load/run-load-tests.js",
+    "test:load:jest": "jest tests/implement-load-testing-suite.test.js --testTimeout=60000 --forceExit"
   },
   "dependencies": {
     "dotenv": "^17.3.1",
