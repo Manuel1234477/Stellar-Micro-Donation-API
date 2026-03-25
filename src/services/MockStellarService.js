@@ -12,7 +12,11 @@ class MockStellarService {
     this.wallets = new Map(); // publicKey -> { publicKey, secretKey, balance }
     this.transactions = new Map(); // publicKey -> [transactions]
     this.streamListeners = new Map(); // publicKey -> [callbacks]
-    
+
+    // Soroban contract simulation state
+    this.contractInvocations = new Map(); // contractId -> { balance, goal, invocations[] }
+    this.contractEvents = new Map(); // contractId -> ContractEvent[]
+
     console.log('[MockStellarService] Initialized');
   }
 
@@ -225,6 +229,101 @@ class MockStellarService {
   }
 
   /**
+   * Invoke a simulated Soroban smart contract method.
+   * @param {string} contractId - The contract identifier
+   * @param {string} method - The method name to invoke
+   * @param {Array} args - Arguments to pass to the method
+   * @returns {Promise<{status: string, returnValue: any, events: Array}>}
+   */
+  async invokeContract(contractId, method, args) {
+    if (!contractId || typeof contractId !== 'string' || contractId.trim() === '') {
+      throw new Error('contractId is required');
+    }
+    if (!method || typeof method !== 'string' || method.trim() === '') {
+      throw new Error('method is required');
+    }
+    if (!Array.isArray(args)) {
+      throw new Error('args must be an array');
+    }
+
+    // Initialise contract state if first invocation
+    if (!this.contractInvocations.has(contractId)) {
+      this.contractInvocations.set(contractId, { balance: 0, goal: args[2] || 100, invocations: [] });
+    }
+    const state = this.contractInvocations.get(contractId);
+    state.invocations.push({ method, args, timestamp: new Date().toISOString() });
+
+    const ledger = 1000000 + state.invocations.length;
+    const timestamp = new Date().toISOString();
+
+    if (method === 'deposit') {
+      const amount = typeof args[1] === 'number' ? args[1] : Number(args[1]) || 0;
+      state.balance += amount;
+
+      const event = {
+        contractId,
+        type: 'deposit',
+        topics: ['deposit', args[0] || 'donor'],
+        data: { donorId: args[0], amount, newBalance: state.balance },
+        timestamp,
+        ledger,
+      };
+      this._storeContractEvent(contractId, event);
+      return { status: 'success', returnValue: null, events: [event] };
+    }
+
+    if (method === 'release') {
+      const goal = typeof args[1] === 'number' ? args[1] : (state.goal || 100);
+      if (state.balance < goal) {
+        return { status: 'error', returnValue: 'Goal not yet reached', events: [] };
+      }
+      const amount = state.balance;
+      state.balance = 0;
+
+      const event = {
+        contractId,
+        type: 'release',
+        topics: ['release', args[0] || 'recipient'],
+        data: { recipientId: args[0], amount },
+        timestamp,
+        ledger,
+      };
+      this._storeContractEvent(contractId, event);
+      return { status: 'success', returnValue: null, events: [event] };
+    }
+
+    // Any other method — succeed with no events
+    return { status: 'success', returnValue: null, events: [] };
+  }
+
+  /**
+   * Retrieve stored contract events for a given contract ID.
+   * @param {string} contractId - The contract identifier
+   * @param {number} [limit] - Maximum number of events to return
+   * @returns {Promise<Array>}
+   */
+  async getContractEvents(contractId, limit) {
+    if (!contractId || typeof contractId !== 'string' || contractId.trim() === '') {
+      throw new Error('contractId is required');
+    }
+    const events = this.contractEvents.get(contractId) || [];
+    // Return in reverse-chronological order (most recent first)
+    const sorted = [...events].reverse();
+    return limit !== undefined ? sorted.slice(0, limit) : sorted;
+  }
+
+  /**
+   * Store a contract event in the internal event store.
+   * @private
+   */
+  _storeContractEvent(contractId, event) {
+    if (!this.contractEvents.has(contractId)) {
+      this.contractEvents.set(contractId, []);
+    }
+    this.contractEvents.get(contractId).push(event);
+  }
+
+  /**
    * Clear all mock data (useful for testing)
    * @private
    */
@@ -232,6 +331,8 @@ class MockStellarService {
     this.wallets.clear();
     this.transactions.clear();
     this.streamListeners.clear();
+    this.contractInvocations.clear();
+    this.contractEvents.clear();
   }
 
   /**
