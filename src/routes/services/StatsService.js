@@ -1,4 +1,15 @@
 const Transaction = require('../models/transaction');
+const Cache = require('../../utils/cache');
+
+/**
+ * Leaderboard cache TTL in milliseconds (1 minute)
+ */
+const LEADERBOARD_CACHE_TTL_MS = 60_000;
+
+/**
+ * Default number of top entries to return
+ */
+const DEFAULT_TOP_N = 10;
 
 class StatsService {
   /**
@@ -397,6 +408,187 @@ class StatsService {
     }
   }
   */
+
+  // ==================== Leaderboard Methods ====================
+
+  /**
+   * Get date range for a time period
+   * @param {string} period - Time period: 'all', 'monthly', 'weekly', 'daily'
+   * @returns {Object} { startDate, endDate }
+   */
+  static getDateRangeForPeriod(period) {
+    const now = new Date();
+    const endDate = new Date(now);
+    let startDate;
+
+    switch (period) {
+      case 'daily':
+        startDate = new Date(now);
+        startDate.setHours(0, 0, 0, 0);
+        break;
+      case 'weekly':
+        startDate = new Date(now);
+        startDate.setDate(startDate.getDate() - 7);
+        break;
+      case 'monthly':
+        startDate = new Date(now);
+        startDate.setMonth(startDate.getMonth() - 1);
+        break;
+      case 'all':
+      default:
+        // Return epoch for 'all' - will be handled separately
+        return { startDate: null, endDate: null };
+    }
+
+    return { startDate, endDate };
+  }
+
+  /**
+   * Get donor leaderboard - top donors by total donations
+   * @param {string} period - Time period: 'all', 'monthly', 'weekly', 'daily'
+   * @param {number} limit - Number of top donors to return (default 10)
+   * @returns {Array} Array of donor leaderboard entries
+   */
+  static getDonorLeaderboard(period = 'all', limit = DEFAULT_TOP_N) {
+    const cacheKey = `leaderboard:donors:${period}:${limit}`;
+    
+    // Check cache
+    const cached = Cache.get(cacheKey);
+    if (cached) {
+      return cached;
+    }
+
+    let transactions;
+    const { startDate, endDate } = this.getDateRangeForPeriod(period);
+
+    if (period === 'all') {
+      // For 'all' period, get all transactions
+      transactions = Transaction.loadTransactions();
+    } else {
+      transactions = Transaction.getByDateRange(startDate, endDate);
+    }
+
+    // Filter confirmed transactions only
+    const confirmedTransactions = transactions.filter(t => 
+      t.status === 'confirmed' || t.status === 'COMPLETED'
+    );
+
+    // Aggregate by donor
+    const donorMap = new Map();
+    confirmedTransactions.forEach(tx => {
+      const donor = tx.donor || 'Anonymous';
+      if (!donorMap.has(donor)) {
+        donorMap.set(donor, {
+          rank: 0,
+          donor,
+          totalDonated: 0,
+          donationCount: 0,
+          lastDonationAt: null,
+          period
+        });
+      }
+
+      const donorEntry = donorMap.get(donor);
+      donorEntry.totalDonated += parseFloat(tx.amount) || 0;
+      donorEntry.donationCount += 1;
+      
+      const txDate = new Date(tx.timestamp);
+      if (!donorEntry.lastDonationAt || txDate > new Date(donorEntry.lastDonationAt)) {
+        donorEntry.lastDonationAt = tx.timestamp;
+      }
+    });
+
+    // Sort by total donated (descending) and assign ranks
+    const leaderboard = Array.from(donorMap.values())
+      .sort((a, b) => b.totalDonated - a.totalDonated)
+      .slice(0, limit)
+      .map((entry, index) => ({
+        ...entry,
+        rank: index + 1
+      }));
+
+    // Cache the result
+    Cache.set(cacheKey, leaderboard, LEADERBOARD_CACHE_TTL_MS);
+
+    return leaderboard;
+  }
+
+  /**
+   * Get recipient leaderboard - top recipients by total received
+   * @param {string} period - Time period: 'all', 'monthly', 'weekly', 'daily'
+   * @param {number} limit - Number of top recipients to return (default 10)
+   * @returns {Array} Array of recipient leaderboard entries
+   */
+  static getRecipientLeaderboard(period = 'all', limit = DEFAULT_TOP_N) {
+    const cacheKey = `leaderboard:recipients:${period}:${limit}`;
+    
+    // Check cache
+    const cached = Cache.get(cacheKey);
+    if (cached) {
+      return cached;
+    }
+
+    let transactions;
+    const { startDate, endDate } = this.getDateRangeForPeriod(period);
+
+    if (period === 'all') {
+      // For 'all' period, get all transactions
+      transactions = Transaction.loadTransactions();
+    } else {
+      transactions = Transaction.getByDateRange(startDate, endDate);
+    }
+
+    // Filter confirmed transactions only
+    const confirmedTransactions = transactions.filter(t => 
+      t.status === 'confirmed' || t.status === 'COMPLETED'
+    );
+
+    // Aggregate by recipient
+    const recipientMap = new Map();
+    confirmedTransactions.forEach(tx => {
+      const recipient = tx.recipient || 'Unknown';
+      if (!recipientMap.has(recipient)) {
+        recipientMap.set(recipient, {
+          rank: 0,
+          recipient,
+          totalReceived: 0,
+          donationCount: 0,
+          lastReceivedAt: null,
+          period
+        });
+      }
+
+      const recipientEntry = recipientMap.get(recipient);
+      recipientEntry.totalReceived += parseFloat(tx.amount) || 0;
+      recipientEntry.donationCount += 1;
+      
+      const txDate = new Date(tx.timestamp);
+      if (!recipientEntry.lastReceivedAt || txDate > new Date(recipientEntry.lastReceivedAt)) {
+        recipientEntry.lastReceivedAt = tx.timestamp;
+      }
+    });
+
+    // Sort by total received (descending) and assign ranks
+    const leaderboard = Array.from(recipientMap.values())
+      .sort((a, b) => b.totalReceived - a.totalReceived)
+      .slice(0, limit)
+      .map((entry, index) => ({
+        ...entry,
+        rank: index + 1
+      }));
+
+    // Cache the result
+    Cache.set(cacheKey, leaderboard, LEADERBOARD_CACHE_TTL_MS);
+
+    return leaderboard;
+  }
+
+  /**
+   * Invalidate all leaderboard caches (called when new confirmed donation arrives)
+   */
+  static invalidateLeaderboardCache() {
+    Cache.clearPrefix('leaderboard:');
+  }
 }
 
 module.exports = StatsService;

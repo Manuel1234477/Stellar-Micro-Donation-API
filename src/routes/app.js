@@ -27,6 +27,7 @@ const webhooksRoutes = require('./webhooks');
 const campaignsRoutes = require('./campaigns');
 const offersRoutes = require('./offers');
 const tagsRoutes = require('./tags');
+const leaderboardRoutes = require('./leaderboard');
 const { errorHandler, notFoundHandler } = require('../middleware/errorHandler');
 const logger = require('../middleware/logger');
 const { attachUserRole } = require('../middleware/rbac');
@@ -157,6 +158,7 @@ app.use('/webhooks', webhooksRoutes);
 app.use('/campaigns', campaignsRoutes);
 app.use('/offers', offersRoutes);
 app.use('/tags', tagsRoutes);
+app.use('/leaderboard', leaderboardRoutes);
 
 // Exchange rates endpoint
 app.get('/exchange-rates', async (req, res) => {
@@ -426,6 +428,16 @@ async function startServer() {
       const { startCleanup } = require('../utils/replayDetector');
       const replayConfig = require('../config/replayDetection');
       replayCleanupTimer = startCleanup(replayDetectionMiddleware.trackingStore, replayConfig);
+
+      // Initialize Leaderboard SSE for real-time updates
+      try {
+        const LeaderboardSSE = require('../services/LeaderboardSSE');
+        LeaderboardSSE.initLeaderboardSSE();
+      } catch (err) {
+        log.error('APP', 'Failed to initialize LeaderboardSSE', {
+          error: err.message,
+        });
+      }
 
       log.info('APP', 'API started', {
         port: PORT,
