@@ -23,6 +23,7 @@ const { validateSchema } = require('../middleware/schemaValidation');
 const { TRANSACTION_STATES } = require('../utils/transactionStateMachine');
 const { parseCursorPaginationQuery } = require('../utils/pagination');
 const { payloadSizeLimiter, ENDPOINT_LIMITS } = require('../middleware/payloadSizeLimiter');
+const { parseAssetInput } = require('../utils/stellarAsset');
 
 const { getStellarService } = require('../config/stellar');
 const DonationService = require('../services/DonationService');
@@ -31,6 +32,9 @@ const { LIFECYCLE_STAGES } = require('../middleware/requestLifecycle');
 const federation = require('../utils/federation');
 const stellarService = getStellarService();
 const donationService = new DonationService(stellarService);
+const safeBatchRateLimiter = typeof batchRateLimiter === 'function'
+  ? batchRateLimiter
+  : (_req, _res, next) => next();
 
 // Helper to enforce note privacy
 function applyNotePrivacy(req, tx) {
@@ -39,8 +43,12 @@ function applyNotePrivacy(req, tx) {
   const isAdmin = req.apiKey && req.apiKey.role === 'admin';
   
   if (!isOwner && !isAdmin && tx.notes !== undefined) {
+    // eslint-disable-next-line no-unused-vars
     const { notes, ...rest } = tx;
     return rest;
+    const sanitized = { ...tx };
+    delete sanitized.notes;
+    return sanitized;
   }
   return tx;
 }
@@ -96,11 +104,25 @@ const createDonationSchema = validateSchema({
         maxLength: 255,
         nullable: true,
       },
+      sourceAsset: {
+        types: ['string', 'object'],
+        required: false,
+        nullable: true,
+      },
+      sourceAmount: {
+        type: 'numberString',
+        required: false,
+      },
       memoType: {
         type: 'string',
         required: false,
         nullable: true,
         enum: ['text', 'hash', 'id', 'return'],
+      },
+      encryptMemo: {
+        type: 'boolean',
+        required: false,
+        nullable: true,
       },
       notes: {
         type: 'string',
@@ -113,6 +135,48 @@ const createDonationSchema = validateSchema({
         required: false,
         nullable: true,
       },
+      anonymous: {
+        type: 'boolean',
+        required: false,
+        nullable: true,
+      },
+    },
+    validate: (body) => {
+      if ((body.sourceAsset && !body.sourceAmount) || (!body.sourceAsset && body.sourceAmount)) {
+        return 'sourceAsset and sourceAmount must be provided together';
+      }
+
+      return null;
+    },
+  },
+});
+
+const pathEstimateSchema = validateSchema({
+  query: {
+    fields: {
+      sourceAsset: {
+        type: 'string',
+        required: true,
+      },
+      sourceAmount: {
+        type: 'numberString',
+        required: false,
+      },
+      destAsset: {
+        type: 'string',
+        required: false,
+      },
+      destAmount: {
+        type: 'numberString',
+        required: false,
+      },
+    },
+    validate: (query) => {
+      if (!query.sourceAmount && !query.destAmount) {
+        return 'Either sourceAmount or destAmount is required';
+      }
+
+      return null;
     },
   },
 });
@@ -331,7 +395,7 @@ router.post('/send', payloadSizeLimiter(ENDPOINT_LIMITS.singleDonation), donatio
  * Donations with the same donor are grouped into multi-operation Stellar transactions.
  * Rate limited: 10 batch requests per minute per IP.
  */
-router.post('/batch', payloadSizeLimiter(ENDPOINT_LIMITS.batchDonation), batchRateLimiter, requireApiKey, async (req, res, next) => {
+router.post('/batch', payloadSizeLimiter(ENDPOINT_LIMITS.batchDonation), safeBatchRateLimiter, requireApiKey, async (req, res, next) => {
   try {
     const { donations } = req.body;
 
@@ -381,7 +445,20 @@ router.post('/batch', payloadSizeLimiter(ENDPOINT_LIMITS.batchDonation), batchRa
  */
 router.post('/', payloadSizeLimiter(ENDPOINT_LIMITS.singleDonation), donationRateLimiter, requireApiKey, requireIdempotency, createDonationSchema, async (req, res, next) => {
   try {
-    const { amount, currency, donor, recipient, memo, memoType, notes, tags } = req.body;
+    const {
+      amount,
+      currency,
+      donor,
+      recipient,
+      memo,
+      memoType,
+      notes,
+      tags,
+      encryptMemo,
+      anonymous,
+      sourceAsset,
+      sourceAmount
+    } = req.body;
 
     // Basic validation
     if (!amount || !recipient) {
@@ -399,6 +476,18 @@ router.post('/', payloadSizeLimiter(ENDPOINT_LIMITS.singleDonation), donationRat
       return res.status(400).json({
         error: `Invalid amount: ${amountValidation.error}`
       });
+    }
+
+    let sourceAmountValidation = null;
+    let normalizedSourceAsset = null;
+    if (sourceAsset || sourceAmount) {
+      normalizedSourceAsset = parseAssetInput(sourceAsset, 'sourceAsset');
+      sourceAmountValidation = validateFloat(sourceAmount);
+      if (!sourceAmountValidation.valid) {
+        return res.status(400).json({
+          error: `Invalid sourceAmount: ${sourceAmountValidation.error}`
+        });
+      }
     }
 
     // Validate memo type + value combination
@@ -419,6 +508,26 @@ router.post('/', payloadSizeLimiter(ENDPOINT_LIMITS.singleDonation), donationRat
       resolvedRecipient = await federation.resolveRecipient(recipient);
     }
 
+    // Optionally encrypt memo using recipient's Stellar public key (ECDH)
+    let memoEnvelope = null;
+    let encryptionMetadata = null;
+    if (encryptMemo && memo) {
+      try {
+        const memoEncryption = require('../utils/memoEncryption');
+        memoEnvelope = memoEncryption.encryptMemo(memo, resolvedRecipient);
+        encryptionMetadata = {
+          encrypted: true,
+          algorithm: memoEnvelope.alg,
+          nonce: memoEnvelope.iv,
+        };
+      } catch (encErr) {
+        return res.status(400).json({
+          success: false,
+          error: { code: 'MEMO_ENCRYPTION_FAILED', message: encErr.message }
+        });
+      }
+    }
+
     // Delegate to service
     const transaction = await donationService.createDonationRecord({
       amount: amountValidation.value,
@@ -426,12 +535,17 @@ router.post('/', payloadSizeLimiter(ENDPOINT_LIMITS.singleDonation), donationRat
       donor,
       recipient: resolvedRecipient,
       memo,
+      sourceAsset: normalizedSourceAsset,
+      sourceAmount: sourceAmountValidation ? sourceAmountValidation.value : undefined,
       memoType: memoType || 'text',
       notes,
       tags,
+      memoEnvelope,
+      encryptionMetadata,
       idempotencyKey: req.idempotency.key,
       apiKeyId: req.apiKey ? req.apiKey.id : null,
-      apiKeyRole: req.apiKey ? req.apiKey.role : (req.user?.role || 'user')
+      apiKeyRole: req.apiKey ? req.apiKey.role : (req.user?.role || 'user'),
+      anonymous: anonymous === true,
     });
 
     // Estimate fee for informational purposes (non-blocking)
@@ -452,6 +566,7 @@ router.post('/', payloadSizeLimiter(ENDPOINT_LIMITS.singleDonation), donationRat
       data: {
         verified: true,
         transactionHash: transaction.stellarTxId || transaction.id,
+        ...(encryptionMetadata && { encryptionMetadata }),
         ...(feeEstimate && {
           estimatedFee: feeEstimate.feeStroops,
           estimatedFeeXLM: feeEstimate.feeXLM,
@@ -464,6 +579,42 @@ router.post('/', payloadSizeLimiter(ENDPOINT_LIMITS.singleDonation), donationRat
 
     await storeIdempotencyResponse(req, response);
     res.status(201).json(response);
+  } catch (error) {
+    next(error);
+  }
+});
+
+/**
+ * GET /donations/verify-anonymous
+ * Allow a donor to prove their anonymous donation using their wallet address.
+ *
+ * Query parameters:
+ *   - donationId    {string} - The ID of the anonymous donation
+ *   - walletAddress {string} - The donor's wallet address to verify
+ *
+ * Returns { verified: boolean, donationId, pseudonymousId, amount, recipient, timestamp }
+ */
+router.get('/verify-anonymous', checkPermission(PERMISSIONS.DONATIONS_READ), async (req, res, next) => {
+  try {
+    const { donationId, walletAddress } = req.query;
+
+    if (!donationId || !walletAddress) {
+      return res.status(400).json({
+        success: false,
+        error: {
+          code: 'MISSING_REQUIRED_FIELDS',
+          message: 'donationId and walletAddress query parameters are required',
+        },
+      });
+    }
+
+    const result = donationService.verifyAnonymousDonation(donationId, walletAddress);
+
+    if (req.markLifecycleStage) {
+      req.markLifecycleStage(LIFECYCLE_STAGES.PROCESSED);
+    }
+
+    res.json({ success: true, data: result });
   } catch (error) {
     next(error);
   }
@@ -565,10 +716,49 @@ router.get('/', checkPermission(PERMISSIONS.DONATIONS_READ), listDonationsQueryS
 });
 
 /**
+ * GET /donations/path-estimate
+ * Estimate the best Stellar path payment route for a donation.
+ */
+router.get('/path-estimate', requireApiKey, pathEstimateSchema, async (req, res, next) => {
+  try {
+    const sourceAmount = req.query.sourceAmount ? validateFloat(req.query.sourceAmount) : null;
+    const destAmount = req.query.destAmount ? validateFloat(req.query.destAmount) : null;
+
+    if (sourceAmount && !sourceAmount.valid) {
+      return res.status(400).json({
+        success: false,
+        error: `Invalid sourceAmount: ${sourceAmount.error}`
+      });
+    }
+
+    if (destAmount && !destAmount.valid) {
+      return res.status(400).json({
+        success: false,
+        error: `Invalid destAmount: ${destAmount.error}`
+      });
+    }
+
+    const estimate = await donationService.estimateDonationPath({
+      sourceAsset: req.query.sourceAsset,
+      sourceAmount: sourceAmount ? sourceAmount.value : undefined,
+      destAsset: req.query.destAsset,
+      destAmount: destAmount ? destAmount.value : undefined,
+    });
+
+    res.status(200).json({
+      success: true,
+      data: estimate,
+    });
+  } catch (error) {
+    next(error);
+  }
+});
+
+/**
  * GET /donations/limits
  * Get current donation amount limits
  */
-router.get('/limits', checkPermission(PERMISSIONS.DONATIONS_READ), (req, res) => {
+router.get('/limits', checkPermission(PERMISSIONS.DONATIONS_READ), (req, res, next) => {
   try {
     const limits = donationService.getDonationLimits();
     
@@ -670,6 +860,71 @@ router.post('/:id/receipt/email', requireApiKey, donationIdParamSchema, async (r
     if (error.status === 400) {
       return res.status(400).json({ success: false, error: { message: error.message } });
     }
+    next(error);
+  }
+});
+
+/**
+ * GET /donations/:id/memo/decrypt
+ * Decrypt an encrypted memo for a specific donation.
+ *
+ * Only the recipient (holder of the Stellar private key) can decrypt the memo.
+ * The caller must supply their Stellar secret key as a query parameter.
+ *
+ * Query params:
+ *   - recipientSecret {string} Stellar S... secret key of the recipient
+ *
+ * Security note: In production, memo decryption should be performed client-side
+ * so that private keys never leave the user's device. This endpoint is provided
+ * for server-side integrations and testing only.
+ */
+router.get('/:id/memo/decrypt', requireApiKey, donationIdParamSchema, async (req, res, next) => {
+  try {
+    const { id } = req.params;
+    const { recipientSecret } = req.query;
+
+    if (!recipientSecret) {
+      return res.status(400).json({
+        success: false,
+        error: { code: 'MISSING_FIELD', message: 'recipientSecret query parameter is required' }
+      });
+    }
+
+    const transaction = Transaction.getById(id);
+    if (!transaction) {
+      return res.status(404).json({
+        success: false,
+        error: { code: 'NOT_FOUND', message: `Donation ${id} not found` }
+      });
+    }
+
+    if (!transaction.memoEnvelope) {
+      return res.status(422).json({
+        success: false,
+        error: { code: 'MEMO_NOT_ENCRYPTED', message: 'This donation does not have an encrypted memo' }
+      });
+    }
+
+    const memoEncryption = require('../utils/memoEncryption');
+    let plaintext;
+    try {
+      plaintext = memoEncryption.decryptMemo(transaction.memoEnvelope, recipientSecret);
+    } catch (decErr) {
+      return res.status(403).json({
+        success: false,
+        error: { code: 'DECRYPTION_FAILED', message: 'Unable to decrypt memo: invalid key or tampered data' }
+      });
+    }
+
+    res.json({
+      success: true,
+      data: {
+        donationId: id,
+        memo: plaintext,
+        algorithm: transaction.encryptionMetadata?.algorithm || 'ECDH-X25519-AES256GCM',
+      }
+    });
+  } catch (error) {
     next(error);
   }
 });

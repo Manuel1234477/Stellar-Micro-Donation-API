@@ -180,7 +180,9 @@ function buildLogEntry(level, scope, message, meta = {}) {
   const timestamp = new Date().toISOString();
   const context = getContext();
 
+  // eslint-disable-next-line no-control-regex
   const sanitizedScope = typeof scope === 'string' ? scope.replace(/[\x00-\x1F\x7F]/g, '') : scope;
+  // eslint-disable-next-line no-control-regex
   const sanitizedMessage = typeof message === 'string' ? message.replace(/[\x00-\x1F\x7F]/g, '') : message;
 
   return {
@@ -207,7 +209,7 @@ function formatJson(logEntry) {
  * Format log entry for human-readable text output
  */
 function formatText(logEntry) {
-  const { timestamp, level, scope, message, requestId, transactionId, userId, service, environment, version, ...metaData } = logEntry;
+  const { timestamp, level, scope, message, requestId, transactionId, userId, ...metaData } = logEntry;
 
   const contextParts = [];
   if (requestId) contextParts.push(`reqId=${requestId.substring(0, 8)}`);

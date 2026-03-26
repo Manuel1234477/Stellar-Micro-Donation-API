@@ -1,0 +1,78 @@
+name: E2E Testnet Nightly
+
+# ─── Triggers ──────────────────────────────────────────────────────────────────
+# Runs automatically at midnight UTC every day.
+# workflow_dispatch allows maintainers to trigger a run manually from the
+# GitHub Actions UI without waiting for the nightly schedule.
+on:
+  schedule:
+    - cron: '0 0 * * *'
+  workflow_dispatch:
+
+# ─── Job ───────────────────────────────────────────────────────────────────────
+jobs:
+  e2e-testnet:
+    name: E2E — Stellar Testnet
+    runs-on: ubuntu-latest
+    # Hard wall-clock limit; individual tests have a 60 s Jest timeout
+    timeout-minutes: 30
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v6
+
+      - name: Set up Node.js 18
+        uses: actions/setup-node@v6
+        with:
+          node-version: '18'
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run E2E test suite against Stellar testnet
+        run: npm run test:e2e
+        env:
+          # Real Stellar testnet — never mock in this workflow
+          MOCK_STELLAR: 'false'
+          STELLAR_ENVIRONMENT: testnet
+          NODE_ENV: test
+
+          # API keys used by the e2e test suite (same as in tests/e2e/setup.js)
+          API_KEYS: 'e2e-test-key,e2e-admin-key'
+
+          # Stable encryption key so DB-seeded secrets can be decrypted at runtime.
+          # Set E2E_ENCRYPTION_KEY in the repository's Actions secrets.
+          # If unset, tests/e2e/setup.js falls back to a hardcoded dev value.
+          ENCRYPTION_KEY: ${{ secrets.E2E_ENCRYPTION_KEY }}
+
+      # ─── Failure Notification ─────────────────────────────────────────────
+      # Posts a comment on the most recent commit when the nightly run fails so
+      # the team gets visibility without needing to watch the Actions tab manually.
+      - name: Notify on failure
+        if: failure()
+        uses: actions/github-script@v8
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          script: |
+            const sha = context.sha;
+            const runUrl = `${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`;
+            await github.rest.repos.createCommitComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              commit_sha: sha,
+              body: [
+                '## ❌ Nightly E2E Testnet Run Failed',
+                '',
+                `The nightly Stellar testnet e2e suite failed on commit \`${sha.slice(0, 7)}\`.`,
+                '',
+                `**Run details:** ${runUrl}`,
+                '',
+                'Common causes:',
+                '- Stellar testnet maintenance or instability',
+                '- Friendbot rate-limiting',
+                '- A recent code change broke real-network behaviour',
+                '',
+                'Check the workflow logs for the specific failing test(s).',
+              ].join('\n'),
+            });

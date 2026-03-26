@@ -214,7 +214,8 @@ class SuspiciousPatternDetector {
   /**
    * Calculate severity level for alerting
    */
-  _calculateSeverity(signalType, metadata) {
+  _calculateSeverity(signalType, _metadata) {
+    void _metadata;
     const severityMap = {
       high_velocity_donations: 'medium',
       identical_amount_pattern: 'medium',

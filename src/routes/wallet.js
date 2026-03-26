@@ -17,8 +17,12 @@ const LimitService = require('../services/LimitService');
 const Database = require('../utils/database');
 const { ValidationError, NotFoundError, ERROR_CODES } = require('../utils/errors');
 const WalletService = require('../services/WalletService');
+const Database = require('../utils/database');
+const { getStellarService } = require('../config/stellar');
+const log = require('../utils/log');
 const { validateSchema } = require('../middleware/schemaValidation');
 const { parseCursorPaginationQuery } = require('../utils/pagination');
+// eslint-disable-next-line no-unused-vars
 const { sanitizeLabel, sanitizeName } = require('../utils/sanitizer');
 const { payloadSizeLimiter, ENDPOINT_LIMITS } = require('../middleware/payloadSizeLimiter');
 
@@ -88,7 +92,7 @@ const walletPublicKeySchema = validateSchema({
  * POST /wallets
  * Create a new wallet with metadata. Auto-funds via Friendbot on testnet.
  */
-router.post('/', checkPermission(PERMISSIONS.WALLETS_CREATE), walletCreateSchema, async (req, res) => {
+router.post('/', checkPermission(PERMISSIONS.WALLETS_CREATE), walletCreateSchema, async (req, res) => {});
 router.post('/', payloadSizeLimiter(ENDPOINT_LIMITS.wallet), checkPermission(PERMISSIONS.WALLETS_CREATE), walletCreateSchema, async (req, res, next) => {
   try {
     const { address, label, ownerName, sponsored } = req.body;
@@ -215,7 +219,7 @@ router.patch('/:id', checkPermission(PERMISSIONS.WALLETS_UPDATE), walletUpdateSc
  * GET /wallets/:publicKey/transactions
  * Get all transactions (sent and received) for a wallet
  */
-router.get('/:publicKey/transactions', checkPermission(PERMISSIONS.WALLETS_READ), walletPublicKeySchema, async (req, res) => {
+router.get('/:publicKey/transactions', checkPermission(PERMISSIONS.WALLETS_READ), walletPublicKeySchema, async (req, res, next) => {
   try {
     const { publicKey } = req.params;
 
@@ -255,6 +259,7 @@ router.get('/:publicKey/transactions', checkPermission(PERMISSIONS.WALLETS_READ)
     );
 
     // Format the response
+    // eslint-disable-next-line no-unused-vars
     const formattedTransactions = transactions.map(tx => ({
       id: tx.id,
       sender: tx.senderPublicKey,
@@ -266,9 +271,11 @@ router.get('/:publicKey/transactions', checkPermission(PERMISSIONS.WALLETS_READ)
 
     res.json({
       success: true,
-      data: result.transactions,
-      count: result.count,
-      message: result.message
+      data: transactions,
+      count: transactions.length,
+      data: formattedTransactions,
+      count: formattedTransactions.length,
+      count: formattedTransactions.length
     });
   } catch (error) {
     next(error);
@@ -362,6 +369,213 @@ router.post('/:id/revoke-sponsorship', checkPermission(PERMISSIONS.WALLETS_UPDAT
     });
 
     res.json({ success: true, data: result });
+  } catch (error) {
+    next(error);
+  }
+});
+
+/**
+ * DELETE /wallets/:id
+ * Soft delete a wallet by setting deleted_at timestamp
+ */
+router.delete('/:id', checkPermission(PERMISSIONS.WALLETS_DELETE), walletIdSchema, async (req, res, next) => {
+  try {
+    const { id } = req.params;
+
+    // Check if wallet exists and isn't already deleted
+    const wallet = await Database.get('SELECT id FROM users WHERE id = ? AND deleted_at IS NULL', [id]);
+    if (!wallet) {
+      throw new NotFoundError('Wallet not found or already deleted', ERROR_CODES.WALLET_NOT_FOUND);
+    }
+
+    // Perform Soft Delete
+    await Database.run(
+      'UPDATE users SET deleted_at = CURRENT_TIMESTAMP WHERE id = ?',
+      [id]
+    );
+
+    await AuditLogService.log({
+      category: AuditLogService.CATEGORY.WALLET_OPERATION,
+      action: AuditLogService.ACTION.WALLET_DELETED,
+      severity: AuditLogService.SEVERITY.HIGH,
+      result: 'SUCCESS',
+      userId: req.user && req.user.id,
+      requestId: req.id,
+      ipAddress: req.ip,
+      resource: `/wallets/${id}`,
+      details: { walletId: id, type: 'SOFT_DELETE' }
+    });
+
+    res.json({ success: true, message: 'Wallet soft-deleted successfully' });
+  } catch (error) {
+    next(error);
+  }
+});
+
+/**
+ * GET /admin/deleted
+ * Admin only: View all soft-deleted wallets and transactions
+ */
+router.get('/admin/deleted', requireAdmin(), async (req, res, next) => {
+  try {
+    const deletedWallets = await Database.query('SELECT * FROM users WHERE deleted_at IS NULL');
+    const deletedTransactions = await Database.query('SELECT * FROM transactions WHERE deleted_at IS NOT NULL');
+
+    res.json({
+      success: true,
+      data: {
+        wallets: deletedWallets,
+        transactions: deletedTransactions
+      }
+    });
+  } catch (error) {
+    next(error);
+  }
+});
+
+/**
+ * UPDATED: GET /wallets/:publicKey/transactions
+ * Now filters out soft-deleted transactions
+ */
+router.get('/:publicKey/transactions', checkPermission(PERMISSIONS.WALLETS_READ), walletPublicKeySchema, async (req, res, next) => {
+  try {
+    const { publicKey } = req.params;
+
+    const user = await Database.get(
+      'SELECT id FROM users WHERE publicKey = ? AND deleted_at IS NULL',
+      [publicKey]
+    );
+
+    if (!user) {
+      return res.json({ success: true, data: [], count: 0, message: 'No active user found' });
+    }
+
+    // Added "t.deleted_at IS NULL" to the WHERE clause
+    const transactions = await Database.query(
+      `SELECT t.*, sender.publicKey as senderPublicKey, receiver.publicKey as receiverPublicKey
+       FROM transactions t
+       LEFT JOIN users sender ON t.senderId = sender.id
+       LEFT JOIN users receiver ON t.receiverId = receiver.id
+       WHERE (t.senderId = ? OR t.receiverId = ?) AND t.deleted_at IS NULL
+       ORDER BY t.timestamp DESC`,
+      [user.id, user.id]
+    );
+
+    res.json({
+      success: true,
+      data: transactions,
+      count: transactions.length
+    });
+  } catch (error) {
+    next(error);
+  }
+});
+
+/**
+ * POST /wallets/:id/merge
+ * Merge a wallet into a destination account.
+ *
+ * Transfers all XLM from the source wallet to the destination, closes the
+ * source account on the Stellar network, and soft-deletes the wallet record.
+ *
+ * @requires wallets:delete permission
+ * @body {string}  destinationPublicKey - Stellar public key of the receiving account
+ * @body {string}  sourceSecret         - Secret key of the wallet being merged
+ * @body {boolean} confirm              - Must be exactly `true` to proceed
+ */
+router.post('/:id/merge', checkPermission(PERMISSIONS.WALLETS_DELETE), async (req, res, next) => {
+  try {
+    const { destinationPublicKey, sourceSecret, confirm } = req.body;
+
+    // ── Confirmation gate ────────────────────────────────────────────────────
+    if (confirm !== true) {
+      return res.status(400).json({
+        success: false,
+        error: 'Account merge requires explicit confirmation. Set confirm: true to proceed.',
+      });
+    }
+
+    // ── Required fields ──────────────────────────────────────────────────────
+    if (!destinationPublicKey || !sourceSecret) {
+      return res.status(400).json({
+        success: false,
+        error: 'Missing required fields: destinationPublicKey, sourceSecret',
+      });
+    }
+
+    // ── Lookup source wallet ─────────────────────────────────────────────────
+    const sourceWallet = await Database.get(
+      'SELECT id, publicKey, mergedAt FROM users WHERE id = ?',
+      [req.params.id]
+    );
+
+    if (!sourceWallet) {
+      return res.status(404).json({ success: false, error: 'Wallet not found' });
+    }
+
+    if (sourceWallet.mergedAt) {
+      return res.status(409).json({
+        success: false,
+        error: 'Wallet has already been merged and closed',
+      });
+    }
+
+    if (sourceWallet.publicKey === destinationPublicKey) {
+      return res.status(400).json({
+        success: false,
+        error: 'Source and destination wallets cannot be the same',
+      });
+    }
+
+    // ── Execute merge on Stellar ─────────────────────────────────────────────
+    const stellarService = getStellarService();
+    const mergeResult = await stellarService.mergeAccount(sourceSecret, destinationPublicKey);
+
+    // ── Soft-delete source wallet ────────────────────────────────────────────
+    const now = new Date().toISOString();
+    await Database.run(
+      'UPDATE users SET mergedAt = ?, mergedInto = ? WHERE id = ?',
+      [now, destinationPublicKey, sourceWallet.id]
+    );
+
+    // ── Write audit log ──────────────────────────────────────────────────────
+    await Database.run(
+      `INSERT INTO wallet_merge_audit
+         (sourceWalletId, sourcePublicKey, destinationPublicKey, mergedAmount,
+          transactionHash, ledger, performedBy, timestamp)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+      [
+        sourceWallet.id,
+        sourceWallet.publicKey,
+        destinationPublicKey,
+        mergeResult.mergedAmount,
+        mergeResult.hash,
+        mergeResult.ledger,
+        req.user ? req.user.id : 'unknown',
+        now,
+      ]
+    );
+
+    log.info('WALLET_ROUTE', 'Wallet merged', {
+      sourceId: sourceWallet.id,
+      sourcePublicKey: sourceWallet.publicKey,
+      destinationPublicKey,
+      hash: mergeResult.hash,
+    });
+
+    return res.json({
+      success: true,
+      message: 'Account merged successfully. Source account has been closed.',
+      data: {
+        sourceWalletId: sourceWallet.id,
+        sourcePublicKey: sourceWallet.publicKey,
+        destinationPublicKey,
+        mergedAmount: mergeResult.mergedAmount,
+        transactionHash: mergeResult.hash,
+        ledger: mergeResult.ledger,
+        mergedAt: now,
+      },
+    });
   } catch (error) {
     next(error);
   }

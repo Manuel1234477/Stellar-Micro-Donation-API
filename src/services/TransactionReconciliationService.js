@@ -38,6 +38,14 @@ class TransactionReconciliationService {
     this.orphanedTransactionCount = 0;
   }
 
+  /**
+   * Set the FeeBumpService for automatic fee bumping during reconciliation.
+   * @param {Object} feeBumpService - FeeBumpService instance
+   */
+  setFeeBumpService(feeBumpService) {
+    this.feeBumpService = feeBumpService;
+  }
+
   // ─── Lifecycle ────────────────────────────────────────────────────────────
 
   /** Start the background reconciliation loop */
@@ -77,7 +85,7 @@ class TransactionReconciliationService {
   async reconcile() {
     if (this.reconciliationInProgress) {
       log.debug('RECONCILIATION', 'Skipping — reconciliation already in progress');
-      return { corrected: 0, errors: 0, orphansDetected: 0, orphansCompensated: 0 };
+      return { corrected: 0, errors: 0, orphansDetected: 0, orphansCompensated: 0, feeBumpsApplied: 0, feeBumpErrors: 0 };
     }
 
     this.reconciliationInProgress = true;
@@ -107,19 +115,34 @@ class TransactionReconciliationService {
       // 2. Detect and compensate orphaned Stellar transactions
       const { detected, compensated } = await this.detectAndCompensateOrphans();
 
+      // 3. Process stuck transactions with fee bumps
+      let feeBumpsApplied = 0;
+      let feeBumpErrors = 0;
+      if (this.feeBumpService) {
+        try {
+          const feeBumpResult = await this.feeBumpService.processStuckTransactions();
+          feeBumpsApplied = feeBumpResult.succeeded;
+          feeBumpErrors = feeBumpResult.failed;
+        } catch (error) {
+          log.error('RECONCILIATION', 'Fee bump processing failed', { error: error.message });
+        }
+      }
+
       log.info('RECONCILIATION', 'Cycle complete', {
         corrected,
         errors,
         orphansDetected: detected,
         orphansCompensated: compensated,
+        feeBumpsApplied,
+        feeBumpErrors,
       });
 
-      return { corrected, errors, orphansDetected: detected, orphansCompensated: compensated };
+      return { corrected, errors, orphansDetected: detected, orphansCompensated: compensated, feeBumpsApplied, feeBumpErrors };
     } catch (error) {
       log.error('RECONCILIATION', 'Error during reconciliation cycle', {
         error: error.message,
       });
-      return { corrected: 0, errors: 1, orphansDetected: 0, orphansCompensated: 0 };
+      return { corrected: 0, errors: 1, orphansDetected: 0, orphansCompensated: 0, feeBumpsApplied: 0, feeBumpErrors: 0 };
     } finally {
       this.reconciliationInProgress = false;
     }

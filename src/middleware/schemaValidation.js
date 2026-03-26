@@ -1,4 +1,6 @@
 const { ERROR_CODES } = require('../utils/errors');
+const schemaRegistry = require('./schemaRegistry');
+
 const {
   formatTypeError,
   formatEnumError,
@@ -216,24 +218,89 @@ function validateSegment(data, segmentSchema, segmentName) {
   return errors;
 }
 
-function validateSchema(schema) {
+/**
+ * Middleware factory for request schema validation with version support.
+ * 
+ * Supports both legacy single-schema objects and versioned schemas from the registry.
+ * Negotiates schema version using the 'X-Schema-Version' request header.
+ * 
+ * @param {Object|string} schemaOrKey A schema object (for legacy support) or a unique registry key.
+ * @param {Object} [versions] (Optional) An object mapping version strings to schemas for in-line registration.
+ * @param {Object} [options] (Optional) Configuration for versioning (deprecated versions, migration guides).
+ * @returns {Function} Express middleware function
+ */
+function validateSchema(schemaOrKey, versions, options) {
+
+  let schemaKey = null;
+
+  // In-line registration if versions are provided
+  if (typeof schemaOrKey === 'string' && versions) {
+    schemaKey = schemaOrKey;
+    schemaRegistry.registerSchema(schemaKey, versions, options);
+  } else if (typeof schemaOrKey === 'string') {
+    schemaKey = schemaOrKey;
+  }
+
   return (req, res, next) => {
+    let schemaToUse;
+    let versionInfo = null;
+
+    if (schemaKey) {
+      const requestedVersion = req.get('X-Schema-Version');
+      versionInfo = schemaRegistry.getSchema(schemaKey, requestedVersion);
+
+      if (!versionInfo) {
+        return res.status(400).json({
+          success: false,
+          error: {
+            code: ERROR_CODES.INVALID_SCHEMA_VERSION.code,
+            message: `Unsupported schema version: ${requestedVersion || 'latest'}`,
+            supportedVersions: schemaRegistry.registry.get(schemaKey)?.allVersions || [],
+            migrationGuide: 'Please consult the API documentation for supported schema versions.',
+            requestId: req.id,
+            timestamp: new Date().toISOString(),
+          },
+        });
+      }
+      schemaToUse = versionInfo.schema;
+    } else {
+      // Legacy support for direct schema objects
+      schemaToUse = schemaOrKey;
+    }
+
+    // Version headers
+    if (versionInfo) {
+      res.setHeader('X-Schema-Version', versionInfo.version);
+      res.setHeader('X-Schema-Version-Supported', versionInfo.supportedVersions.join(', '));
+
+      if (versionInfo.isDeprecated) {
+        res.setHeader('X-Schema-Deprecated', 'true');
+        if (versionInfo.migrationGuide) {
+          res.setHeader('X-Schema-Migration-Guide', versionInfo.migrationGuide);
+          // Add standard Warning header for deprecation
+          res.setHeader('Warning', `199 - "Schema version ${versionInfo.version} is deprecated. ${versionInfo.migrationGuide}"`);
+        } else {
+          res.setHeader('Warning', `199 - "Schema version ${versionInfo.version} is deprecated."`);
+        }
+      }
+    }
+
     const allErrors = [];
 
-    if (schema.body) {
-      allErrors.push(...validateSegment(req.body ?? {}, schema.body, 'body'));
+    if (schemaToUse.body) {
+      allErrors.push(...validateSegment(req.body ?? {}, schemaToUse.body, 'body'));
     }
 
-    if (schema.query) {
-      allErrors.push(...validateSegment(req.query ?? {}, schema.query, 'query'));
+    if (schemaToUse.query) {
+      allErrors.push(...validateSegment(req.query ?? {}, schemaToUse.query, 'query'));
     }
 
-    if (schema.params) {
-      allErrors.push(...validateSegment(req.params ?? {}, schema.params, 'params'));
+    if (schemaToUse.params) {
+      allErrors.push(...validateSegment(req.params ?? {}, schemaToUse.params, 'params'));
     }
 
     if (allErrors.length > 0) {
-      return res.status(400).json({
+      const errorResponse = {
         success: false,
         error: {
           code: ERROR_CODES.VALIDATION_ERROR.code,
@@ -242,7 +309,14 @@ function validateSchema(schema) {
           requestId: req.id,
           timestamp: new Date().toISOString(),
         },
-      });
+      };
+
+      // Include migration guide in error if version is deprecated
+      if (versionInfo?.isDeprecated && versionInfo?.migrationGuide) {
+        errorResponse.error.migrationGuide = versionInfo.migrationGuide;
+      }
+
+      return res.status(400).json(errorResponse);
     }
 
     return next();
@@ -252,3 +326,4 @@ function validateSchema(schema) {
 module.exports = {
   validateSchema,
 };
+

@@ -14,7 +14,7 @@ const router = express.Router();
 const requireApiKey = require('../middleware/apiKey');
 const { checkPermission } = require('../middleware/rbac');
 const { PERMISSIONS } = require('../utils/permissions');
-const { ValidationError, NotFoundError, ERROR_CODES } = require('../utils/errors');
+const { ValidationError } = require('../utils/errors');
 const { getStellarService } = require('../config/stellar');
 
 const stellarService = getStellarService();

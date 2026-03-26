@@ -62,7 +62,7 @@ const transactionSyncBodySchema = validateSchema({
   },
 });
 
-router.get('/', checkPermission(PERMISSIONS.TRANSACTIONS_READ), transactionListQuerySchema, async (req, res) => {
+router.get('/', checkPermission(PERMISSIONS.TRANSACTIONS_READ), transactionListQuerySchema, async (req, res, next) => {
   try {
     const { limit = 10, offset = 0 } = req.query;
 

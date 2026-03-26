@@ -37,6 +37,7 @@ class Wallet {
       label: walletData.label || null,
       ownerName: walletData.ownerName || null,
       createdAt: new Date().toISOString(),
+      deletedAt: null, // Initialized for soft-delete support
       ...walletData
     };
     wallets.push(newWallet);
@@ -44,23 +45,41 @@ class Wallet {
     return newWallet;
   }
 
+  /**
+   * Returns only wallets that have NOT been soft-deleted
+   */
   static getAll() {
-    return this.loadWallets();
+    const wallets = this.loadWallets();
+    return wallets.filter(w => !w.deletedAt);
   }
 
+  /**
+   * Returns a specific wallet only if not soft-deleted
+   */
   static getById(id) {
     const wallets = this.loadWallets();
-    return wallets.find(w => w.id === id);
+    return wallets.find(w => w.id === id && !w.deletedAt);
   }
 
+  /**
+   * Returns a specific address only if not soft-deleted
+   */
   static getByAddress(address) {
     const wallets = this.loadWallets();
-    return wallets.find(w => w.address === address);
+    return wallets.find(w => w.address === address && !w.deletedAt);
+  }
+
+  /**
+   * Internal method for admin/cleanup to see deleted records
+   */
+  static getAllDeleted() {
+    const wallets = this.loadWallets();
+    return wallets.filter(w => !!w.deletedAt);
   }
 
   static update(id, updates) {
     const wallets = this.loadWallets();
-    const index = wallets.findIndex(w => w.id === id);
+    const index = wallets.findIndex(w => w.id === id && !w.deletedAt);
     if (index === -1) return null;
 
     wallets[index] = {
@@ -70,6 +89,19 @@ class Wallet {
     };
     this.saveWallets(wallets);
     return wallets[index];
+  }
+
+  /**
+   * Soft delete: sets the deletedAt timestamp instead of removing from array
+   */
+  static softDelete(id) {
+    const wallets = this.loadWallets();
+    const index = wallets.findIndex(w => w.id === id);
+    if (index === -1) return false;
+
+    wallets[index].deletedAt = new Date().toISOString();
+    this.saveWallets(wallets);
+    return true;
   }
 }
 

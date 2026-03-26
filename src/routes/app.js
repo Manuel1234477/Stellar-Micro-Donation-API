@@ -19,15 +19,21 @@ const statsRoutes = require('./stats');
 const streamRoutes = require('./stream');
 const transactionRoutes = require('./transaction');
 const apiKeysRoutes = require('./apiKeys');
+const recurringDonationRoutes = require('./recurringDonation');
+const assetRoutes = require('./assets');
 const feesRoutes = require('./fees');
 const featureFlagsAdminRoutes = require('./admin/featureFlags');
+const createFeeBumpRouter = require('./admin/feeBump');
+const dbAdminRoutes = require('./admin/db');
 const retentionAdminRoutes = require('./admin/retention');
 const backupAdminRoutes = require('./admin/backup');
+const matchingProgramsAdminRoutes = require('./admin/matchingPrograms');
 const networkRoutes = require('./network');
 const webhooksRoutes = require('./webhooks');
 const campaignsRoutes = require('./campaigns');
 const offersRoutes = require('./offers');
 const tagsRoutes = require('./tags');
+const leaderboardRoutes = require('./leaderboard');
 const { errorHandler, notFoundHandler } = require('../middleware/errorHandler');
 const logger = require('../middleware/logger');
 const { attachUserRole } = require('../middleware/rbac');
@@ -41,9 +47,12 @@ const { validateRBAC } = require('../utils/rbacValidator');
 const log = require('../utils/log');
 const requestId = require('../middleware/requestId');
 const serviceContainer = require('../config/serviceContainer');
-const { payloadSizeLimiter, ENDPOINT_LIMITS } = require('../middleware/payloadSizeLimiter');
+const { payloadSizeLimiter } = require('../middleware/payloadSizeLimiter');
 const { createCorsMiddleware } = require('../middleware/cors');
 const { responseFormatterMiddleware } = require('../utils/responseFormatter');
+const trackQuotaUsage = require('../middleware/quotaTracker');
+const { startQuotaResetJob } = require('../jobs/quotaResetJob');
+const { createDeduplicationMiddleware } = require('../middleware/deduplication');
 const {
   logStartupDiagnostics,
   logShutdownDiagnostics,
@@ -51,8 +60,15 @@ const {
 const { parseCursorPaginationQuery } = require('../utils/pagination');
 const AuditLogService = require('../services/AuditLogService');
 const auditLogRetentionService = require('../services/AuditLogRetentionService');
+const { runCleanup } = require('../jobs/cleanupJob');
 
 const app = express();
+
+// Configure trusted proxies for API Gateway integration
+const trustedProxies = process.env.TRUSTED_PROXIES
+  ? process.env.TRUSTED_PROXIES.split(',').map(ip => ip.trim())
+  : 'loopback';
+app.set('trust proxy', trustedProxies);
 
 // Initialize services from container
 const stellarService = serviceContainer.getStellarService();
@@ -143,22 +159,48 @@ app.use(require('../middleware/suspiciousPatternDetection'));
 // Attach user role from authentication (must be before routes)
 app.use(attachUserRole());
 
+// Track API quota usage (must be after authentication)
+app.use(trackQuotaUsage);
+
+// Prometheus request duration instrumentation
+app.use(metricsMiddleware);
+
+// GET /metrics — Prometheus scrape endpoint (admin only)
+app.get('/metrics', requireApiKey, requireAdmin(), async (req, res) => {
+  res.set('Content-Type', registry.contentType);
+  res.end(await registry.metrics());
+});
+// Content-based request deduplication (for requests without idempotency keys)
+app.use(createDeduplicationMiddleware());
+
 // Routes
 app.use('/wallets', walletRoutes);
 app.use('/donations', donationRoutes);
+app.use('/donations/recurring', recurringDonationRoutes);
+app.use('/assets', assetRoutes);
 app.use('/stats', statsRoutes);
 app.use('/stream', streamRoutes);
 app.use('/transactions', transactionRoutes);
 app.use('/api-keys', apiKeysRoutes);
 app.use('/fees', feesRoutes);
 app.use('/admin/feature-flags', featureFlagsAdminRoutes);
+app.use('/admin/db', dbAdminRoutes);
 app.use('/admin/retention', retentionAdminRoutes);
 app.use('/admin', backupAdminRoutes);
+app.use('/admin/matching-programs', matchingProgramsAdminRoutes);
+
+// Fee bump admin route — lazy access to serviceContainer
+app.use('/admin/transactions', (req, res, next) => {
+  const serviceContainer = require('../config/serviceContainer');
+  const feeBumpRouter = createFeeBumpRouter(serviceContainer.getFeeBumpService());
+  feeBumpRouter(req, res, next);
+});
 app.use('/network', networkRoutes);
 app.use('/webhooks', webhooksRoutes);
 app.use('/campaigns', campaignsRoutes);
 app.use('/offers', offersRoutes);
 app.use('/tags', tagsRoutes);
+app.use('/leaderboard', leaderboardRoutes);
 
 // Exchange rates endpoint
 app.get('/exchange-rates', async (req, res) => {
@@ -172,7 +214,6 @@ app.get('/exchange-rates', async (req, res) => {
         rates,
         supportedCurrencies: ['XLM', ...priceOracle.SUPPORTED_CURRENCIES.map(c => c.toUpperCase())],
         cachedAt: new Date().toISOString(),
-      }
       },
     });
   } catch (err) {
@@ -191,6 +232,9 @@ app.get('/health', async (req, res) => {
   const stellarConfig = require('../config/stellar');
   health.stellarEnvironment = stellarConfig.environment || 'testnet';
   health.stellarNetwork = stellarConfig.network || 'testnet';
+  health.clientIp = req.ip;
+  health.protocol = req.protocol;
+  health.requestId = req.id;
   
   const httpStatus = health.status === 'unhealthy' ? 503 : 200;
   return res.status(httpStatus).json(health);
@@ -412,9 +456,19 @@ async function startServer() {
     await validateRBAC();
 
     const server = app.listen(PORT, async () => {
+      // Attach GraphQL WebSocket subscription server
+      attachSubscriptionServer(server);
+
       recurringDonationScheduler.start();
       reconciliationService.start();
       auditLogRetentionService.start();
+      
+      // Start quota reset job
+      const stopQuotaResetJob = startQuotaResetJob();
+      server.stopQuotaResetJob = stopQuotaResetJob;
+
+      runCleanup(); // Run once on startup
+    const cleanupInterval = setInterval(runCleanup, 24 * 60 * 60 * 1000);
       
       // Initialize and start network status monitoring
       try {
@@ -428,6 +482,16 @@ async function startServer() {
       const { startCleanup } = require('../utils/replayDetector');
       const replayConfig = require('../config/replayDetection');
       replayCleanupTimer = startCleanup(replayDetectionMiddleware.trackingStore, replayConfig);
+
+      // Initialize Leaderboard SSE for real-time updates
+      try {
+        const LeaderboardSSE = require('../services/LeaderboardSSE');
+        LeaderboardSSE.initLeaderboardSSE();
+      } catch (err) {
+        log.error('APP', 'Failed to initialize LeaderboardSSE', {
+          error: err.message,
+        });
+      }
 
       log.info('APP', 'API started', {
         port: PORT,
@@ -452,6 +516,8 @@ async function startServer() {
       log.info("SHUTDOWN", `Received ${signal}, starting graceful shutdown`);
       logShutdownDiagnostics(signal);
 
+      clearInterval(cleanupInterval); // Stop the timer so the process can exit
+
       const timeoutMs = parseInt(process.env.SHUTDOWN_TIMEOUT || '30000', 10);
       const forceExit = setTimeout(() => {
         log.error("SHUTDOWN", `Forced shutdown after ${timeoutMs}ms timeout`);
@@ -474,6 +540,12 @@ async function startServer() {
           recurringDonationScheduler.stop();
           reconciliationService.stop();
           auditLogRetentionService.stop();
+          
+          // Stop quota reset job
+          if (server.stopQuotaResetJob) {
+            server.stopQuotaResetJob();
+            log.info("SHUTDOWN", "Quota reset job stopped");
+          }
           
           try {
             await networkStatusService.shutdown();

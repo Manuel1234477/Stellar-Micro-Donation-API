@@ -1,0 +1,84 @@
+name: Load Tests
+
+on:
+  schedule:
+    # Run every Sunday at 00:00 UTC
+    - cron: '0 0 * * 0'
+  workflow_dispatch:
+    inputs:
+      concurrency:
+        description: 'Number of concurrent virtual users'
+        required: false
+        default: '10'
+      iterations:
+        description: 'Total iterations per scenario'
+        required: false
+        default: '50'
+
+jobs:
+  load-test:
+    name: Run Load Tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v6
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: '18'
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run load test suite (Jest)
+        env:
+          MOCK_STELLAR: 'true'
+          NODE_ENV: 'test'
+        run: npm test tests/implement-load-testing-suite.test.js -- --testTimeout=60000 --forceExit
+
+      - name: Run in-process load test runner
+        env:
+          MOCK_STELLAR: 'true'
+          NODE_ENV: 'test'
+        run: |
+          node tests/load/run-load-tests.js \
+            --output ./reports/load \
+            --concurrency ${{ github.event.inputs.concurrency || '10' }} \
+            --iterations ${{ github.event.inputs.iterations || '50' }}
+
+      - name: Upload performance report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: load-test-report-${{ github.run_number }}
+          path: reports/load/
+          retention-days: 90
+
+      - name: Comment on PR with load test summary
+        if: github.event_name == 'pull_request' && always()
+        uses: actions/github-script@v8
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          script: |
+            const fs = require('fs');
+            const reportPath = 'reports/load/load-test-report.json';
+            if (!fs.existsSync(reportPath)) {
+              console.log('No report file found, skipping comment');
+              return;
+            }
+            const report = JSON.parse(fs.readFileSync(reportPath, 'utf8'));
+            const status = report.passed ? '✅ PASSED' : '❌ FAILED';
+            const rows = report.scenarios.map(s =>
+              `| ${s.scenario} | ${s.totalRequests} | ${s.latencyMs.p50}ms | ${s.latencyMs.p95}ms | ${s.latencyMs.p99}ms | ${s.throughputRps} req/s | ${s.errorRate}% |`
+            ).join('\n');
+            const body = `## Load Test Report — ${status}\n\n| Scenario | Requests | p50 | p95 | p99 | Throughput | Error Rate |\n|---|---|---|---|---|---|---|\n${rows}\n\n_Generated at: ${report.generatedAt}_`;
+            github.rest.issues.createComment({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              body,
+            });

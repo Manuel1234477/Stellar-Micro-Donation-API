@@ -8,6 +8,7 @@ module.exports = {
   testMatch: ['**/tests/**/*.test.js'],
   testPathIgnorePatterns: [
     '/node_modules/',
+    'tests/e2e/',
     'tests/donation-routes-integration.test.js', // Temporarily disabled - pre-existing failures
     'tests/scheduler-resilience.test.js',
     'tests/advanced-failure-scenarios.test.js',
@@ -31,10 +32,10 @@ module.exports = {
   coverageReporters: ['text', 'text-summary', 'lcov', 'html', 'json-summary'],
   coverageThreshold: {
     global: {
-      branches: 30,
-      functions: 30,
-      lines: 30,
-      statements: 30,
+      branches: 80,
+      functions: 80,
+      lines: 80,
+      statements: 80,
     },
   },
   coverageDirectory: 'coverage',

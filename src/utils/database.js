@@ -23,20 +23,41 @@ const log = require('./log');
 
 const DEFAULT_POOL_SIZE = 5;
 const DEFAULT_ACQUIRE_TIMEOUT = TIMEOUT_DEFAULTS.DATABASE;
+const DEFAULT_SLOW_QUERY_THRESHOLD_MS = 100;
+const MAX_SLOW_QUERY_ENTRIES = 1000;
+const SLOW_QUERY_WINDOW_MS = 24 * 60 * 60 * 1000;
 const DB_PATH = path.join(__dirname, '../../data/stellar_donations.db');
 
 class Database {
-  static poolState = {
-    initialized: false,
-    initializing: null,
-    closing: false,
-    poolSize: DEFAULT_POOL_SIZE,
-    acquireTimeout: DEFAULT_ACQUIRE_TIMEOUT,
-    connections: [],
-    waitQueue: [],
-    nextConnectionId: 1,
-    pendingCreations: 0,
-    queueDrainInProgress: false,
+  static get poolState() {
+    if (!this._poolState) {
+      this._poolState = {
+        initialized: false,
+        initializing: null,
+        closing: false,
+        poolSize: DEFAULT_POOL_SIZE,
+        acquireTimeout: DEFAULT_ACQUIRE_TIMEOUT,
+        connections: [],
+        waitQueue: [],
+        nextConnectionId: 1,
+        pendingCreations: 0,
+        queueDrainInProgress: false,
+      };
+    }
+
+    return this._poolState;
+  }
+
+  static set poolState(value) {
+    this._poolState = value;
+  }
+
+  static performanceState = {
+    totalQueries: 0,
+    totalDurationMs: 0,
+    slowQueryThresholdMs: DEFAULT_SLOW_QUERY_THRESHOLD_MS,
+    slowQueries: [],
+    recentDurations: [],
   };
 
   /**
@@ -65,6 +86,31 @@ class Database {
   }
 
   /**
+   * Parse a non-negative integer environment variable with a safe default.
+   *
+   * @param {string} variableName - Environment variable name.
+   * @param {string|undefined} rawValue - Raw environment value.
+   * @param {number} defaultValue - Default value to use when unset.
+   * @returns {number} Parsed non-negative integer.
+   */
+  static parseNonNegativeIntegerEnv(variableName, rawValue, defaultValue) {
+    if (rawValue === undefined || rawValue === null || rawValue === '') {
+      return defaultValue;
+    }
+
+    const parsed = Number.parseInt(rawValue, 10);
+
+    if (!Number.isInteger(parsed) || parsed < 0) {
+      throw new DatabaseError(
+        `${variableName} must be a non-negative integer`,
+        new Error(`Invalid value provided for ${variableName}`)
+      );
+    }
+
+    return parsed;
+  }
+
+  /**
    * Read and validate pool configuration from environment variables.
    *
    * @returns {{poolSize: number, acquireTimeout: number}} Validated pool config.
@@ -81,6 +127,145 @@ class Database {
         process.env.DB_ACQUIRE_TIMEOUT,
         DEFAULT_ACQUIRE_TIMEOUT
       ),
+    };
+  }
+
+  /**
+   * Read and validate query monitoring configuration from environment variables.
+   *
+   * @returns {{slowQueryThresholdMs: number}} Validated monitoring config.
+   */
+  static getPerformanceConfiguration() {
+    return {
+      slowQueryThresholdMs: this.parseNonNegativeIntegerEnv(
+        'SLOW_QUERY_THRESHOLD_MS',
+        process.env.SLOW_QUERY_THRESHOLD_MS,
+        DEFAULT_SLOW_QUERY_THRESHOLD_MS
+      ),
+    };
+  }
+
+  /**
+   * Remove durations and slow query entries that fall outside the reporting window.
+   *
+   * @returns {void}
+   */
+  static prunePerformanceState() {
+    const cutoff = Date.now() - SLOW_QUERY_WINDOW_MS;
+    const state = this.performanceState;
+
+    state.recentDurations = state.recentDurations.filter(entry => entry.timestamp >= cutoff);
+    state.slowQueries = state.slowQueries.filter(entry => entry.timestamp >= cutoff);
+  }
+
+  /**
+   * Persist metrics for a completed query execution and log slow queries.
+   *
+   * @param {Object} entry - Query execution details.
+   * @param {string} entry.method - Database method used.
+   * @param {string} entry.sql - SQL statement executed.
+   * @param {number} entry.durationMs - Query duration in milliseconds.
+   * @param {boolean} [entry.failed=false] - Whether the query ended in failure.
+   * @param {boolean} [entry.timedOut=false] - Whether the query timed out.
+   * @returns {void}
+   */
+  static recordQueryExecution({ method, sql, durationMs, failed = false, timedOut = false }) {
+    const state = this.performanceState;
+    const timestamp = Date.now();
+    const normalizedDurationMs = Number.isFinite(durationMs) && durationMs >= 0
+      ? Number(durationMs.toFixed(3))
+      : 0;
+
+    state.totalQueries += 1;
+    state.totalDurationMs += normalizedDurationMs;
+    state.recentDurations.push({ durationMs: normalizedDurationMs, timestamp });
+
+    const thresholdMs = state.slowQueryThresholdMs;
+    if (normalizedDurationMs > thresholdMs) {
+      const slowQueryEntry = {
+        sql,
+        method,
+        durationMs: normalizedDurationMs,
+        timestamp,
+        isoTimestamp: new Date(timestamp).toISOString(),
+        failed,
+        timedOut,
+      };
+
+      state.slowQueries.push(slowQueryEntry);
+      if (state.slowQueries.length > MAX_SLOW_QUERY_ENTRIES) {
+        state.slowQueries.splice(0, state.slowQueries.length - MAX_SLOW_QUERY_ENTRIES);
+      }
+
+      log.warn('DATABASE', 'Slow query detected', {
+        method,
+        durationMs: normalizedDurationMs,
+        thresholdMs,
+        sql,
+        failed,
+        timedOut,
+      });
+    }
+
+    this.prunePerformanceState();
+  }
+
+  /**
+   * Return a read-only snapshot of slow query entries from the past 24 hours.
+   *
+   * @param {{limit?: number}} [options={}] - Result shaping options.
+   * @returns {Array<Object>} Slow queries sorted by duration descending.
+   */
+  static getSlowQueries(options = {}) {
+    this.prunePerformanceState();
+
+    const limit = Number.isInteger(options.limit) && options.limit > 0
+      ? options.limit
+      : this.performanceState.slowQueries.length;
+
+    return [...this.performanceState.slowQueries]
+      .sort((left, right) => right.durationMs - left.durationMs || right.timestamp - left.timestamp)
+      .slice(0, limit)
+      .map(entry => ({ ...entry }));
+  }
+
+  /**
+   * Return aggregate query performance metrics for health checks and diagnostics.
+   *
+   * @returns {{thresholdMs: number, totalQueries: number, averageQueryTimeMs: number, slowQueryCount: number, recentQueryCount: number}}
+   */
+  static getPerformanceMetrics() {
+    this.prunePerformanceState();
+
+    const recentQueryCount = this.performanceState.recentDurations.length;
+    const recentDurationTotal = this.performanceState.recentDurations.reduce(
+      (sum, entry) => sum + entry.durationMs,
+      0
+    );
+
+    return {
+      thresholdMs: this.performanceState.slowQueryThresholdMs,
+      totalQueries: this.performanceState.totalQueries,
+      averageQueryTimeMs: recentQueryCount === 0
+        ? 0
+        : Number((recentDurationTotal / recentQueryCount).toFixed(3)),
+      slowQueryCount: this.performanceState.slowQueries.length,
+      recentQueryCount,
+    };
+  }
+
+  /**
+   * Reset query performance state for test isolation and shutdown cleanup.
+   *
+   * @returns {void}
+   */
+  static resetPerformanceMetrics() {
+    this.performanceState = {
+      totalQueries: 0,
+      totalDurationMs: 0,
+      slowQueryThresholdMs: this.getPerformanceConfiguration().slowQueryThresholdMs,
+      slowQueries: [],
+      recentDurations: [],
     };
   }
 
@@ -230,9 +415,11 @@ class Database {
 
     state.initializing = (async () => {
       const config = this.getPoolConfiguration();
+      const performanceConfig = this.getPerformanceConfiguration();
       state.poolSize = config.poolSize;
       state.acquireTimeout = config.acquireTimeout;
       state.closing = false;
+      this.performanceState.slowQueryThresholdMs = performanceConfig.slowQueryThresholdMs;
 
       const connection = await this.createConnectionRecord();
       connection.inUse = false;
@@ -444,6 +631,8 @@ class Database {
   static async execute(method, sql, params, failureMessage) {
     const lease = await this.acquireConnection();
     let timedOut = false;
+    let completed = false;
+    const startTimeNs = process.hrtime.bigint();
 
     let resolveStatement;
     let rejectStatement;
@@ -457,6 +646,16 @@ class Database {
 
     const callback = function(err, result) {
       const statementContext = this;
+      const durationMs = Number(process.hrtime.bigint() - startTimeNs) / 1e6;
+
+      completed = true;
+      Database.recordQueryExecution({
+        method,
+        sql,
+        durationMs,
+        failed: Boolean(err),
+        timedOut,
+      });
 
       if (err) {
         rejectStatement(Database.mapDatabaseError(err, failureMessage));
@@ -493,6 +692,17 @@ class Database {
     } catch (error) {
       if (error instanceof TimeoutError) {
         timedOut = true;
+        if (!completed) {
+          const durationMs = Number(process.hrtime.bigint() - startTimeNs) / 1e6;
+          Database.recordQueryExecution({
+            method,
+            sql,
+            durationMs,
+            failed: true,
+            timedOut: true,
+          });
+          completed = true;
+        }
       }
 
       throw error;
@@ -600,7 +810,10 @@ class Database {
     state.pendingCreations = 0;
     state.queueDrainInProgress = false;
     state.closing = false;
+    this.resetPerformanceMetrics();
   }
 }
+
+Database.resetPerformanceMetrics();
 
 module.exports = Database;
