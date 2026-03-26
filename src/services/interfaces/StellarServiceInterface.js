@@ -49,7 +49,6 @@ class StellarServiceInterface {
     throw new Error('buildAndSubmitFeeBumpTransaction() must be implemented');
   }
 
-  isValidAddress(address) {
   async discoverBestPath(_params) {
     void _params;
     throw new Error('discoverBestPath() must be implemented');
