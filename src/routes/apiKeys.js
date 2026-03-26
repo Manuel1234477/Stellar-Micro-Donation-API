@@ -17,6 +17,7 @@ const { ValidationError } = require('../utils/errors');
 const { validateNonEmptyString, validateRole, validateInteger } = require('../utils/validationHelpers');
 
 const AuditLogService = require('../services/AuditLogService');
+const TOTPService = require('../services/TOTPService');
 
 const { validateSchema } = require('../middleware/schemaValidation');
 const { API_KEY_STATUS } = require('../constants');
@@ -415,6 +416,164 @@ router.post('/cleanup', requireAdmin(), apiKeyCleanupSchema, async (req, res, ne
         retentionDays
       }
     });
+  } catch (error) {
+    next(error);
+  }
+});
+
+// ─── TOTP Routes ──────────────────────────────────────────────────────────────
+
+/**
+ * POST /api-keys/:id/totp/setup
+ * Generate a TOTP secret and QR code for an API key (admin only).
+ * TOTP is not yet active — the admin must call /verify to activate it.
+ */
+router.post('/:id/totp/setup', requireAdmin(), apiKeyIdParamSchema, async (req, res, next) => {
+  try {
+    const { value: keyId } = validateInteger(req.params.id, { min: 1 });
+
+    // Fetch key name for the otpauth label
+    const { initializeApiKeysTable } = require('../models/apiKeys');
+    await initializeApiKeysTable();
+    const db = require('../utils/database');
+    const row = await db.get(`SELECT name FROM api_keys WHERE id = ?`, [keyId]);
+    if (!row) {
+      return res.status(404).json({
+        success: false,
+        error: { code: 'NOT_FOUND', message: 'API key not found' },
+      });
+    }
+
+    const result = await TOTPService.generateSecret(keyId, row.name);
+
+    await AuditLogService.log({
+      category: AuditLogService.CATEGORY.API_KEY_MANAGEMENT,
+      action: 'TOTP_SETUP_INITIATED',
+      severity: AuditLogService.SEVERITY.HIGH,
+      result: 'SUCCESS',
+      userId: req.user.id,
+      requestId: req.id,
+      ipAddress: req.ip,
+      resource: `/api/v1/api-keys/${keyId}/totp/setup`,
+      details: { keyId, initiatedBy: req.user.id },
+    });
+
+    res.status(200).json({
+      success: true,
+      data: {
+        secret: result.secret,
+        qrCodeDataUrl: result.qrCodeDataUrl,
+        otpauthUrl: result.otpauthUrl,
+        backupCodes: result.backupCodes,
+        warning: 'Store backup codes securely. They will not be shown again.',
+        instructions: 'Scan the QR code with your authenticator app, then call POST /totp/verify with a valid code to activate TOTP.',
+      },
+    });
+  } catch (error) {
+    next(error);
+  }
+});
+
+/**
+ * POST /api-keys/:id/totp/verify
+ * Verify a TOTP code and activate TOTP for the API key (admin only).
+ * Also accepts a backup code to authenticate when TOTP is already enabled.
+ */
+router.post('/:id/totp/verify', requireAdmin(), apiKeyIdParamSchema, async (req, res, next) => {
+  try {
+    const { value: keyId } = validateInteger(req.params.id, { min: 1 });
+    const { code } = req.body;
+
+    if (!code) {
+      return res.status(400).json({
+        success: false,
+        error: { code: 'VALIDATION_ERROR', message: 'code is required' },
+      });
+    }
+
+    // If TOTP is already enabled, this endpoint just verifies the code
+    const alreadyEnabled = await TOTPService.isTotpEnabled(keyId);
+    if (alreadyEnabled) {
+      const totpValid = await TOTPService.verify(keyId, String(code));
+      const backupValid = !totpValid && await TOTPService.verifyBackupCode(keyId, String(code));
+      const valid = totpValid || backupValid;
+
+      res.setHeader('X-TOTP-Required', 'true');
+      if (!valid) {
+        return res.status(401).json({
+          success: false,
+          error: { code: 'INVALID_TOTP', message: 'Invalid or expired TOTP code' },
+        });
+      }
+      return res.status(200).json({ success: true, data: { verified: true, usedBackupCode: backupValid } });
+    }
+
+    // First-time activation
+    const result = await TOTPService.enable(keyId, String(code));
+    if (!result.enabled) {
+      res.setHeader('X-TOTP-Required', 'true');
+      return res.status(401).json({
+        success: false,
+        error: { code: 'INVALID_TOTP', message: result.reason || 'Invalid TOTP code' },
+      });
+    }
+
+    await AuditLogService.log({
+      category: AuditLogService.CATEGORY.API_KEY_MANAGEMENT,
+      action: 'TOTP_ENABLED',
+      severity: AuditLogService.SEVERITY.HIGH,
+      result: 'SUCCESS',
+      userId: req.user.id,
+      requestId: req.id,
+      ipAddress: req.ip,
+      resource: `/api/v1/api-keys/${keyId}/totp/verify`,
+      details: { keyId, enabledBy: req.user.id },
+    });
+
+    res.status(200).json({ success: true, data: { enabled: true } });
+  } catch (error) {
+    next(error);
+  }
+});
+
+/**
+ * DELETE /api-keys/:id/totp
+ * Disable TOTP for an API key (admin only). Requires a valid TOTP or backup code.
+ */
+router.delete('/:id/totp', requireAdmin(), apiKeyIdParamSchema, async (req, res, next) => {
+  try {
+    const { value: keyId } = validateInteger(req.params.id, { min: 1 });
+    const { code } = req.body;
+
+    if (!code) {
+      return res.status(400).json({
+        success: false,
+        error: { code: 'VALIDATION_ERROR', message: 'code is required to disable TOTP' },
+      });
+    }
+
+    const result = await TOTPService.disable(keyId, String(code));
+    if (!result.disabled) {
+      res.setHeader('X-TOTP-Required', 'true');
+      return res.status(401).json({
+        success: false,
+        error: { code: 'INVALID_TOTP', message: result.reason || 'Invalid code' },
+      });
+    }
+
+    await AuditLogService.log({
+      category: AuditLogService.CATEGORY.API_KEY_MANAGEMENT,
+      action: 'TOTP_DISABLED',
+      severity: AuditLogService.SEVERITY.HIGH,
+      result: 'SUCCESS',
+      userId: req.user.id,
+      requestId: req.id,
+      ipAddress: req.ip,
+      resource: `/api/v1/api-keys/${keyId}/totp`,
+      details: { keyId, disabledBy: req.user.id },
+    });
+
+    res.status(200).json({ success: true, data: { disabled: true } });
   } catch (error) {
     next(error);
   }
