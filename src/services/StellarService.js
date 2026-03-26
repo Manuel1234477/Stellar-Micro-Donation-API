@@ -19,6 +19,12 @@ const { STELLAR_NETWORKS, HORIZON_URLS } = require('../constants');
 const StellarErrorHandler = require('../utils/stellarErrorHandler');
 const log = require('../utils/log');
 const { withTimeout, TIMEOUT_DEFAULTS, TimeoutError } = require('../utils/timeoutHandler');
+const {
+  toStellarSdkAsset,
+  normalizeHorizonAsset,
+  isSameAsset,
+  serializeAsset,
+} = require('../utils/stellarAsset');
 
 class StellarService extends StellarServiceInterface {
   /**
@@ -61,6 +67,32 @@ class StellarService extends StellarServiceInterface {
 
   getHorizonUrl() {
     return this.horizonUrl;
+  }
+
+  /**
+   * Resolve the active network passphrase for transaction building.
+   *
+   * @private
+   * @returns {string} Stellar network passphrase.
+   */
+  _getNetworkPassphrase() {
+    return this.network === 'public' ? StellarSdk.Networks.PUBLIC : StellarSdk.Networks.TESTNET;
+  }
+
+  /**
+   * Compare two path arrays for deterministic validation.
+   *
+   * @private
+   * @param {Array<Object>} left - First path.
+   * @param {Array<Object>} right - Second path.
+   * @returns {boolean} True when both paths contain the same assets in the same order.
+   */
+  _isSamePath(left = [], right = []) {
+    if (left.length !== right.length) {
+      return false;
+    }
+
+    return left.every((asset, index) => isSameAsset(asset, right[index]));
   }
 
   /**
@@ -197,7 +229,7 @@ class StellarService extends StellarServiceInterface {
         try {
           const existingTx = await this._executeWithRetry(
             () => this.server.transaction(txHash).call(),
-            'verifySubmittedTransaction'
+            'verify_tx_submission'
           );
 
           if (existingTx && existingTx.hash === txHash) {
@@ -352,6 +384,41 @@ class StellarService extends StellarServiceInterface {
   }
 
   /**
+   * Build and submit a fee bump transaction wrapping an existing transaction.
+   * @param {string} envelopeXdr - Base64-encoded XDR of the original transaction envelope
+   * @param {number} newFeeStroops - New fee in stroops for the fee bump transaction
+   * @param {string} feeSourceSecret - Secret key of the account paying the new fee
+   * @returns {Promise<{hash: string, ledger: number, fee: number, envelopeXdr: string}>}
+   */
+  async buildAndSubmitFeeBumpTransaction(envelopeXdr, newFeeStroops, feeSourceSecret) {
+    return StellarErrorHandler.wrap(async () => {
+      const feeSourceKeypair = StellarSdk.Keypair.fromSecret(feeSourceSecret);
+
+      const innerTransaction = StellarSdk.TransactionBuilder.fromXDR(
+        envelopeXdr,
+        this.networkPassphrase
+      );
+
+      const feeBumpTx = StellarSdk.TransactionBuilder.buildFeeBumpTransaction(
+        feeSourceKeypair,
+        String(newFeeStroops),
+        innerTransaction,
+        this.networkPassphrase
+      );
+
+      feeBumpTx.sign(feeSourceKeypair);
+
+      const result = await this._submitTransactionWithNetworkSafety(feeBumpTx);
+      return {
+        hash: result.hash,
+        ledger: result.ledger,
+        fee: newFeeStroops,
+        envelopeXdr: feeBumpTx.toEnvelope().toXDR('base64'),
+      };
+    }, 'buildAndSubmitFeeBumpTransaction');
+  }
+
+  /**
    * Send a donation transaction
    * @param {Object} params
    * @param {string} params.sourceSecret - Source account secret key
@@ -360,13 +427,14 @@ class StellarService extends StellarServiceInterface {
    * @param {string} [params.memo] - Optional transaction memo (max 28 bytes)
    * @returns {Promise<{transactionId: string, ledger: number}>}
    */
-  async sendDonation({ sourceSecret, destinationPublic, amount, memo = '', memoType = 'text' }) {
+  async sendDonation({ sourceSecret, destinationPublic, amount, memo = '', memoType = 'text', asset = null }) {
     return StellarErrorHandler.wrap(async () => {
       const sourceKeypair = StellarSdk.Keypair.fromSecret(sourceSecret);
       const sourceAccount = await this._executeWithRetry(
         () => this.server.loadAccount(sourceKeypair.publicKey()),
         'loadAccountForDonation'
       );
+      const paymentAsset = asset ? toStellarSdkAsset(asset) : StellarSdk.Asset.native();
 
       const transaction = new StellarSdk.TransactionBuilder(sourceAccount, {
         fee: this.baseFee,
@@ -374,7 +442,7 @@ class StellarService extends StellarServiceInterface {
       })
         .addOperation(StellarSdk.Operation.payment({
           destination: destinationPublic,
-          asset: StellarSdk.Asset.native(),
+          asset: paymentAsset,
           amount: amount.toString(),
         }))
         .setTimeout(30);
@@ -398,12 +466,176 @@ class StellarService extends StellarServiceInterface {
       const builtTx = transaction.build();
       builtTx.sign(sourceKeypair);
 
+      const envelopeXdr = builtTx.toEnvelope().toXDR('base64');
+      const result = await this._submitTransactionWithNetworkSafety(builtTx);
+      return {
+        transactionId: result.hash,
+        ledger: result.ledger,
+        envelopeXdr,
+        fee: parseInt(this.baseFee),
+      };
+    }, 'sendDonation');
+  }
+
+  /**
+   * Discover the best available path payment route for a source and destination asset pair.
+   *
+   * @param {Object} params - Path discovery parameters.
+   * @param {{ type: string, code: string, issuer: string|null }} params.sourceAsset - Source asset.
+   * @param {string} [params.sourceAmount] - Source amount for strict-send quotes.
+   * @param {{ type: string, code: string, issuer: string|null }} params.destAsset - Destination asset.
+   * @param {string} [params.destAmount] - Destination amount for strict-receive quotes.
+   * @returns {Promise<Object|null>} Best route or null when no route exists.
+   */
+  async discoverBestPath({ sourceAsset, sourceAmount, destAsset, destAmount }) {
+    return StellarErrorHandler.wrap(async () => {
+      if (isSameAsset(sourceAsset, destAsset)) {
+        const effectiveAmount = sourceAmount || destAmount;
+
+        return {
+          sourceAsset: serializeAsset(sourceAsset),
+          sourceAmount: effectiveAmount,
+          destAsset: serializeAsset(destAsset),
+          destAmount: effectiveAmount,
+          conversionRate: '1.0000000',
+          path: [],
+        };
+      }
+
+      let records = [];
+
+      if (sourceAmount) {
+        const response = await this._executeWithRetry(
+          () => this.server
+            .strictSendPaths(toStellarSdkAsset(sourceAsset), sourceAmount, [toStellarSdkAsset(destAsset)])
+            .call(),
+          'strictSendPaths'
+        );
+        records = response.records || [];
+      } else if (destAmount) {
+        const response = await this._executeWithRetry(
+          () => this.server
+            .strictReceivePaths([toStellarSdkAsset(sourceAsset)], toStellarSdkAsset(destAsset), destAmount)
+            .call(),
+          'strictReceivePaths'
+        );
+        records = response.records || [];
+      } else {
+        throw new Error('Either sourceAmount or destAmount is required for path discovery');
+      }
+
+      if (records.length === 0) {
+        return null;
+      }
+
+      const bestRecord = [...records].sort((left, right) => {
+        const leftDest = parseFloat(left.destination_amount || left.destination_amount_max || '0');
+        const rightDest = parseFloat(right.destination_amount || right.destination_amount_max || '0');
+        return rightDest - leftDest;
+      })[0];
+
+      const normalizedPath = (bestRecord.path || []).map(normalizeHorizonAsset);
+      const resolvedSourceAmount = sourceAmount || bestRecord.source_amount;
+      const resolvedDestAmount = bestRecord.destination_amount || destAmount;
+      const conversionRate = (
+        parseFloat(resolvedSourceAmount) > 0
+          ? (parseFloat(resolvedDestAmount) / parseFloat(resolvedSourceAmount)).toFixed(7)
+          : '0.0000000'
+      );
+
+      return {
+        sourceAsset: serializeAsset(sourceAsset),
+        sourceAmount: resolvedSourceAmount,
+        destAsset: serializeAsset(destAsset),
+        destAmount: resolvedDestAmount,
+        conversionRate,
+        path: normalizedPath.map(serializeAsset),
+      };
+    }, 'discoverBestPath');
+  }
+
+  /**
+   * Execute a Stellar path payment using a server-discovered route.
+   *
+   * @param {{ type: string, code: string, issuer: string|null }} sourceAsset - Source asset.
+   * @param {string} sourceAmount - Source amount to send.
+   * @param {{ type: string, code: string, issuer: string|null }} destAsset - Destination asset.
+   * @param {string} destAmount - Minimum destination amount to receive.
+   * @param {Array<Object>} path - Normalized path assets.
+   * @param {Object} [options={}] - Execution options.
+   * @param {string} options.sourceSecret - Source account secret key.
+   * @param {string} options.destinationPublic - Destination account public key.
+   * @param {string} [options.memo] - Optional memo.
+   * @returns {Promise<{transactionId: string, ledger: number}>} Submitted transaction details.
+   */
+  async pathPayment(sourceAsset, sourceAmount, destAsset, destAmount, path, options = {}) {
+    return StellarErrorHandler.wrap(async () => {
+      const { sourceSecret, destinationPublic, memo = '' } = options;
+
+      if (!sourceSecret || !destinationPublic) {
+        throw new Error('sourceSecret and destinationPublic are required for path payments');
+      }
+
+      const discoveredPath = await this.discoverBestPath({
+        sourceAsset,
+        sourceAmount,
+        destAsset,
+        destAmount,
+      });
+
+      if (!discoveredPath) {
+        throw new Error('No Stellar path payment route found');
+      }
+
+      const normalizedPath = (path || []).map((asset) => ({
+        type: asset.type,
+        code: asset.code,
+        issuer: asset.issuer || null,
+      }));
+
+      const discoveredNormalizedPath = (discoveredPath.path || []).map((asset) => ({
+        type: asset.type,
+        code: asset.code,
+        issuer: asset.issuer || null,
+      }));
+
+      if (!this._isSamePath(normalizedPath, discoveredNormalizedPath)) {
+        throw new Error('Submitted payment path does not match the best available Stellar route');
+      }
+
+      const sourceKeypair = StellarSdk.Keypair.fromSecret(sourceSecret);
+      const sourceAccount = await this._executeWithRetry(
+        () => this.server.loadAccount(sourceKeypair.publicKey()),
+        'loadAccountForPathPayment'
+      );
+
+      const transaction = new StellarSdk.TransactionBuilder(sourceAccount, {
+        fee: this.baseFee,
+        networkPassphrase: this.networkPassphrase,
+      })
+        .addOperation(StellarSdk.Operation.pathPaymentStrictSend({
+          sendAsset: toStellarSdkAsset(sourceAsset),
+          sendAmount: sourceAmount.toString(),
+          destination: destinationPublic,
+          destAsset: toStellarSdkAsset(destAsset),
+          destMin: destAmount.toString(),
+          path: normalizedPath.map(toStellarSdkAsset),
+        }))
+        .setTimeout(30);
+
+      if (memo) {
+        transaction.addMemo(StellarSdk.Memo.text(memo));
+      }
+
+      const builtTx = transaction.build();
+      builtTx.sign(sourceKeypair);
+
       const result = await this._submitTransactionWithNetworkSafety(builtTx);
       return {
         transactionId: result.hash,
         ledger: result.ledger,
       };
-    }, 'sendDonation');
+    }, 'pathPayment');
   }
 
   /**
@@ -436,8 +668,14 @@ class StellarService extends StellarServiceInterface {
       const builtTx = builder.build();
       builtTx.sign(sourceKeypair);
 
+      const envelopeXdr = builtTx.toEnvelope().toXDR('base64');
       const result = await this._submitTransactionWithNetworkSafety(builtTx);
-      return { transactionId: result.hash, ledger: result.ledger };
+      return {
+        transactionId: result.hash,
+        ledger: result.ledger,
+        envelopeXdr,
+        fee: parseInt(StellarSdk.BASE_FEE),
+      };
     }, 'sendBatchDonations');
   }
 

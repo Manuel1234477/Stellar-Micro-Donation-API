@@ -6,6 +6,7 @@ const mockDonationService = {
   createDonationRecord: jest.fn(),
   verifyTransaction: jest.fn(),
   getAllDonations: jest.fn(),
+  getPaginatedDonations: jest.fn(),
   getDonationLimits: jest.fn(),
   getRecentDonations: jest.fn(),
   getDonationById: jest.fn(),
@@ -82,7 +83,7 @@ const RESPONSE_CONTRACTS = {
     errorRequired: ['code', 'message', 'requestId', 'timestamp'],
   },
   listDonationsSuccess: {
-    topLevel: ['success', 'data', 'count'],
+    topLevel: ['success', 'data', 'count', 'meta'],
   },
   verifyDonationError: {
     topLevel: ['success', 'error'],
@@ -122,15 +123,24 @@ describe('API Response Contract Tests', () => {
       transactionHash: 'tx_001',
       verified: true,
     });
-    mockDonationService.getAllDonations.mockReturnValue([
-      {
-        id: 'don_001',
-        donor: 'GDONOR',
-        recipient: 'GRECIPIENT',
-        amount: 10,
-        timestamp: '2026-01-01T00:00:00.000Z',
+    mockDonationService.getPaginatedDonations.mockReturnValue({
+      data: [
+        {
+          id: 'don_001',
+          donor: 'GDONOR',
+          recipient: 'GRECIPIENT',
+          amount: 10,
+          timestamp: '2026-01-01T00:00:00.000Z',
+        },
+      ],
+      totalCount: 1,
+      meta: {
+        hasNextPage: false,
+        hasPreviousPage: false,
+        nextCursor: null,
+        previousCursor: null,
       },
-    ]);
+    });
 
     app = express();
     app.use(express.json());
@@ -145,7 +155,7 @@ describe('API Response Contract Tests', () => {
 
   test('POST /donations success response matches contract', async () => {
     const response = await request(app)
-      .post('/api/v1/donations')
+      .post('/donations')
       .set('X-API-Key', 'test-key-1')
       .set('X-Idempotency-Key', 'idem-contract-001')
       .send({
@@ -163,7 +173,7 @@ describe('API Response Contract Tests', () => {
 
   test('POST /donations validation error response matches contract', async () => {
     const response = await request(app)
-      .post('/api/v1/donations')
+      .post('/donations')
       .set('X-API-Key', 'test-key-1')
       .set('X-Idempotency-Key', 'idem-contract-002')
       .send({
@@ -178,7 +188,7 @@ describe('API Response Contract Tests', () => {
 
   test('GET /donations success response matches contract', async () => {
     const response = await request(app)
-      .get('/api/v1/donations')
+      .get('/donations')
       .set('X-API-Key', 'test-key-1');
 
     expect(response.status).toBe(200);
@@ -196,7 +206,7 @@ describe('API Response Contract Tests', () => {
     });
 
     const response = await request(app)
-      .post('/api/v1/donations/verify')
+      .post('/donations/verify')
       .set('X-API-Key', 'test-key-1')
       .send({
         transactionHash: 'tx_missing',
@@ -210,7 +220,7 @@ describe('API Response Contract Tests', () => {
 
   test('POST /donations authentication error response matches contract', async () => {
     const response = await request(app)
-      .post('/api/v1/donations')
+      .post('/donations')
       .set('X-Idempotency-Key', 'idem-contract-003')
       .send({
         amount: '10',

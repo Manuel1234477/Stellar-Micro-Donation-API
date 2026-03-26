@@ -20,10 +20,9 @@
  * Sanitize a value for display in error messages
  * Prevents exposure of sensitive data while showing enough context
  * @param {*} value - The value to sanitize
- * @param {string} fieldPath - The field path for context
  * @returns {string} - Sanitized string representation
  */
-function sanitizeValueForDisplay(value, fieldPath = '') {
+function sanitizeValueForDisplay(value) {
   // Handle null/undefined
   if (value === null) return 'null';
   if (value === undefined) return 'undefined';
@@ -58,10 +57,9 @@ function sanitizeValueForDisplay(value, fieldPath = '') {
 /**
  * Generate example value based on field rules
  * @param {Object} rules - Field validation rules
- * @param {string} fieldPath - Field path for context
  * @returns {string} - Example value string
  */
-function generateExampleValue(rules, fieldPath = '') {
+function generateExampleValue(rules) {
   // If enum is provided, use first value
   if (rules.enum && rules.enum.length > 0) {
     return sanitizeValueForDisplay(rules.enum[0]);
@@ -76,10 +74,10 @@ function generateExampleValue(rules, fieldPath = '') {
     if (rules.pattern) {
       // Try to generate pattern-matching example
       if (rules.pattern.source.includes('G[A-Z2-7]')) {
-        return '"GBRPYHIL2CI3WHZDTOOQFC6EB4KJJGUJGU7XYJE4D2RCOSXJW7Y5D7Z"';
+        return '"G_PUBLIC_KEY_EXAMPLE"';
       }
       if (rules.pattern.source.includes('[a-f0-9]')) {
-        return '"a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0c1d2e3f4a5b6c7d8e9f0"';
+        return '"hex_value_example"';
       }
     }
     if (rules.minLength) {

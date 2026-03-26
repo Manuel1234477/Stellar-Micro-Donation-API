@@ -9,7 +9,6 @@ const {
 } = require('../../utils/transactionStateMachine');
 
 class Transaction {
-  static eventEmitter = donationEvents;
   static getDbPath() {
     return process.env.DB_JSON_PATH || path.join(__dirname, '../../../data/donations.json');
   }
@@ -81,6 +80,11 @@ class Transaction {
       stellarTxId: transactionData.stellarTxId || null,
       stellarLedger: transactionData.stellarLedger || null,
       statusUpdatedAt: transactionData.statusUpdatedAt || nowIso,
+      envelopeXdr: transactionData.envelopeXdr || null,
+      feeBumpCount: transactionData.feeBumpCount || 0,
+      originalFee: transactionData.originalFee || null,
+      currentFee: transactionData.currentFee || null,
+      lastFeeBumpAt: transactionData.lastFeeBumpAt || null,
     };
     transactions.push(newTransaction);
     this.saveTransactions(transactions);
@@ -168,6 +172,45 @@ class Transaction {
     return transactions[index];
   }
 
+  /**
+   * Update fee bump metadata for a transaction.
+   * @param {string} id - Transaction ID
+   * @param {Object} feeBumpData - Fee bump data to update
+   * @param {number} [feeBumpData.feeBumpCount] - New fee bump count
+   * @param {number} [feeBumpData.currentFee] - New current fee in stroops
+   * @param {string} [feeBumpData.lastFeeBumpAt] - ISO timestamp of fee bump
+   * @param {string} [feeBumpData.envelopeXdr] - Updated envelope XDR (fee bump envelope)
+   * @param {string} [feeBumpData.stellarTxId] - New Stellar transaction hash
+   * @returns {Object} Updated transaction
+   */
+  static updateFeeBumpData(id, feeBumpData) {
+    const transactions = this.loadTransactions();
+    const index = transactions.findIndex(t => t.id === id);
+
+    if (index === -1) {
+      throw new Error(`Transaction not found: ${id}`);
+    }
+
+    if (feeBumpData.feeBumpCount !== undefined) {
+      transactions[index].feeBumpCount = feeBumpData.feeBumpCount;
+    }
+    if (feeBumpData.currentFee !== undefined) {
+      transactions[index].currentFee = feeBumpData.currentFee;
+    }
+    if (feeBumpData.lastFeeBumpAt !== undefined) {
+      transactions[index].lastFeeBumpAt = feeBumpData.lastFeeBumpAt;
+    }
+    if (feeBumpData.envelopeXdr !== undefined) {
+      transactions[index].envelopeXdr = feeBumpData.envelopeXdr;
+    }
+    if (feeBumpData.stellarTxId !== undefined) {
+      transactions[index].stellarTxId = feeBumpData.stellarTxId;
+    }
+
+    this.saveTransactions(transactions);
+    return transactions[index];
+  }
+
   static getByStatus(status) {
     const transactions = this.loadTransactions();
     return transactions.filter(t => t.status === status);
@@ -203,5 +246,7 @@ class Transaction {
     this.saveTransactions([]);
   }
 }
+
+Transaction.eventEmitter = donationEvents;
 
 module.exports = Transaction;

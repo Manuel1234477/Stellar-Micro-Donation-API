@@ -11,7 +11,7 @@ const requireApiKey = require('../middleware/apiKey');
 const { checkPermission } = require('../middleware/rbac');
 const { PERMISSIONS } = require('../utils/permissions');
 const { validateSchema } = require('../middleware/schemaValidation');
-const { validateRequiredFields, validateFloat } = require('../utils/validationHelpers');
+const { validateFloat } = require('../utils/validationHelpers');
 
 const createCampaignSchema = validateSchema({
   body: {

@@ -19,7 +19,7 @@
 const fieldSchemas = {
   // Donation endpoints
   'POST /donations/send': ['senderId', 'receiverId', 'amount', 'memo'],
-  'POST /donations': ['amount', 'currency', 'donor', 'recipient', 'memo'],
+  'POST /donations': ['amount', 'currency', 'donor', 'recipient', 'memo', 'memoType', 'notes', 'tags', 'sourceAsset', 'sourceAmount'],
   'POST /donations/verify': ['transactionHash'],
   'PATCH /donations/:id/status': ['status', 'stellarTxId', 'ledger'],
 

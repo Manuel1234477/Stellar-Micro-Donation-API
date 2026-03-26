@@ -1,6 +1,5 @@
 const db = require('../utils/database');
 const crypto = require('crypto');
-const log = require('../utils/log');
 const { API_KEY_STATUS } = require('../constants/index');
 
 const CREATE_TABLE_SQL = `
@@ -235,6 +234,7 @@ module.exports = {
   createApiKey,
   validateApiKey,
   validateKey,
+  updateApiKey,
   listApiKeys,
   deprecateApiKey,
   revokeApiKey,

@@ -18,6 +18,7 @@
 const express = require('express');
 const router = express.Router();
 const log = require('../utils/log');
+const config = require('../config');
 
 /**
  * In-memory federation registry: name (lowercase) → { account_id, memo_type?, memo? }

@@ -5,14 +5,6 @@ const { EventEmitter } = require('events');
  * Provides a centralized event system for donation state changes
  */
 class DonationEvents extends EventEmitter {
-  // Lifecycle event constants
-  static EVENTS = {
-    CREATED: 'donation.created',
-    SUBMITTED: 'donation.submitted',
-    CONFIRMED: 'donation.confirmed',
-    FAILED: 'donation.failed'
-  };
-
   constructor() {
     super();
     this.validEvents = Object.values(DonationEvents.EVENTS);
@@ -64,6 +56,13 @@ class DonationEvents extends EventEmitter {
     return this.listeners(eventName);
   }
 }
+
+DonationEvents.EVENTS = {
+  CREATED: 'donation.created',
+  SUBMITTED: 'donation.submitted',
+  CONFIRMED: 'donation.confirmed',
+  FAILED: 'donation.failed'
+};
 
 // Export singleton instance
 module.exports = new DonationEvents();

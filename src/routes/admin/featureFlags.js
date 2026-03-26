@@ -17,8 +17,7 @@ const router = express.Router();
 const featureFlagsUtil = require('../../utils/featureFlags');
 const { checkPermission } = require('../../middleware/rbac');
 const { PERMISSIONS } = require('../../utils/permissions');
-const { ValidationError, ForbiddenError, NotFoundError, ERROR_CODES } = require('../../utils/errors');
-const log = require('../../utils/log');
+const { ValidationError, NotFoundError } = require('../../utils/errors');
 const { validateSchema } = require('../../middleware/schemaValidation');
 const AuditLogService = require('../../services/AuditLogService');
 

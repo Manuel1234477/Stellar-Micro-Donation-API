@@ -47,6 +47,11 @@ const ERROR_CODES = {
   // Business logic errors (5000-5099)
   INSUFFICIENT_BALANCE: { code: 'INSUFFICIENT_BALANCE', numeric: 5000 },
   TRANSACTION_FAILED:   { code: 'TRANSACTION_FAILED',   numeric: 5001 },
+  FEE_BUMP_MAX_ATTEMPTS:  { code: 'FEE_BUMP_MAX_ATTEMPTS',  numeric: 5010 },
+  FEE_BUMP_EXCEEDS_CAP:   { code: 'FEE_BUMP_EXCEEDS_CAP',   numeric: 5011 },
+  FEE_BUMP_INVALID_STATE: { code: 'FEE_BUMP_INVALID_STATE', numeric: 5012 },
+  FEE_BUMP_NO_ENVELOPE:   { code: 'FEE_BUMP_NO_ENVELOPE',   numeric: 5013 },
+  FEE_BUMP_FAILED:        { code: 'FEE_BUMP_FAILED',        numeric: 5014 },
 
   // Rate limiting errors (6000-6099)
   RATE_LIMIT_EXCEEDED: { code: 'RATE_LIMIT_EXCEEDED', numeric: 6000 },

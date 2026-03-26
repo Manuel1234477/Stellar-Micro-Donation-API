@@ -11,8 +11,7 @@
 
 const express = require('express');
 const router = express.Router();
-const { checkPermission, requireAdmin } = require('../middleware/rbac');
-const { PERMISSIONS } = require('../utils/permissions');
+const { requireAdmin } = require('../middleware/rbac');
 const { ValidationError, ERROR_CODES } = require('../utils/errors');
 const log = require('../utils/log');
 
