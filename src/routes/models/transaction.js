@@ -247,6 +247,33 @@ class Transaction {
   static _clearAllData() {
     this.saveTransactions([]);
   }
+
+  /**
+   * Update NFT certificate fields on a transaction record.
+   * @param {string} id - Transaction ID
+   * @param {Object} nftData
+   * @param {string} [nftData.nft_asset_code]
+   * @param {string} [nftData.nft_issuer]
+   * @param {string} [nftData.nft_tx_hash]
+   * @param {string} [nftData.nft_minted_at]
+   * @param {string} [nftData.nft_mint_error]
+   * @returns {Object} Updated transaction
+   */
+  static updateNftData(id, nftData) {
+    const transactions = this.loadTransactions();
+    const index = transactions.findIndex(t => t.id === id);
+    if (index === -1) throw new Error(`Transaction not found: ${id}`);
+
+    const fields = ['nft_asset_code', 'nft_issuer', 'nft_tx_hash', 'nft_minted_at', 'nft_mint_error'];
+    for (const field of fields) {
+      if (Object.prototype.hasOwnProperty.call(nftData, field)) {
+        transactions[index][field] = nftData[field];
+      }
+    }
+
+    this.saveTransactions(transactions);
+    return transactions[index];
+  }
 }
 
 Transaction.eventEmitter = donationEvents;

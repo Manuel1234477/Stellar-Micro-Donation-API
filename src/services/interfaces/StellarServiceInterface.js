@@ -118,6 +118,16 @@ class StellarServiceInterface {
     void _key;
     throw new Error('deleteAccountData() must be implemented');
   }
+
+  async mintCertificateNFT(_params) {
+    void _params;
+    throw new Error('mintCertificateNFT() must be implemented');
+  }
+
+  async getCertificatesForWallet(_publicKey) {
+    void _publicKey;
+    throw new Error('getCertificatesForWallet() must be implemented');
+  }
 }
 
 module.exports = StellarServiceInterface;

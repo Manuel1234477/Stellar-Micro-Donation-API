@@ -154,6 +154,11 @@ const createDonationSchema = validateSchema({
         nullable: true,
         min: 0,
       },
+      mintCertificate: {
+        type: 'boolean',
+        required: false,
+        nullable: true,
+      },
     },
     validate: (body) => {
       if ((body.sourceAsset && !body.sourceAmount) || (!body.sourceAsset && body.sourceAmount)) {
@@ -483,7 +488,8 @@ router.post('/', payloadSizeLimiter(ENDPOINT_LIMITS.singleDonation), donationRat
       encryptMemo,
       anonymous,
       sourceAsset,
-      sourceAmount
+      sourceAmount,
+      mintCertificate,
     } = req.body;
 
     // Basic validation
@@ -598,6 +604,58 @@ router.post('/', payloadSizeLimiter(ENDPOINT_LIMITS.singleDonation), donationRat
       // Fee estimation is best-effort; don't fail the request
     }
 
+    // Optionally mint a donation certificate NFT (non-blocking — failure never blocks donation)
+    let nftResult = null;
+    if (mintCertificate === true) {
+      const issuerSecret = process.env.NFT_ISSUER_SECRET || process.env.STELLAR_SECRET || process.env.SERVICE_SECRET_KEY;
+      const recipientPublicKey = resolvedRecipient;
+
+      if (issuerSecret && recipientPublicKey) {
+        try {
+          const nft = await stellarService.mintCertificateNFT({
+            issuerSecret,
+            recipientPublicKey,
+            donationId: transaction.id,
+            amount: transaction.amount,
+            campaignId: transaction.campaign_id || null,
+            donatedAt: transaction.timestamp,
+          });
+
+          Transaction.updateNftData(transaction.id, {
+            nft_asset_code: nft.assetCode,
+            nft_issuer: nft.issuer,
+            nft_tx_hash: nft.txHash,
+            nft_minted_at: new Date().toISOString(),
+          });
+
+          nftResult = {
+            nftMinted: true,
+            nftAssetCode: nft.assetCode,
+            nftIssuer: nft.issuer,
+            nftTxHash: nft.txHash,
+          };
+        } catch (nftErr) {
+          log.error('DONATION_ROUTE', 'NFT certificate minting failed (non-blocking)', {
+            donationId: transaction.id,
+            error: nftErr.message,
+          });
+
+          try {
+            Transaction.updateNftData(transaction.id, {
+              nft_mint_error: nftErr.message,
+            });
+          } catch (_) { /* best-effort */ }
+
+          nftResult = { nftMinted: false, nftError: nftErr.message };
+        }
+      } else {
+        log.warn('DONATION_ROUTE', 'mintCertificate requested but NFT_ISSUER_SECRET not configured', {
+          donationId: transaction.id,
+        });
+        nftResult = { nftMinted: false, nftError: 'NFT issuer not configured' };
+      }
+    }
+
     // Mark processing complete
     if (req.markLifecycleStage) {
       req.markLifecycleStage(LIFECYCLE_STAGES.PROCESSED);
@@ -609,6 +667,7 @@ router.post('/', payloadSizeLimiter(ENDPOINT_LIMITS.singleDonation), donationRat
         verified: true,
         transactionHash: transaction.stellarTxId || transaction.id,
         ...(encryptionMetadata && { encryptionMetadata }),
+        ...(nftResult && nftResult),
         ...(feeEstimate && {
           estimatedFee: feeEstimate.feeStroops,
           estimatedFeeXLM: feeEstimate.feeXLM,
@@ -1017,6 +1076,46 @@ router.get('/:id/memo/decrypt', requireApiKey, donationIdParamSchema, async (req
         memo: plaintext,
         algorithm: transaction.encryptionMetadata?.algorithm || 'ECDH-X25519-AES256GCM',
       }
+    });
+  } catch (error) {
+    next(error);
+  }
+});
+
+/**
+ * GET /donations/:id/certificate
+ * Return the NFT donation certificate details for a specific donation.
+ * Returns 404 if the donation is not found or has no minted certificate.
+ */
+router.get('/:id/certificate', checkPermission(PERMISSIONS.DONATIONS_READ), donationIdParamSchema, (req, res, next) => {
+  try {
+    const transaction = Transaction.getById(req.params.id);
+
+    if (!transaction) {
+      return res.status(404).json({
+        success: false,
+        error: { code: 'NOT_FOUND', message: `Donation ${req.params.id} not found` },
+      });
+    }
+
+    if (!transaction.nft_asset_code) {
+      return res.status(404).json({
+        success: false,
+        error: { code: 'CERTIFICATE_NOT_FOUND', message: 'No NFT certificate has been minted for this donation' },
+      });
+    }
+
+    if (req.markLifecycleStage) req.markLifecycleStage(LIFECYCLE_STAGES.PROCESSED);
+
+    res.json({
+      success: true,
+      data: {
+        donationId: transaction.id,
+        nftAssetCode: transaction.nft_asset_code,
+        nftIssuer: transaction.nft_issuer,
+        nftTxHash: transaction.nft_tx_hash,
+        nftMintedAt: transaction.nft_minted_at,
+      },
     });
   } catch (error) {
     next(error);

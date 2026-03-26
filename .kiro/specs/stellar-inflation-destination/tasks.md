@@ -53,11 +53,11 @@ Implement read and write support for the Stellar `inflation_destination` account
 - [x] 5. Checkpoint — Ensure all tests pass
   - Ensure all tests pass, ask the user if questions arise.
 
-- [~] 6. Add PATCH route and extend GET route in `src/routes/wallet.js`
-  - [~] 6.1 Add `inflationDestinationSchema` using `validateSchema` for the PATCH body (`destination`, `sourceSecret` both required strings)
+- [ ] 6. Add PATCH route and extend GET route in `src/routes/wallet.js`
+  - [ ] 6.1 Add `inflationDestinationSchema` using `validateSchema` for the PATCH body (`destination`, `sourceSecret` both required strings)
     - _Requirements: 1.3, 1.4, 1.5, 4.2_
 
-  - [~] 6.2 Add `PATCH /wallets/:id/inflation-destination` route handler
+  - [ ] 6.2 Add `PATCH /wallets/:id/inflation-destination` route handler
     - Apply auth middleware and `checkPermission(WALLETS_UPDATE)`
     - Apply `inflationDestinationSchema` validation middleware
     - Call `WalletService.getWalletById(id)`; return 404 if not found
@@ -67,13 +67,13 @@ Implement read and write support for the Stellar `inflation_destination` account
     - Never include `sourceSecret` in audit log details
     - _Requirements: 1.1, 1.2, 1.6, 1.7, 5.1, 5.2, 5.3, 5.4, 6.1, 6.2, 6.4, 6.5_
 
-  - [~] 6.3 Extend existing `GET /wallets/:id` handler to include `inflationDestination`
+  - [ ] 6.3 Extend existing `GET /wallets/:id` handler to include `inflationDestination`
     - After fetching the wallet record, call `StellarService.getInflationDestination(wallet.address)`
     - Merge result into response `data`; default to `null` if call fails
     - _Requirements: 2.1, 2.2, 2.3, 2.4, 6.3_
 
-- [~] 7. Write unit and integration tests
-  - [~] 7.1 Write unit tests for the PATCH endpoint covering all Requirement 7 cases
+- [ ] 7. Write unit and integration tests
+  - [ ] 7.1 Write unit tests for the PATCH endpoint covering all Requirement 7 cases
     - Valid PATCH returns 200 with `inflationDestination` in body (Req 7.1)
     - Invalid `destination` returns 400 (Req 7.2)
     - Missing `destination` returns 400 (Req 7.3)
@@ -84,7 +84,7 @@ Implement read and write support for the Stellar `inflation_destination` account
     - Insufficient permissions returns 403
     - _Requirements: 7.1, 7.2, 7.3, 7.4, 7.5_
 
-  - [~] 7.2 Write unit tests for the GET endpoint and audit log
+  - [ ] 7.2 Write unit tests for the GET endpoint and audit log
     - `GET /wallets/:id` includes `inflationDestination` field (Req 7.6)
     - Successful PATCH creates audit log entry with correct fields (Req 7.7)
     - `sourceSecret` is absent from all audit log fields after a PATCH
@@ -110,7 +110,7 @@ Implement read and write support for the Stellar `inflation_destination` account
     - **Property 8: sourceSecret never appears in audit log entries**
     - **Validates: Requirements 6.4**
 
-- [~] 8. Final checkpoint — Ensure all tests pass and coverage ≥ 95%
+- [ ] 8. Final checkpoint — Ensure all tests pass and coverage ≥ 95%
   - Ensure all tests pass, ask the user if questions arise.
   - Verify line coverage for all new code meets the ≥ 95% target (Req 7.8)
 

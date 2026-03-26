@@ -2292,6 +2292,84 @@ class MockStellarService extends StellarServiceInterface {
   xlmToStroops(xlm) {
     return Math.floor(parseFloat(xlm) * 10000000).toString();
   }
+
+  /**
+   * Mock implementation of mintCertificateNFT.
+   *
+   * Derives the asset code from donationId, records the NFT in the recipient's
+   * mock wallet balances, and returns a deterministic mock result.
+   *
+   * @param {Object} params
+   * @param {string} params.issuerSecret
+   * @param {string} params.recipientPublicKey
+   * @param {string} params.donationId
+   * @returns {Promise<{assetCode: string, issuer: string, txHash: string, ledger: number}>}
+   */
+  async mintCertificateNFT({ issuerSecret, recipientPublicKey, donationId }) {
+    await this._simulateNetworkDelay();
+    this._checkRateLimit();
+    this._validateSecretKey(issuerSecret);
+    this._validatePublicKey(recipientPublicKey);
+    this._simulateFailure();
+
+    if (!donationId) throw new ValidationError('donationId is required');
+
+    const suffix = donationId.replace(/[^A-Za-z0-9]/g, '').toUpperCase().slice(0, 8);
+    const assetCode = `CERT${suffix}`.slice(0, 12);
+
+    const issuerPublic = this._secretToPublic(issuerSecret);
+
+    // Record the NFT balance on the recipient wallet if it exists
+    const recipientWallet = this.wallets.get(recipientPublicKey);
+    if (recipientWallet) {
+      this._ensureAssetBalances(recipientWallet);
+      const assetKey = `${assetCode}:${issuerPublic}`;
+      recipientWallet.assetBalances[assetKey] = '1.0000000';
+    }
+
+    const txHash = `mock_nft_${crypto.randomBytes(16).toString('hex')}`;
+    const ledger = Math.floor(Math.random() * 1000000) + 1000000;
+
+    log.info('MOCK_STELLAR_SERVICE', 'NFT certificate minted (mock)', {
+      assetCode, issuerPublic, recipientPublicKey, donationId, txHash,
+    });
+
+    return { assetCode, issuer: issuerPublic, txHash, ledger };
+  }
+
+  /**
+   * Mock implementation of getCertificatesForWallet.
+   *
+   * Returns all asset balances whose key starts with "CERT" for the given wallet.
+   *
+   * @param {string} publicKey - Stellar public key
+   * @returns {Promise<Array<{assetCode: string, issuer: string, balance: string}>>}
+   */
+  async getCertificatesForWallet(publicKey) {
+    await this._simulateNetworkDelay();
+    this._checkRateLimit();
+    this._validatePublicKey(publicKey);
+
+    const wallet = this.wallets.get(publicKey);
+    if (!wallet) {
+      throw new NotFoundError(
+        `Account not found. The account ${publicKey} does not exist on the network.`,
+        ERROR_CODES.WALLET_NOT_FOUND
+      );
+    }
+
+    this._ensureAssetBalances(wallet);
+
+    const certs = [];
+    for (const [key, balance] of Object.entries(wallet.assetBalances)) {
+      if (key === 'native') continue;
+      const [code, issuer] = key.split(':');
+      if (code && code.startsWith('CERT')) {
+        certs.push({ assetCode: code, issuer: issuer || '', balance });
+      }
+    }
+    return certs;
+  }
 }
 
 module.exports = MockStellarService;

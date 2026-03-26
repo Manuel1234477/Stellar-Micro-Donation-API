@@ -719,4 +719,29 @@ router.post('/:id/merge', checkPermission(PERMISSIONS.WALLETS_DELETE), async (re
   }
 });
 
+/**
+ * GET /wallets/:id/certificates
+ * Return all donation certificate NFTs held by a wallet.
+ * Queries Horizon (or mock) for CERT-prefixed assets on the wallet's Stellar account.
+ */
+router.get('/:id/certificates', checkPermission(PERMISSIONS.WALLETS_READ), walletIdSchema, async (req, res, next) => {
+  try {
+    const wallet = await walletService.getWalletById(req.params.id);
+    if (!wallet) {
+      return res.status(404).json({ success: false, error: 'Wallet not found' });
+    }
+
+    const stellarSvc = getStellarService();
+    const certificates = await stellarSvc.getCertificatesForWallet(wallet.address || wallet.publicKey);
+
+    res.json({
+      success: true,
+      data: certificates,
+      count: certificates.length,
+    });
+  } catch (error) {
+    next(error);
+  }
+});
+
 module.exports = router;
