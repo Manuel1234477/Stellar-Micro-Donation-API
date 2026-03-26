@@ -976,6 +976,74 @@ class StellarService extends StellarServiceInterface {
 
 
   /**
+   * Get the inflation destination for a Stellar account.
+   *
+   * @param {string} publicKey - Public key of the account to query
+   * @returns {Promise<string|null>} The inflation_destination field, or null if unset or on error
+   */
+  async getInflationDestination(publicKey) {
+    try {
+      const account = await this._executeWithRetry(
+        () => this.server.loadAccount(publicKey),
+        'loadAccountForInflationDestination'
+      );
+      return account.inflation_destination || null;
+    } catch (error) {
+      log.warn('STELLAR_SERVICE', 'Failed to fetch inflation destination, returning null', {
+        publicKey,
+        error: error.message,
+      });
+      return null;
+    }
+  }
+
+  /**
+   * Set the inflation destination for a Stellar account.
+   *
+   * @param {string} sourceSecret - Secret key of the source account
+   * @param {string} destinationPublicKey - Public key to set as inflation destination
+   * @returns {Promise<{hash: string, ledger: number}>}
+   * @throws {ValidationError} If destinationPublicKey is not a valid Stellar public key
+   * @throws {BusinessLogicError} If the Stellar network rejects the transaction
+   */
+  async setInflationDestination(sourceSecret, destinationPublicKey) {
+    const { ValidationError } = require('../utils/errors');
+
+    if (!StellarSdk.StrKey.isValidEd25519PublicKey(destinationPublicKey)) {
+      throw new ValidationError(
+        `destination must be a valid Stellar public key (56-character Base32 string starting with G); received: ${destinationPublicKey}`
+      );
+    }
+
+    return StellarErrorHandler.wrap(async () => {
+      const sourceKeypair = StellarSdk.Keypair.fromSecret(sourceSecret);
+      const sourceAccount = await this._executeWithRetry(
+        () => this.server.loadAccount(sourceKeypair.publicKey()),
+        'loadAccountForSetInflationDestination'
+      );
+
+      const transaction = new StellarSdk.TransactionBuilder(sourceAccount, {
+        fee: this.baseFee,
+        networkPassphrase: this.networkPassphrase,
+      })
+        .addOperation(StellarSdk.Operation.setOptions({ inflationDest: destinationPublicKey }))
+        .setTimeout(30)
+        .build();
+
+      transaction.sign(sourceKeypair);
+
+      const result = await this._submitTransactionWithNetworkSafety(transaction);
+
+      log.info('STELLAR_SERVICE', 'Inflation destination set', {
+        source: sourceKeypair.publicKey(),
+        inflationDest: destinationPublicKey,
+        hash: result.hash,
+      });
+
+      return { hash: result.hash, ledger: result.ledger };
+    }, 'setInflationDestination');
+  }
+
    * Append events to the internal event store.
    * @private
    * @param {string} contractId

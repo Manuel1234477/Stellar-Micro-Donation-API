@@ -2235,6 +2235,50 @@ class MockStellarService extends StellarServiceInterface {
     return pub;
   }
 
+  /**
+   * Get the inflation destination for a wallet by public key.
+   * @param {string} publicKey - Stellar public key
+   * @returns {Promise<string|null>} The inflation destination or null if not set / not found
+   */
+  async getInflationDestination(publicKey) {
+    const wallet = this.wallets.get(publicKey);
+    if (!wallet) return null;
+    return wallet.inflationDestination || null;
+  }
+
+  /**
+   * Set the inflation destination for a wallet.
+   * @param {string} sourceSecret - Secret key of the source account
+   * @param {string} destinationPublicKey - Stellar public key to set as inflation destination
+   * @returns {Promise<{hash: string, ledger: number}>}
+   * @throws {ValidationError} If destinationPublicKey is not a valid Stellar public key
+   */
+  async setInflationDestination(sourceSecret, destinationPublicKey) {
+    if (
+      !destinationPublicKey ||
+      typeof destinationPublicKey !== 'string' ||
+      !destinationPublicKey.startsWith('G') ||
+      destinationPublicKey.length !== 56 ||
+      !/^G[A-Z2-7]{55}$/.test(destinationPublicKey)
+    ) {
+      throw new ValidationError(
+        'Invalid destination: must be a valid Stellar public key (56-character Base32 string starting with G).'
+      );
+    }
+
+    const sourceWallet = this._findWalletBySecret(sourceSecret);
+    if (!sourceWallet) {
+      throw new ValidationError('Invalid source secret key. The provided secret key does not match any account.');
+    }
+
+    sourceWallet.inflationDestination = destinationPublicKey;
+
+    const hash = `mock_${crypto.randomBytes(16).toString('hex')}`;
+    const ledger = Math.floor(Math.random() * 1000000) + 1;
+
+    return { hash, ledger };
+  }
+
   // Interface compliance methods
   isValidAddress(address) {
     // Simple validation for mock: check format

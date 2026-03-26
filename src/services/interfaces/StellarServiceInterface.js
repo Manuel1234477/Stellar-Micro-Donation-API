@@ -97,6 +97,15 @@ class StellarServiceInterface {
     throw new Error('estimateFee() must be implemented');
   }
 
+  async setInflationDestination(_sourceSecret, _destinationPublicKey) {
+    void _sourceSecret;
+    void _destinationPublicKey;
+    throw new Error('setInflationDestination() must be implemented');
+  }
+
+  async getInflationDestination(_publicKey) {
+    void _publicKey;
+    throw new Error('getInflationDestination() must be implemented');
   async setAccountData(_secret, _key, _value) {
     void _secret;
     void _key;
