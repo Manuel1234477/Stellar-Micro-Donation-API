@@ -177,10 +177,10 @@ class WalletService {
    * @returns {Promise<Object|null>} User object or null if not found
    */
   async getUserByPublicKey(publicKey) {
-    return await Database.get(
-      'SELECT id, publicKey, createdAt FROM users WHERE publicKey = ?',
-      [publicKey]
-    );
+   return await Database.get(
+    'SELECT id, publicKey, createdAt FROM users WHERE publicKey = ? AND deleted_at IS NULL',
+    [publicKey]
+  );
   }
 
   /**
@@ -203,22 +203,23 @@ class WalletService {
 
     // Get all transactions where user is sender or receiver
     const transactions = await Database.query(
-      `SELECT 
-        t.id,
-        t.senderId,
-        t.receiverId,
-        t.amount,
-        t.memo,
-        t.timestamp,
-        sender.publicKey as senderPublicKey,
-        receiver.publicKey as receiverPublicKey
-      FROM transactions t
-      LEFT JOIN users sender ON t.senderId = sender.id
-      LEFT JOIN users receiver ON t.receiverId = receiver.id
-      WHERE t.senderId = ? OR t.receiverId = ?
-      ORDER BY t.timestamp DESC`,
-      [user.id, user.id]
-    );
+  `SELECT 
+    t.id,
+    t.senderId,
+    t.receiverId,
+    t.amount,
+    t.memo,
+    t.timestamp,
+    sender.publicKey as senderPublicKey,
+    receiver.publicKey as receiverPublicKey
+  FROM transactions t
+  LEFT JOIN users sender ON t.senderId = sender.id
+  LEFT JOIN users receiver ON t.receiverId = receiver.id
+  WHERE (t.senderId = ? OR t.receiverId = ?) 
+    AND t.deleted_at IS NULL -- Added this line
+  ORDER BY t.timestamp DESC`,
+  [user.id, user.id]
+);
 
     // Format the response
     const formattedTransactions = transactions.map(tx => ({

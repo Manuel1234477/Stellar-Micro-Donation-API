@@ -30,6 +30,7 @@ const apiKeyCreateSchema = validateSchema({
       metadata: { type: 'object', required: false, nullable: true },
       rateLimit: { type: 'integer', required: false, min: 1 },
       rateLimitWindowSeconds: { type: 'integer', required: false, min: 1 },
+      allowedIps: { type: 'array', required: false, nullable: true },
     },
   },
 });
@@ -66,7 +67,7 @@ const apiKeyCleanupSchema = validateSchema({
  */
 router.post('/', requireAdmin(), apiKeyCreateSchema, async (req, res, next) => {
   try {
-    const { name, role = 'user', expiresInDays, metadata, rateLimit, rateLimitWindowSeconds } = req.body;
+    const { name, role = 'user', expiresInDays, metadata, rateLimit, rateLimitWindowSeconds, allowedIps } = req.body;
 
     const nameValidation = validateNonEmptyString(name, 'Name');
     if (!nameValidation.valid) {
@@ -93,6 +94,7 @@ router.post('/', requireAdmin(), apiKeyCreateSchema, async (req, res, next) => {
       metadata: metadata || {},
       rateLimit: rateLimit || null,
       rateLimitWindowSeconds: rateLimitWindowSeconds || null,
+      allowedIps: allowedIps || null,
     });
 
     // Audit log: API key created
@@ -285,6 +287,47 @@ router.post('/:id/deprecate', requireAdmin(), apiKeyIdParamSchema, async (req, r
       success: true,
       message: 'API key deprecated successfully'
     });
+  } catch (error) {
+    next(error);
+  }
+});
+
+/**
+ * PATCH /api/v1/api-keys/:id
+ * Update mutable fields on an API key, e.g. allowedIps (admin only)
+ */
+router.patch('/:id', requireAdmin(), apiKeyIdParamSchema, async (req, res, next) => {
+  try {
+    const keyIdValidation = validateInteger(req.params.id, { min: 1 });
+    if (!keyIdValidation.valid) {
+      throw new ValidationError(`Invalid key ID: ${keyIdValidation.error}`);
+    }
+
+    const { allowedIps } = req.body;
+    const updates = {};
+    if (allowedIps !== undefined) updates.allowed_ips = allowedIps;
+
+    const updated = await apiKeysModel.updateApiKey(keyIdValidation.value, updates);
+    if (!updated) {
+      return res.status(404).json({
+        success: false,
+        error: { code: 'NOT_FOUND', message: 'API key not found' },
+      });
+    }
+
+    await AuditLogService.log({
+      category: AuditLogService.CATEGORY.API_KEY_MANAGEMENT,
+      action: 'API_KEY_UPDATED',
+      severity: AuditLogService.SEVERITY.HIGH,
+      result: 'SUCCESS',
+      userId: req.user.id,
+      requestId: req.id,
+      ipAddress: req.ip,
+      resource: `/api/v1/api-keys/${keyIdValidation.value}`,
+      details: { keyId: keyIdValidation.value, updatedFields: Object.keys(updates), updatedBy: req.user.id },
+    });
+
+    res.json({ success: true, message: 'API key updated successfully' });
   } catch (error) {
     next(error);
   }

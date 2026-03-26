@@ -1,6 +1,5 @@
 const db = require('../utils/database');
 const crypto = require('crypto');
-const log = require('../utils/log');
 const { API_KEY_STATUS } = require('../constants/index');
 
 const CREATE_TABLE_SQL = `
@@ -21,15 +20,24 @@ const CREATE_TABLE_SQL = `
     grace_period_days INTEGER NOT NULL DEFAULT 30,
     rotated_to_id INTEGER,
     signing_required INTEGER NOT NULL DEFAULT 0,
-    key_secret TEXT
+    key_secret TEXT,
+    allowed_ips TEXT
   )
 `;
 
 async function initializeApiKeysTable() {
   await db.run(CREATE_TABLE_SQL);
+  // Add allowed_ips column to existing tables that predate this feature
+  try {
+    await db.run(`ALTER TABLE api_keys ADD COLUMN allowed_ips TEXT`);
+  } catch (err) {
+    // Ignore "duplicate column name" — column already exists
+    const detail = (err.details && err.details.originalError) || err.message || '';
+    if (!detail.includes('duplicate column')) throw err;
+  }
 }
 
-async function createApiKey({ name, role = 'user', expiresInDays, createdBy, metadata = {}, gracePeriodDays = 30, signingRequired = false }) {
+async function createApiKey({ name, role = 'user', expiresInDays, createdBy, metadata = {}, gracePeriodDays = 30, signingRequired = false, allowedIps = null }) {
   await initializeApiKeysTable();
   const rawKey = crypto.randomBytes(32).toString('hex');
   const keyHash = crypto.createHash('sha256').update(rawKey).digest('hex');
@@ -38,11 +46,12 @@ async function createApiKey({ name, role = 'user', expiresInDays, createdBy, met
   const keySecret = crypto.randomBytes(32).toString('hex');
   const now = Date.now();
   const expiresAt = expiresInDays ? now + expiresInDays * 24 * 60 * 60 * 1000 : null;
+  const allowedIpsJson = allowedIps && allowedIps.length > 0 ? JSON.stringify(allowedIps) : null;
 
   const result = await db.run(
-    `INSERT INTO api_keys (key_hash, key_prefix, name, role, status, created_by, metadata, expires_at, created_at, grace_period_days, signing_required, key_secret)
-     VALUES (?, ?, ?, ?, 'active', ?, ?, ?, ?, ?, ?, ?)`,
-    [keyHash, keyPrefix, name, role, createdBy || null, JSON.stringify(metadata), expiresAt, now, gracePeriodDays, signingRequired ? 1 : 0, keySecret]
+    `INSERT INTO api_keys (key_hash, key_prefix, name, role, status, created_by, metadata, expires_at, created_at, grace_period_days, signing_required, key_secret, allowed_ips)
+     VALUES (?, ?, ?, ?, 'active', ?, ?, ?, ?, ?, ?, ?, ?)`,
+    [keyHash, keyPrefix, name, role, createdBy || null, JSON.stringify(metadata), expiresAt, now, gracePeriodDays, signingRequired ? 1 : 0, keySecret, allowedIpsJson]
   );
 
   return {
@@ -57,6 +66,7 @@ async function createApiKey({ name, role = 'user', expiresInDays, createdBy, met
     expiresAt: expiresAt ? new Date(expiresAt).toISOString() : null,
     gracePeriodDays,
     signingRequired: !!signingRequired,
+    allowedIps: allowedIps || null,
   };
 }
 
@@ -90,6 +100,7 @@ async function validateApiKey(rawKey) {
     createdAt: row.created_at,
     signingRequired: !!row.signing_required,
     keySecret: row.key_secret || null,
+    allowedIps: row.allowed_ips ? JSON.parse(row.allowed_ips) : null,
   };
 }
 
@@ -140,11 +151,15 @@ async function revokeApiKey(id) {
 
 async function updateApiKey(id, updates = {}) {
   await initializeApiKeysTable();
-  const allowed = ['name', 'role', 'metadata', 'signing_required'];
+  const allowed = ['name', 'role', 'metadata', 'signing_required', 'allowed_ips'];
   const fields = Object.keys(updates).filter(k => allowed.includes(k));
   if (fields.length === 0) return false;
   const sets = fields.map(f => `${f} = ?`).join(', ');
-  const values = fields.map(f => f === 'metadata' ? JSON.stringify(updates[f]) : updates[f]);
+  const values = fields.map(f => {
+    if (f === 'metadata') return JSON.stringify(updates[f]);
+    if (f === 'allowed_ips') return updates[f] ? JSON.stringify(updates[f]) : null;
+    return updates[f];
+  });
   const result = await db.run(`UPDATE api_keys SET ${sets} WHERE id = ?`, [...values, id]);
   return result.changes > 0;
 }
@@ -219,9 +234,11 @@ module.exports = {
   createApiKey,
   validateApiKey,
   validateKey,
+  updateApiKey,
   listApiKeys,
   deprecateApiKey,
   revokeApiKey,
+  updateApiKey,
   cleanupOldKeys,
   rotateApiKey,
   revokeExpiredDeprecatedKeys,

@@ -1,0 +1,55 @@
+# Artillery load test — Balance & Wallet Queries
+# Run: npx artillery run tests/load/artillery/balance-queries.yml --target http://localhost:3000
+# Requires a running API server with MOCK_STELLAR=true
+
+config:
+  target: "http://localhost:3000"
+  phases:
+    - name: "Warm-up"
+      duration: 30
+      arrivalRate: 5
+    - name: "Ramp-up"
+      duration: 60
+      arrivalRate: 5
+      rampTo: 30
+    - name: "Sustained load"
+      duration: 120
+      arrivalRate: 30
+    - name: "Cool-down"
+      duration: 30
+      arrivalRate: 5
+  defaults:
+    headers:
+      X-API-Key: "test-load-key"
+  plugins:
+    expect: {}
+  ensure:
+    p95: 300
+    p99: 600
+    maxErrorRate: 2
+
+scenarios:
+  - name: "List wallets"
+    weight: 60
+    flow:
+      - get:
+          url: "/wallets"
+          expect:
+            - statusCode:
+                - 200
+                - 401
+  - name: "Get wallet transactions"
+    weight: 40
+    flow:
+      - get:
+          url: "/wallets"
+          capture:
+            - json: "$.data[0].address"
+              as: "walletAddress"
+      - get:
+          url: "/wallets/{{ walletAddress }}/transactions"
+          ifTrue: "walletAddress"
+          expect:
+            - statusCode:
+                - 200
+                - 404

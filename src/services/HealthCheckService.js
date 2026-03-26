@@ -46,6 +46,7 @@ async function checkDatabase() {
   return {
     ...result,
     pool: Database.getPoolMetrics(),
+    performance: Database.getPerformanceMetrics(),
   };
 }
 

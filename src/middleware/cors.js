@@ -25,7 +25,7 @@ const CORS_DEFAULTS = {
  * Parse and validate the CORS_ALLOWED_ORIGINS environment variable.
  * Returns an array of allowed origin strings/patterns.
  *
- * @param {string} [raw] - Raw env value, defaults to process.env.CORS_ALLOWED_ORIGINS
+ * @param {string} [raw] - Raw allowlist env value
  * @returns {string[]} Parsed list of allowed origins
  */
 function parseAllowedOrigins(raw) {

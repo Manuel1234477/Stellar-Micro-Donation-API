@@ -59,7 +59,10 @@ module.exports = async () => {
       revoked_at INTEGER,
       created_at INTEGER NOT NULL,
       grace_period_days INTEGER NOT NULL DEFAULT 30,
-      rotated_to_id INTEGER
+      rotated_to_id INTEGER,
+      signing_required INTEGER NOT NULL DEFAULT 0,
+      key_secret TEXT,
+      allowed_ips TEXT
     )`);
     await Database.run(`CREATE TABLE IF NOT EXISTS student_fees (
       id INTEGER PRIMARY KEY AUTOINCREMENT,

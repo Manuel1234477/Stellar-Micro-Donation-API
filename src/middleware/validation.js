@@ -22,15 +22,15 @@ function validateDateRange(req, res, next) {
 
 // Allowed fields per route pattern and method
 const ROUTE_ALLOWED_FIELDS = [
-  { methods: ['POST'], pattern: /^\/donations\/send$/, fields: ['senderId', 'receiverId', 'amount', 'memo', 'idempotencyKey'] },
-  { methods: ['POST'], pattern: /^\/donations\/verify$/, fields: ['transactionHash', 'stellarTxId'] },
-  { methods: ['POST'], pattern: /^\/donations$/, fields: ['donor', 'recipient', 'amount', 'memo', 'idempotencyKey'] },
-  { methods: ['PATCH'], pattern: /^\/donations\/[^/]+\/status$/, fields: ['status', 'stellarTxId', 'ledger'] },
-  { methods: ['POST'], pattern: /^\/wallets$/, fields: ['address', 'label', 'ownerName'] },
-  { methods: ['PATCH'], pattern: /^\/wallets\/[^/]+$/, fields: ['label', 'ownerName'] },
-  { methods: ['POST'], pattern: /^\/transactions\/sync$/, fields: ['publicKey'] },
-  { methods: ['POST'], pattern: /^\/api-keys\/cleanup$/, fields: ['retentionDays'] },
-  { methods: ['POST'], pattern: /^\/api-keys$/, fields: ['name', 'role', 'expiresInDays', 'metadata'] },
+  { methods: ['POST'], pattern: /^(\/api\/v1)?\/donations\/send$/, fields: ['senderId', 'receiverId', 'amount', 'memo', 'idempotencyKey', 'campaign_id'] },
+  { methods: ['POST'], pattern: /^(\/api\/v1)?\/donations\/verify$/, fields: ['transactionHash', 'stellarTxId'] },
+  { methods: ['POST'], pattern: /^(\/api\/v1)?\/donations$/, fields: ['donor', 'recipient', 'amount', 'memo', 'currency', 'memoType', 'notes', 'tags', 'sourceAsset', 'sourceAmount', 'idempotencyKey'] },
+  { methods: ['PATCH'], pattern: /^(\/api\/v1)?\/donations\/[^/]+\/status$/, fields: ['status', 'stellarTxId', 'ledger', 'notes', 'tags'] },
+  { methods: ['POST'], pattern: /^(\/api\/v1)?\/wallets$/, fields: ['address', 'label', 'ownerName'] },
+  { methods: ['PATCH'], pattern: /^(\/api\/v1)?\/wallets\/[^/]+$/, fields: ['label', 'ownerName'] },
+  { methods: ['POST'], pattern: /^(\/api\/v1)?\/transactions\/sync$/, fields: ['publicKey'] },
+  { methods: ['POST'], pattern: /^(\/api\/v1)?\/api-keys\/cleanup$/, fields: ['retentionDays'] },
+  { methods: ['POST'], pattern: /^(\/api\/v1)?\/api-keys$/, fields: ['name', 'role', 'expiresInDays', 'metadata'] },
 ];
 
 function validatePayloadFields(req, res, next) {

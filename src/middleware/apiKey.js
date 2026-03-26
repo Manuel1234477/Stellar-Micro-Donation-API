@@ -13,8 +13,9 @@ const { securityConfig } = require("../config/securityConfig");
 const { validateKey } = require("../models/apiKeys");
 const log = require("../utils/log");
 const AuditLogService = require("../services/AuditLogService");
-const perKeyRateLimit = require("./perKeyRateLimit");
 const { verify: verifySignature } = require("../utils/requestSigner");
+const { isIpAllowed } = require("../utils/ipAllowlist");
+const { defaultStore: nonceStore } = require("../utils/nonceStore");
 
 /**
  * Legacy Support Configuration
@@ -84,6 +85,40 @@ const requireApiKey = async (req, res, next) => {
     if (keyInfo) {
       req.apiKey = keyInfo;
 
+      // --- IP Allowlist Check ---
+      if (!isIpAllowed(req.ip, keyInfo.allowedIps)) {
+        log.warn('API_KEY_AUTH', 'Request rejected: IP not in allowlist', {
+          keyId: keyInfo.id,
+          keyPrefix: keyInfo.keyPrefix,
+          clientIp: req.ip,
+          path: req.path,
+        });
+
+        AuditLogService.log({
+          category: AuditLogService.CATEGORY.AUTHENTICATION,
+          action: AuditLogService.ACTION.API_KEY_VALIDATION_FAILED,
+          severity: AuditLogService.SEVERITY.HIGH,
+          result: 'FAILURE',
+          userId: keyInfo.id?.toString(),
+          requestId: req.id,
+          ipAddress: req.ip,
+          resource: req.path,
+          reason: 'IP address not in allowlist',
+          details: { keyId: keyInfo.id, clientIp: req.ip },
+        }).catch(() => {});
+
+        return res.status(403).json({
+          success: false,
+          error: {
+            code: 'FORBIDDEN',
+            message: 'IP address not permitted for this API key',
+            requestId: req.id,
+            timestamp: new Date().toISOString(),
+          },
+        });
+      }
+      // --- End IP Allowlist Check ---
+
       // --- Request Signing Verification ---
       if (keyInfo.signingRequired) {
         const timestamp = req.get('x-timestamp');
@@ -116,6 +151,38 @@ const requireApiKey = async (req, res, next) => {
             },
           });
         }
+
+        // --- Nonce Replay Protection ---
+        const nonce = req.get('x-nonce');
+        if (!nonce) {
+          return res.status(401).json({
+            success: false,
+            error: {
+              code: 'MISSING_NONCE',
+              message: 'X-Nonce header is required for signed requests',
+              requestId: req.id,
+              timestamp: new Date().toISOString(),
+            },
+          });
+        }
+
+        const { seen } = nonceStore.check(nonce);
+        if (seen) {
+          log.warn('API_KEY_AUTH', 'Replayed nonce rejected', {
+            path: req.path,
+            keyPrefix: keyInfo.keyPrefix,
+          });
+          return res.status(409).json({
+            success: false,
+            error: {
+              code: 'NONCE_REPLAYED',
+              message: 'This request has already been processed. Use a unique nonce per request.',
+              requestId: req.id,
+              timestamp: new Date().toISOString(),
+            },
+          });
+        }
+        // --- End Nonce Replay Protection ---
       }
       // --- End Request Signing Verification ---
 

@@ -18,6 +18,7 @@
 const Database = require('../utils/database');
 const WebhookService = require('./WebhookService');
 const { SCHEDULE_STATUS, DONATION_FREQUENCIES } = require('../constants');
+const Database = require('../utils/database');
 const log = require('../utils/log');
 const { revokeExpiredDeprecatedKeys } = require('../models/apiKeys');
 const {
@@ -300,6 +301,13 @@ class RecurringDonationScheduler {
           [
             schedule.donorId,
             schedule.recipientId,
+    return withAsyncContext(
+      "execute_schedule",
+      async () => {
+        try {
+          const transactionResult = await this.stellarService.sendPayment(
+            schedule.donorPublicKey,
+            schedule.recipientPublicKey,
             schedule.amount,
             `Recurring donation (Schedule #${schedule.id})`,
             new Date().toISOString(),
