@@ -64,10 +64,9 @@ function sanitizeMessage(message, errorCode = 'INTERNAL_ERROR') {
  * Intent: Create consistent, secure error responses
  * @param {Object} error - Error object
  * @param {string} requestId - Request ID for tracing
- * @param {number} statusCode - HTTP status code
  * @returns {Object} - Formatted error response
  */
-function formatErrorResponse(error, requestId, statusCode = 500) {
+function formatErrorResponse(error, requestId) {
   const isProduction = process.env.NODE_ENV === 'production';
   const errorCode = error.errorCode || error.code || "INTERNAL_ERROR";
   const numericCode = error.numericCode || 9000;
@@ -201,5 +200,6 @@ function notFoundHandler(req, res) {
 
 module.exports = {
   errorHandler,
-  notFoundHandler
+  notFoundHandler,
+  formatErrorResponse
 };

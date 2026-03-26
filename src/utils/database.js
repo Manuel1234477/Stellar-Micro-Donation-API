@@ -26,18 +26,28 @@ const DEFAULT_ACQUIRE_TIMEOUT = TIMEOUT_DEFAULTS.DATABASE;
 const DB_PATH = path.join(__dirname, '../../data/stellar_donations.db');
 
 class Database {
-  static poolState = {
-    initialized: false,
-    initializing: null,
-    closing: false,
-    poolSize: DEFAULT_POOL_SIZE,
-    acquireTimeout: DEFAULT_ACQUIRE_TIMEOUT,
-    connections: [],
-    waitQueue: [],
-    nextConnectionId: 1,
-    pendingCreations: 0,
-    queueDrainInProgress: false,
-  };
+  static get poolState() {
+    if (!this._poolState) {
+      this._poolState = {
+        initialized: false,
+        initializing: null,
+        closing: false,
+        poolSize: DEFAULT_POOL_SIZE,
+        acquireTimeout: DEFAULT_ACQUIRE_TIMEOUT,
+        connections: [],
+        waitQueue: [],
+        nextConnectionId: 1,
+        pendingCreations: 0,
+        queueDrainInProgress: false,
+      };
+    }
+
+    return this._poolState;
+  }
+
+  static set poolState(value) {
+    this._poolState = value;
+  }
 
   /**
    * Parse a positive integer environment variable with a safe default.

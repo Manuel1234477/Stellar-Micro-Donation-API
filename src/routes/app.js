@@ -40,7 +40,7 @@ const { validateRBAC } = require('../utils/rbacValidator');
 const log = require('../utils/log');
 const requestId = require('../middleware/requestId');
 const serviceContainer = require('../config/serviceContainer');
-const { payloadSizeLimiter, ENDPOINT_LIMITS } = require('../middleware/payloadSizeLimiter');
+const { payloadSizeLimiter } = require('../middleware/payloadSizeLimiter');
 const { createCorsMiddleware } = require('../middleware/cors');
 const { responseFormatterMiddleware } = require('../utils/responseFormatter');
 const {
@@ -170,7 +170,6 @@ app.get('/exchange-rates', async (req, res) => {
         rates,
         supportedCurrencies: ['XLM', ...priceOracle.SUPPORTED_CURRENCIES.map(c => c.toUpperCase())],
         cachedAt: new Date().toISOString(),
-      }
       },
     });
   } catch (err) {

@@ -103,8 +103,8 @@ async function main() {
 
   // Create a donation (POST with body)
   const result = await client.post('/donations', {
-    donor: 'GDQP2KPQGKIHYJGXNUIYOMHARUARCA7DJT5FO2FFOOKY3B2WSQHG4W37',
-    recipient: 'GCEZWKCA5VLDNRLN3RPRJMRZOX3Z6G5CHCGZWM9CQJKR3BSQNEWVDGE',
+    donor: 'G_DONOR_EXAMPLE',
+    recipient: 'G_RECIPIENT_EXAMPLE',
     amount: '10',
     memo: 'Test donation',
   });

@@ -11,7 +11,7 @@
 
 require('dotenv').config({ path: require('path').join(__dirname, '../../.env') });
 const path = require('path');
-const { VALID_STELLAR_NETWORKS, HORIZON_URLS } = require('../constants');
+const { VALID_STELLAR_NETWORKS } = require('../constants');
 const { getActiveEnvironment } = require('./stellarEnvironments');
 
 /**
@@ -218,8 +218,6 @@ const buildConfig = (env, isProduction, isTest) => {
   };
 
   // Stellar configuration
-  const envName = process.env.STELLAR_ENVIRONMENT || process.env.STELLAR_NETWORK || 'testnet';
-  
   if (!process.env.STELLAR_ENVIRONMENT && process.env.STELLAR_NETWORK) {
     console.warn('\x1b[33m[DEPRECATION WARNING] ... Please update your .env file to use STELLAR_ENVIRONMENT instead.\x1b[0m');
   }

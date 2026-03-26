@@ -23,13 +23,22 @@ const { paginateCollection } = require('../utils/pagination');
 const { checkConfirmations } = require('../utils/confirmationChecker');
 const { CONFIRMATION_LEDGER_THRESHOLD } = require('../config/confirmationThreshold');
 
-const MAX_MEMO_LENGTH = 28;
 const LimitService = require('./LimitService');
 const log = require('../utils/log');
 const priceOracle = require('./PriceOracleService');
 const { buildOverpaymentRecord } = require('../utils/overpaymentDetector');
 const memoCollisionDetector = require('../utils/memoCollisionDetector');
-const { paginateCollection } = require('../utils/pagination');
+const {
+  parseAssetInput,
+  isSameAsset,
+  serializeAsset,
+} = require('../utils/stellarAsset');
+
+const DEFAULT_DESTINATION_ASSET = {
+  type: 'native',
+  code: 'XLM',
+  issuer: null,
+};
 
 class DonationService {
   constructor(stellarService) {
@@ -92,7 +101,7 @@ class DonationService {
    * @param {string} params.requestId - Request ID for logging
    * @returns {Promise<Object>} Donation result with transaction details
    */
-  async sendCustodialDonation({ senderId, receiverId, amount, memo, notes, tags, apiKeyId, apiKeyRole = 'user', idempotencyKey, requestId }) {
+  async sendCustodialDonation({ senderId, receiverId, amount, memo, notes, tags, apiKeyId, campaign_id, idempotencyKey, requestId }) {
     log.debug('DONATION_SERVICE', 'Processing custodial donation', {
       requestId,
       senderId,
@@ -369,6 +378,91 @@ class DonationService {
   }
 
   /**
+   * Normalize and validate a donation amount used in either direct or path payments.
+   * @param {number} amount - Parsed numeric amount.
+   * @param {string} fieldName - Field name for validation context.
+   * @throws {ValidationError} If amount is invalid.
+   */
+  validatePaymentAmount(amount, fieldName) {
+    const validation = donationValidator.validateAmount(amount);
+    if (!validation.valid) {
+      throw new ValidationError(
+        `${fieldName}: ${validation.error}`,
+        null,
+        validation.code || ERROR_CODES.INVALID_AMOUNT
+      );
+    }
+  }
+
+  /**
+   * Resolve the secret key that should sign a donation payment.
+   * Prefers a wallet owned by the donor in mock mode and falls back to a configured service key.
+   *
+   * @param {string|null} donor - Donor identifier.
+   * @returns {string|null} Secret key or null when no payment signer is available.
+   */
+  resolvePaymentSourceSecret(donor) {
+    if (
+      donor &&
+      this.stellarService &&
+      typeof this.stellarService.getSecretForPublicKey === 'function'
+    ) {
+      const donorSecret = this.stellarService.getSecretForPublicKey(donor);
+      if (donorSecret) {
+        return donorSecret;
+      }
+    }
+
+    return this.stellarService && this.stellarService.serviceSecretKey
+      ? this.stellarService.serviceSecretKey
+      : null;
+  }
+
+  /**
+   * Estimate the best server-side path payment route for a donation quote.
+   *
+   * @param {Object} params - Estimate parameters.
+   * @param {string|Object} params.sourceAsset - Source asset definition.
+   * @param {number} params.sourceAmount - Source amount.
+   * @param {string|Object} [params.destAsset] - Destination asset definition.
+   * @param {number} [params.destAmount] - Destination amount.
+   * @returns {Promise<Object>} Path estimate payload.
+   */
+  async estimateDonationPath({ sourceAsset, sourceAmount, destAsset, destAmount }) {
+    const normalizedSourceAsset = parseAssetInput(sourceAsset, 'sourceAsset');
+    const normalizedDestAsset = destAsset
+      ? parseAssetInput(destAsset, 'destAsset')
+      : DEFAULT_DESTINATION_ASSET;
+
+    if (sourceAmount !== undefined && sourceAmount !== null) {
+      this.validatePaymentAmount(sourceAmount, 'sourceAmount');
+    }
+    if (destAmount !== undefined && destAmount !== null) {
+      this.validatePaymentAmount(destAmount, 'destAmount');
+    }
+
+    const estimate = await this.stellarService.discoverBestPath({
+      sourceAsset: normalizedSourceAsset,
+      sourceAmount: sourceAmount !== undefined && sourceAmount !== null ? sourceAmount.toString() : undefined,
+      destAsset: normalizedDestAsset,
+      destAmount: destAmount !== undefined && destAmount !== null ? destAmount.toString() : undefined,
+    });
+
+    if (!estimate) {
+      throw new ValidationError('No conversion path found for the requested asset pair');
+    }
+
+    return {
+      sourceAsset: serializeAsset(normalizedSourceAsset),
+      sourceAmount: estimate.sourceAmount,
+      destAsset: serializeAsset(normalizedDestAsset),
+      destAmount: estimate.destAmount,
+      conversionRate: estimate.conversionRate,
+      path: estimate.path,
+    };
+  }
+
+  /**
    * Create a non-custodial donation record
    * @param {Object} params - Donation parameters
    * @param {number} params.amount - Donation amount (in the specified currency)
@@ -376,10 +470,29 @@ class DonationService {
    * @param {string} params.donor - Donor identifier
    * @param {string} params.recipient - Recipient identifier
    * @param {string} params.memo - Optional memo
+   * @param {string|Object} [params.sourceAsset] - Optional source asset for cross-asset payments
+   * @param {number} [params.sourceAmount] - Optional source asset amount
    * @param {string} params.idempotencyKey - Idempotency key
    * @returns {Object} Created transaction
    */
-  async createDonationRecord({ amount, currency = 'XLM', donor, recipient, memo, notes, tags, memoType = 'text', apiKeyId, apiKeyRole = 'user', idempotencyKey, receivedAmount, sessionId }) {
+  async createDonationRecord({
+    amount,
+    currency = 'XLM',
+    donor,
+    recipient,
+    memo,
+    notes,
+    tags,
+    memoType = 'text',
+    apiKeyId,
+    apiKeyRole = 'user',
+    idempotencyKey,
+    receivedAmount,
+    sessionId,
+    campaign_id,
+    sourceAsset,
+    sourceAmount,
+  }) {
     // Sanitize identifiers
     const sanitizedDonor = donor ? sanitizeIdentifier(donor) : 'Anonymous';
     const sanitizedRecipient = sanitizeIdentifier(recipient);
@@ -393,6 +506,10 @@ class DonationService {
     const memoResult = memoType && memoType !== 'text'
       ? memoValidator.validateWithType(memo, memoType)
       : this.validateAndSanitizeMemo(memo);
+
+    if (sourceAmount !== undefined && sourceAmount !== null) {
+      this.validatePaymentAmount(sourceAmount, 'sourceAmount');
+    }
 
     if (!memoResult.valid) {
       throw new ValidationError(memoResult.error, null, memoResult.code);
@@ -447,6 +564,79 @@ class DonationService {
       });
     }
 
+    const sourceAssetProvided = sourceAsset !== undefined && sourceAsset !== null;
+    const normalizedDestAsset = DEFAULT_DESTINATION_ASSET;
+    const normalizedSourceAsset = sourceAssetProvided
+      ? parseAssetInput(sourceAsset, 'sourceAsset')
+      : normalizedDestAsset;
+    const normalizedSourceAmount = sourceAmount ?? xlmAmount;
+    const sourceSecret = this.resolvePaymentSourceSecret(sanitizedDonor);
+    let stellarResult = null;
+    let paymentMethod = 'record_only';
+    let fallbackUsed = false;
+    let selectedPath = [];
+    let conversionRate = null;
+
+    if (sourceSecret && sanitizedRecipient) {
+      if (!sourceAssetProvided) {
+        stellarResult = await this.stellarService.sendDonation({
+          sourceSecret,
+          destinationPublic: sanitizedRecipient,
+          amount: normalizedSourceAmount.toString(),
+          memo: memoResult.sanitized,
+          asset: normalizedSourceAsset,
+        });
+        paymentMethod = 'direct';
+      } else {
+        const estimate = await this.stellarService.discoverBestPath({
+          sourceAsset: normalizedSourceAsset,
+          sourceAmount: normalizedSourceAmount.toString(),
+          destAsset: normalizedDestAsset,
+          destAmount: xlmAmount.toString(),
+        });
+
+        if (!estimate) {
+          throw new ValidationError('No conversion path found for the requested asset pair');
+        }
+
+        selectedPath = estimate.path || [];
+        conversionRate = estimate.conversionRate;
+
+        try {
+          stellarResult = await this.stellarService.pathPayment(
+            normalizedSourceAsset,
+            normalizedSourceAmount.toString(),
+            normalizedDestAsset,
+            estimate.destAmount,
+            selectedPath,
+            {
+              sourceSecret,
+              destinationPublic: sanitizedRecipient,
+              memo: memoResult.sanitized,
+            }
+          );
+          paymentMethod = 'path';
+        } catch (error) {
+          if (isSameAsset(normalizedSourceAsset, normalizedDestAsset)) {
+            if (typeof this.stellarService.disableFailureSimulation === 'function') {
+              this.stellarService.disableFailureSimulation();
+            }
+            stellarResult = await this.stellarService.sendDonation({
+              sourceSecret,
+              destinationPublic: sanitizedRecipient,
+              amount: normalizedSourceAmount.toString(),
+              memo: memoResult.sanitized,
+              asset: normalizedSourceAsset,
+            });
+            paymentMethod = 'direct';
+            fallbackUsed = true;
+          } else {
+            throw error;
+          }
+        }
+      }
+    }
+
     // Create transaction record
     const transaction = Transaction.create({
       amount: xlmAmount,
@@ -462,6 +652,18 @@ class DonationService {
       idempotencyKey: idempotencyKey,
       analyticsFee: feeCalculation.fee,
       analyticsFeePercentage: feeCalculation.feePercentage,
+      status: stellarResult ? TRANSACTION_STATES.CONFIRMED : TRANSACTION_STATES.PENDING,
+      stellarTxId: stellarResult ? stellarResult.transactionId : null,
+      stellarLedger: stellarResult ? stellarResult.ledger : null,
+      confirmedAt: stellarResult ? new Date().toISOString() : null,
+      sourceAsset: serializeAsset(normalizedSourceAsset),
+      sourceAmount: normalizedSourceAmount.toString(),
+      destinationAsset: serializeAsset(normalizedDestAsset),
+      destinationAmount: xlmAmount.toString(),
+      paymentMethod,
+      fallbackUsed,
+      path: selectedPath,
+      conversionRate,
       // Overpayment fields (null when no overpayment)
       overpaymentFlagged: overpayment ? true : false,
       overpaymentDetails: overpayment || null,
@@ -748,7 +950,13 @@ class DonationService {
     if (filters.tag) {
       transactions = transactions.filter(tx => tx.tags && tx.tags.includes(filters.tag));
     }
-    return paginateCollection(transactions, {
+
+    const sortBy = filters.sortBy || 'timestamp';
+    const order = filters.order || 'desc';
+    const useCustomSort = sortBy !== 'timestamp' || order !== 'desc';
+    const filteredTransactions = this.applyFilters(transactions, filters);
+
+    let result = paginateCollection(filteredTransactions, {
       ...pagination,
       timestampField: 'timestamp',
       idField: 'id',
@@ -757,9 +965,11 @@ class DonationService {
       ...(useCustomSort && { _presorted: true }),
     });
 
-    // paginateCollection always re-sorts by timestamp; re-apply custom sort to the page
     if (useCustomSort) {
-      result.data = this.applyFilters(result.data, { sortBy, order: order || 'desc' });
+      result = {
+        ...result,
+        data: this.applyFilters(result.data, { sortBy, order }),
+      };
     }
 
     const appliedFilters = {};

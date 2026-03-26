@@ -102,7 +102,7 @@ router.get('/tags', checkPermission(PERMISSIONS.STATS_READ), auditStatsAccess, s
  * Get daily aggregated donation volume
  * Query params: startDate, endDate (ISO format)
  */
-router.get('/daily', checkPermission(PERMISSIONS.STATS_READ), auditStatsAccess, strictDateRangeQuerySchema, validateDateRange, (req, res) => {
+router.get('/daily', checkPermission(PERMISSIONS.STATS_READ), auditStatsAccess, strictDateRangeQuerySchema, validateDateRange, (req, res, next) => {
   try {
     const { startDate, endDate } = req.query;
     const start = new Date(startDate);
@@ -282,7 +282,7 @@ router.get(
  * Get analytics fee summary for reporting
  * Query params: startDate, endDate (ISO format)
  */
-router.get('/analytics-fees', checkPermission(PERMISSIONS.STATS_READ), auditStatsAccess, strictDateRangeQuerySchema, validateDateRange, (req, res) => {
+router.get('/analytics-fees', checkPermission(PERMISSIONS.STATS_READ), auditStatsAccess, strictDateRangeQuerySchema, validateDateRange, (req, res, next) => {
   try {
     const { startDate, endDate } = req.query;
     const start = new Date(startDate);
@@ -307,7 +307,7 @@ router.get('/analytics-fees', checkPermission(PERMISSIONS.STATS_READ), auditStat
  * Get donation analytics for a specific wallet
  * Query params: startDate, endDate (optional, ISO format)
  */
-router.get('/wallet/:walletAddress/analytics', checkPermission(PERMISSIONS.STATS_READ), walletAnalyticsSchema, (req, res) => {
+router.get('/wallet/:walletAddress/analytics', checkPermission(PERMISSIONS.STATS_READ), walletAnalyticsSchema, (req, res, next) => {
   try {
     const { walletAddress } = req.params;
     const { startDate, endDate } = req.query;
@@ -356,7 +356,7 @@ router.get('/wallet/:walletAddress/analytics', checkPermission(PERMISSIONS.STATS
   }
 });
 
-router.get('/wallet/:walletAddress/analytics', checkPermission(PERMISSIONS.STATS_READ), walletAnalyticsSchema, async (req, res) => {
+router.get('/wallet/:walletAddress/analytics', checkPermission(PERMISSIONS.STATS_READ), walletAnalyticsSchema, async (req, res, next) => {
   try {
     const { walletAddress } = req.params;
 

@@ -13,13 +13,13 @@ const log = require('../utils/log');
  * Default size limits in bytes, used when no override is provided.
  */
 const ENDPOINT_LIMITS = {
-  default: 100 * 1024,          // 100 KB — general fallback
-  singleDonation: 10 * 1024,    // 10 KB  — POST /donations
-  batchDonation: 512 * 1024,    // 512 KB — POST /donations/batch
-  wallet: 20 * 1024,            // 20 KB  — POST /wallets
-  stream: 10 * 1024,            // 10 KB  — POST /stream/create
-  transaction: 50 * 1024,       // 50 KB  — POST /transactions/sync
-  stats: 10 * 1024,             // 10 KB  — stats endpoints
+  default: 100 * 1024,          // 100 KB general fallback
+  singleDonation: 10 * 1024,    // 10 KB for POST /donations
+  batchDonation: 512 * 1024,    // 512 KB for POST /donations/batch
+  wallet: 20 * 1024,            // 20 KB for POST /wallets
+  stream: 10 * 1024,            // 10 KB for POST /stream/create
+  transaction: 50 * 1024,       // 50 KB for POST /transactions/sync
+  stats: 10 * 1024,             // 10 KB for stats endpoints
 };
 
 /**
@@ -44,13 +44,6 @@ function formatBytes(bytes) {
  * @param {number} [maxBytes] - Maximum allowed body size in bytes.
  *   Defaults to ENDPOINT_LIMITS.default when omitted.
  * @returns {import('express').RequestHandler}
- *
- * @example
- * // Single donation — tight limit
- * router.post('/donations', payloadSizeLimiter(ENDPOINT_LIMITS.singleDonation), handler);
- *
- * // Batch donations — relaxed limit
- * router.post('/donations/batch', payloadSizeLimiter(ENDPOINT_LIMITS.batchDonation), handler);
  */
 function payloadSizeLimiter(maxBytes = ENDPOINT_LIMITS.default) {
   return (req, res, next) => {

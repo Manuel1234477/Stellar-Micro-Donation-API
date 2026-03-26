@@ -7,7 +7,6 @@
  * 3. Allow normal requests to proceed unaffected
  */
 
-const { AppError } = require('../utils/errors');
 const log = require('../utils/log');
 
 /**

@@ -13,7 +13,6 @@ const { securityConfig } = require("../config/securityConfig");
 const { validateKey } = require("../models/apiKeys");
 const log = require("../utils/log");
 const AuditLogService = require("../services/AuditLogService");
-const perKeyRateLimit = require("./perKeyRateLimit");
 const { verify: verifySignature } = require("../utils/requestSigner");
 const { defaultStore: nonceStore } = require("../utils/nonceStore");
 

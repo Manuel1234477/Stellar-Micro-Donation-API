@@ -9,7 +9,6 @@ const {
 } = require('../../utils/transactionStateMachine');
 
 class Transaction {
-  static eventEmitter = donationEvents;
   static getDbPath() {
     return process.env.DB_JSON_PATH || path.join(__dirname, '../../../data/donations.json');
   }
@@ -203,5 +202,7 @@ class Transaction {
     this.saveTransactions([]);
   }
 }
+
+Transaction.eventEmitter = donationEvents;
 
 module.exports = Transaction;

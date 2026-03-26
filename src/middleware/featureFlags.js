@@ -10,7 +10,7 @@
  */
 
 const featureFlagsUtil = require('../utils/featureFlags');
-const { ForbiddenError, ERROR_CODES } = require('../utils/errors');
+const { ForbiddenError } = require('../utils/errors');
 const log = require('../utils/log');
 const AuditLogService = require('../services/AuditLogService');
 
