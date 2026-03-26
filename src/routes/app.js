@@ -48,6 +48,8 @@ const serviceContainer = require('../config/serviceContainer');
 const { payloadSizeLimiter } = require('../middleware/payloadSizeLimiter');
 const { createCorsMiddleware } = require('../middleware/cors');
 const { responseFormatterMiddleware } = require('../utils/responseFormatter');
+const trackQuotaUsage = require('../middleware/quotaTracker');
+const { startQuotaResetJob } = require('../jobs/quotaResetJob');
 const { createDeduplicationMiddleware } = require('../middleware/deduplication');
 const {
   logStartupDiagnostics,
@@ -148,6 +150,9 @@ app.use(require('../middleware/suspiciousPatternDetection'));
 
 // Attach user role from authentication (must be before routes)
 app.use(attachUserRole());
+
+// Track API quota usage (must be after authentication)
+app.use(trackQuotaUsage);
 
 // Prometheus request duration instrumentation
 app.use(metricsMiddleware);
@@ -444,6 +449,10 @@ async function startServer() {
       recurringDonationScheduler.start();
       reconciliationService.start();
       auditLogRetentionService.start();
+      
+      // Start quota reset job
+      const stopQuotaResetJob = startQuotaResetJob();
+      server.stopQuotaResetJob = stopQuotaResetJob;
 
       runCleanup(); // Run once on startup
     const cleanupInterval = setInterval(runCleanup, 24 * 60 * 60 * 1000);
@@ -518,6 +527,12 @@ async function startServer() {
           recurringDonationScheduler.stop();
           reconciliationService.stop();
           auditLogRetentionService.stop();
+          
+          // Stop quota reset job
+          if (server.stopQuotaResetJob) {
+            server.stopQuotaResetJob();
+            log.info("SHUTDOWN", "Quota reset job stopped");
+          }
           
           try {
             await networkStatusService.shutdown();

@@ -10,12 +10,13 @@
  */
 
 const { securityConfig } = require("../config/securityConfig");
-const { validateKey } = require("../models/apiKeys");
+const { validateKey, incrementQuota } = require("../models/apiKeys");
 const log = require("../utils/log");
 const AuditLogService = require("../services/AuditLogService");
 const { verify: verifySignature } = require("../utils/requestSigner");
 const { isIpAllowed } = require("../utils/ipAllowlist");
 const { defaultStore: nonceStore } = require("../utils/nonceStore");
+const WebhookService = require("../services/WebhookService");
 
 /**
  * Legacy Support Configuration
@@ -84,6 +85,60 @@ const requireApiKey = async (req, res, next) => {
 
     if (keyInfo) {
       req.apiKey = keyInfo;
+
+      // --- Quota Check ---
+      if (keyInfo.monthlyQuota) {
+        const quotaRemaining = keyInfo.monthlyQuota - keyInfo.quotaUsed;
+        
+        if (quotaRemaining <= 0) {
+          log.warn('API_KEY_AUTH', 'Request rejected: quota exceeded', {
+            keyId: keyInfo.id,
+            keyPrefix: keyInfo.keyPrefix,
+            quotaUsed: keyInfo.quotaUsed,
+            monthlyQuota: keyInfo.monthlyQuota,
+            path: req.path,
+          });
+
+          AuditLogService.log({
+            category: AuditLogService.CATEGORY.AUTHENTICATION,
+            action: AuditLogService.ACTION.API_KEY_VALIDATION_FAILED,
+            severity: AuditLogService.SEVERITY.MEDIUM,
+            result: 'FAILURE',
+            userId: keyInfo.id?.toString(),
+            requestId: req.id,
+            ipAddress: req.ip,
+            resource: req.path,
+            reason: 'Monthly quota exceeded',
+            details: { keyId: keyInfo.id, quotaUsed: keyInfo.quotaUsed, monthlyQuota: keyInfo.monthlyQuota },
+          }).catch(() => {});
+
+          // Fire quota.exceeded webhook event
+          WebhookService.deliver('quota.exceeded', {
+            keyId: keyInfo.id,
+            keyName: keyInfo.name,
+            quotaUsed: keyInfo.quotaUsed,
+            monthlyQuota: keyInfo.monthlyQuota,
+            quotaResetAt: keyInfo.quotaResetAt ? new Date(keyInfo.quotaResetAt).toISOString() : null,
+          }).catch(() => {});
+
+          return res.status(429).json({
+            success: false,
+            error: {
+              code: 'QUOTA_EXCEEDED',
+              message: 'Monthly API quota exceeded',
+              requestId: req.id,
+              timestamp: new Date().toISOString(),
+              quotaResetAt: keyInfo.quotaResetAt ? new Date(keyInfo.quotaResetAt).toISOString() : null,
+            },
+          });
+        }
+
+        // Set quota headers
+        res.setHeader('X-Quota-Limit', keyInfo.monthlyQuota.toString());
+        res.setHeader('X-Quota-Remaining', quotaRemaining.toString());
+        res.setHeader('X-Quota-Reset', keyInfo.quotaResetAt ? new Date(keyInfo.quotaResetAt).toISOString() : '');
+      }
+      // --- End Quota Check ---
 
       // --- IP Allowlist Check ---
       if (!isIpAllowed(req.ip, keyInfo.allowedIps)) {
