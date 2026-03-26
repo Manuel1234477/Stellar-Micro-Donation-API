@@ -221,6 +221,15 @@ const requireApiKey = async (req, res, next) => {
         }
       }
 
+      // Expiry proximity header — show days remaining when key expires within 30 days
+      if (keyInfo.expiresAt) {
+        const msRemaining = keyInfo.expiresAt - Date.now();
+        const daysRemaining = Math.ceil(msRemaining / (24 * 60 * 60 * 1000));
+        if (daysRemaining <= 30) {
+          res.setHeader("X-API-Key-Expires-In", String(daysRemaining));
+        }
+      }
+
       return next();
     }
 

@@ -17,8 +17,8 @@
 
 const Database = require('../utils/database');
 const WebhookService = require('./WebhookService');
+const ApiKeyExpirationNotifier = require('./ApiKeyExpirationNotifier');
 const { SCHEDULE_STATUS, DONATION_FREQUENCIES } = require('../constants');
-const Database = require('../utils/database');
 const log = require('../utils/log');
 const { revokeExpiredDeprecatedKeys } = require('../models/apiKeys');
 const {
@@ -193,6 +193,13 @@ class RecurringDonationScheduler {
         }
       } catch (revokeError) {
         log.error('RECURRING_SCHEDULER', 'Failed to auto-revoke expired API keys', { error: revokeError.message });
+      }
+
+      // Send expiry notifications for keys approaching or past their expiration date
+      try {
+        await ApiKeyExpirationNotifier.run();
+      } catch (notifyError) {
+        log.error('RECURRING_SCHEDULER', 'API key expiry notification job failed', { error: notifyError.message });
       }
 
       // Run data retention job once per cleanupInterval
