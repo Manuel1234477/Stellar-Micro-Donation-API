@@ -49,6 +49,7 @@ const serviceContainer = require('../config/serviceContainer');
 const { payloadSizeLimiter } = require('../middleware/payloadSizeLimiter');
 const { createCorsMiddleware } = require('../middleware/cors');
 const { responseFormatterMiddleware } = require('../utils/responseFormatter');
+const { createDeduplicationMiddleware } = require('../middleware/deduplication');
 const {
   logStartupDiagnostics,
   logShutdownDiagnostics,
@@ -148,6 +149,9 @@ app.use(require('../middleware/suspiciousPatternDetection'));
 
 // Attach user role from authentication (must be before routes)
 app.use(attachUserRole());
+
+// Content-based request deduplication (for requests without idempotency keys)
+app.use(createDeduplicationMiddleware());
 
 // Routes
 app.use('/wallets', walletRoutes);
