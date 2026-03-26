@@ -10,8 +10,8 @@
  * execution logging, failure tracking, and correlation ID propagation for tracing.
  */
 
-const MockStellarService = require('./MockStellarService');
 const { SCHEDULE_STATUS, DONATION_FREQUENCIES } = require('../constants');
+const Database = require('../utils/database');
 const log = require('../utils/log');
 const { revokeExpiredDeprecatedKeys } = require('../models/apiKeys');
 const {
@@ -196,7 +196,6 @@ class RecurringDonationScheduler {
         }
 
         this.executingSchedules.add(schedule.id);
-        const correlation = getCorrelationSummary();
 
         try {
           let lastError = null;
@@ -241,8 +240,6 @@ class RecurringDonationScheduler {
     return withAsyncContext(
       "execute_schedule",
       async () => {
-        const correlation = getCorrelationSummary();
-
         try {
           const transactionResult = await this.stellarService.sendPayment(
             schedule.donorPublicKey,

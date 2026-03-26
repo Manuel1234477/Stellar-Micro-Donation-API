@@ -13,7 +13,9 @@ class DonationRequestBuilder {
       amount: '100',
       donor: null,
       recipient: null,
-      memo: null
+      memo: null,
+      sourceAsset: null,
+      sourceAmount: null,
     };
   }
 
@@ -54,6 +56,26 @@ class DonationRequestBuilder {
    */
   withMemo(memo) {
     this.data.memo = memo;
+    return this;
+  }
+
+  /**
+   * Set source asset for cross-asset donations.
+   * @param {string|Object} asset
+   * @returns {DonationRequestBuilder}
+   */
+  withSourceAsset(asset) {
+    this.data.sourceAsset = asset;
+    return this;
+  }
+
+  /**
+   * Set source amount for cross-asset donations.
+   * @param {string|number} amount
+   * @returns {DonationRequestBuilder}
+   */
+  withSourceAmount(amount) {
+    this.data.sourceAmount = String(amount);
     return this;
   }
 

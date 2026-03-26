@@ -68,7 +68,7 @@ const streamScheduleIdSchema = validateSchema({
  * POST /stream/create
  * Create a recurring donation schedule
  */
-router.post('/create', payloadSizeLimiter(ENDPOINT_LIMITS.stream), requestTimeout(TIMEOUTS.stream), checkPermission(PERMISSIONS.STREAM_CREATE), streamCreateSchema, async (req, res) => {
+router.post('/create', payloadSizeLimiter(ENDPOINT_LIMITS.stream), requestTimeout(TIMEOUTS.stream), checkPermission(PERMISSIONS.STREAM_CREATE), streamCreateSchema, async (req, res, next) => {
   try {
     const { donorPublicKey, recipientPublicKey, amount, frequency } = req.body;
 
@@ -203,7 +203,7 @@ router.post('/create', payloadSizeLimiter(ENDPOINT_LIMITS.stream), requestTimeou
  * GET /stream/schedules
  * Get all recurring donation schedules
  */
-router.get('/schedules', checkPermission(PERMISSIONS.STREAM_READ), async (req, res) => {
+router.get('/schedules', checkPermission(PERMISSIONS.STREAM_READ), async (req, res, next) => {
   try {
     const schedules = await Database.query(
       `SELECT

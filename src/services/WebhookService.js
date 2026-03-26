@@ -11,6 +11,11 @@ const https = require('https');
 const http = require('http');
 const Database = require('../utils/database');
 const log = require('../utils/log');
+const { 
+  getCorrelationContext, 
+  withAsyncContext, 
+  generateCorrelationHeaders 
+} = require('../utils/correlation');
 
 const MAX_RETRIES = 5;
 const BASE_BACKOFF_MS = 1000; // 1s, 2s, 4s, 8s, 16s
@@ -105,6 +110,7 @@ class WebhookService {
   /**
    * Deliver an event to all active webhooks subscribed to it.
    * Fires-and-forgets retries; does not block the caller.
+   * Propagates correlation context through async operations.
    * @param {string} event - Event type e.g. 'transaction.confirmed'
    * @param {object} payload - Event data
    */
@@ -126,38 +132,73 @@ class WebhookService {
       } catch { return false; }
     });
 
+    // Capture correlation context from current request
+    const parentContext = getCorrelationContext();
+
     for (const webhook of interested) {
-      // Fire-and-forget with retry
-      this._deliverWithRetry(webhook, event, payload, 0).catch(() => {});
+      // Fire-and-forget with retry, propagating correlation context through async boundaries
+      withAsyncContext('webhook_delivery', async () => {
+        await this._deliverWithRetry(webhook, event, payload, 0);
+      }, {
+        webhookId: webhook.id,
+        event,
+        parentRequestId: parentContext.requestId
+      }).catch(() => {});
     }
   }
 
   /**
    * Attempt delivery with exponential backoff retry.
+   * Maintains correlation context across retry attempts.
    * @private
    */
   static async _deliverWithRetry(webhook, event, payload, attempt) {
-    const body = JSON.stringify({ event, data: payload, timestamp: new Date().toISOString() });
+    const correlationHeaders = generateCorrelationHeaders();
+    const body = JSON.stringify({ 
+      event, 
+      data: payload, 
+      timestamp: new Date().toISOString(),
+      // Include correlation context in payload for traceability
+      correlationContext: {
+        correlationId: correlationHeaders['X-Correlation-ID'],
+        traceId: correlationHeaders['X-Trace-ID'],
+        operationId: correlationHeaders['X-Operation-ID']
+      }
+    });
     const signature = this._sign(body, webhook.secret);
 
     try {
-      await this._httpPost(webhook.url, body, signature);
+      await this._httpPost(webhook.url, body, signature, correlationHeaders);
       // Reset failure counter on success
       await Database.run(
         `UPDATE webhooks SET consecutive_failures = 0 WHERE id = ?`,
         [webhook.id]
       ).catch(() => {});
-      log.debug('WEBHOOK', 'Delivered', { id: webhook.id, event, attempt });
+      log.debug('WEBHOOK', 'Delivered', { 
+        id: webhook.id, 
+        event, 
+        attempt,
+        ...correlationHeaders
+      });
     } catch (err) {
       const failures = (webhook.consecutive_failures || 0) + 1;
-      log.warn('WEBHOOK', 'Delivery failed', { id: webhook.id, event, attempt, error: err.message });
+      log.warn('WEBHOOK', 'Delivery failed', { 
+        id: webhook.id, 
+        event, 
+        attempt, 
+        error: err.message,
+        ...correlationHeaders
+      });
 
       if (failures >= MAX_CONSECUTIVE_FAILURES) {
         await Database.run(
           `UPDATE webhooks SET is_active = 0, consecutive_failures = ? WHERE id = ?`,
           [failures, webhook.id]
         ).catch(() => {});
-        log.warn('WEBHOOK', 'Webhook auto-disabled after consecutive failures', { id: webhook.id });
+        log.warn('WEBHOOK', 'Webhook auto-disabled after consecutive failures', { 
+          id: webhook.id,
+          ...correlationHeaders
+        });
         return;
       }
 
@@ -189,9 +230,10 @@ class WebhookService {
 
   /**
    * POST a JSON body to a URL with a timeout.
+   * Includes correlation headers for traceability.
    * @private
    */
-  static _httpPost(url, body, signature) {
+  static _httpPost(url, body, signature, correlationHeaders = {}) {
     return new Promise((resolve, reject) => {
       const parsed = new URL(url);
       const lib = parsed.protocol === 'https:' ? https : http;
@@ -204,6 +246,7 @@ class WebhookService {
           'Content-Type': 'application/json',
           'Content-Length': Buffer.byteLength(body),
           'X-Webhook-Signature': `sha256=${signature}`,
+          ...correlationHeaders,
         },
         timeout: DELIVERY_TIMEOUT_MS,
       };

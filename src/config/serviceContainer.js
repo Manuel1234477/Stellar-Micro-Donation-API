@@ -93,7 +93,10 @@ function getInstance() {
   if (!_instance) {
     _instance = new ServiceContainer({
       useMockStellar: appConfig.stellar.mockEnabled,
-      stellar: appConfig.stellar
+      stellar: {
+        ...appConfig.stellar,
+        serviceSecretKey: appConfig.stellar.serviceSecretKey || process.env.STELLAR_SECRET || process.env.SERVICE_SECRET_KEY || null,
+      },
     });
   }
   return _instance;

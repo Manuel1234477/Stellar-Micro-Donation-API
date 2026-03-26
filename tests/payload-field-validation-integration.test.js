@@ -169,7 +169,9 @@ describe('Payload Field Validation Integration', () => {
           amount: 100,
           donor: 'GXXX',
           recipient: 'GYYY',
-          memo: 'test'
+          memo: 'test',
+          sourceAsset: 'native',
+          sourceAmount: '100'
         });
 
       expect(response.status).toBe(201);
