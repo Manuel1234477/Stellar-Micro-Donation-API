@@ -374,7 +374,7 @@ async function deleteFlag(flagName, scope, scopeValue = null, deletedBy = 'syste
 
 /**
  * Bulk set flags from environment variables
- * Format: FLAG_NAME=true|false,ANOTHER_FLAG=true
+ * Format: FEATURE_ONE=on|off,FEATURE_TWO=on
  * 
  * @param {string} envVarValue - Comma-separated flag definitions
  * @returns {Promise<void>}

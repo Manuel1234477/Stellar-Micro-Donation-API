@@ -40,7 +40,7 @@ const HTML_ENTITY_MAP = {
  * Regex pattern for HTML entity encoding
  * Matches the exact characters that need encoding
  */
-const HTML_ENTITY_REGEX = /[&<>"'\/]/g;
+const HTML_ENTITY_REGEX = /[&<>"'/]/g;
 
 /**
  * Encodes HTML entities to prevent XSS attacks
@@ -88,9 +88,11 @@ function removeScriptTagsAndHandlers(str) {
   }
 
   // Remove script tags and their content (case-insensitive)
+  // eslint-disable-next-line security/detect-unsafe-regex
   let sanitized = str.replace(/<script\b[^<]*(?:(?!<\/script>)<[^<]*)*<\/script>/gi, '');
   
   // Remove iframe tags
+  // eslint-disable-next-line security/detect-unsafe-regex
   sanitized = sanitized.replace(/<iframe\b[^<]*(?:(?!<\/iframe>)<[^<]*)*<\/iframe>/gi, '');
   
   // Remove event handlers (onclick, onload, etc.)

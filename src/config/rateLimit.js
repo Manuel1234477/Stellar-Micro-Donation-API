@@ -3,6 +3,8 @@
  * Uses centralized configuration module
  */
 
+const config = require('./index');
+
 /**
  * Load rate limit configuration from environment variables
  * @returns {Object} Configuration object with limit, windowMs, and cleanupIntervalMs
@@ -65,11 +67,13 @@ function validateRateLimitConfig(rateLimitConfig) {
 }
 
 // Export configuration from centralized config
-const rateLimitConfig = {
-  limit: config.rateLimit.maxRequests,
-  windowMs: config.rateLimit.windowMs,
-  cleanupIntervalMs: config.rateLimit.cleanupIntervalMs
-};
+const rateLimitConfig = config.rateLimit
+  ? {
+      limit: config.rateLimit.maxRequests,
+      windowMs: config.rateLimit.windowMs,
+      cleanupIntervalMs: config.rateLimit.cleanupIntervalMs
+    }
+  : loadRateLimitConfig();
 
 module.exports = {
   rateLimitConfig,

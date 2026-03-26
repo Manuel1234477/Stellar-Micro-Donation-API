@@ -1,6 +1,5 @@
 const sqlite3 = require('sqlite3').verbose();
 const path = require('path');
-const fs = require('fs');
 
 const DATA_DIR = './data';
 const DB_PATH = path.join(DATA_DIR, 'stellar_donations.db');
@@ -24,7 +23,7 @@ function runMigration() {
       console.log('✓ Connected to database');
 
       // Check if column already exists
-      db.get("PRAGMA table_info(transactions)", (err, row) => {
+      db.get("PRAGMA table_info(transactions)", (err) => {
         if (err) {
           db.close();
           reject(err);

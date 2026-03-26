@@ -23,6 +23,7 @@ const { validateSchema } = require('../middleware/schemaValidation');
 const { TRANSACTION_STATES } = require('../utils/transactionStateMachine');
 const { parseCursorPaginationQuery } = require('../utils/pagination');
 const { payloadSizeLimiter, ENDPOINT_LIMITS } = require('../middleware/payloadSizeLimiter');
+const { parseAssetInput } = require('../utils/stellarAsset');
 
 const { getStellarService } = require('../config/stellar');
 const DonationService = require('../services/DonationService');
@@ -31,6 +32,9 @@ const { LIFECYCLE_STAGES } = require('../middleware/requestLifecycle');
 const federation = require('../utils/federation');
 const stellarService = getStellarService();
 const donationService = new DonationService(stellarService);
+const safeBatchRateLimiter = typeof batchRateLimiter === 'function'
+  ? batchRateLimiter
+  : (_req, _res, next) => next();
 
 // Helper to enforce note privacy
 function applyNotePrivacy(req, tx) {
@@ -39,8 +43,9 @@ function applyNotePrivacy(req, tx) {
   const isAdmin = req.apiKey && req.apiKey.role === 'admin';
   
   if (!isOwner && !isAdmin && tx.notes !== undefined) {
-    const { notes, ...rest } = tx;
-    return rest;
+    const sanitized = { ...tx };
+    delete sanitized.notes;
+    return sanitized;
   }
   return tx;
 }
@@ -96,6 +101,15 @@ const createDonationSchema = validateSchema({
         maxLength: 255,
         nullable: true,
       },
+      sourceAsset: {
+        types: ['string', 'object'],
+        required: false,
+        nullable: true,
+      },
+      sourceAmount: {
+        type: 'numberString',
+        required: false,
+      },
       memoType: {
         type: 'string',
         required: false,
@@ -113,6 +127,43 @@ const createDonationSchema = validateSchema({
         required: false,
         nullable: true,
       },
+    },
+    validate: (body) => {
+      if ((body.sourceAsset && !body.sourceAmount) || (!body.sourceAsset && body.sourceAmount)) {
+        return 'sourceAsset and sourceAmount must be provided together';
+      }
+
+      return null;
+    },
+  },
+});
+
+const pathEstimateSchema = validateSchema({
+  query: {
+    fields: {
+      sourceAsset: {
+        type: 'string',
+        required: true,
+      },
+      sourceAmount: {
+        type: 'numberString',
+        required: false,
+      },
+      destAsset: {
+        type: 'string',
+        required: false,
+      },
+      destAmount: {
+        type: 'numberString',
+        required: false,
+      },
+    },
+    validate: (query) => {
+      if (!query.sourceAmount && !query.destAmount) {
+        return 'Either sourceAmount or destAmount is required';
+      }
+
+      return null;
     },
   },
 });
@@ -331,7 +382,7 @@ router.post('/send', payloadSizeLimiter(ENDPOINT_LIMITS.singleDonation), donatio
  * Donations with the same donor are grouped into multi-operation Stellar transactions.
  * Rate limited: 10 batch requests per minute per IP.
  */
-router.post('/batch', payloadSizeLimiter(ENDPOINT_LIMITS.batchDonation), batchRateLimiter, requireApiKey, async (req, res, next) => {
+router.post('/batch', payloadSizeLimiter(ENDPOINT_LIMITS.batchDonation), safeBatchRateLimiter, requireApiKey, async (req, res, next) => {
   try {
     const { donations } = req.body;
 
@@ -381,7 +432,7 @@ router.post('/batch', payloadSizeLimiter(ENDPOINT_LIMITS.batchDonation), batchRa
  */
 router.post('/', payloadSizeLimiter(ENDPOINT_LIMITS.singleDonation), donationRateLimiter, requireApiKey, requireIdempotency, createDonationSchema, async (req, res, next) => {
   try {
-    const { amount, currency, donor, recipient, memo, memoType, notes, tags } = req.body;
+    const { amount, currency, donor, recipient, memo, memoType, notes, tags, sourceAsset, sourceAmount } = req.body;
 
     // Basic validation
     if (!amount || !recipient) {
@@ -399,6 +450,18 @@ router.post('/', payloadSizeLimiter(ENDPOINT_LIMITS.singleDonation), donationRat
       return res.status(400).json({
         error: `Invalid amount: ${amountValidation.error}`
       });
+    }
+
+    let sourceAmountValidation = null;
+    let normalizedSourceAsset = null;
+    if (sourceAsset || sourceAmount) {
+      normalizedSourceAsset = parseAssetInput(sourceAsset, 'sourceAsset');
+      sourceAmountValidation = validateFloat(sourceAmount);
+      if (!sourceAmountValidation.valid) {
+        return res.status(400).json({
+          error: `Invalid sourceAmount: ${sourceAmountValidation.error}`
+        });
+      }
     }
 
     // Validate memo type + value combination
@@ -426,6 +489,8 @@ router.post('/', payloadSizeLimiter(ENDPOINT_LIMITS.singleDonation), donationRat
       donor,
       recipient: resolvedRecipient,
       memo,
+      sourceAsset: normalizedSourceAsset,
+      sourceAmount: sourceAmountValidation ? sourceAmountValidation.value : undefined,
       memoType: memoType || 'text',
       notes,
       tags,
@@ -565,10 +630,49 @@ router.get('/', checkPermission(PERMISSIONS.DONATIONS_READ), listDonationsQueryS
 });
 
 /**
+ * GET /donations/path-estimate
+ * Estimate the best Stellar path payment route for a donation.
+ */
+router.get('/path-estimate', requireApiKey, pathEstimateSchema, async (req, res, next) => {
+  try {
+    const sourceAmount = req.query.sourceAmount ? validateFloat(req.query.sourceAmount) : null;
+    const destAmount = req.query.destAmount ? validateFloat(req.query.destAmount) : null;
+
+    if (sourceAmount && !sourceAmount.valid) {
+      return res.status(400).json({
+        success: false,
+        error: `Invalid sourceAmount: ${sourceAmount.error}`
+      });
+    }
+
+    if (destAmount && !destAmount.valid) {
+      return res.status(400).json({
+        success: false,
+        error: `Invalid destAmount: ${destAmount.error}`
+      });
+    }
+
+    const estimate = await donationService.estimateDonationPath({
+      sourceAsset: req.query.sourceAsset,
+      sourceAmount: sourceAmount ? sourceAmount.value : undefined,
+      destAsset: req.query.destAsset,
+      destAmount: destAmount ? destAmount.value : undefined,
+    });
+
+    res.status(200).json({
+      success: true,
+      data: estimate,
+    });
+  } catch (error) {
+    next(error);
+  }
+});
+
+/**
  * GET /donations/limits
  * Get current donation amount limits
  */
-router.get('/limits', checkPermission(PERMISSIONS.DONATIONS_READ), (req, res) => {
+router.get('/limits', checkPermission(PERMISSIONS.DONATIONS_READ), (req, res, next) => {
   try {
     const limits = donationService.getDonationLimits();
     

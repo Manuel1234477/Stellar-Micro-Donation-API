@@ -19,7 +19,6 @@ const { ValidationError, NotFoundError, ERROR_CODES } = require('../utils/errors
 const WalletService = require('../services/WalletService');
 const { validateSchema } = require('../middleware/schemaValidation');
 const { parseCursorPaginationQuery } = require('../utils/pagination');
-const { sanitizeLabel, sanitizeName } = require('../utils/sanitizer');
 const { payloadSizeLimiter, ENDPOINT_LIMITS } = require('../middleware/payloadSizeLimiter');
 
 const walletService = new WalletService(require('../config/serviceContainer').getStellarService());
@@ -267,6 +266,7 @@ router.get('/:publicKey/transactions', checkPermission(PERMISSIONS.WALLETS_READ)
       success: true,
       data: formattedTransactions,
       count: formattedTransactions.length,
+      count: formattedTransactions.length
     });
   } catch (error) {
     next(error);
