@@ -1319,6 +1319,104 @@ class MockStellarService extends StellarServiceInterface {
   }
 
   /**
+   * Merge a source account into a destination account (mock implementation).
+   *
+   * Transfers the entire balance of the source account to the destination,
+   * then marks the source wallet as merged/closed in the in-memory store.
+   *
+   * @param {string} sourceSecret      - Secret key of the account to merge (close)
+   * @param {string} destinationPublic - Public key of the account to receive all funds
+   * @returns {Promise<{hash: string, ledger: number, mergedAmount: string}>}
+   * @throws {ValidationError}    If keys are invalid or accounts are the same
+   * @throws {NotFoundError}      If source or destination account does not exist
+   * @throws {BusinessLogicError} If simulated failure is active
+   */
+  async mergeAccount(sourceSecret, destinationPublic) {
+    return this._executeWithRetry(async () => {
+      await this._simulateNetworkDelay();
+      this._checkRateLimit();
+      this._validateSecretKey(sourceSecret);
+      this._validatePublicKey(destinationPublic);
+      this._simulateFailure();
+
+      // Resolve source wallet by secret key
+      let sourceWallet = null;
+      for (const wallet of this.wallets.values()) {
+        if (wallet.secretKey === sourceSecret) {
+          sourceWallet = wallet;
+          break;
+        }
+      }
+
+      if (!sourceWallet) {
+        throw new ValidationError(
+          'Invalid source secret key. The provided secret key does not match any account.'
+        );
+      }
+
+      if (sourceWallet.publicKey === destinationPublic) {
+        throw new ValidationError('Source and destination accounts cannot be the same.');
+      }
+
+      const destWallet = this.wallets.get(destinationPublic);
+      if (!destWallet) {
+        throw new NotFoundError(
+          `Destination account not found. The account ${destinationPublic} does not exist on the network.`,
+          ERROR_CODES.WALLET_NOT_FOUND
+        );
+      }
+
+      const mergedAmount = sourceWallet.balance;
+      const mergedAmountNum = parseFloat(mergedAmount);
+
+      // Transfer entire balance to destination
+      destWallet.balance = (parseFloat(destWallet.balance) + mergedAmountNum).toFixed(7);
+
+      // Close source account (zero balance, mark merged)
+      sourceWallet.balance = '0';
+      sourceWallet.merged = true;
+      sourceWallet.mergedAt = new Date().toISOString();
+      sourceWallet.mergedInto = destinationPublic;
+
+      const hash = 'mock_merge_' + crypto.randomBytes(16).toString('hex');
+      const ledger = Math.floor(Math.random() * 1000000) + 1000000;
+
+      // Record merge transaction for both accounts
+      const tx = {
+        hash,
+        type: 'account_merge',
+        source: sourceWallet.publicKey,
+        destination: destinationPublic,
+        amount: mergedAmount,
+        timestamp: new Date().toISOString(),
+        ledger,
+        status: 'confirmed',
+        fee: '0.0000100',
+      };
+
+      if (!this.transactions.has(sourceWallet.publicKey)) {
+        this.transactions.set(sourceWallet.publicKey, []);
+      }
+      if (!this.transactions.has(destinationPublic)) {
+        this.transactions.set(destinationPublic, []);
+      }
+      this.transactions.get(sourceWallet.publicKey).push(tx);
+      this.transactions.get(destinationPublic).push(tx);
+
+      log.info('MOCK_STELLAR_SERVICE', 'Account merge simulated', {
+        source: `${sourceWallet.publicKey.substring(0, 8)}...`,
+        destination: `${destinationPublic.substring(0, 8)}...`,
+        mergedAmount,
+      });
+
+      return { hash, ledger, mergedAmount };
+    });
+  }
+
+
+  /**
+   * Get mock service state (useful for testing)
+   * @private
    * Get the mock order book for a trading pair.
    *
    * @param {string} sellingAsset - Base asset ('XLM' or 'CODE:ISSUER')

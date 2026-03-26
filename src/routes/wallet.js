@@ -17,6 +17,9 @@ const LimitService = require('../services/LimitService');
 const Database = require('../utils/database');
 const { ValidationError, NotFoundError, ERROR_CODES } = require('../utils/errors');
 const WalletService = require('../services/WalletService');
+const Database = require('../utils/database');
+const { getStellarService } = require('../config/stellar');
+const log = require('../utils/log');
 const { validateSchema } = require('../middleware/schemaValidation');
 const { parseCursorPaginationQuery } = require('../utils/pagination');
 // eslint-disable-next-line no-unused-vars
@@ -462,6 +465,116 @@ router.get('/:publicKey/transactions', checkPermission(PERMISSIONS.WALLETS_READ)
       success: true,
       data: transactions,
       count: transactions.length
+    });
+  } catch (error) {
+    next(error);
+  }
+});
+
+/**
+ * POST /wallets/:id/merge
+ * Merge a wallet into a destination account.
+ *
+ * Transfers all XLM from the source wallet to the destination, closes the
+ * source account on the Stellar network, and soft-deletes the wallet record.
+ *
+ * @requires wallets:delete permission
+ * @body {string}  destinationPublicKey - Stellar public key of the receiving account
+ * @body {string}  sourceSecret         - Secret key of the wallet being merged
+ * @body {boolean} confirm              - Must be exactly `true` to proceed
+ */
+router.post('/:id/merge', checkPermission(PERMISSIONS.WALLETS_DELETE), async (req, res, next) => {
+  try {
+    const { destinationPublicKey, sourceSecret, confirm } = req.body;
+
+    // ── Confirmation gate ────────────────────────────────────────────────────
+    if (confirm !== true) {
+      return res.status(400).json({
+        success: false,
+        error: 'Account merge requires explicit confirmation. Set confirm: true to proceed.',
+      });
+    }
+
+    // ── Required fields ──────────────────────────────────────────────────────
+    if (!destinationPublicKey || !sourceSecret) {
+      return res.status(400).json({
+        success: false,
+        error: 'Missing required fields: destinationPublicKey, sourceSecret',
+      });
+    }
+
+    // ── Lookup source wallet ─────────────────────────────────────────────────
+    const sourceWallet = await Database.get(
+      'SELECT id, publicKey, mergedAt FROM users WHERE id = ?',
+      [req.params.id]
+    );
+
+    if (!sourceWallet) {
+      return res.status(404).json({ success: false, error: 'Wallet not found' });
+    }
+
+    if (sourceWallet.mergedAt) {
+      return res.status(409).json({
+        success: false,
+        error: 'Wallet has already been merged and closed',
+      });
+    }
+
+    if (sourceWallet.publicKey === destinationPublicKey) {
+      return res.status(400).json({
+        success: false,
+        error: 'Source and destination wallets cannot be the same',
+      });
+    }
+
+    // ── Execute merge on Stellar ─────────────────────────────────────────────
+    const stellarService = getStellarService();
+    const mergeResult = await stellarService.mergeAccount(sourceSecret, destinationPublicKey);
+
+    // ── Soft-delete source wallet ────────────────────────────────────────────
+    const now = new Date().toISOString();
+    await Database.run(
+      'UPDATE users SET mergedAt = ?, mergedInto = ? WHERE id = ?',
+      [now, destinationPublicKey, sourceWallet.id]
+    );
+
+    // ── Write audit log ──────────────────────────────────────────────────────
+    await Database.run(
+      `INSERT INTO wallet_merge_audit
+         (sourceWalletId, sourcePublicKey, destinationPublicKey, mergedAmount,
+          transactionHash, ledger, performedBy, timestamp)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+      [
+        sourceWallet.id,
+        sourceWallet.publicKey,
+        destinationPublicKey,
+        mergeResult.mergedAmount,
+        mergeResult.hash,
+        mergeResult.ledger,
+        req.user ? req.user.id : 'unknown',
+        now,
+      ]
+    );
+
+    log.info('WALLET_ROUTE', 'Wallet merged', {
+      sourceId: sourceWallet.id,
+      sourcePublicKey: sourceWallet.publicKey,
+      destinationPublicKey,
+      hash: mergeResult.hash,
+    });
+
+    return res.json({
+      success: true,
+      message: 'Account merged successfully. Source account has been closed.',
+      data: {
+        sourceWalletId: sourceWallet.id,
+        sourcePublicKey: sourceWallet.publicKey,
+        destinationPublicKey,
+        mergedAmount: mergeResult.mergedAmount,
+        transactionHash: mergeResult.hash,
+        ledger: mergeResult.ledger,
+        mergedAt: now,
+      },
     });
   } catch (error) {
     next(error);
