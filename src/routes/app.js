@@ -28,6 +28,7 @@ const webhooksRoutes = require('./webhooks');
 const campaignsRoutes = require('./campaigns');
 const offersRoutes = require('./offers');
 const tagsRoutes = require('./tags');
+const channelsRoutes = require('./channels');
 const { createGraphQLRouter, attachSubscriptionServer } = require('../graphql');
 const { errorHandler, notFoundHandler } = require('../middleware/errorHandler');
 const logger = require('../middleware/logger');
@@ -160,6 +161,7 @@ app.use('/webhooks', webhooksRoutes);
 app.use('/campaigns', campaignsRoutes);
 app.use('/offers', offersRoutes);
 app.use('/tags', tagsRoutes);
+app.use('/channels', channelsRoutes);
 app.use('/graphql', createGraphQLRouter());
 
 // Exchange rates endpoint
