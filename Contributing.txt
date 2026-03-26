@@ -1,0 +1,58 @@
+🌟 Stella Micro-donation App
+Stella is a blockchain-powered platform designed to make charitable giving frictionless. By leveraging the Stellar network, we enable users to send micro-donations with near-zero transaction fees, ensuring that every cent reaches the intended cause.
+
+🛠 Getting Started
+Prerequisites
+Node.js (v18.x or higher)
+
+Stellar SDK
+
+Git
+
+Installation
+Clone the repository:
+
+Bash
+git clone https://github.com/YourUsername/stella-app.git
+cd stella-app
+Install dependencies:
+
+Bash
+npm install
+Set up Environment Variables:
+Create a .env file in the root directory and add your Stellar Testnet credentials:
+
+Code snippet
+STELLAR_NETWORK=TESTNET
+STELLAR_HORIZON_URL=https://horizon-testnet.stellar.org
+# Replace with your testnet keys for local development
+TEST_SOURCE_SECRET=SABC123... 
+🧪 Local Development: Stellar Testnet
+To test your contributions without using real funds, you must use the Stellar Testnet.
+
+Generate a Test Account: Visit the Stellar Laboratory to create a public/private key pair.
+
+Fund your Account: Click "Friendbot" on the Laboratory page to fund your test account with 10,000 test XLM.
+
+Update your .env: Paste your secret key into the TEST_SOURCE_SECRET field.
+
+🤝 How to Contribute
+We follow a standard Fork, Branch, and Pull Request workflow to maintain code quality.
+
+1. Fork & Branch
+Fork this repo to your account.
+
+Create a branch for your feature: git checkout -b feat/your-feature-name.
+
+2. Implementation
+Wallet APIs: Help us optimize how we query balances or encrypt secret keys. Look for issues labeled wallet-service.
+
+Donation APIs: We are currently prioritizing Recurring Donations and Transaction Metadata (to show users exactly where their money goes).
+
+3. Submit your PR
+Ensure your code passes linting: npm run lint.
+
+Open a Pull Request against our main branch.
+
+Clearly describe your changes and link the relevant issue: Closes #42.
+

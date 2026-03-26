@@ -1,0 +1,733 @@
+/**
+ * Stats Service - Analytics and Reporting Layer
+ * 
+ * RESPONSIBILITY: Donation statistics aggregation and analytics calculations
+ * OWNER: Analytics Team
+ * DEPENDENCIES: Transaction model, Database
+ * 
+ * Provides statistical analysis of donation data including daily/weekly aggregations,
+ * donor/recipient analytics, and summary reports for business intelligence.
+ */
+
+const Transaction = require('../routes/models/transaction');
+
+class StatsService {
+  /**
+   * Get daily aggregated stats
+   * @param {Date} startDate - Start date for aggregation
+   * @param {Date} endDate - End date for aggregation
+   * @returns {Array} Array of daily stats with date and total volume
+   */
+  static getDailyStats(startDate, endDate) {
+    const transactions = Transaction.getByDateRange(startDate, endDate);
+    const dailyMap = new Map();
+
+    transactions.forEach(tx => {
+      const date = new Date(tx.timestamp);
+      const dateKey = this.getDateKey(date);
+      
+      if (!dailyMap.has(dateKey)) {
+        dailyMap.set(dateKey, {
+          date: dateKey,
+          totalVolume: 0,
+          transactionCount: 0,
+          transactions: []
+        });
+      }
+
+      const dayStats = dailyMap.get(dateKey);
+      dayStats.totalVolume += parseFloat(tx.amount) || 0;
+      dayStats.transactionCount += 1;
+      dayStats.transactions.push({
+        id: tx.id,
+        amount: tx.amount,
+        donor: tx.donor,
+        recipient: tx.recipient,
+        timestamp: tx.timestamp
+      });
+    });
+
+    return Array.from(dailyMap.values()).sort((a, b) => 
+      new Date(a.date) - new Date(b.date)
+    );
+  }
+
+  /**
+   * Get weekly aggregated stats
+   * @param {Date} startDate - Start date for aggregation
+   * @param {Date} endDate - End date for aggregation
+   * @returns {Array} Array of weekly stats with week number and total volume
+   */
+  static getWeeklyStats(startDate, endDate) {
+    const transactions = Transaction.getByDateRange(startDate, endDate);
+    const weeklyMap = new Map();
+
+    transactions.forEach(tx => {
+      const date = new Date(tx.timestamp);
+      const weekKey = this.getWeekKey(date);
+      const mapKey = weekKey.key;
+      
+      if (!weeklyMap.has(mapKey)) {
+        weeklyMap.set(mapKey, {
+          week: weekKey.week,
+          year: weekKey.year,
+          weekStart: weekKey.weekStart,
+          weekEnd: weekKey.weekEnd,
+          totalVolume: 0,
+          transactionCount: 0,
+          transactions: []
+        });
+      }
+
+      const weekStats = weeklyMap.get(mapKey);
+      weekStats.totalVolume += parseFloat(tx.amount) || 0;
+      weekStats.transactionCount += 1;
+      weekStats.transactions.push({
+        id: tx.id,
+        amount: tx.amount,
+        donor: tx.donor,
+        recipient: tx.recipient,
+        timestamp: tx.timestamp
+      });
+    });
+
+    return Array.from(weeklyMap.values()).sort((a, b) => {
+      if (a.year !== b.year) return a.year - b.year;
+      return a.week - b.week;
+    });
+  }
+
+  /**
+   * Get overall stats summary
+   * @param {Date} startDate - Start date for aggregation
+   * @param {Date} endDate - End date for aggregation
+   * @returns {Object} Summary stats
+   */
+  static getSummaryStats(startDate, endDate) {
+    const transactions = Transaction.getByDateRange(startDate, endDate);
+    
+    const summary = {
+      totalVolume: 0,
+      totalTransactions: transactions.length,
+      averageTransactionAmount: 0,
+      maxTransactionAmount: 0,
+      minTransactionAmount: Infinity,
+      dateRange: {
+        start: startDate.toISOString(),
+        end: endDate.toISOString()
+      }
+    };
+
+    if (transactions.length === 0) {
+      summary.minTransactionAmount = 0;
+      return summary;
+    }
+
+    transactions.forEach(tx => {
+      const amount = parseFloat(tx.amount) || 0;
+      summary.totalVolume += amount;
+      summary.maxTransactionAmount = Math.max(summary.maxTransactionAmount, amount);
+      summary.minTransactionAmount = Math.min(summary.minTransactionAmount, amount);
+    });
+
+    summary.averageTransactionAmount = summary.totalVolume / transactions.length;
+
+    return summary;
+  }
+
+  /**
+   * Get stats by donor.
+   * Anonymous donations are excluded so that pseudonymous IDs do not pollute
+   * public donor rankings or leaderboards.
+   * @param {Date} startDate - Start date for aggregation
+   * @param {Date} endDate - End date for aggregation
+   * @returns {Array} Array of donor stats sorted by total volume
+   */
+  static getDonorStats(startDate, endDate) {
+    const transactions = Transaction.getByDateRange(startDate, endDate);
+    const donorMap = new Map();
+
+    // Exclude anonymous donations from public donor stats / leaderboards
+    transactions.filter(tx => !tx.anonymous).forEach(tx => {
+      const donor = tx.donor || 'Anonymous';
+      
+      if (!donorMap.has(donor)) {
+        donorMap.set(donor, {
+          donor,
+          totalDonated: 0,
+          donationCount: 0,
+          donations: []
+        });
+      }
+
+      const donorStats = donorMap.get(donor);
+      donorStats.totalDonated += parseFloat(tx.amount) || 0;
+      donorStats.donationCount += 1;
+      donorStats.donations.push({
+        id: tx.id,
+        amount: tx.amount,
+        recipient: tx.recipient,
+        timestamp: tx.timestamp
+      });
+    });
+
+    return Array.from(donorMap.values()).sort((a, b) => 
+      b.totalDonated - a.totalDonated
+    );
+  }
+
+  /**
+   * Get stats by recipient
+   * @param {Date} startDate - Start date for aggregation
+   * @param {Date} endDate - End date for aggregation
+   * @returns {Array} Array of recipient stats sorted by total received
+   */
+  static getRecipientStats(startDate, endDate) {
+    const transactions = Transaction.getByDateRange(startDate, endDate);
+    const recipientMap = new Map();
+
+    transactions.forEach(tx => {
+      const recipient = tx.recipient || 'Unknown';
+      
+      if (!recipientMap.has(recipient)) {
+        recipientMap.set(recipient, {
+          recipient,
+          totalReceived: 0,
+          donationCount: 0,
+          donations: []
+        });
+      }
+
+      const recipientStats = recipientMap.get(recipient);
+      recipientStats.totalReceived += parseFloat(tx.amount) || 0;
+      recipientStats.donationCount += 1;
+      recipientStats.donations.push({
+        id: tx.id,
+        amount: tx.amount,
+        donor: tx.donor,
+        timestamp: tx.timestamp
+      });
+    });
+
+    return Array.from(recipientMap.values()).sort((a, b) => 
+      b.totalReceived - a.totalReceived
+    );
+  }
+
+  /**
+   * Get stats by tag
+   * @param {Date} startDate - Start date for aggregation
+   * @param {Date} endDate - End date for aggregation
+   * @returns {Array} Array of tag stats sorted by total donated
+   */
+  static getTagStats(startDate, endDate) {
+    const transactions = Transaction.getByDateRange(startDate, endDate);
+    const tagMap = new Map();
+
+    transactions.forEach(tx => {
+      if (!tx.tags || !Array.isArray(tx.tags)) return;
+      
+      tx.tags.forEach(tag => {
+        if (!tagMap.has(tag)) {
+          tagMap.set(tag, {
+            tag,
+            totalDonated: 0,
+            donationCount: 0
+          });
+        }
+        
+        const tagStats = tagMap.get(tag);
+        tagStats.totalDonated += parseFloat(tx.amount) || 0;
+        tagStats.donationCount += 1;
+      });
+    });
+
+    return Array.from(tagMap.values()).sort((a, b) => 
+      b.totalDonated - a.totalDonated
+    );
+  }
+
+  // Helper methods
+  static getDateKey(date) {
+    return date.toISOString().split('T')[0];
+  }
+
+  static getWeekKey(date) {
+    const d = new Date(Date.UTC(date.getFullYear(), date.getMonth(), date.getDate()));
+    const dayNum = d.getUTCDay() || 7;
+    d.setUTCDate(d.getUTCDate() + 4 - dayNum);
+    const yearStart = new Date(Date.UTC(d.getUTCFullYear(), 0, 4));
+    const weekStart = new Date(yearStart);
+    weekStart.setUTCDate(yearStart.getUTCDate() - yearStart.getUTCDay() + 1);
+    const diff = d - weekStart;
+    const week = Math.floor(diff / (7 * 24 * 60 * 60 * 1000)) + 1;
+    
+    const weekStartDate = new Date(weekStart);
+    weekStartDate.setUTCDate(weekStart.getUTCDate() + (week - 1) * 7);
+    const weekEndDate = new Date(weekStartDate);
+    weekEndDate.setUTCDate(weekStartDate.getUTCDate() + 6);
+
+    return {
+      key: `${d.getUTCFullYear()}-W${String(week).padStart(2, '0')}`,
+      week,
+      year: d.getUTCFullYear(),
+      weekStart: weekStartDate.toISOString().split('T')[0],
+      weekEnd: weekEndDate.toISOString().split('T')[0]
+    };
+  }
+
+  /**
+   * Get analytics fee summary
+   * @param {Date} startDate - Start date for aggregation
+   * @param {Date} endDate - End date for aggregation
+   * @returns {Object} Analytics fee summary
+   */
+  static getAnalyticsFeeStats(startDate, endDate) {
+    const transactions = Transaction.getByDateRange(startDate, endDate);
+    
+    const feeStats = {
+      totalFeesCalculated: 0,
+      totalDonationVolume: 0,
+      transactionCount: transactions.length,
+      averageFeePerTransaction: 0,
+      feesByRecipient: {},
+      dateRange: {
+        start: startDate.toISOString(),
+        end: endDate.toISOString()
+      }
+    };
+
+    if (transactions.length === 0) {
+      return feeStats;
+    }
+
+    transactions.forEach(tx => {
+      const amount = parseFloat(tx.amount) || 0;
+      const fee = parseFloat(tx.analyticsFee) || 0;
+      
+      feeStats.totalFeesCalculated += fee;
+      feeStats.totalDonationVolume += amount;
+
+      const recipient = tx.recipient || 'Unknown';
+      if (!feeStats.feesByRecipient[recipient]) {
+        feeStats.feesByRecipient[recipient] = {
+          totalFees: 0,
+          donationCount: 0,
+          totalVolume: 0
+        };
+      }
+      
+      feeStats.feesByRecipient[recipient].totalFees += fee;
+      feeStats.feesByRecipient[recipient].donationCount += 1;
+      feeStats.feesByRecipient[recipient].totalVolume += amount;
+    });
+
+    feeStats.averageFeePerTransaction = feeStats.totalFeesCalculated / transactions.length;
+    feeStats.effectiveFeePercentage = (feeStats.totalFeesCalculated / feeStats.totalDonationVolume) * 100;
+
+    return feeStats;
+  }
+  /**
+   * Get wallet donation analytics
+   * @param {string} walletAddress - Wallet address (donor or recipient name)
+   * @param {Date} startDate - Optional start date for filtering
+   * @param {Date} endDate - Optional end date for filtering
+   * @returns {Object} Wallet analytics with totals sent, received, and donation count
+   */
+  static getWalletAnalytics(walletAddress, startDate = null, endDate = null) {
+    let transactions;
+
+    if (startDate && endDate) {
+      transactions = Transaction.getByDateRange(startDate, endDate);
+    } else {
+      transactions = Transaction.loadTransactions();
+    }
+
+    const analytics = {
+      walletAddress,
+      totalSent: 0,
+      totalReceived: 0,
+      donationCount: 0,
+      sentCount: 0,
+      receivedCount: 0,
+      sentTransactions: [],
+      receivedTransactions: []
+    };
+
+    if (startDate && endDate) {
+      analytics.dateRange = {
+        start: startDate.toISOString(),
+        end: endDate.toISOString()
+      };
+    } else {
+      analytics.dateRange = 'lifetime';
+    }
+
+    transactions.forEach(tx => {
+      const amount = parseFloat(tx.amount) || 0;
+
+      // Check if wallet is the donor (sender)
+      if (tx.donor === walletAddress) {
+        analytics.totalSent += amount;
+        analytics.sentCount += 1;
+        analytics.sentTransactions.push({
+          id: tx.id,
+          amount: tx.amount,
+          recipient: tx.recipient,
+          timestamp: tx.timestamp,
+          status: tx.status
+        });
+      }
+
+      // Check if wallet is the recipient (receiver)
+      if (tx.recipient === walletAddress) {
+        analytics.totalReceived += amount;
+        analytics.receivedCount += 1;
+        analytics.receivedTransactions.push({
+          id: tx.id,
+          amount: tx.amount,
+          donor: tx.donor,
+          timestamp: tx.timestamp,
+          status: tx.status
+        });
+      }
+    });
+
+    // Total donation count is the sum of sent and received
+    analytics.donationCount = analytics.sentCount + analytics.receivedCount;
+
+    return analytics;
+  }
+
+  /**
+   * Get orphaned transaction stats from the database
+   * @returns {Promise<{count: number, totalAmount: number}>}
+   */
+  static async getOrphanStats() {
+    const Database = require('../utils/database');
+    const rows = await Database.query(
+      'SELECT COUNT(*) as count, COALESCE(SUM(amount), 0) as totalAmount FROM transactions WHERE is_orphan = 1',
+      []
+    );
+    const row = rows[0] || { count: 0, totalAmount: 0 };
+    return { count: row.count, totalAmount: row.totalAmount };
+  }
+
+  /**
+   * Get memo collision statistics — flagged and suspicious transactions.
+   *
+   * @param {Date|null} [startDate]
+   * @param {Date|null} [endDate]
+   * @returns {{
+   *   totalCollisions: number,
+   *   totalSuspicious: number,
+   *   transactions: Array
+   * }}
+   */
+  static getMemoCollisionStats(startDate = null, endDate = null) {
+    const Transaction = require('../routes/models/transaction');
+    let transactions = Transaction.getAll();
+
+    if (startDate || endDate) {
+      transactions = transactions.filter(t => {
+        const ts = new Date(t.timestamp);
+        if (startDate && ts < startDate) return false;
+        if (endDate && ts > endDate) return false;
+        return true;
+      });
+    }
+
+    const collisions = transactions.filter(t => t.memoCollision === true);
+    const suspicious = collisions.filter(t => t.memoSuspicious === true);
+
+    return {
+      totalCollisions: collisions.length,
+      totalSuspicious: suspicious.length,
+      transactions: collisions.map(t => ({
+        id: t.id,
+        memo: t.memo,
+        donor: t.donor,
+        recipient: t.recipient,
+        amount: t.amount,
+        memoSuspicious: t.memoSuspicious,
+        memoCollisionReason: t.memoCollisionReason,
+        timestamp: t.timestamp,
+      })),
+    };
+  }
+
+  /**
+   * Reads from the JSON transaction store and aggregates flagged overpayments.
+   *
+   * @param {Date|null} [startDate] - Optional start of date range
+   * @param {Date|null} [endDate]   - Optional end of date range
+   * @returns {{
+   *   totalOverpayments: number,
+   *   totalExcessAmount: number,
+   *   averageExcessAmount: number,
+   *   transactions: Array
+   * }}
+   */
+  static getOverpaymentStats(startDate = null, endDate = null) {
+    const Transaction = require('../routes/models/transaction');
+    let transactions = Transaction.getAll();
+
+    // Apply optional date filter
+    if (startDate || endDate) {
+      transactions = transactions.filter(t => {
+        const ts = new Date(t.timestamp);
+        if (startDate && ts < startDate) return false;
+        if (endDate && ts > endDate) return false;
+        return true;
+      });
+    }
+
+    const overpaid = transactions.filter(t => t.overpaymentFlagged === true);
+
+    const totalExcessAmount = parseFloat(
+      overpaid.reduce((sum, t) => sum + (t.overpaymentDetails?.excessAmount || 0), 0).toFixed(7)
+    );
+
+    return {
+      totalOverpayments: overpaid.length,
+      totalExcessAmount,
+      averageExcessAmount: overpaid.length > 0
+        ? parseFloat((totalExcessAmount / overpaid.length).toFixed(7))
+        : 0,
+      transactions: overpaid.map(t => ({
+        id: t.id,
+        donor: t.donor,
+        recipient: t.recipient,
+        donationAmount: t.amount,
+        analyticsFee: t.analyticsFee,
+        expectedTotal: t.overpaymentDetails?.expectedTotal,
+        receivedAmount: t.overpaymentDetails?.receivedAmount,
+        excessAmount: t.overpaymentDetails?.excessAmount,
+        overpaymentPercentage: t.overpaymentDetails?.overpaymentPercentage,
+        detectedAt: t.overpaymentDetails?.detectedAt,
+        timestamp: t.timestamp,
+      })),
+    };
+  }
+
+  /**
+   * Fetches live data from Stellar and persists it for performance.
+   * 
+   * TODO: Uncomment and implement when needed
+   * Requires: Horizon SDK, config, and Database imports
+   */
+  /*
+  static async aggregateFromNetwork(walletAddress) {
+    const server = new Horizon.Server(config.horizonUrl || 'https://horizon-testnet.stellar.org');
+    
+    try {
+      // 1. Aggregation Logic: Fetch live payments
+      const operations = await server.operations()
+        .forAccount(walletAddress)
+        .limit(100)
+        .order('desc')
+        .call();
+
+      const aggregation = operations.records.reduce((acc, op) => {
+        if (op.type === 'payment' && op.asset_type === 'native') {
+          acc.totalXlm += parseFloat(op.amount);
+          acc.count += 1;
+        }
+        return acc;
+      }, { totalXlm: 0, count: 0 });
+
+      // 2. Store summary data: Persist to DB
+      const lastUpdated = new Date().toISOString();
+      await Database.run(
+        `INSERT OR REPLACE INTO wallet_analytics (address, total_xlm, tx_count, last_updated)
+         VALUES (?, ?, ?, ?)`,
+        [walletAddress, aggregation.totalXlm, aggregation.count, lastUpdated]
+      );
+
+      return {
+        ...aggregation,
+        lastUpdated
+      };
+    } catch (error) {
+      console.error('Aggregation failed:', error);
+      throw error;
+    }
+  }
+  */
+}
+
+// ─── Dashboard analytics (appended) ──────────────────────────────────────────
+
+/**
+ * Parse a period string (e.g. '7d', '30d', '90d', '1y') into a date range.
+ * @param {string} period
+ * @returns {{ start: Date, end: Date, granularity: string }}
+ */
+StatsService.parsePeriod = function parsePeriod(period = '30d') {
+  const now = new Date();
+  const match = String(period).match(/^(\d+)(h|d|w|m|y)$/i);
+  if (!match) {
+    const err = new Error('Invalid period format. Use e.g. 7d, 24h, 4w, 3m, 1y');
+    err.statusCode = 400;
+    throw err;
+  }
+
+  const [, n, unit] = match;
+  const num = parseInt(n, 10);
+  const start = new Date(now);
+
+  switch (unit.toLowerCase()) {
+    case 'h': start.setHours(start.getHours() - num); break;
+    case 'd': start.setDate(start.getDate() - num); break;
+    case 'w': start.setDate(start.getDate() - num * 7); break;
+    case 'm': start.setMonth(start.getMonth() - num); break;
+    case 'y': start.setFullYear(start.getFullYear() - num); break;
+  }
+
+  const hours = (now - start) / 3_600_000;
+  let granularity = 'daily';
+  if (hours <= 48) granularity = 'hourly';
+  else if (hours <= 24 * 14) granularity = 'daily';
+  else if (hours <= 24 * 90) granularity = 'weekly';
+  else granularity = 'monthly';
+
+  return { start, end: now, granularity };
+};
+
+/**
+ * Bucket transactions by granularity.
+ * @param {Array} transactions
+ * @param {'hourly'|'daily'|'weekly'|'monthly'} granularity
+ * @returns {Array<{bucket: string, count: number, totalAmount: number, avgAmount: number}>}
+ */
+StatsService.bucketByGranularity = function bucketByGranularity(transactions, granularity) {
+  const map = new Map();
+
+  for (const tx of transactions) {
+    const d = new Date(tx.timestamp);
+    let key;
+    switch (granularity) {
+      case 'hourly':
+        key = `${d.toISOString().slice(0, 13)}:00:00Z`;
+        break;
+      case 'weekly':
+        key = StatsService.getWeekKey(d).key;
+        break;
+      case 'monthly':
+        key = `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, '0')}`;
+        break;
+      default:
+        key = StatsService.getDateKey(d);
+    }
+
+    if (!map.has(key)) map.set(key, { bucket: key, count: 0, totalAmount: 0 });
+    const b = map.get(key);
+    b.count += 1;
+    b.totalAmount += parseFloat(tx.amount) || 0;
+  }
+
+  return Array.from(map.values())
+    .map(b => ({ ...b, totalAmount: +b.totalAmount.toFixed(7), avgAmount: b.count ? +(b.totalAmount / b.count).toFixed(7) : 0 }))
+    .sort((a, b) => a.bucket.localeCompare(b.bucket));
+};
+
+/**
+ * Compute a simple moving average over bucketed trend data.
+ * @param {Array<{bucket: string, totalAmount: number}>} buckets
+ * @param {number} [window=3]
+ * @returns {Array<{bucket: string, movingAvg: number}>}
+ */
+StatsService.movingAverage = function movingAverage(buckets, window = 3) {
+  return buckets.map((b, i) => {
+    const slice = buckets.slice(Math.max(0, i - window + 1), i + 1);
+    const avg = slice.reduce((s, x) => s + x.totalAmount, 0) / slice.length;
+    return { bucket: b.bucket, movingAvg: +avg.toFixed(7) };
+  });
+};
+
+/**
+ * Build the full dashboard analytics payload with 5-minute caching.
+ *
+ * @param {object} [options]
+ * @param {string} [options.period='30d']       - Period string (e.g. '7d', '24h', '3m').
+ * @param {string} [options.granularity]        - Override: hourly|daily|weekly|monthly.
+ * @param {number} [options.topN=10]            - Top donors/recipients count.
+ * @param {number} [options.movingAvgWindow=3]  - Moving average window size.
+ * @returns {object} Dashboard data payload.
+ */
+StatsService.getDashboardData = function getDashboardData({ period = '30d', granularity: granularityOverride, topN = 10, movingAvgWindow = 3 } = {}) {
+  const Cache = require('../utils/cache');
+  const CACHE_TTL_MS = 5 * 60 * 1000;
+  const cacheKey = `dashboard:${period}:${granularityOverride || 'auto'}:${topN}:${movingAvgWindow}`;
+
+  const cached = Cache.get(cacheKey);
+  if (cached) return { ...cached, cached: true };
+
+  const { start, end, granularity: autoGranularity } = StatsService.parsePeriod(period);
+  const granularity = granularityOverride || autoGranularity;
+
+  const Transaction = require('../routes/models/transaction');
+  const transactions = Transaction.getByDateRange(start, end);
+
+  const totalAmount = transactions.reduce((s, tx) => s + (parseFloat(tx.amount) || 0), 0);
+  const totalDonations = transactions.length;
+  const avgAmount = totalDonations ? totalAmount / totalDonations : 0;
+
+  const trendBuckets = StatsService.bucketByGranularity(transactions, granularity);
+  const trendMovingAvg = StatsService.movingAverage(trendBuckets, movingAvgWindow);
+
+  const donorMap = new Map();
+  for (const tx of transactions) {
+    if (tx.anonymous) continue; // exclude anonymous donations from public leaderboard
+    const key = tx.donor || 'anonymous';
+    if (!donorMap.has(key)) donorMap.set(key, { address: key, totalAmount: 0, count: 0 });
+    const d = donorMap.get(key);
+    d.totalAmount += parseFloat(tx.amount) || 0;
+    d.count += 1;
+  }
+  const topDonors = Array.from(donorMap.values())
+    .sort((a, b) => b.totalAmount - a.totalAmount)
+    .slice(0, topN)
+    .map(d => ({ ...d, totalAmount: +d.totalAmount.toFixed(7) }));
+
+  const recipientMap = new Map();
+  for (const tx of transactions) {
+    const key = tx.recipient || 'unknown';
+    if (!recipientMap.has(key)) recipientMap.set(key, { address: key, totalAmount: 0, count: 0 });
+    const r = recipientMap.get(key);
+    r.totalAmount += parseFloat(tx.amount) || 0;
+    r.count += 1;
+  }
+  const topRecipients = Array.from(recipientMap.values())
+    .sort((a, b) => b.totalAmount - a.totalAmount)
+    .slice(0, topN)
+    .map(r => ({ ...r, totalAmount: +r.totalAmount.toFixed(7) }));
+
+  const result = {
+    period,
+    granularity,
+    dateRange: { start: start.toISOString(), end: end.toISOString() },
+    summary: {
+      totalDonations,
+      totalAmount: +totalAmount.toFixed(7),
+      avgAmount: +avgAmount.toFixed(7),
+    },
+    trend: trendBuckets,
+    trendMovingAvg,
+    topDonors,
+    topRecipients,
+    cached: false,
+  };
+
+  Cache.set(cacheKey, result, CACHE_TTL_MS);
+  return result;
+};
+
+// Invalidate dashboard cache whenever a new donation is created
+const donationEvents = require('../events/donationEvents');
+donationEvents.on('donation.created', () => {
+  const Cache = require('../utils/cache');
+  Cache.clearPrefix('dashboard:');
+});
+
+module.exports = StatsService;

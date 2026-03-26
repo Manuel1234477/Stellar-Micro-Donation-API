@@ -1,32 +1,37 @@
 /**
- * Stellar Configuration
- * Handles both real and mock Stellar service initialization
+ * Stellar Configuration - Blockchain Configuration Layer
+ * 
+ * RESPONSIBILITY: Stellar network configuration and service initialization
+ * OWNER: Blockchain Team
+ * DEPENDENCIES: ServiceContainer, environment validation, logger
+ * 
+ * Configures Stellar network settings (testnet/mainnet), Horizon URLs, and initializes
+ * Stellar service instances. Uses ServiceContainer for dependency injection.
  */
 
-const StellarService = require('../services/StellarService');
-const MockStellarService = require('../services/MockStellarService');
+require('dotenv').config({ path: require('path').join(__dirname, '../../.env') });
+const path = require('path');
+const log = require('../utils/log');
 
-const useMockStellar = process.env.MOCK_STELLAR === 'true';
+const serviceContainer = require('./serviceContainer');
 
 /**
- * Get Stellar service instance
- * Returns mock service if MOCK_STELLAR=true, otherwise real service
+ * Get Stellar service instance from container
  */
 const getStellarService = () => {
-  if (useMockStellar) {
-    console.log('[Stellar Config] Using MOCK Stellar service');
-    return new MockStellarService();
-  }
-  
-  console.log('[Stellar Config] Using REAL Stellar service');
-  return new StellarService({
-    network: process.env.STELLAR_NETWORK || 'testnet',
-    horizonUrl: process.env.HORIZON_URL || 'https://horizon-testnet.stellar.org',
-    serviceSecretKey: process.env.SERVICE_SECRET_KEY,
-  });
+  const service = serviceContainer.getStellarService();
+  const network = service.getNetwork ? service.getNetwork() : 'testnet';
+  log.info('STELLAR_CONFIG', 'Using Stellar service from container', { network });
+  return service;
 };
+
+const { getActiveEnvironment } = require('./stellarEnvironments');
+const activeEnv = getActiveEnvironment();
 
 module.exports = {
   getStellarService,
-  useMockStellar,
+  useMockStellar: process.env.USE_MOCK_STELLAR === 'true',
+  port: process.env.PORT || 3000,
+  ...activeEnv,
+  dbPath: process.env.DB_JSON_PATH || path.join(__dirname, '../../data/donations.json'),
 };
