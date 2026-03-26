@@ -27,6 +27,9 @@ const webhooksRoutes = require('./webhooks');
 const campaignsRoutes = require('./campaigns');
 const offersRoutes = require('./offers');
 const tagsRoutes = require('./tags');
+const { metricsMiddleware, registry } = require('../utils/metrics');
+const requireApiKey = require('../middleware/apiKey');
+const { requireAdmin } = require('../middleware/rbac');
 const { errorHandler, notFoundHandler } = require('../middleware/errorHandler');
 const logger = require('../middleware/logger');
 const { attachUserRole } = require('../middleware/rbac');
@@ -141,6 +144,15 @@ app.use(require('../middleware/suspiciousPatternDetection'));
 
 // Attach user role from authentication (must be before routes)
 app.use(attachUserRole());
+
+// Prometheus request duration instrumentation
+app.use(metricsMiddleware);
+
+// GET /metrics — Prometheus scrape endpoint (admin only)
+app.get('/metrics', requireApiKey, requireAdmin(), async (req, res) => {
+  res.set('Content-Type', registry.contentType);
+  res.end(await registry.metrics());
+});
 
 // Routes
 app.use('/wallets', walletRoutes);
