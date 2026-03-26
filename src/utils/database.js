@@ -14,6 +14,7 @@ const path = require('path');
 require('dotenv').config({ path: path.join(__dirname, '../../src/.env') });
 
 // External modules
+const path = require('path');
 const sqlite3 = require('sqlite3').verbose();
 
 // Internal modules

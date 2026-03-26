@@ -1,15 +1,18 @@
 /**
- * WebhookService - Webhook Registration and Delivery
+ * Webhook Service - Notification Layer
  *
- * RESPONSIBILITY: Register webhook endpoints, deliver signed payloads,
- *                 retry failed deliveries with exponential backoff, and
- *                 auto-disable webhooks after 5 consecutive failures.
+ * RESPONSIBILITY: Sends HTTP webhook notifications for persistent recurring donation failures
+ * OWNER: Backend Team
+ * DEPENDENCIES: https (Node built-in), log utility
+ *
+ * Delivers POST payloads to user-configured webhook URLs when a recurring donation
+ * exhausts all retry attempts. Failures to deliver the webhook are logged but do
+ * not affect the donation schedule state.
  */
 
-const crypto = require('crypto');
 const https = require('https');
 const http = require('http');
-const Database = require('../utils/database');
+const { URL } = require('url');
 const log = require('../utils/log');
 const { 
   getCorrelationContext, 
@@ -17,96 +20,28 @@ const {
   generateCorrelationHeaders 
 } = require('../utils/correlation');
 
-const MAX_RETRIES = 5;
-const BASE_BACKOFF_MS = 1000; // 1s, 2s, 4s, 8s, 16s
-const MAX_CONSECUTIVE_FAILURES = 5;
-const DELIVERY_TIMEOUT_MS = 5000;
-
 class WebhookService {
   /**
-   * Create the webhooks table if it doesn't exist.
+   * Send a failure notification to the configured webhook URL.
+   *
+   * @param {string} webhookUrl - Target URL (http or https)
+   * @param {Object} payload - Notification payload
+   * @param {number} payload.scheduleId - Recurring donation schedule ID
+   * @param {string} payload.donorPublicKey - Donor Stellar public key
+   * @param {string} payload.recipientPublicKey - Recipient Stellar public key
+   * @param {string} payload.amount - Donation amount in XLM
+   * @param {string} payload.frequency - Donation frequency
+   * @param {string} payload.errorMessage - Last error message
+   * @param {number} payload.failureCount - Total consecutive failures
+   * @param {string} payload.timestamp - ISO timestamp of the failure
+   * @returns {Promise<{delivered: boolean, statusCode?: number, error?: string}>}
    */
-  static async initTable() {
-    await Database.run(`
-      CREATE TABLE IF NOT EXISTS webhooks (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        url TEXT NOT NULL,
-        events TEXT NOT NULL,
-        secret TEXT NOT NULL,
-        api_key_id TEXT,
-        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-        is_active INTEGER NOT NULL DEFAULT 1,
-        consecutive_failures INTEGER NOT NULL DEFAULT 0
-      )
-    `);
-  }
-
-  /**
-   * Register a new webhook.
-   * @param {object} params
-   * @param {string} params.url - HTTPS URL to deliver events to
-   * @param {string[]} params.events - Event types e.g. ['transaction.confirmed']
-   * @param {string} [params.secret] - HMAC secret; auto-generated if omitted
-   * @param {string} [params.apiKeyId]
-   * @returns {Promise<object>} Created webhook record
-   */
-  static async register({ url, events, secret, apiKeyId }) {
-    if (!url || !events || !Array.isArray(events) || events.length === 0) {
-      throw Object.assign(new Error('url and events[] are required'), { status: 400 });
+  async sendFailureNotification(webhookUrl, payload) {
+    if (!webhookUrl) {
+      return { delivered: false, error: 'No webhook URL configured' };
     }
 
-    try { new URL(url); } catch {
-      throw Object.assign(new Error('Invalid webhook URL'), { status: 400 });
-    }
-
-    const webhookSecret = secret || crypto.randomBytes(32).toString('hex');
-    const eventsJson = JSON.stringify(events);
-
-    const result = await Database.run(
-      `INSERT INTO webhooks (url, events, secret, api_key_id) VALUES (?, ?, ?, ?)`,
-      [url, eventsJson, webhookSecret, apiKeyId || null]
-    );
-
-    return {
-      id: result.id,
-      url,
-      events,
-      secret: webhookSecret,
-      apiKeyId: apiKeyId || null,
-      isActive: true,
-      createdAt: new Date().toISOString(),
-    };
-  }
-
-  /**
-   * List all active webhooks.
-   * @returns {Promise<object[]>}
-   */
-  static async list() {
-    const rows = await Database.query(
-      `SELECT id, url, events, api_key_id, created_at, is_active FROM webhooks ORDER BY created_at DESC`
-    );
-    return rows.map(r => ({
-      id: r.id,
-      url: r.url,
-      events: JSON.parse(r.events),
-      apiKeyId: r.api_key_id,
-      createdAt: r.created_at,
-      isActive: Boolean(r.is_active),
-    }));
-  }
-
-  /**
-   * Delete (hard-delete) a webhook by ID.
-   * @param {number} id
-   */
-  static async remove(id) {
-    const result = await Database.run(`DELETE FROM webhooks WHERE id = ?`, [id]);
-    if (result.changes === 0) {
-      throw Object.assign(new Error('Webhook not found'), { status: 404 });
-    }
-  }
-
+    let parsedUrl;
   /**
    * Deliver an event to all active webhooks subscribed to it.
    * Fires-and-forgets retries; does not block the caller.
@@ -117,21 +52,20 @@ class WebhookService {
   static async deliver(event, payload) {
     let webhooks;
     try {
-      webhooks = await Database.query(
-        `SELECT * FROM webhooks WHERE is_active = 1`
-      );
-    } catch (err) {
-      log.error('WEBHOOK', 'Failed to query webhooks', { error: err.message });
-      return;
+      parsedUrl = new URL(webhookUrl);
+    } catch {
+      log.warn('WEBHOOK_SERVICE', 'Invalid webhook URL', { webhookUrl });
+      return { delivered: false, error: 'Invalid webhook URL' };
     }
 
-    const interested = webhooks.filter(w => {
-      try {
-        const events = JSON.parse(w.events);
-        return events.includes(event) || events.includes('*');
-      } catch { return false; }
+    const body = JSON.stringify({
+      event: 'recurring_donation.persistent_failure',
+      ...payload,
+      timestamp: payload.timestamp || new Date().toISOString(),
     });
 
+    return new Promise((resolve) => {
+      const transport = parsedUrl.protocol === 'https:' ? https : http;
     // Capture correlation context from current request
     const parentContext = getCorrelationContext();
 
@@ -238,37 +172,52 @@ class WebhookService {
       const parsed = new URL(url);
       const lib = parsed.protocol === 'https:' ? https : http;
       const options = {
-        hostname: parsed.hostname,
-        port: parsed.port || (parsed.protocol === 'https:' ? 443 : 80),
-        path: parsed.pathname + parsed.search,
+        hostname: parsedUrl.hostname,
+        port: parsedUrl.port || (parsedUrl.protocol === 'https:' ? 443 : 80),
+        path: parsedUrl.pathname + parsedUrl.search,
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
           'Content-Length': Buffer.byteLength(body),
+          'User-Agent': 'Stella-Donation-API/1.0',
+          'X-Stella-Event': 'recurring_donation.persistent_failure',
           'X-Webhook-Signature': `sha256=${signature}`,
           ...correlationHeaders,
         },
-        timeout: DELIVERY_TIMEOUT_MS,
+        timeout: 10000, // 10 second timeout
       };
 
-      const req = lib.request(options, (res) => {
+      const req = transport.request(options, (res) => {
         // Drain response body
         res.resume();
-        res.on('end', () => {
-          if (res.statusCode >= 200 && res.statusCode < 300) {
-            resolve(res.statusCode);
-          } else {
-            reject(new Error(`HTTP ${res.statusCode}`));
-          }
+        const delivered = res.statusCode >= 200 && res.statusCode < 300;
+        log.info('WEBHOOK_SERVICE', 'Webhook delivered', {
+          scheduleId: payload.scheduleId,
+          statusCode: res.statusCode,
+          delivered,
         });
+        resolve({ delivered, statusCode: res.statusCode });
       });
 
-      req.on('timeout', () => { req.destroy(new Error('Request timed out')); });
-      req.on('error', reject);
+      req.on('timeout', () => {
+        req.destroy();
+        log.warn('WEBHOOK_SERVICE', 'Webhook request timed out', { webhookUrl, scheduleId: payload.scheduleId });
+        resolve({ delivered: false, error: 'Request timed out' });
+      });
+
+      req.on('error', (err) => {
+        log.warn('WEBHOOK_SERVICE', 'Webhook request failed', {
+          webhookUrl,
+          scheduleId: payload.scheduleId,
+          error: err.message,
+        });
+        resolve({ delivered: false, error: err.message });
+      });
+
       req.write(body);
       req.end();
     });
   }
 }
 
-module.exports = WebhookService;
+module.exports = new WebhookService();

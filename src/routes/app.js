@@ -19,6 +19,7 @@ const statsRoutes = require('./stats');
 const streamRoutes = require('./stream');
 const transactionRoutes = require('./transaction');
 const apiKeysRoutes = require('./apiKeys');
+const recurringDonationRoutes = require('./recurringDonation');
 const feesRoutes = require('./fees');
 const featureFlagsAdminRoutes = require('./admin/featureFlags');
 const createFeeBumpRouter = require('./admin/feeBump');
@@ -156,6 +157,7 @@ app.use(createDeduplicationMiddleware());
 // Routes
 app.use('/wallets', walletRoutes);
 app.use('/donations', donationRoutes);
+app.use('/donations/recurring', recurringDonationRoutes);
 app.use('/stats', statsRoutes);
 app.use('/stream', streamRoutes);
 app.use('/transactions', transactionRoutes);

@@ -24,6 +24,7 @@ const DONATION_FREQUENCIES = Object.freeze({
   DAILY: 'daily',
   WEEKLY: 'weekly',
   MONTHLY: 'monthly',
+  CUSTOM: 'custom',
 });
 
 /**
@@ -33,6 +34,7 @@ const VALID_FREQUENCIES = Object.freeze([
   DONATION_FREQUENCIES.DAILY,
   DONATION_FREQUENCIES.WEEKLY,
   DONATION_FREQUENCIES.MONTHLY,
+  DONATION_FREQUENCIES.CUSTOM,
 ]);
 
 /**
