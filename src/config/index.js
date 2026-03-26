@@ -11,7 +11,8 @@
 
 require('dotenv').config({ path: require('path').join(__dirname, '../../.env') });
 const path = require('path');
-const { VALID_STELLAR_NETWORKS, STELLAR_NETWORKS, HORIZON_URLS } = require('../constants');
+const { VALID_STELLAR_NETWORKS } = require('../constants');
+const { getActiveEnvironment } = require('./stellarEnvironments');
 
 /**
  * Configuration error class for clear error messages
@@ -119,6 +120,12 @@ const loadConfig = () => {
   const isProduction = env === 'production';
   const isTest = env === 'test';
 
+  // Prevent mainnet operations in test environment
+  const currentStellarEnv = (process.env.STELLAR_ENVIRONMENT || process.env.STELLAR_NETWORK || 'testnet').toLowerCase();
+  if (isTest && currentStellarEnv === 'mainnet') {
+    throw new ConfigurationError('CRITICAL: Mainnet operations are strictly prevented when NODE_ENV=test.');
+  }
+
   // Skip validation in test environment
   if (isTest) {
     return buildConfig(env, isProduction, isTest);
@@ -150,12 +157,13 @@ const loadConfig = () => {
     }
   }
 
-  // Validate STELLAR_NETWORK
-  if (process.env.STELLAR_NETWORK) {
-    const network = process.env.STELLAR_NETWORK.toLowerCase();
-    if (!VALID_STELLAR_NETWORKS.includes(network)) {
+  // Validate STELLAR_NETWORK (Legacy) or STELLAR_ENVIRONMENT (New)
+  const stellarEnvRaw = process.env.STELLAR_ENVIRONMENT || process.env.STELLAR_NETWORK;
+  if (stellarEnvRaw) {
+    const network = stellarEnvRaw.toLowerCase();
+    if (!['testnet', 'mainnet'].includes(network) && !VALID_STELLAR_NETWORKS.includes(network)) {
       errors.push(
-        `STELLAR_NETWORK must be one of: ${VALID_STELLAR_NETWORKS.join(', ')}. Received: "${process.env.STELLAR_NETWORK}".`
+        `Environment must be one of: testnet, mainnet. Received: "${stellarEnvRaw}".`
       );
     }
   }
@@ -210,10 +218,16 @@ const buildConfig = (env, isProduction, isTest) => {
   };
 
   // Stellar configuration
-  const stellarNetwork = (process.env.STELLAR_NETWORK || 'testnet').toLowerCase();
+  if (!process.env.STELLAR_ENVIRONMENT && process.env.STELLAR_NETWORK) {
+    console.warn('\x1b[33m[DEPRECATION WARNING] ... Please update your .env file to use STELLAR_ENVIRONMENT instead.\x1b[0m');
+  }
+  
+  const environmentConfig = getActiveEnvironment();
+  
   const stellar = {
-    network: stellarNetwork,
-    horizonUrl: process.env.HORIZON_URL || HORIZON_URLS[stellarNetwork] || HORIZON_URLS.testnet,
+    network: environmentConfig.environment,
+    environment: environmentConfig,
+    horizonUrl: environmentConfig.horizonUrl,
     mockEnabled: parseBoolean(process.env.MOCK_STELLAR, false),
     serviceSecretKey: process.env.STELLAR_SECRET || process.env.SERVICE_SECRET_KEY || null,
   };
@@ -244,6 +258,7 @@ const buildConfig = (env, isProduction, isTest) => {
     minAmount: parseFloat(process.env.MIN_DONATION_AMOUNT, 0.01, 0, null, 'MIN_DONATION_AMOUNT'),
     maxAmount: parseFloat(process.env.MAX_DONATION_AMOUNT, 10000, 0, null, 'MAX_DONATION_AMOUNT'),
     maxDailyPerDonor: parseFloat(process.env.MAX_DAILY_DONATION_PER_DONOR, 0, 0, null, 'MAX_DAILY_DONATION_PER_DONOR'),
+    refundEligibilityWindowDays: parseInteger(process.env.REFUND_ELIGIBILITY_WINDOW_DAYS, 30, 1, null, 'REFUND_ELIGIBILITY_WINDOW_DAYS'),
   };
 
   // Logging configuration
@@ -252,6 +267,9 @@ const buildConfig = (env, isProduction, isTest) => {
     directory: process.env.LOG_DIR || path.join(__dirname, '../../logs'),
     verbose: parseBoolean(process.env.LOG_VERBOSE, false),
     debugMode: parseBoolean(process.env.DEBUG_MODE, false),
+    format: process.env.LOG_FORMAT || 'text',
+    level: process.env.LOG_LEVEL || 'info',
+    sampleRate: parseFloat(process.env.LOG_SAMPLE_RATE, 1.0, 0.0, 1.0, 'LOG_SAMPLE_RATE'),
   };
 
   // Encryption configuration
@@ -266,7 +284,7 @@ const buildConfig = (env, isProduction, isTest) => {
     version: process.env.npm_package_version || '1.0.0',
   };
 
-  return {
+  const configObj = {
     server,
     stellar,
     database,
@@ -277,6 +295,8 @@ const buildConfig = (env, isProduction, isTest) => {
     encryption,
     app,
   };
+  
+  return configObj;
 };
 
 // Load configuration once at module initialization

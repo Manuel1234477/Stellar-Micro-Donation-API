@@ -58,8 +58,12 @@ const SENSITIVE_PATTERNS = [
   'taxid',
   'tax_id',
   
-  // Encryption
-  'encryptionkey',
+  // Database & Connection
+  'database_url',
+  'databaseurl',
+  'db_url',
+  'connection_string',
+  'connectionstring',
   'encryption_key',
   'cipher',
   'iv',
@@ -80,11 +84,9 @@ const SENSITIVE_PATTERNS = [
  */
 const VALUE_PATTERNS = [
   // Stellar secret keys (start with S, 56 chars)
-  /S[A-Z2-7]{55}/g,
+  /^S[A-Z2-7]{55}$/,
   // JWT tokens (three base64 segments separated by dots)
-  /eyJ[A-Za-z0-9_-]+\.eyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+/g,
-  // API keys (common formats)
-  /[a-zA-Z0-9]{32,}/g, // Long alphanumeric strings (potential API keys)
+  /eyJ[A-Za-z0-9_-]+\.eyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+/,
 ];
 
 /**
@@ -110,13 +112,7 @@ function isSensitiveKey(key) {
  */
 function isSensitiveValue(value) {
   if (typeof value !== 'string') return false;
-  
-  // Check against value patterns
-  return VALUE_PATTERNS.some(pattern => {
-    // Reset regex lastIndex for global patterns
-    pattern.lastIndex = 0;
-    return pattern.test(value);
-  });
+  return VALUE_PATTERNS.some(pattern => pattern.test(value));
 }
 
 /**
@@ -148,7 +144,7 @@ function maskValue(value, options = {}) {
   if (showFirst > 0 || showLast > 0) {
     const first = strValue.substring(0, showFirst);
     const last = strValue.substring(strValue.length - showLast);
-    const maskedLength = Math.max(8, strValue.length - showFirst - showLast);
+    const maskedLength = Math.max(4, strValue.length - showFirst - showLast);
     const masked = maskChar.repeat(maskedLength);
     return `${first}${masked}${last}`;
   }
@@ -232,14 +228,9 @@ function maskError(error) {
   
   // Mask stack trace to remove potential sensitive data in file paths or values
   if (error.stack) {
-    // Keep stack trace but mask any potential secrets in it
     masked.stack = error.stack.split('\n').map(line => {
-      let maskedLine = line;
-      VALUE_PATTERNS.forEach(pattern => {
-        pattern.lastIndex = 0;
-        maskedLine = maskedLine.replace(pattern, '[REDACTED]');
-      });
-      return maskedLine;
+      // Replace Stellar secret keys in stack trace lines
+      return line.replace(/S[A-Z2-7]{55}/g, '[REDACTED]');
     }).join('\n');
   }
   

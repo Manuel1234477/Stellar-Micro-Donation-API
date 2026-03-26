@@ -17,11 +17,11 @@ const log = require('./log');
  * Uses AsyncLocalStorage for thread-safe context management
  */
 let contextStorage;
+let _lastContext = null; // Fallback for post-scope access
 try {
   const { AsyncLocalStorage } = require('async_hooks');
   contextStorage = new AsyncLocalStorage();
 } catch (error) {
-  // Fallback for older Node versions
   contextStorage = null;
 }
 
@@ -54,9 +54,9 @@ const DEFAULT_CONTEXT = {
  */
 function getCorrelationContext() {
   if (!contextStorage) {
-    return { ...DEFAULT_CONTEXT };
+    return _lastContext || { ...DEFAULT_CONTEXT };
   }
-  return contextStorage.getStore() || { ...DEFAULT_CONTEXT };
+  return contextStorage.getStore() || _lastContext || { ...DEFAULT_CONTEXT };
 }
 
 /**
@@ -84,7 +84,7 @@ function setCorrelationContext(context) {
 function createCorrelationContext(options = {}) {
   const correlationId = options.correlationId || uuidv4();
   const traceId = options.traceId || correlationId;
-  const operationId = uuidv4();
+  const operationId = options.operationId || uuidv4();
   
   const context = {
     correlationId,
@@ -159,24 +159,6 @@ function createAsyncContext(operationType, metadata = {}) {
     }
   });
 
-  setCorrelationContext(childContext);
-  
-  // Update logging context with new correlation IDs
-  log.setContext({
-    correlationId: childContext.correlationId,
-    parentCorrelationId: childContext.parentCorrelationId,
-    traceId: childContext.traceId,
-    operationId: childContext.operationId,
-    requestId: childContext.requestId
-  });
-
-  log.debug('CORRELATION', 'Async correlation context created', {
-    correlationId: childContext.correlationId,
-    parentCorrelationId: childContext.parentCorrelationId,
-    operationType,
-    traceId: childContext.traceId
-  });
-
   return childContext;
 }
 
@@ -197,21 +179,6 @@ function createBackgroundContext(taskType, metadata = {}) {
     }
   });
 
-  setCorrelationContext(context);
-  
-  // Update logging context with correlation IDs
-  log.setContext({
-    correlationId: context.correlationId,
-    traceId: context.traceId,
-    operationId: context.operationId
-  });
-
-  log.debug('CORRELATION', 'Background correlation context created', {
-    correlationId: context.correlationId,
-    taskType,
-    traceId: context.traceId
-  });
-
   return context;
 }
 
@@ -223,10 +190,26 @@ function createBackgroundContext(taskType, metadata = {}) {
  */
 function withCorrelationContext(context, fn) {
   if (!contextStorage) {
-    return fn();
+    const prev = _lastContext;
+    _lastContext = context;
+    try {
+      return fn();
+    } finally {
+      _lastContext = prev;
+    }
   }
-
-  return contextStorage.run(context, fn);
+  const prev = _lastContext;
+  _lastContext = context;
+  const result = contextStorage.run(context, fn);
+  // For promise results, restore _lastContext after resolution/rejection
+  if (result && typeof result.then === 'function') {
+    return result.then(
+      (val) => { _lastContext = prev; return val; },
+      (err) => { _lastContext = context; throw err; } // Keep context on error for catch blocks
+    );
+  }
+  _lastContext = prev;
+  return result;
 }
 
 /**
@@ -277,8 +260,9 @@ function getCorrelationSummary() {
  * @returns {boolean} True if correlation context is available
  */
 function hasCorrelationContext() {
-  const context = getCorrelationContext();
-  return !!context.correlationId;
+  if (!contextStorage) return false;
+  const store = contextStorage.getStore();
+  return !!(store && store.correlationId);
 }
 
 /**
@@ -286,7 +270,8 @@ function hasCorrelationContext() {
  * @returns {Object} Headers object with correlation IDs
  */
 function generateCorrelationHeaders() {
-  const context = getCorrelationContext();
+  const context = contextStorage ? contextStorage.getStore() : null;
+  if (!context) return {};
   const headers = {};
 
   if (context.correlationId) {

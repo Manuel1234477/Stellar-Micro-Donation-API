@@ -1,6 +1,6 @@
 const fs = require('fs');
 const path = require('path');
-const dbPath = process.env.DB_JSON_PATH || require('path').join(__dirname, '../../data/donations.json');
+const donationEvents = require('../../events/donationEvents');
 const {
   TRANSACTION_STATES,
   normalizeState,
@@ -9,9 +9,8 @@ const {
 } = require('../../utils/transactionStateMachine');
 
 class Transaction {
-  static eventEmitter = donationEvents;
   static getDbPath() {
-    return dbPath;
+    return process.env.DB_JSON_PATH || path.join(__dirname, '../../../data/donations.json');
   }
 
   static ensureDbDir() {
@@ -67,16 +66,27 @@ class Transaction {
     const nowIso = new Date().toISOString();
     const newTransaction = {
       ...transactionData,
-      id: transactionData.id || Date.now().toString(),
+      id: transactionData.id || `${Date.now()}-${Math.random().toString(36).slice(2)}`,
       amount: transactionData.amount,
       donor: transactionData.donor,
       recipient: transactionData.recipient,
       memo: transactionData.memo || '',
+      memoType: transactionData.memoType || 'text',
+      encryptionMetadata: transactionData.encryptionMetadata || null,
+      memoEnvelope: transactionData.memoEnvelope || null,
+      notes: transactionData.notes || null,
+      tags: transactionData.tags || [],
+      apiKeyId: transactionData.apiKeyId || null,
       timestamp: transactionData.timestamp || nowIso,
       status: normalizedStatus,
       stellarTxId: transactionData.stellarTxId || null,
       stellarLedger: transactionData.stellarLedger || null,
       statusUpdatedAt: transactionData.statusUpdatedAt || nowIso,
+      envelopeXdr: transactionData.envelopeXdr || null,
+      feeBumpCount: transactionData.feeBumpCount || 0,
+      originalFee: transactionData.originalFee || null,
+      currentFee: transactionData.currentFee || null,
+      lastFeeBumpAt: transactionData.lastFeeBumpAt || null,
     };
     transactions.push(newTransaction);
     this.saveTransactions(transactions);
@@ -153,6 +163,51 @@ class Transaction {
     if (stellarData.confirmedAt) {
       transactions[index].confirmedAt = stellarData.confirmedAt;
     }
+    if (Object.prototype.hasOwnProperty.call(stellarData, 'notes')) {
+      transactions[index].notes = stellarData.notes;
+    }
+    if (Object.prototype.hasOwnProperty.call(stellarData, 'tags')) {
+      transactions[index].tags = Array.isArray(stellarData.tags) ? stellarData.tags : [];
+    }
+
+    this.saveTransactions(transactions);
+    return transactions[index];
+  }
+
+  /**
+   * Update fee bump metadata for a transaction.
+   * @param {string} id - Transaction ID
+   * @param {Object} feeBumpData - Fee bump data to update
+   * @param {number} [feeBumpData.feeBumpCount] - New fee bump count
+   * @param {number} [feeBumpData.currentFee] - New current fee in stroops
+   * @param {string} [feeBumpData.lastFeeBumpAt] - ISO timestamp of fee bump
+   * @param {string} [feeBumpData.envelopeXdr] - Updated envelope XDR (fee bump envelope)
+   * @param {string} [feeBumpData.stellarTxId] - New Stellar transaction hash
+   * @returns {Object} Updated transaction
+   */
+  static updateFeeBumpData(id, feeBumpData) {
+    const transactions = this.loadTransactions();
+    const index = transactions.findIndex(t => t.id === id);
+
+    if (index === -1) {
+      throw new Error(`Transaction not found: ${id}`);
+    }
+
+    if (feeBumpData.feeBumpCount !== undefined) {
+      transactions[index].feeBumpCount = feeBumpData.feeBumpCount;
+    }
+    if (feeBumpData.currentFee !== undefined) {
+      transactions[index].currentFee = feeBumpData.currentFee;
+    }
+    if (feeBumpData.lastFeeBumpAt !== undefined) {
+      transactions[index].lastFeeBumpAt = feeBumpData.lastFeeBumpAt;
+    }
+    if (feeBumpData.envelopeXdr !== undefined) {
+      transactions[index].envelopeXdr = feeBumpData.envelopeXdr;
+    }
+    if (feeBumpData.stellarTxId !== undefined) {
+      transactions[index].stellarTxId = feeBumpData.stellarTxId;
+    }
 
     this.saveTransactions(transactions);
     return transactions[index];
@@ -193,5 +248,7 @@ class Transaction {
     this.saveTransactions([]);
   }
 }
+
+Transaction.eventEmitter = donationEvents;
 
 module.exports = Transaction;

@@ -1,6 +1,4 @@
 let uuidv4;
-// Intent: Select the most efficient UUID generator available in the environment.
-// Flow: Native Crypto (High perf) -> uuid package -> Math.random fallback.
 try {
   const { randomUUID } = require('crypto');
   uuidv4 = () => randomUUID();
@@ -13,21 +11,7 @@ try {
 }
 
 const log = require('../utils/log');
-const {
-  initializeRequestContext,
-  parseCorrelationHeaders,
-} = require("../utils/correlation");
-
-/**
- * Middleware to generate and attach a unique ID to every request
- * Intent: Facilitate request tracing and log correlation across the system.
- * Flow:
- * 1. Check for existing 'X-Request-ID' header (provided by proxy/load balancer).
- * 2. Parse correlation headers from inbound request
- * 3. Generate UUID v4 if not present (ensures uniqueness).
- * 4. Attach to req object and response headers.
- * 5. Initialize correlation context for async operation tracking
- */
+const correlationUtils = require("../utils/correlation");
 
 const requestIdMiddleware = (req, res, next) => {
   const requestId = req.get('X-Request-ID') || uuidv4();
@@ -35,17 +19,59 @@ const requestIdMiddleware = (req, res, next) => {
   req.id = requestId;
   res.setHeader('X-Request-ID', requestId);
 
-  // Set logging context with requestId
-  log.setContext({
-    requestId,
-    method: req.method,
-    path: req.path,
-    userAgent: req.get("User-Agent"),
-    ip: req.ip,
-    ...correlationHeaders,
-  });
+  const inboundHeaders = correlationUtils.parseCorrelationHeaders
+    ? correlationUtils.parseCorrelationHeaders(req.headers)
+    : {};
+
+  let context = null;
+
+  try {
+    if (correlationUtils.createCorrelationContext && correlationUtils.setCorrelationContext) {
+      context = correlationUtils.createCorrelationContext({
+        requestId,
+        correlationId: inboundHeaders.correlationId || undefined,
+        traceId: inboundHeaders.traceId || undefined,
+        operationType: 'http_request',
+        metadata: {
+          method: req.method,
+          path: req.path,
+          userAgent: req.get('User-Agent'),
+          ip: req.ip,
+          initiatedAt: new Date().toISOString(),
+        },
+      });
+      correlationUtils.setCorrelationContext(context);
+    } else if (correlationUtils.initializeRequestContext) {
+      context = correlationUtils.initializeRequestContext(requestId, {
+        method: req.method,
+        path: req.path,
+      });
+    }
+  } catch (e) {
+    // Correlation context creation failed — continue without it
+  }
+
+  req.correlationContext = context;
+
+  if (context && context.correlationId) {
+    res.setHeader('X-Correlation-ID', context.correlationId);
+  }
+  if (context && context.traceId) {
+    res.setHeader('X-Trace-ID', context.traceId);
+  }
+
+  if (log.setContext) {
+    log.setContext({
+      requestId,
+      method: req.method,
+      path: req.path,
+      userAgent: req.get('User-Agent'),
+      ip: req.ip,
+      ...(context && { correlationId: context.correlationId, traceId: context.traceId }),
+    });
+  }
 
   next();
-};;
+};
 
 module.exports = requestIdMiddleware;

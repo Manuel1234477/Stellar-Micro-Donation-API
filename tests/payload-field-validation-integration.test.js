@@ -36,44 +36,44 @@ function createTestApp() {
   app.use(validatePayloadFields);
 
   // Mock route handlers for testing
-  app.post('/donations/send', (req, res) => {
+  app.post('/api/v1/donations/send', (req, res) => {
     res.status(201).json({ success: true, message: 'Donation sent' });
   });
 
-  app.post('/donations', (req, res) => {
+  app.post('/api/v1/donations', (req, res) => {
     res.status(201).json({ success: true, message: 'Donation created' });
   });
 
-  app.post('/donations/verify', (req, res) => {
+  app.post('/api/v1/donations/verify', (req, res) => {
     res.status(200).json({ success: true, message: 'Transaction verified' });
   });
 
-  app.patch('/donations/:id/status', (req, res) => {
+  app.patch('/api/v1/donations/:id/status', (req, res) => {
     res.status(200).json({ success: true, message: 'Status updated' });
   });
 
-  app.post('/wallets', (req, res) => {
+  app.post('/api/v1/wallets', (req, res) => {
     res.status(201).json({ success: true, message: 'Wallet created' });
   });
 
-  app.patch('/wallets/:id', (req, res) => {
+  app.patch('/api/v1/wallets/:id', (req, res) => {
     res.status(200).json({ success: true, message: 'Wallet updated' });
   });
 
-  app.post('/transactions/sync', (req, res) => {
+  app.post('/api/v1/transactions/sync', (req, res) => {
     res.status(200).json({ success: true, message: 'Transactions synced' });
   });
 
-  app.post('/api-keys', (req, res) => {
+  app.post('/api/v1/api-keys', (req, res) => {
     res.status(201).json({ success: true, message: 'API key created' });
   });
 
-  app.post('/api-keys/cleanup', (req, res) => {
+  app.post('/api/v1/api-keys/cleanup', (req, res) => {
     res.status(200).json({ success: true, message: 'Cleanup completed' });
   });
 
   // GET endpoint (should not validate)
-  app.get('/donations', (req, res) => {
+  app.get('/api/v1/donations', (req, res) => {
     res.status(200).json({ success: true, data: [] });
   });
 
@@ -90,7 +90,7 @@ describe('Payload Field Validation Integration', () => {
   describe('POST /donations/send', () => {
     it('should accept valid payload with all allowed fields', async () => {
       const response = await request(app)
-        .post('/donations/send')
+        .post('/api/v1/donations/send')
         .send({
           senderId: '123',
           receiverId: '456',
@@ -104,7 +104,7 @@ describe('Payload Field Validation Integration', () => {
 
     it('should accept valid payload with subset of allowed fields', async () => {
       const response = await request(app)
-        .post('/donations/send')
+        .post('/api/v1/donations/send')
         .send({
           senderId: '123',
           receiverId: '456',
@@ -117,7 +117,7 @@ describe('Payload Field Validation Integration', () => {
 
     it('should reject payload with unknown field', async () => {
       const response = await request(app)
-        .post('/donations/send')
+        .post('/api/v1/donations/send')
         .send({
           senderId: '123',
           receiverId: '456',
@@ -133,7 +133,7 @@ describe('Payload Field Validation Integration', () => {
 
     it('should reject payload with multiple unknown fields', async () => {
       const response = await request(app)
-        .post('/donations/send')
+        .post('/api/v1/donations/send')
         .send({
           senderId: '123',
           receiverId: '456',
@@ -149,7 +149,7 @@ describe('Payload Field Validation Integration', () => {
 
     it('should reject payload with typo in field name', async () => {
       const response = await request(app)
-        .post('/donations/send')
+        .post('/api/v1/donations/send')
         .send({
           senderId: '123',
           receiverId: '456',
@@ -164,12 +164,14 @@ describe('Payload Field Validation Integration', () => {
   describe('POST /donations', () => {
     it('should accept valid payload', async () => {
       const response = await request(app)
-        .post('/donations')
+        .post('/api/v1/donations')
         .send({
           amount: 100,
           donor: 'GXXX',
           recipient: 'GYYY',
-          memo: 'test'
+          memo: 'test',
+          sourceAsset: 'native',
+          sourceAmount: '100'
         });
 
       expect(response.status).toBe(201);
@@ -178,7 +180,7 @@ describe('Payload Field Validation Integration', () => {
 
     it('should reject payload with unknown field', async () => {
       const response = await request(app)
-        .post('/donations')
+        .post('/api/v1/donations')
         .send({
           amount: 100,
           recipient: 'GYYY',
@@ -193,7 +195,7 @@ describe('Payload Field Validation Integration', () => {
   describe('POST /donations/verify', () => {
     it('should accept valid payload', async () => {
       const response = await request(app)
-        .post('/donations/verify')
+        .post('/api/v1/donations/verify')
         .send({
           transactionHash: 'a'.repeat(64)
         });
@@ -204,7 +206,7 @@ describe('Payload Field Validation Integration', () => {
 
     it('should reject payload with unknown field', async () => {
       const response = await request(app)
-        .post('/donations/verify')
+        .post('/api/v1/donations/verify')
         .send({
           transactionHash: 'a'.repeat(64),
           extraField: 'not allowed'
@@ -218,7 +220,7 @@ describe('Payload Field Validation Integration', () => {
   describe('PATCH /donations/:id/status', () => {
     it('should accept valid payload', async () => {
       const response = await request(app)
-        .patch('/donations/123/status')
+        .patch('/api/v1/donations/123/status')
         .send({
           status: 'completed',
           stellarTxId: 'abc123',
@@ -231,7 +233,7 @@ describe('Payload Field Validation Integration', () => {
 
     it('should reject payload with unknown field', async () => {
       const response = await request(app)
-        .patch('/donations/123/status')
+        .patch('/api/v1/donations/123/status')
         .send({
           status: 'completed',
           unknownField: 'bad'
@@ -245,7 +247,7 @@ describe('Payload Field Validation Integration', () => {
   describe('POST /wallets', () => {
     it('should accept valid payload', async () => {
       const response = await request(app)
-        .post('/wallets')
+        .post('/api/v1/wallets')
         .send({
           address: 'GXXX',
           label: 'My Wallet',
@@ -258,7 +260,7 @@ describe('Payload Field Validation Integration', () => {
 
     it('should reject payload with unknown field', async () => {
       const response = await request(app)
-        .post('/wallets')
+        .post('/api/v1/wallets')
         .send({
           address: 'GXXX',
           label: 'My Wallet',
@@ -273,7 +275,7 @@ describe('Payload Field Validation Integration', () => {
   describe('PATCH /wallets/:id', () => {
     it('should accept valid payload', async () => {
       const response = await request(app)
-        .patch('/wallets/123')
+        .patch('/api/v1/wallets/123')
         .send({
           label: 'Updated Label',
           ownerName: 'Jane Doe'
@@ -285,7 +287,7 @@ describe('Payload Field Validation Integration', () => {
 
     it('should reject payload with unknown field', async () => {
       const response = await request(app)
-        .patch('/wallets/123')
+        .patch('/api/v1/wallets/123')
         .send({
           label: 'Updated Label',
           extraField: 'not allowed'
@@ -299,7 +301,7 @@ describe('Payload Field Validation Integration', () => {
   describe('POST /transactions/sync', () => {
     it('should accept valid payload', async () => {
       const response = await request(app)
-        .post('/transactions/sync')
+        .post('/api/v1/transactions/sync')
         .send({
           publicKey: 'GXXX'
         });
@@ -310,7 +312,7 @@ describe('Payload Field Validation Integration', () => {
 
     it('should reject payload with unknown field', async () => {
       const response = await request(app)
-        .post('/transactions/sync')
+        .post('/api/v1/transactions/sync')
         .send({
           publicKey: 'GXXX',
           maliciousField: 'bad'
@@ -324,7 +326,7 @@ describe('Payload Field Validation Integration', () => {
   describe('POST /api-keys', () => {
     it('should accept valid payload', async () => {
       const response = await request(app)
-        .post('/api-keys')
+        .post('/api/v1/api-keys')
         .send({
           name: 'My Key',
           role: 'user',
@@ -338,7 +340,7 @@ describe('Payload Field Validation Integration', () => {
 
     it('should reject payload with unknown field', async () => {
       const response = await request(app)
-        .post('/api-keys')
+        .post('/api/v1/api-keys')
         .send({
           name: 'My Key',
           role: 'user',
@@ -353,7 +355,7 @@ describe('Payload Field Validation Integration', () => {
   describe('POST /api-keys/cleanup', () => {
     it('should accept valid payload', async () => {
       const response = await request(app)
-        .post('/api-keys/cleanup')
+        .post('/api/v1/api-keys/cleanup')
         .send({
           retentionDays: 90
         });
@@ -364,7 +366,7 @@ describe('Payload Field Validation Integration', () => {
 
     it('should reject payload with unknown field', async () => {
       const response = await request(app)
-        .post('/api-keys/cleanup')
+        .post('/api/v1/api-keys/cleanup')
         .send({
           retentionDays: 90,
           extraField: 'not allowed'
@@ -378,7 +380,7 @@ describe('Payload Field Validation Integration', () => {
   describe('HTTP Method Filtering', () => {
     it('should not validate GET requests', async () => {
       const response = await request(app)
-        .get('/donations')
+        .get('/api/v1/donations')
         .query({ unknownParam: 'should be ignored' });
 
       expect(response.status).toBe(200);
@@ -387,7 +389,7 @@ describe('Payload Field Validation Integration', () => {
 
     it('should validate POST requests', async () => {
       const response = await request(app)
-        .post('/donations/send')
+        .post('/api/v1/donations/send')
         .send({
           senderId: '123',
           receiverId: '456',
@@ -400,7 +402,7 @@ describe('Payload Field Validation Integration', () => {
 
     it('should validate PATCH requests', async () => {
       const response = await request(app)
-        .patch('/wallets/123')
+        .patch('/api/v1/wallets/123')
         .send({
           label: 'Test',
           unknownField: 'should be rejected'
@@ -413,7 +415,7 @@ describe('Payload Field Validation Integration', () => {
   describe('Edge Cases', () => {
     it('should handle empty payload', async () => {
       const response = await request(app)
-        .post('/donations/send')
+        .post('/api/v1/donations/send')
         .send({});
 
       // Empty payload should pass validation (required field validation is separate)
@@ -422,7 +424,7 @@ describe('Payload Field Validation Integration', () => {
 
     it('should handle special characters in field names', async () => {
       const response = await request(app)
-        .post('/donations/send')
+        .post('/api/v1/donations/send')
         .send({
           senderId: '123',
           receiverId: '456',
@@ -437,7 +439,7 @@ describe('Payload Field Validation Integration', () => {
 
     it('should provide helpful error information', async () => {
       const response = await request(app)
-        .post('/donations/send')
+        .post('/api/v1/donations/send')
         .send({
           senderId: '123',
           receiverId: '456',

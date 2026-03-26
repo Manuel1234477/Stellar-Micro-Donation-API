@@ -11,15 +11,7 @@
 
 require('dotenv').config({ path: require('path').join(__dirname, '../../.env') });
 const path = require('path');
-
-// External modules
-require('dotenv').config({ path: path.join(__dirname, '../../.env') });
-
-// Internal modules
-const { validateEnvironment } = require('./envValidation');
 const log = require('../utils/log');
-
-validateEnvironment();
 
 const serviceContainer = require('./serviceContainer');
 
@@ -33,6 +25,13 @@ const getStellarService = () => {
   return service;
 };
 
+const { getActiveEnvironment } = require('./stellarEnvironments');
+const activeEnv = getActiveEnvironment();
+
 module.exports = {
-  getStellarService
+  getStellarService,
+  useMockStellar: process.env.USE_MOCK_STELLAR === 'true',
+  port: process.env.PORT || 3000,
+  ...activeEnv,
+  dbPath: process.env.DB_JSON_PATH || path.join(__dirname, '../../data/donations.json'),
 };

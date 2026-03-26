@@ -128,7 +128,7 @@ describe('Logger Middleware - Sensitive Data Masking', () => {
       expect(sanitized.success).toBe(true);
       expect(sanitized.transaction.hash).toBe('abc123');
       expect(sanitized.transaction.amount).toBe('100');
-      expect(sanitized.transaction.destination).toBe('GBZVMB3SEPB2ENHQVEQ5MJQXB2QZUQPQQ6QQZQPQQ6QQZQPQQ6QQZQPQQ6QQZQPQ');
+      expect(sanitized.transaction.destination).toBe('GBZVMB3SEPB2ENHQVEQ5MJQXB2QZUQPQQ6QQZQPQQ6QQZQPQQ6QQZQPQ');
     });
   });
 

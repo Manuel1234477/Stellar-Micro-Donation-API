@@ -1,0 +1,15 @@
+[
+  {
+    "donor": "donor1",
+    "recipient": "recipient1",
+    "amount": 10,
+    "status": "confirmed",
+    "stellarTxId": "tx1",
+    "id": "1773934122339",
+    "memo": "",
+    "timestamp": "2026-03-19T15:28:42.339Z",
+    "stellarLedger": 12345,
+    "statusUpdatedAt": "2026-03-19T15:28:42.340Z",
+    "confirmedAt": "2026-03-19T15:28:42.340Z"
+  }
+]

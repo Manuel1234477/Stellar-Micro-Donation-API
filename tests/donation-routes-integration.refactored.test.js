@@ -64,7 +64,7 @@ describe('Donation Routes Integration Tests (Refactored)', () => {
           'Test donation'
         );
 
-        const response = await apiRequest.post('/donations', donationData);
+        const response = await apiRequest.post('/api/v1/donations', donationData);
 
         expect(response.status).toBe(201);
         expect(response.body.success).toBe(true);
@@ -79,7 +79,7 @@ describe('Donation Routes Integration Tests (Refactored)', () => {
           .withAmount('50')
           .build();
 
-        const response = await apiRequest.post('/donations', donationData);
+        const response = await apiRequest.post('/api/v1/donations', donationData);
 
         expect(response.status).toBe(201);
         expect(response.body.success).toBe(true);
@@ -92,7 +92,7 @@ describe('Donation Routes Integration Tests (Refactored)', () => {
           .withMemo('Anonymous donation')
           .build();
 
-        const response = await apiRequest.post('/donations', donationData);
+        const response = await apiRequest.post('/api/v1/donations', donationData);
 
         expect(response.status).toBe(201);
         expect(response.body.success).toBe(true);
@@ -105,7 +105,7 @@ describe('Donation Routes Integration Tests (Refactored)', () => {
           '123.456789'
         );
 
-        const response = await apiRequest.post('/donations', donationData);
+        const response = await apiRequest.post('/api/v1/donations', donationData);
 
         expect(response.status).toBe(201);
         expect(response.body.success).toBe(true);
@@ -117,7 +117,7 @@ describe('Donation Routes Integration Tests (Refactored)', () => {
           .withAmount('1000')
           .build();
 
-        const response = await apiRequest.post('/donations', donationData);
+        const response = await apiRequest.post('/api/v1/donations', donationData);
 
         expect(response.status).toBe(201);
         
@@ -135,7 +135,7 @@ describe('Donation Routes Integration Tests (Refactored)', () => {
           .build();
         delete donationData.amount;
 
-        const response = await apiRequest.post('/donations', donationData);
+        const response = await apiRequest.post('/api/v1/donations', donationData);
 
         expect(response.status).toBe(400);
         expect(response.body.success).toBe(false);
@@ -148,7 +148,7 @@ describe('Donation Routes Integration Tests (Refactored)', () => {
           .withAmount('100')
           .build();
 
-        const response = await apiRequest.post('/donations', donationData);
+        const response = await apiRequest.post('/api/v1/donations', donationData);
 
         expect(response.status).toBe(400);
         expect(response.body.success).toBe(false);
@@ -161,7 +161,7 @@ describe('Donation Routes Integration Tests (Refactored)', () => {
           '-100'
         );
 
-        const response = await apiRequest.post('/donations', donationData);
+        const response = await apiRequest.post('/api/v1/donations', donationData);
 
         expect(response.status).toBe(400);
         expect(response.body.error).toMatch(/positive number/i);
@@ -174,7 +174,7 @@ describe('Donation Routes Integration Tests (Refactored)', () => {
           '0'
         );
 
-        const response = await apiRequest.post('/donations', donationData);
+        const response = await apiRequest.post('/api/v1/donations', donationData);
 
         expect(response.status).toBe(400);
         expect(response.body.error).toMatch(/positive number/i);
@@ -187,7 +187,7 @@ describe('Donation Routes Integration Tests (Refactored)', () => {
           'not-a-number'
         );
 
-        const response = await apiRequest.post('/donations', donationData);
+        const response = await apiRequest.post('/api/v1/donations', donationData);
 
         expect(response.status).toBe(400);
         expect(response.body.error).toMatch(/positive number/i);
@@ -200,7 +200,7 @@ describe('Donation Routes Integration Tests (Refactored)', () => {
           .withAmount('100')
           .build();
 
-        const response = await apiRequest.post('/donations', donationData);
+        const response = await apiRequest.post('/api/v1/donations', donationData);
 
         expect(response.status).toBe(400);
         expect(response.body.success).toBe(false);
@@ -213,7 +213,7 @@ describe('Donation Routes Integration Tests (Refactored)', () => {
           .withMemo('a'.repeat(29))
           .build();
 
-        const response = await apiRequest.post('/donations', donationData);
+        const response = await apiRequest.post('/api/v1/donations', donationData);
 
         expect(response.status).toBe(400);
         expect(response.body.success).toBe(false);
@@ -227,7 +227,7 @@ describe('Donation Routes Integration Tests (Refactored)', () => {
           recipient: testRecipient.publicKey
         };
 
-        const response = await apiRequest.post('/donations', donationData);
+        const response = await apiRequest.post('/api/v1/donations', donationData);
 
         expect(response.status).toBe(400);
         expect(response.body.error).toMatch(/malformed/i);
@@ -240,7 +240,7 @@ describe('Donation Routes Integration Tests (Refactored)', () => {
           recipient: { invalid: 'object' }
         };
 
-        const response = await apiRequest.post('/donations', donationData);
+        const response = await apiRequest.post('/api/v1/donations', donationData);
 
         expect(response.status).toBe(400);
         expect(response.body.error).toMatch(/malformed/i);
@@ -255,7 +255,7 @@ describe('Donation Routes Integration Tests (Refactored)', () => {
           '0.5'
         );
 
-        const response = await apiRequest.post('/donations', donationData);
+        const response = await apiRequest.post('/api/v1/donations', donationData);
 
         expect(response.status).toBe(400);
         expect(response.body.success).toBe(false);
@@ -270,7 +270,7 @@ describe('Donation Routes Integration Tests (Refactored)', () => {
           '100001'
         );
 
-        const response = await apiRequest.post('/donations', donationData);
+        const response = await apiRequest.post('/api/v1/donations', donationData);
 
         expect(response.status).toBe(400);
         expect(response.body.success).toBe(false);
@@ -287,7 +287,7 @@ describe('Donation Routes Integration Tests (Refactored)', () => {
         const response1 = await ApiRequestBuilder
           .create(request, app)
           .withIdempotencyKey(idempotencyKey)
-          .post('/donations', donationData);
+          .post('/api/v1/donations', donationData);
 
         expect(response1.status).toBe(201);
 
@@ -295,7 +295,7 @@ describe('Donation Routes Integration Tests (Refactored)', () => {
         const response2 = await ApiRequestBuilder
           .create(request, app)
           .withIdempotencyKey(idempotencyKey)
-          .post('/donations', donationData);
+          .post('/api/v1/donations', donationData);
 
         expect(response2.status).toBe(200);
         expect(response2.body).toEqual(response1.body);
@@ -307,7 +307,7 @@ describe('Donation Routes Integration Tests (Refactored)', () => {
         const response = await ApiRequestBuilder
           .create(request, app)
           .withApiKey('test-key-1')
-          .post('/donations', donationData);
+          .post('/api/v1/donations', donationData);
 
         expect(response.status).toBe(400);
       });
@@ -318,7 +318,7 @@ describe('Donation Routes Integration Tests (Refactored)', () => {
         const donationData = DonationRequestBuilder.minimal(testDonor, testRecipient);
 
         const response = await request(app)
-          .post('/donations')
+          .post('/api/v1/donations')
           .set('X-Idempotency-Key', 'test-idem-017')
           .send(donationData);
 
@@ -332,7 +332,7 @@ describe('Donation Routes Integration Tests (Refactored)', () => {
           .create(request, app)
           .withApiKey('invalid-key')
           .withAutoIdempotency()
-          .post('/donations', donationData);
+          .post('/api/v1/donations', donationData);
 
         expect(response.status).toBe(401);
       });
@@ -342,9 +342,9 @@ describe('Donation Routes Integration Tests (Refactored)', () => {
   describe('GET /donations - List All Donations', () => {
     beforeEach(async () => {
       // Create test donations using builders
-      await apiRequest.post('/donations', 
+      await apiRequest.post('/api/v1/donations', 
         DonationRequestBuilder.complete(testDonor, testRecipient, '100'));
-      await apiRequest.post('/donations', 
+      await apiRequest.post('/api/v1/donations', 
         DonationRequestBuilder.complete(testDonor, testRecipient, '200'));
     });
 
@@ -352,7 +352,7 @@ describe('Donation Routes Integration Tests (Refactored)', () => {
       const response = await ApiRequestBuilder
         .create(request, app)
         .asUser()
-        .get('/donations');
+        .get('/api/v1/donations');
 
       expect(response.status).toBe(200);
       expect(response.body.success).toBe(true);
@@ -364,7 +364,7 @@ describe('Donation Routes Integration Tests (Refactored)', () => {
       const response = await ApiRequestBuilder
         .create(request, app)
         .asUser()
-        .get('/donations');
+        .get('/api/v1/donations');
 
       expect(response.status).toBe(200);
       const donation = response.body.data[0];
@@ -380,7 +380,7 @@ describe('Donation Routes Integration Tests (Refactored)', () => {
     beforeEach(async () => {
       // Create multiple donations
       for (let i = 0; i < 15; i++) {
-        await apiRequest.post('/donations',
+        await apiRequest.post('/api/v1/donations',
           DonationRequestBuilder.complete(testDonor, testRecipient, `${10 + i}`));
       }
     });
@@ -389,7 +389,7 @@ describe('Donation Routes Integration Tests (Refactored)', () => {
       const response = await ApiRequestBuilder
         .create(request, app)
         .asUser()
-        .get('/donations/recent');
+        .get('/api/v1/donations/recent');
 
       expect(response.status).toBe(200);
       expect(response.body.success).toBe(true);
@@ -402,7 +402,7 @@ describe('Donation Routes Integration Tests (Refactored)', () => {
       const response = await ApiRequestBuilder
         .create(request, app)
         .asUser()
-        .get('/donations/recent', { limit: 5 });
+        .get('/api/v1/donations/recent', { limit: 5 });
 
       expect(response.status).toBe(200);
       expect(response.body.data.length).toBeLessThanOrEqual(5);
@@ -413,7 +413,7 @@ describe('Donation Routes Integration Tests (Refactored)', () => {
       const response = await ApiRequestBuilder
         .create(request, app)
         .asUser()
-        .get('/donations/recent', { limit: 200 });
+        .get('/api/v1/donations/recent', { limit: 200 });
 
       expect(response.status).toBe(200);
       expect(response.body.limit).toBe(100);
@@ -423,7 +423,7 @@ describe('Donation Routes Integration Tests (Refactored)', () => {
       const response = await ApiRequestBuilder
         .create(request, app)
         .asUser()
-        .get('/donations/recent', { limit: 5 });
+        .get('/api/v1/donations/recent', { limit: 5 });
 
       expect(response.status).toBe(200);
       const donations = response.body.data;
@@ -439,7 +439,7 @@ describe('Donation Routes Integration Tests (Refactored)', () => {
       const response = await ApiRequestBuilder
         .create(request, app)
         .asUser()
-        .get('/donations/recent', { limit: 'invalid' });
+        .get('/api/v1/donations/recent', { limit: 'invalid' });
 
       expect(response.status).toBe(400);
     });
@@ -449,7 +449,7 @@ describe('Donation Routes Integration Tests (Refactored)', () => {
     let donationId;
 
     beforeEach(async () => {
-      await apiRequest.post('/donations',
+      await apiRequest.post('/api/v1/donations',
         DonationRequestBuilder.minimal(testDonor, testRecipient));
 
       const transactions = Transaction.getAll();
@@ -460,7 +460,7 @@ describe('Donation Routes Integration Tests (Refactored)', () => {
       const response = await ApiRequestBuilder
         .create(request, app)
         .asUser()
-        .get(`/donations/${donationId}`);
+        .get(`/api/v1/donations/${donationId}`);
 
       expect(response.status).toBe(200);
       expect(response.body.success).toBe(true);
@@ -471,7 +471,7 @@ describe('Donation Routes Integration Tests (Refactored)', () => {
       const response = await ApiRequestBuilder
         .create(request, app)
         .asUser()
-        .get('/donations/non-existent-id');
+        .get('/api/v1/donations/non-existent-id');
 
       expect(response.status).toBe(404);
       expect(response.body.success).toBe(false);
@@ -483,7 +483,7 @@ describe('Donation Routes Integration Tests (Refactored)', () => {
       const response = await ApiRequestBuilder
         .create(request, app)
         .asUser()
-        .get('/donations/limits');
+        .get('/api/v1/donations/limits');
 
       expect(response.status).toBe(200);
       expect(response.body.success).toBe(true);
@@ -498,7 +498,7 @@ describe('Donation Routes Integration Tests (Refactored)', () => {
       const response = await ApiRequestBuilder
         .create(request, app)
         .asUser()
-        .get('/donations/limits');
+        .get('/api/v1/donations/limits');
 
       expect(response.status).toBe(200);
       expect(typeof response.body.data.minAmount).toBe('number');
@@ -509,7 +509,7 @@ describe('Donation Routes Integration Tests (Refactored)', () => {
 
   describe('POST /donations/verify - Verify Transaction', () => {
     test('should verify valid transaction hash', async () => {
-      const createResponse = await apiRequest.post('/donations',
+      const createResponse = await apiRequest.post('/api/v1/donations',
         DonationRequestBuilder.minimal(testDonor, testRecipient));
 
       const transactionHash = createResponse.body.data.transactionHash;
@@ -517,7 +517,7 @@ describe('Donation Routes Integration Tests (Refactored)', () => {
       const response = await ApiRequestBuilder
         .create(request, app)
         .asUser()
-        .post('/donations/verify', { transactionHash });
+        .post('/api/v1/donations/verify', { transactionHash });
 
       expect(response.status).toBe(200);
       expect(response.body.success).toBe(true);
@@ -528,7 +528,7 @@ describe('Donation Routes Integration Tests (Refactored)', () => {
       const response = await ApiRequestBuilder
         .create(request, app)
         .asUser()
-        .post('/donations/verify', {});
+        .post('/api/v1/donations/verify', {});
 
       expect(response.status).toBe(400);
       expect(response.body.success).toBe(false);
@@ -539,7 +539,7 @@ describe('Donation Routes Integration Tests (Refactored)', () => {
     let donationId;
 
     beforeEach(async () => {
-      await apiRequest.post('/donations',
+      await apiRequest.post('/api/v1/donations',
         DonationRequestBuilder.minimal(testDonor, testRecipient));
 
       const transactions = Transaction.getAll();
@@ -550,7 +550,7 @@ describe('Donation Routes Integration Tests (Refactored)', () => {
       const response = await ApiRequestBuilder
         .create(request, app)
         .asUser()
-        .patch(`/donations/${donationId}/status`, {
+        .patch(`/api/v1/donations/${donationId}/status`, {
           status: 'confirmed',
           stellarTxId: 'test-tx-123',
           ledger: 12345
@@ -565,7 +565,7 @@ describe('Donation Routes Integration Tests (Refactored)', () => {
       const response = await ApiRequestBuilder
         .create(request, app)
         .asUser()
-        .patch(`/donations/${donationId}/status`, {
+        .patch(`/api/v1/donations/${donationId}/status`, {
           status: 'invalid-status'
         });
 
@@ -579,7 +579,7 @@ describe('Donation Routes Integration Tests (Refactored)', () => {
       const apiReq = ApiRequestBuilder.create(request, app).asUser();
 
       // Step 1: Check limits
-      const limitsResponse = await apiReq.get('/donations/limits');
+      const limitsResponse = await apiReq.get('/api/v1/donations/limits');
       expect(limitsResponse.status).toBe(200);
       const { minAmount, maxAmount } = limitsResponse.body.data;
 
@@ -591,21 +591,21 @@ describe('Donation Routes Integration Tests (Refactored)', () => {
         .withMemo('E2E test donation')
         .build();
 
-      const createResponse = await apiRequest.post('/donations', donationData);
+      const createResponse = await apiRequest.post('/api/v1/donations', donationData);
       expect(createResponse.status).toBe(201);
       const transactionHash = createResponse.body.data.transactionHash;
 
       // Step 3: Verify transaction
-      const verifyResponse = await apiReq.post('/donations/verify', { transactionHash });
+      const verifyResponse = await apiReq.post('/api/v1/donations/verify', { transactionHash });
       expect(verifyResponse.status).toBe(200);
 
       // Step 4: Check recent donations
-      const recentResponse = await apiReq.get('/donations/recent', { limit: 1 });
+      const recentResponse = await apiReq.get('/api/v1/donations/recent', { limit: 1 });
       expect(recentResponse.status).toBe(200);
       expect(recentResponse.body.data.length).toBeGreaterThan(0);
 
       // Step 5: Get all donations
-      const allResponse = await apiReq.get('/donations');
+      const allResponse = await apiReq.get('/api/v1/donations');
       expect(allResponse.status).toBe(200);
       expect(allResponse.body.count).toBeGreaterThan(0);
     });

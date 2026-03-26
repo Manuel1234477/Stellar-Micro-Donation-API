@@ -24,6 +24,7 @@ function addRecurringDonationsTable() {
           lastExecutionDate DATETIME,
           executionCount INTEGER DEFAULT 0,
           createdAt DATETIME DEFAULT CURRENT_TIMESTAMP,
+          tenant_id TEXT NOT NULL DEFAULT 'default',
           FOREIGN KEY (donorId) REFERENCES users(id),
           FOREIGN KEY (recipientId) REFERENCES users(id)
         )

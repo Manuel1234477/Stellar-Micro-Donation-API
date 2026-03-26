@@ -3,6 +3,63 @@
  * Centralized validation logic to eliminate duplication across routes and services
  */
 
+function isStrictIntegerString(value) {
+  if (typeof value !== 'string') return false;
+
+  const trimmed = value.trim();
+  if (trimmed.length === 0) return false;
+
+  let startIndex = 0;
+  if (trimmed[0] === '-') {
+    if (trimmed.length === 1) return false;
+    startIndex = 1;
+  }
+
+  for (let i = startIndex; i < trimmed.length; i += 1) {
+    const code = trimmed.charCodeAt(i);
+    if (code < 48 || code > 57) {
+      return false;
+    }
+  }
+
+  return true;
+}
+
+function isStrictNumberString(value) {
+  if (typeof value !== 'string') return false;
+
+  const trimmed = value.trim();
+  if (trimmed.length === 0) return false;
+
+  let dotCount = 0;
+  let digitCount = 0;
+
+  for (let i = 0; i < trimmed.length; i += 1) {
+    const char = trimmed[i];
+    const code = trimmed.charCodeAt(i);
+
+    if (char === '-') {
+      if (i !== 0) return false;
+      continue;
+    }
+
+    if (char === '.') {
+      dotCount += 1;
+      if (dotCount > 1) return false;
+      continue;
+    }
+
+    if (code >= 48 && code <= 57) {
+      digitCount += 1;
+      continue;
+    }
+
+    return false;
+  }
+
+  return digitCount > 0;
+}
+
 /**
  * Validate required fields are present
  * @param {Object} data - Object containing fields to validate
@@ -47,12 +104,24 @@ function validateNonEmptyString(value, fieldName = 'field') {
 function validateInteger(value, options = {}) {
   const { min, max, default: defaultValue } = options;
 
-  const parsed = parseInt(value, 10);
+  const isMissing = value === undefined || value === null || value === '';
+  if (isMissing && defaultValue !== undefined) {
+    return { valid: true, value: defaultValue };
+  }
 
-  if (isNaN(parsed)) {
-    if (defaultValue !== undefined) {
-      return { valid: true, value: defaultValue };
+  let parsed;
+  if (typeof value === 'number') {
+    if (!Number.isInteger(value)) {
+      return { valid: false, error: 'Must be a valid integer' };
     }
+    parsed = value;
+  } else if (typeof value === 'string') {
+    const trimmed = value.trim();
+    if (!isStrictIntegerString(trimmed)) {
+      return { valid: false, error: 'Must be a valid integer' };
+    }
+    parsed = Number(trimmed);
+  } else {
     return { valid: false, error: 'Must be a valid integer' };
   }
 
@@ -79,9 +148,20 @@ function validateInteger(value, options = {}) {
 function validateFloat(value, options = {}) {
   const { min, max, allowZero = false } = options;
 
-  const parsed = parseFloat(value);
+  let parsed;
+  if (typeof value === 'number') {
+    parsed = value;
+  } else if (typeof value === 'string') {
+    const trimmed = value.trim();
+    if (!isStrictNumberString(trimmed)) {
+      return { valid: false, error: 'Must be a valid number' };
+    }
+    parsed = Number(trimmed);
+  } else {
+    return { valid: false, error: 'Must be a valid number' };
+  }
 
-  if (isNaN(parsed) || !isFinite(parsed)) {
+  if (!Number.isFinite(parsed)) {
     return { valid: false, error: 'Must be a valid number' };
   }
 

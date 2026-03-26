@@ -39,7 +39,7 @@ describe('Error Message Hardening', () => {
     test('should mask database error details in production', async () => {
       // Simulate a database error by calling an endpoint that might fail
       const response = await request(app)
-        .post('/donations')
+        .post('/api/v1/donations')
         .send({})
         .set('X-API-Key', 'invalid-key')
         .expect(401);
@@ -52,7 +52,7 @@ describe('Error Message Hardening', () => {
 
     test('should sanitize validation errors but keep useful information', async () => {
       const response = await request(app)
-        .post('/donations')
+        .post('/api/v1/donations')
         .send({})
         .set('X-API-Key', 'test-key')
         .expect(400);

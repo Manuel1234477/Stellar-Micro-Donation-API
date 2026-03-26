@@ -17,8 +17,10 @@
 
 const Database = require('../utils/database');
 const WebhookService = require('./WebhookService');
+const ApiKeyExpirationNotifier = require('./ApiKeyExpirationNotifier');
 const { SCHEDULE_STATUS, DONATION_FREQUENCIES } = require('../constants');
 const log = require('../utils/log');
+const { revokeExpiredDeprecatedKeys } = require('../models/apiKeys');
 const {
   withBackgroundContext,
   withAsyncContext,
@@ -30,8 +32,7 @@ class RecurringDonationScheduler {
    * @param {Object} stellarService - StellarService or MockStellarService instance
    */
   constructor(stellarService) {
-    if (!stellarService) throw new Error('stellarService is required');
-    this.stellarService = stellarService;
+    this.stellarService = stellarService || null;
     this.intervalId = null;
     this.isRunning = false;
 
@@ -65,11 +66,15 @@ class RecurringDonationScheduler {
     this.processSchedules();
     this.intervalId = setInterval(() => this.processSchedules(), this.checkInterval);
 
-    const { correlationId, traceId } = getCorrelationSummary();
-    log.info('RECURRING_SCHEDULER', 'Scheduler started', {
+    this.intervalId = setInterval(() => {
+      this.processSchedules();
+    }, this.checkInterval);
+
+    const correlation = getCorrelationSummary();
+    log.info("RECURRING_SCHEDULER", "Scheduler started", {
       checkIntervalSeconds: this.checkInterval / 1000,
-      correlationId,
-      traceId,
+      correlationId: correlation.correlationId,
+      traceId: correlation.traceId,
     });
   }
 
@@ -137,21 +142,85 @@ class RecurringDonationScheduler {
             correlationId,
             traceId,
           });
-        }
+    if (!this.isRunning) {
+      return;
+    }
 
-        const promises = dueSchedules
-          .filter(s => !this.executingSchedules.has(s.id))
-          .map(s => this.executeScheduleWithRetry(s));
+    const correlation = getCorrelationSummary();
 
-        await Promise.allSettled(promises);
-      } catch (error) {
-        log.error('RECURRING_SCHEDULER', 'Error processing schedules', {
-          error: error.message,
-          correlationId,
-          traceId,
+    try {
+      const now = new Date().toISOString();
+
+      const dueSchedules = await Database.query(
+        `SELECT
+          rd.id,
+          rd.donorId,
+          rd.recipientId,
+          rd.amount,
+          rd.frequency,
+          rd.nextExecutionDate,
+          rd.executionCount,
+          rd.lastExecutionDate,
+          donor.publicKey as donorPublicKey,
+          recipient.publicKey as recipientPublicKey
+         FROM recurring_donations rd
+         JOIN users donor ON rd.donorId = donor.id
+         JOIN users recipient ON rd.recipientId = recipient.id
+         WHERE rd.status = ?
+         AND rd.nextExecutionDate <= ?`,
+        [SCHEDULE_STATUS.ACTIVE, now]
+      );
+
+      if (dueSchedules.length > 0) {
+        log.info("RECURRING_SCHEDULER", "Found due schedules for execution", {
+          count: dueSchedules.length,
+          correlationId: correlation.correlationId,
+          traceId: correlation.traceId,
         });
       }
-    });
+
+      const promises = dueSchedules
+        .filter((schedule) => !this.executingSchedules.has(schedule.id))
+        .map((schedule) => this.executeScheduleWithRetry(schedule));
+
+      await Promise.allSettled(promises);
+
+      // Auto-revoke deprecated API keys whose grace period has elapsed
+      try {
+        const revokedCount = await revokeExpiredDeprecatedKeys();
+        if (revokedCount > 0) {
+          log.info('RECURRING_SCHEDULER', 'Auto-revoked expired deprecated API keys', { revokedCount });
+        }
+      } catch (revokeError) {
+        log.error('RECURRING_SCHEDULER', 'Failed to auto-revoke expired API keys', { error: revokeError.message });
+      }
+
+      // Send expiry notifications for keys approaching or past their expiration date
+      try {
+        await ApiKeyExpirationNotifier.run();
+      } catch (notifyError) {
+        log.error('RECURRING_SCHEDULER', 'API key expiry notification job failed', { error: notifyError.message });
+      }
+
+      // Run data retention job once per cleanupInterval
+      const now2 = Date.now();
+      if (now2 - this.lastCleanupAt >= this.cleanupInterval) {
+        this.lastCleanupAt = now2;
+        try {
+          const retentionService = require('./RetentionService');
+          await retentionService.runAll();
+        } catch (retentionError) {
+          log.error('RECURRING_SCHEDULER', 'Retention job failed', { error: retentionError.message });
+        }
+      }
+    } catch (error) {
+      log.error("RECURRING_SCHEDULER", "Error processing schedules", {
+        error: error.message,
+        correlationId: correlation.correlationId,
+        traceId: correlation.traceId,
+      });
+      this.logFailure("PROCESS_SCHEDULES", null, error.message);
+    }
   }
 
   // ─────────────────────────────────────────────────────────────────────────
@@ -194,8 +263,7 @@ class RecurringDonationScheduler {
             }
           }
 
-          // All retries exhausted
-          await this.handlePersistentFailure(schedule, lastError);
+          await this.handleFailedExecution(schedule, lastError);
         } finally {
           this.executingSchedules.delete(schedule.id);
         }
@@ -240,6 +308,13 @@ class RecurringDonationScheduler {
           [
             schedule.donorId,
             schedule.recipientId,
+    return withAsyncContext(
+      "execute_schedule",
+      async () => {
+        try {
+          const transactionResult = await this.stellarService.sendPayment(
+            schedule.donorPublicKey,
+            schedule.recipientPublicKey,
             schedule.amount,
             `Recurring donation (Schedule #${schedule.id})`,
             new Date().toISOString(),
@@ -562,4 +637,9 @@ class RecurringDonationScheduler {
   }
 }
 
-module.exports = RecurringDonationScheduler;
+// Export class for use with `new`, but also export a default instance
+// so tests that expect `require(...)` to return an object work
+const _instance = new RecurringDonationScheduler(null);
+_instance.Class = RecurringDonationScheduler;
+module.exports = _instance;
+module.exports.Class = RecurringDonationScheduler;

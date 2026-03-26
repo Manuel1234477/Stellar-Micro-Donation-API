@@ -1,12 +1,16 @@
 const TransactionReconciliationService = require('../src/services/TransactionReconciliationService');
 const Transaction = require('../src/routes/models/transaction');
 const { TRANSACTION_STATES } = require('../src/utils/transactionStateMachine');
+const path = require('path');
+const os = require('os');
 
 describe('TransactionReconciliationService', () => {
   let reconciliationService;
   let mockStellarService;
 
   beforeEach(() => {
+    // Use a unique temp file per test to avoid parallel test interference
+    process.env.DB_JSON_PATH = path.join(os.tmpdir(), `test-reconciliation-${Date.now()}-${Math.random()}.json`);
     Transaction._clearAllData();
 
     mockStellarService = {

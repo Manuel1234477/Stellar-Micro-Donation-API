@@ -18,6 +18,7 @@ const IV_LENGTH = 12; // Standard for GCM
 // eslint-disable-next-line no-unused-vars -- Reserved for future GCM tag validation
 const AUTH_TAG_LENGTH = 16;
 
+// eslint-disable-next-line no-unused-vars -- Reserved for future config-driven algorithm selection
 const config = require('../config');
 
 /**
@@ -127,9 +128,86 @@ const isEncryptionConfigured = () => {
   return !!securityConfig.ENCRYPTION_KEY;
 };
 
+// ─── Envelope Encryption (DEK per wallet) ────────────────────────────────────
+
+const kms = require('./kms');
+
+/**
+ * Encrypt a wallet secret using envelope encryption.
+ *
+ * Generates a fresh DEK, encrypts the plaintext with it (AES-256-GCM),
+ * then encrypts the DEK with the KEK via the configured KMS provider.
+ *
+ * Stored format (JSON string):
+ *   { v: 2, encryptedDEK: "<kms-blob>", iv: "<hex>", ct: "<hex>", tag: "<hex>" }
+ *
+ * @param {string} plaintext - Wallet secret to protect
+ * @returns {Promise<string>} JSON envelope string
+ */
+const encryptWithDEK = async (plaintext) => {
+  const dek = kms.generateDEK();
+  const iv = crypto.randomBytes(IV_LENGTH);
+  const cipher = crypto.createCipheriv(ALGORITHM, dek, iv);
+  let ct = cipher.update(plaintext, 'utf8', 'hex');
+  ct += cipher.final('hex');
+  const tag = cipher.getAuthTag().toString('hex');
+  const encryptedDEK = await kms.encryptDEK(dek);
+
+  return JSON.stringify({
+    v: 2,
+    encryptedDEK,
+    iv: iv.toString('hex'),
+    ct,
+    tag,
+  });
+};
+
+/**
+ * Decrypt an envelope-encrypted wallet secret.
+ *
+ * Accepts both v2 (envelope) and legacy v1 (single-key) formats so existing
+ * records continue to work until migrated.
+ *
+ * @param {string} envelope - JSON envelope string (v2) or legacy "iv:ct:tag" (v1)
+ * @returns {Promise<string>} Plaintext wallet secret
+ */
+const decryptWithDEK = async (envelope) => {
+  // Legacy format: "iv:ct:tag" (no JSON, no version field)
+  if (!envelope.startsWith('{')) {
+    return decrypt(envelope);
+  }
+
+  const { v, encryptedDEK, iv, ct, tag } = JSON.parse(envelope);
+  if (v !== 2) throw new Error(`Unsupported envelope version: ${v}`);
+
+  const dek = await kms.decryptDEK(encryptedDEK);
+  const decipher = crypto.createDecipheriv(ALGORITHM, dek, Buffer.from(iv, 'hex'));
+  decipher.setAuthTag(Buffer.from(tag, 'hex'));
+  let plaintext = decipher.update(ct, 'hex', 'utf8');
+  plaintext += decipher.final('utf8');
+  return plaintext;
+};
+
+/**
+ * Rotate the DEK for an already-encrypted envelope without changing the plaintext.
+ *
+ * Decrypts the current envelope, then re-encrypts with a brand-new DEK.
+ * The KEK (master key) is unchanged; only the per-wallet DEK is rotated.
+ *
+ * @param {string} currentEnvelope - Existing JSON envelope string
+ * @returns {Promise<string>} New JSON envelope string with fresh DEK
+ */
+const rotateDEK = async (currentEnvelope) => {
+  const plaintext = await decryptWithDEK(currentEnvelope);
+  return encryptWithDEK(plaintext);
+};
+
 module.exports = {
   encrypt,
   decrypt,
   isEncryptionConfigured,
   getEncryptionKey,
+  encryptWithDEK,
+  decryptWithDEK,
+  rotateDEK,
 };

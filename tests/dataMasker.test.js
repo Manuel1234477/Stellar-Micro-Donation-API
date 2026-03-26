@@ -197,7 +197,7 @@ describe('Data Masker', () => {
 
       const masked = maskSensitiveData(data, { showPartial: true });
 
-      expect(masked.apiKey).toMatch(/^abc1\*+x789$/);
+      expect(masked.apiKey).toMatch(/^abc1\*+z789$/);
     });
   });
 

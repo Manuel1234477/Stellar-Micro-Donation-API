@@ -1,4 +1,5 @@
 const abuseDetector = require('../utils/abuseDetector');
+const AuditLogService = require('../services/AuditLogService');
 
 /**
  * Middleware to track requests for abuse detection
@@ -13,6 +14,24 @@ function abuseDetectionMiddleware(req, res, next) {
   // Add flag to response headers if suspicious (for observability)
   if (abuseDetector.isSuspicious(ip)) {
     res.setHeader('X-Abuse-Signal', 'flagged');
+
+    // Audit log: IP flagged as suspicious
+    AuditLogService.log({
+      category: AuditLogService.CATEGORY.ABUSE_DETECTION,
+      action: AuditLogService.ACTION.IP_FLAGGED,
+      severity: AuditLogService.SEVERITY.HIGH,
+      result: 'SUCCESS',
+      requestId: req.id,
+      ipAddress: ip,
+      resource: req.path,
+      details: {
+        method: req.method,
+        userAgent: req.get('User-Agent')
+      }
+    }).catch(err => {
+      // Don't block request if audit logging fails
+      console.error('Audit log failed:', err);
+    });
   }
 
   // Track failures on response

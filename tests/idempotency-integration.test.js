@@ -37,7 +37,7 @@ describe('Idempotency Integration - API Endpoint Tests', () => {
   describe('POST /donations - Idempotency', () => {
     it('should require idempotency key', async () => {
       const response = await request(app)
-        .post('/donations')
+        .post('/api/v1/donations')
         .set('x-api-key', 'test-key')
         .send({
           amount: 10,
@@ -50,7 +50,7 @@ describe('Idempotency Integration - API Endpoint Tests', () => {
 
     it('should reject invalid idempotency key', async () => {
       const response = await request(app)
-        .post('/donations')
+        .post('/api/v1/donations')
         .set('x-api-key', 'test-key')
         .set('idempotency-key', 'short')
         .send({
@@ -66,7 +66,7 @@ describe('Idempotency Integration - API Endpoint Tests', () => {
       const idempotencyKey = 'test-donation-' + Date.now();
       
       const response = await request(app)
-        .post('/donations')
+        .post('/api/v1/donations')
         .set('x-api-key', 'test-key')
         .set('idempotency-key', idempotencyKey)
         .send({
@@ -85,7 +85,7 @@ describe('Idempotency Integration - API Endpoint Tests', () => {
       
       // First request
       const response1 = await request(app)
-        .post('/donations')
+        .post('/api/v1/donations')
         .set('x-api-key', 'test-key')
         .set('idempotency-key', idempotencyKey)
         .send({
@@ -99,7 +99,7 @@ describe('Idempotency Integration - API Endpoint Tests', () => {
 
       // Second request with same key
       const response2 = await request(app)
-        .post('/donations')
+        .post('/api/v1/donations')
         .set('x-api-key', 'test-key')
         .set('idempotency-key', idempotencyKey)
         .send({
@@ -125,7 +125,7 @@ describe('Idempotency Integration - API Endpoint Tests', () => {
 
       // First request
       const response1 = await request(app)
-        .post('/donations')
+        .post('/api/v1/donations')
         .set('x-api-key', 'test-key')
         .set('idempotency-key', key1)
         .send(requestData);
@@ -134,7 +134,7 @@ describe('Idempotency Integration - API Endpoint Tests', () => {
 
       // Second request with different key but same data
       const response2 = await request(app)
-        .post('/donations')
+        .post('/api/v1/donations')
         .set('x-api-key', 'test-key')
         .set('idempotency-key', key2)
         .send(requestData);
@@ -150,7 +150,7 @@ describe('Idempotency Integration - API Endpoint Tests', () => {
 
       // First request
       const response1 = await request(app)
-        .post('/donations')
+        .post('/api/v1/donations')
         .set('x-api-key', 'test-key')
         .set('idempotency-key', key1)
         .send({
@@ -162,7 +162,7 @@ describe('Idempotency Integration - API Endpoint Tests', () => {
 
       // Second request with different data
       const response2 = await request(app)
-        .post('/donations')
+        .post('/api/v1/donations')
         .set('x-api-key', 'test-key')
         .set('idempotency-key', key2)
         .send({
@@ -179,7 +179,7 @@ describe('Idempotency Integration - API Endpoint Tests', () => {
   describe('POST /donations/send - Idempotency', () => {
     it('should require idempotency key for send endpoint', async () => {
       const response = await request(app)
-        .post('/donations/send')
+        .post('/api/v1/donations/send')
         .send({
           senderId: 1,
           receiverId: 2,
@@ -205,13 +205,13 @@ describe('Idempotency Integration - API Endpoint Tests', () => {
 
       // First request
       const response1 = await request(app)
-        .post('/donations/send')
+        .post('/api/v1/donations/send')
         .set('idempotency-key', idempotencyKey)
         .send(requestData);
 
       // Second request with same key
       const response2 = await request(app)
-        .post('/donations/send')
+        .post('/api/v1/donations/send')
         .set('idempotency-key', idempotencyKey)
         .send(requestData);
 
@@ -228,7 +228,7 @@ describe('Idempotency Integration - API Endpoint Tests', () => {
       const uuid = '550e8400-e29b-41d4-a716-446655440000';
       
       const response = await request(app)
-        .post('/donations')
+        .post('/api/v1/donations')
         .set('x-api-key', 'test-key')
         .set('idempotency-key', uuid)
         .send({
@@ -243,7 +243,7 @@ describe('Idempotency Integration - API Endpoint Tests', () => {
       const key = `donation_${Date.now()}_${Math.random().toString(36).substring(7)}`;
       
       const response = await request(app)
-        .post('/donations')
+        .post('/api/v1/donations')
         .set('x-api-key', 'test-key')
         .set('idempotency-key', key)
         .send({
@@ -259,7 +259,7 @@ describe('Idempotency Integration - API Endpoint Tests', () => {
       const key = crypto.randomBytes(16).toString('hex');
       
       const response = await request(app)
-        .post('/donations')
+        .post('/api/v1/donations')
         .set('x-api-key', 'test-key')
         .set('idempotency-key', key)
         .send({
@@ -282,7 +282,7 @@ describe('Idempotency Integration - API Endpoint Tests', () => {
       // Send multiple concurrent requests
       const promises = Array(5).fill(null).map(() =>
         request(app)
-          .post('/donations')
+          .post('/api/v1/donations')
           .set('x-api-key', 'test-key')
           .set('idempotency-key', idempotencyKey)
           .send(requestData)
@@ -310,7 +310,7 @@ describe('Idempotency Integration - API Endpoint Tests', () => {
       
       // First request with invalid data (should fail)
       const response1 = await request(app)
-        .post('/donations')
+        .post('/api/v1/donations')
         .set('x-api-key', 'test-key')
         .set('idempotency-key', idempotencyKey)
         .send({
@@ -322,7 +322,7 @@ describe('Idempotency Integration - API Endpoint Tests', () => {
 
       // Second request with valid data and same key
       const response2 = await request(app)
-        .post('/donations')
+        .post('/api/v1/donations')
         .set('x-api-key', 'test-key')
         .set('idempotency-key', idempotencyKey)
         .send({

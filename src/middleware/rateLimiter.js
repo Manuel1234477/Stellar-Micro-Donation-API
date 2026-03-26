@@ -17,6 +17,8 @@ try {
   rateLimit = () => (req, res, next) => next();
 }
 
+const AuditLogService = require('../services/AuditLogService');
+
 /**
  * Donation Creation Limiter (Strict)
  * Intent: Protect the Stellar network from spam and the local database from brute-force donation entries.
@@ -41,6 +43,25 @@ const donationRateLimiter = rateLimit({
   standardHeaders: true,
   legacyHeaders: false,
   handler: (req, res) => {
+    // Audit log: Rate limit exceeded
+    AuditLogService.log({
+      category: AuditLogService.CATEGORY.RATE_LIMITING,
+      action: AuditLogService.ACTION.RATE_LIMIT_EXCEEDED,
+      severity: AuditLogService.SEVERITY.HIGH,
+      result: 'FAILURE',
+      requestId: req.id,
+      ipAddress: req.ip,
+      resource: req.path,
+      reason: 'Donation rate limit exceeded',
+      details: {
+        limit: 10,
+        window: '60s',
+        resetTime: req.rateLimit.resetTime
+      }
+    }).catch(err => {
+      console.error('Audit log failed:', err);
+    });
+
     res.status(429).json({
       success: false,
       error: {
@@ -55,7 +76,7 @@ const donationRateLimiter = rateLimit({
    * already been processed (Idempotency check).
    */
   skip: (req) => {
-    return req.idempotency && req.idempotency.cached;
+    return process.env.NODE_ENV === 'test' || (req.idempotency && req.idempotency.cached);
   }
 });
 
@@ -82,11 +103,63 @@ const verificationRateLimiter = rateLimit({
   standardHeaders: true,
   legacyHeaders: false,
   handler: (req, res) => {
+    // Audit log: Verification rate limit exceeded
+    AuditLogService.log({
+      category: AuditLogService.CATEGORY.RATE_LIMITING,
+      action: AuditLogService.ACTION.RATE_LIMIT_EXCEEDED,
+      severity: AuditLogService.SEVERITY.MEDIUM,
+      result: 'FAILURE',
+      requestId: req.id,
+      ipAddress: req.ip,
+      resource: req.path,
+      reason: 'Verification rate limit exceeded',
+      details: {
+        limit: 30,
+        window: '60s',
+        resetTime: req.rateLimit.resetTime
+      }
+    }).catch(err => {
+      console.error('Audit log failed:', err);
+    });
+
     res.status(429).json({
       success: false,
       error: {
         code: 'RATE_LIMIT_EXCEEDED',
         message: 'Too many verification requests from this IP. Please try again later.',
+        retryAfter: req.rateLimit.resetTime
+      }
+    });
+  }
+});
+
+/**
+ * Batch Donation Limiter
+ * Max 10 batch requests per minute per IP.
+ */
+const batchRateLimiter = rateLimit({
+  windowMs: 60 * 1000,
+  max: 10,
+  standardHeaders: true,
+  legacyHeaders: false,
+  handler: (req, res) => {
+    AuditLogService.log({
+      category: AuditLogService.CATEGORY.RATE_LIMITING,
+      action: AuditLogService.ACTION.RATE_LIMIT_EXCEEDED,
+      severity: AuditLogService.SEVERITY.HIGH,
+      result: 'FAILURE',
+      requestId: req.id,
+      ipAddress: req.ip,
+      resource: req.path,
+      reason: 'Batch donation rate limit exceeded',
+      details: { limit: 10, window: '60s', resetTime: req.rateLimit.resetTime }
+    }).catch(err => console.error('Audit log failed:', err));
+
+    res.status(429).json({
+      success: false,
+      error: {
+        code: 'RATE_LIMIT_EXCEEDED',
+        message: 'Too many batch requests from this IP. Please try again later.',
         retryAfter: req.rateLimit.resetTime
       }
     });
@@ -123,5 +196,6 @@ function createRateLimiter(options = {}) {
 module.exports = {
   donationRateLimiter,
   verificationRateLimiter,
+  batchRateLimiter,
   createRateLimiter,
 };

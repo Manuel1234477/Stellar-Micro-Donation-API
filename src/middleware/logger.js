@@ -109,7 +109,7 @@ class Logger {
    * 4. If Debug Mode is active, logs granular metadata (headers, query, IP).
    */
   logToConsole(logData) {
-    const { method, endpoint, statusCode, duration, requestId } = logData;
+    const { method, endpoint, statusCode, duration, requestId, timestamp } = logData;
 
     let statusColor = '\x1b[32m'; // Green for 2xx
     if (statusCode >= 400 && statusCode < 500) {

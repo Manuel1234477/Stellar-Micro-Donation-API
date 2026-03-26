@@ -38,6 +38,18 @@ async function clearDatabaseTables() {
   } catch (error) {
     // Table may not exist in some test contexts
   }
+
+  try {
+    await Database.run('DELETE FROM users');
+  } catch (error) {
+    // Table may not exist in some test contexts
+  }
+
+  try {
+    await Database.run('DELETE FROM transactions');
+  } catch (error) {
+    // Table may not exist in some test contexts
+  }
 }
 
 /**

@@ -36,7 +36,7 @@ describe('API Key Rotation', () => {
   describe('Key Creation', () => {
     it('should create a new API key with admin authentication', async () => {
       const response = await request(app)
-        .post('/api-keys')
+        .post('/api/v1/api-keys')
         .set('x-api-key', adminKey)
         .send({
           name: 'Integration Test Key',
@@ -55,7 +55,7 @@ describe('API Key Rotation', () => {
 
     it('should reject key creation without admin role', async () => {
       const response = await request(app)
-        .post('/api-keys')
+        .post('/api/v1/api-keys')
         .set('x-api-key', testKey)
         .send({
           name: 'Unauthorized Key',
@@ -67,7 +67,7 @@ describe('API Key Rotation', () => {
 
     it('should reject key creation with invalid role', async () => {
       const response = await request(app)
-        .post('/api-keys')
+        .post('/api/v1/api-keys')
         .set('x-api-key', adminKey)
         .send({
           name: 'Invalid Role Key',
@@ -138,7 +138,7 @@ describe('API Key Rotation', () => {
   describe('Key Listing', () => {
     it('should list all keys with admin authentication', async () => {
       const response = await request(app)
-        .get('/api-keys')
+        .get('/api/v1/api-keys')
         .set('x-api-key', adminKey);
 
       expect(response.status).toBe(200);
@@ -149,7 +149,7 @@ describe('API Key Rotation', () => {
 
     it('should filter keys by status', async () => {
       const response = await request(app)
-        .get('/api-keys?status=active')
+        .get('/api/v1/api-keys?status=active')
         .set('x-api-key', adminKey);
 
       expect(response.status).toBe(200);
@@ -158,7 +158,7 @@ describe('API Key Rotation', () => {
 
     it('should reject listing without admin role', async () => {
       const response = await request(app)
-        .get('/api-keys')
+        .get('/api/v1/api-keys')
         .set('x-api-key', testKey);
 
       expect(response.status).toBe(403);
@@ -174,7 +174,7 @@ describe('API Key Rotation', () => {
       });
 
       const response = await request(app)
-        .post(`/api-keys/${keyInfo.id}/deprecate`)
+        .post(`/api/v1/api-keys/${keyInfo.id}/deprecate`)
         .set('x-api-key', adminKey);
 
       expect(response.status).toBe(200);
@@ -215,7 +215,7 @@ describe('API Key Rotation', () => {
       });
 
       const response = await request(app)
-        .delete(`/api-keys/${keyInfo.id}`)
+        .delete(`/api/v1/api-keys/${keyInfo.id}`)
         .set('x-api-key', adminKey);
 
       expect(response.status).toBe(200);
@@ -261,7 +261,7 @@ describe('API Key Rotation', () => {
       );
 
       const response = await request(app)
-        .post('/api-keys/cleanup')
+        .post('/api/v1/api-keys/cleanup')
         .set('x-api-key', adminKey)
         .send({ retentionDays: 90 });
 
@@ -282,7 +282,7 @@ describe('API Key Rotation', () => {
 
     it('should reject request without API key', async () => {
       const response = await request(app)
-        .get('/api-keys');
+        .get('/api/v1/api-keys');
 
       expect(response.status).toBe(401);
     });
@@ -316,7 +316,7 @@ describe('API Key Rotation', () => {
       });
 
       const response = await request(app)
-        .get('/api-keys')
+        .get('/api/v1/api-keys')
         .set('x-api-key', adminKeyInfo.key);
 
       expect(response.status).toBe(200); // Admin can access
@@ -330,7 +330,7 @@ describe('API Key Rotation', () => {
       });
 
       const response = await request(app)
-        .get('/api-keys')
+        .get('/api/v1/api-keys')
         .set('x-api-key', userKeyInfo.key);
 
       expect(response.status).toBe(403); // User cannot access admin endpoint

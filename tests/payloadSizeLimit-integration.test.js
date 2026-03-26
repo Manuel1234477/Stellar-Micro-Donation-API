@@ -18,7 +18,7 @@ describe('Payload Size Limit Integration Tests', () => {
 
       // Note: This will fail auth, but should pass payload size check
       const response = await request(app)
-        .post('/donations/send')
+        .post('/api/v1/donations/send')
         .send(donationPayload)
         .set('Content-Type', 'application/json');
 
@@ -36,7 +36,7 @@ describe('Payload Size Limit Integration Tests', () => {
       };
 
       const response = await request(app)
-        .post('/donations/send')
+        .post('/api/v1/donations/send')
         .send(oversizedPayload)
         .set('Content-Type', 'application/json')
         .expect(413);
@@ -56,7 +56,7 @@ describe('Payload Size Limit Integration Tests', () => {
       };
 
       const response = await request(app)
-        .post('/wallets')
+        .post('/api/v1/wallets')
         .send(walletPayload)
         .set('Content-Type', 'application/json');
 
@@ -72,7 +72,7 @@ describe('Payload Size Limit Integration Tests', () => {
       };
 
       const response = await request(app)
-        .post('/wallets')
+        .post('/api/v1/wallets')
         .send(oversizedPayload)
         .set('Content-Type', 'application/json')
         .expect(413);
@@ -98,7 +98,7 @@ describe('Payload Size Limit Integration Tests', () => {
       };
 
       const response = await request(app)
-        .post('/donations/send')
+        .post('/api/v1/donations/send')
         .send(oversizedPayload)
         .set('Content-Type', 'application/json')
         .expect(413);
@@ -126,7 +126,7 @@ describe('Payload Size Limit Integration Tests', () => {
       };
 
       const response = await request(app)
-        .post('/donations/send')
+        .post('/api/v1/donations/send')
         .send(oversizedPayload)
         .set('Content-Type', 'application/json')
         .expect(413);
@@ -146,7 +146,7 @@ describe('Payload Size Limit Integration Tests', () => {
       };
 
       const response = await request(app)
-        .post('/donations/send')
+        .post('/api/v1/donations/send')
         .send(oversizedPayload)
         .set('Content-Type', 'application/json')
         .expect(413);
@@ -162,7 +162,7 @@ describe('Payload Size Limit Integration Tests', () => {
       };
 
       const response = await request(app)
-        .post('/donations/send')
+        .post('/api/v1/donations/send')
         .send(oversizedPayload)
         .set('Content-Type', 'application/json')
         .expect(413);
@@ -179,7 +179,7 @@ describe('Payload Size Limit Integration Tests', () => {
       };
 
       const response = await request(app)
-        .post('/donations/send')
+        .post('/api/v1/donations/send')
         .send(oversizedPayload)
         .set('Content-Type', 'application/json')
         .expect(413);
@@ -191,7 +191,7 @@ describe('Payload Size Limit Integration Tests', () => {
       const oversizedData = 'data=' + 'x'.repeat(110 * 1024);
 
       const response = await request(app)
-        .post('/donations/send')
+        .post('/api/v1/donations/send')
         .send(oversizedData)
         .set('Content-Type', 'application/x-www-form-urlencoded')
         .expect(413);
@@ -203,7 +203,7 @@ describe('Payload Size Limit Integration Tests', () => {
   describe('Edge cases in production context', () => {
     it('should handle requests without Content-Length header', async () => {
       const response = await request(app)
-        .post('/donations/send')
+        .post('/api/v1/donations/send')
         .send({ amount: '10', senderId: '1', receiverId: '2' })
         .set('Content-Type', 'application/json');
 
@@ -213,7 +213,7 @@ describe('Payload Size Limit Integration Tests', () => {
 
     it('should handle empty POST requests', async () => {
       const response = await request(app)
-        .post('/donations/send')
+        .post('/api/v1/donations/send')
         .send({})
         .set('Content-Type', 'application/json');
 

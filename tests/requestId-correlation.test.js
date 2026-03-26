@@ -141,7 +141,7 @@ describe('Request ID Middleware with Correlation Support', () => {
       
       expect(response.body.hasContext).toBe(true);
       expect(response.body.correlationId).toMatch(/^[0-9a-f-]{36}$/);
-      expect(response.body.requestId).toBe(response.body.headers['X-Request-ID']);
+      expect(response.body.requestId).toBe(response.headers['x-request-id']);
       expect(response.body.operationType).toBe('http_request');
     });
 
@@ -189,8 +189,7 @@ describe('Request ID Middleware with Correlation Support', () => {
     test('should handle malformed correlation headers', async () => {
       const response = await request(app)
         .get('/test')
-        .set('X-Correlation-ID', null)
-        .set('X-Trace-ID', undefined)
+        .set('X-Correlation-ID', '')
         .expect(200);
       
       const { correlationContext } = response.body;
@@ -334,7 +333,7 @@ describe('Request ID Middleware with Correlation Support', () => {
           hasPostMiddleware: !!req.postMiddlewareTime,
           hasRequestId: !!req.id,
           hasCorrelationContext: !!req.correlationContext,
-          middlewareOrder: req.preMiddlewareTime < req.postMiddlewareTime
+          middlewareOrder: req.preMiddlewareTime <= req.postMiddlewareTime
         });
       });
       

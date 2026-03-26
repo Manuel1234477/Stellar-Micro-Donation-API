@@ -15,19 +15,112 @@ const StatsService = require('../services/StatsService');
 const { validateDateRange } = require('../middleware/validation');
 const { checkPermission } = require('../middleware/rbac');
 const { PERMISSIONS } = require('../utils/permissions');
+const { validateSchema } = require('../middleware/schemaValidation');
+const AuditLogService = require('../services/AuditLogService');
+
+/** Fire-and-forget audit log for stats data access */
+function auditStatsAccess(req, res, next) {
+  AuditLogService.log({
+    category: AuditLogService.CATEGORY.DATA_ACCESS,
+    action: 'STATS_ACCESSED',
+    severity: AuditLogService.SEVERITY.LOW,
+    result: 'SUCCESS',
+    userId: req.user && req.user.id,
+    requestId: req.id,
+    ipAddress: req.ip,
+    resource: req.path,
+    details: { query: req.query, params: req.params }
+  }).catch(() => {});
+  next();
+}
+
+const strictDateRangeQuerySchema = validateSchema({
+  query: {
+    fields: {
+      startDate: { type: 'dateString', required: true },
+      endDate: { type: 'dateString', required: true },
+    },
+  },
+});
+
+const walletAnalyticsSchema = validateSchema({
+  params: {
+    fields: {
+      walletAddress: {
+        type: 'string',
+        required: true,
+        trim: true,
+        minLength: 1,
+      },
+    },
+  },
+  query: {
+    fields: {
+      startDate: { type: 'dateString', required: false },
+      endDate: { type: 'dateString', required: false },
+    },
+    validate: (query) => {
+      const hasStart = Object.prototype.hasOwnProperty.call(query, 'startDate');
+      const hasEnd = Object.prototype.hasOwnProperty.call(query, 'endDate');
+      return hasStart === hasEnd
+        ? null
+        : 'Both startDate and endDate are required when filtering by date';
+    },
+  },
+});
+
+/**
+ * GET /stats/tags
+ * Get tag aggregated donation volume
+ * Query params: startDate, endDate (ISO format)
+ */
+router.get('/tags', checkPermission(PERMISSIONS.STATS_READ), auditStatsAccess, strictDateRangeQuerySchema, validateDateRange, (req, res, next) => {
+  try {
+    const { startDate, endDate } = req.query;
+    const start = new Date(startDate);
+    const end = new Date(endDate);
+
+    const stats = StatsService.getTagStats(start, end);
+
+    res.json({
+      success: true,
+      data: stats,
+      metadata: {
+        startDate,
+        endDate,
+        totalTagsCount: stats.length,
+        generatedAt: new Date().toISOString()
+      }
+    });
+  } catch (error) {
+    next(error);
+  }
+});
 
 /**
  * GET /stats/daily
  * Get daily aggregated donation volume
  * Query params: startDate, endDate (ISO format)
  */
-router.get('/daily', checkPermission(PERMISSIONS.STATS_READ), validateDateRange, (req, res) => {
+router.get('/daily', checkPermission(PERMISSIONS.STATS_READ), auditStatsAccess, strictDateRangeQuerySchema, validateDateRange, (req, res, next) => {
   try {
     const { startDate, endDate } = req.query;
     const start = new Date(startDate);
     const end = new Date(endDate);
 
     const stats = StatsService.getDailyStats(start, end);
+
+    AuditLogService.log({
+      category: AuditLogService.CATEGORY.DATA_ACCESS,
+      action: 'STATS_ACCESSED',
+      severity: AuditLogService.SEVERITY.LOW,
+      result: 'SUCCESS',
+      userId: req.user && req.user.id,
+      requestId: req.id,
+      ipAddress: req.ip,
+      resource: '/stats/daily',
+      details: { startDate, endDate }
+    }).catch(() => {});
 
     res.json({
       success: true,
@@ -54,6 +147,8 @@ router.get('/daily', checkPermission(PERMISSIONS.STATS_READ), validateDateRange,
 router.get(
   "/weekly",
   checkPermission(PERMISSIONS.STATS_READ),
+  auditStatsAccess,
+  strictDateRangeQuerySchema,
   validateDateRange,
   (req, res, next) => {
     try {
@@ -89,6 +184,8 @@ router.get(
 router.get(
   "/summary",
   checkPermission(PERMISSIONS.STATS_READ),
+  auditStatsAccess,
+  strictDateRangeQuerySchema,
   validateDateRange,
   (req, res, next) => {
     try {
@@ -116,6 +213,8 @@ router.get(
 router.get(
   "/donors",
   checkPermission(PERMISSIONS.STATS_READ),
+  auditStatsAccess,
+  strictDateRangeQuerySchema,
   validateDateRange,
   (req, res, next) => {
     try {
@@ -150,6 +249,8 @@ router.get(
 router.get(
   "/recipients",
   checkPermission(PERMISSIONS.STATS_READ),
+  auditStatsAccess,
+  strictDateRangeQuerySchema,
   validateDateRange,
   (req, res, next) => {
     try {
@@ -181,7 +282,7 @@ router.get(
  * Get analytics fee summary for reporting
  * Query params: startDate, endDate (ISO format)
  */
-router.get('/analytics-fees', checkPermission(PERMISSIONS.STATS_READ), validateDateRange, (req, res) => {
+router.get('/analytics-fees', checkPermission(PERMISSIONS.STATS_READ), auditStatsAccess, strictDateRangeQuerySchema, validateDateRange, (req, res, next) => {
   try {
     const { startDate, endDate } = req.query;
     const start = new Date(startDate);
@@ -206,7 +307,7 @@ router.get('/analytics-fees', checkPermission(PERMISSIONS.STATS_READ), validateD
  * Get donation analytics for a specific wallet
  * Query params: startDate, endDate (optional, ISO format)
  */
-router.get('/wallet/:walletAddress/analytics', checkPermission(PERMISSIONS.STATS_READ), (req, res) => {
+router.get('/wallet/:walletAddress/analytics', checkPermission(PERMISSIONS.STATS_READ), walletAnalyticsSchema, (req, res, next) => {
   try {
     const { walletAddress } = req.params;
     const { startDate, endDate } = req.query;
@@ -255,7 +356,7 @@ router.get('/wallet/:walletAddress/analytics', checkPermission(PERMISSIONS.STATS
   }
 });
 
-router.get('/wallet/:walletAddress/analytics', checkPermission(PERMISSIONS.STATS_READ), async (req, res) => {
+router.get('/wallet/:walletAddress/analytics', checkPermission(PERMISSIONS.STATS_READ), walletAnalyticsSchema, async (req, res, next) => {
   try {
     const { walletAddress } = req.params;
 
@@ -273,6 +374,133 @@ router.get('/wallet/:walletAddress/analytics', checkPermission(PERMISSIONS.STATS
       }
     });
   } catch (error) {
+    next(error);
+  }
+});
+
+/**
+ * GET /stats/memo-collisions
+ * Get transactions flagged for memo collision (duplicate memo within time window)
+ * Query params: startDate, endDate (optional, ISO format)
+ */
+router.get('/memo-collisions', checkPermission(PERMISSIONS.STATS_READ), (req, res, next) => {
+  try {
+    const { startDate, endDate } = req.query;
+    const start = startDate ? new Date(startDate) : null;
+    const end = endDate ? new Date(endDate) : null;
+
+    if (start && isNaN(start.getTime())) {
+      return res.status(400).json({ success: false, error: { code: 'INVALID_DATE', message: 'Invalid startDate' } });
+    }
+    if (end && isNaN(end.getTime())) {
+      return res.status(400).json({ success: false, error: { code: 'INVALID_DATE', message: 'Invalid endDate' } });
+    }
+    if (start && end && start > end) {
+      return res.status(400).json({ success: false, error: { code: 'INVALID_DATE_RANGE', message: 'startDate must be before endDate' } });
+    }
+
+    const stats = StatsService.getMemoCollisionStats(start, end);
+
+    res.json({
+      success: true,
+      data: stats,
+      metadata: {
+        note: 'Collisions occur when the same memo is used more than once within the detection window',
+        ...(start && { startDate: start.toISOString() }),
+        ...(end && { endDate: end.toISOString() }),
+      },
+    });
+  } catch (error) {
+    next(error);
+  }
+});
+
+/**
+ * GET /stats/overpayments
+ * Get all flagged overpayment transactions with excess amounts
+ * Query params: startDate, endDate (optional, ISO format)
+ */
+router.get('/overpayments', checkPermission(PERMISSIONS.STATS_READ), (req, res, next) => {
+  try {
+    const { startDate, endDate } = req.query;
+    const start = startDate ? new Date(startDate) : null;
+    const end = endDate ? new Date(endDate) : null;
+
+    if (start && isNaN(start.getTime())) {
+      return res.status(400).json({ success: false, error: { code: 'INVALID_DATE', message: 'Invalid startDate' } });
+    }
+    if (end && isNaN(end.getTime())) {
+      return res.status(400).json({ success: false, error: { code: 'INVALID_DATE', message: 'Invalid endDate' } });
+    }
+    if (start && end && start > end) {
+      return res.status(400).json({ success: false, error: { code: 'INVALID_DATE_RANGE', message: 'startDate must be before endDate' } });
+    }
+
+    const stats = StatsService.getOverpaymentStats(start, end);
+
+    res.json({
+      success: true,
+      data: stats,
+      metadata: {
+        note: 'Overpayments occur when received amount exceeds donation + analytics fee',
+        ...(start && { startDate: start.toISOString() }),
+        ...(end && { endDate: end.toISOString() }),
+      },
+    });
+  } catch (error) {
+    next(error);
+  }
+});
+
+/**
+ * GET /stats/orphaned-transactions
+ * Get count and total amount of orphaned transactions detected by reconciliation
+ */
+router.get('/orphaned-transactions', checkPermission(PERMISSIONS.STATS_READ), async (req, res, next) => {
+  try {
+    const stats = await StatsService.getOrphanStats();
+    res.json({
+      success: true,
+      data: {
+        orphaned_transactions: stats.count,
+        totalOrphanedAmount: stats.totalAmount,
+      },
+    });
+  } catch (error) {
+    next(error);
+  }
+});
+
+/**
+ * GET /stats/dashboard
+ * Comprehensive analytics dashboard data with configurable time range.
+ *
+ * Query params:
+ *   period       {string}  - Time range: e.g. 7d, 24h, 4w, 3m, 1y (default: 30d)
+ *   granularity  {string}  - hourly|daily|weekly|monthly (auto-selected if omitted)
+ *   topN         {number}  - Number of top donors/recipients (default: 10)
+ */
+router.get('/dashboard', checkPermission(PERMISSIONS.STATS_READ), (req, res, next) => {
+  try {
+    const { period = '30d', granularity, topN, movingAvgWindow } = req.query;
+
+    const topNParsed = topN !== undefined ? parseInt(topN, 10) : 10;
+    const windowParsed = movingAvgWindow !== undefined ? parseInt(movingAvgWindow, 10) : 3;
+
+    if (topN !== undefined && (!Number.isInteger(topNParsed) || topNParsed < 1)) {
+      return res.status(400).json({ success: false, error: { code: 'INVALID_PARAM', message: 'topN must be a positive integer' } });
+    }
+    if (granularity && !['hourly', 'daily', 'weekly', 'monthly'].includes(granularity)) {
+      return res.status(400).json({ success: false, error: { code: 'INVALID_PARAM', message: 'granularity must be hourly, daily, weekly, or monthly' } });
+    }
+
+    const data = StatsService.getDashboardData({ period, granularity, topN: topNParsed, movingAvgWindow: windowParsed });
+
+    res.json({ success: true, data });
+  } catch (error) {
+    if (error.statusCode === 400) {
+      return res.status(400).json({ success: false, error: { code: 'INVALID_PARAM', message: error.message } });
+    }
     next(error);
   }
 });

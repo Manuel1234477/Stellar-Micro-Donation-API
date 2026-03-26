@@ -74,7 +74,7 @@ describe('Donation Routes Integration Tests', () => {
     describe('Successful donation flow', () => {
       test('should create donation with valid data', async () => {
         const response = await request(app)
-          .post('/donations')
+          .post('/api/v1/donations')
           .set('X-API-Key', 'test-key-1')
           .set('X-Idempotency-Key', 'test-idem-001')
           .send({
@@ -93,7 +93,7 @@ describe('Donation Routes Integration Tests', () => {
 
       test('should create donation without memo', async () => {
         const response = await request(app)
-          .post('/donations')
+          .post('/api/v1/donations')
           .set('X-API-Key', 'test-key-1')
           .set('X-Idempotency-Key', 'test-idem-002')
           .send({
@@ -108,7 +108,7 @@ describe('Donation Routes Integration Tests', () => {
 
       test('should create anonymous donation', async () => {
         const response = await request(app)
-          .post('/donations')
+          .post('/api/v1/donations')
           .set('X-API-Key', 'test-key-1')
           .set('X-Idempotency-Key', 'test-idem-003')
           .send({
@@ -123,7 +123,7 @@ describe('Donation Routes Integration Tests', () => {
 
       test('should handle decimal amounts correctly', async () => {
         const response = await request(app)
-          .post('/donations')
+          .post('/api/v1/donations')
           .set('X-API-Key', 'test-key-1')
           .set('X-Idempotency-Key', 'test-idem-004')
           .send({
@@ -138,7 +138,7 @@ describe('Donation Routes Integration Tests', () => {
 
       test('should calculate analytics fee', async () => {
         const response = await request(app)
-          .post('/donations')
+          .post('/api/v1/donations')
           .set('X-API-Key', 'test-key-1')
           .set('X-Idempotency-Key', 'test-idem-005')
           .send({
@@ -160,7 +160,7 @@ describe('Donation Routes Integration Tests', () => {
     describe('Validation failures', () => {
       test('should reject donation without amount', async () => {
         const response = await request(app)
-          .post('/donations')
+          .post('/api/v1/donations')
           .set('X-API-Key', 'test-key-1')
           .set('X-Idempotency-Key', 'test-idem-006')
           .send({
@@ -175,7 +175,7 @@ describe('Donation Routes Integration Tests', () => {
 
       test('should reject donation without recipient', async () => {
         const response = await request(app)
-          .post('/donations')
+          .post('/api/v1/donations')
           .set('X-API-Key', 'test-key-1')
           .set('X-Idempotency-Key', 'test-idem-007')
           .send({
@@ -189,7 +189,7 @@ describe('Donation Routes Integration Tests', () => {
 
       test('should reject negative amount', async () => {
         const response = await request(app)
-          .post('/donations')
+          .post('/api/v1/donations')
           .set('X-API-Key', 'test-key-1')
           .set('X-Idempotency-Key', 'test-idem-008')
           .send({
@@ -204,7 +204,7 @@ describe('Donation Routes Integration Tests', () => {
 
       test('should reject zero amount', async () => {
         const response = await request(app)
-          .post('/donations')
+          .post('/api/v1/donations')
           .set('X-API-Key', 'test-key-1')
           .set('X-Idempotency-Key', 'test-idem-009')
           .send({
@@ -219,7 +219,7 @@ describe('Donation Routes Integration Tests', () => {
 
       test('should reject invalid amount format', async () => {
         const response = await request(app)
-          .post('/donations')
+          .post('/api/v1/donations')
           .set('X-API-Key', 'test-key-1')
           .set('X-Idempotency-Key', 'test-idem-010')
           .send({
@@ -234,7 +234,7 @@ describe('Donation Routes Integration Tests', () => {
 
       test('should reject donation to self', async () => {
         const response = await request(app)
-          .post('/donations')
+          .post('/api/v1/donations')
           .set('X-API-Key', 'test-key-1')
           .set('X-Idempotency-Key', 'test-idem-011')
           .send({
@@ -249,7 +249,7 @@ describe('Donation Routes Integration Tests', () => {
 
       test('should reject memo exceeding 28 bytes', async () => {
         const response = await request(app)
-          .post('/donations')
+          .post('/api/v1/donations')
           .set('X-API-Key', 'test-key-1')
           .set('X-Idempotency-Key', 'test-idem-012')
           .send({
@@ -266,7 +266,7 @@ describe('Donation Routes Integration Tests', () => {
 
       test('should reject malformed donor field', async () => {
         const response = await request(app)
-          .post('/donations')
+          .post('/api/v1/donations')
           .set('X-API-Key', 'test-key-1')
           .set('X-Idempotency-Key', 'test-idem-013')
           .send({
@@ -281,7 +281,7 @@ describe('Donation Routes Integration Tests', () => {
 
       test('should reject malformed recipient field', async () => {
         const response = await request(app)
-          .post('/donations')
+          .post('/api/v1/donations')
           .set('X-API-Key', 'test-key-1')
           .set('X-Idempotency-Key', 'test-idem-014')
           .send({
@@ -298,7 +298,7 @@ describe('Donation Routes Integration Tests', () => {
     describe('Amount limit validation', () => {
       test('should reject amount below minimum', async () => {
         const response = await request(app)
-          .post('/donations')
+          .post('/api/v1/donations')
           .set('X-API-Key', 'test-key-1')
           .set('X-Idempotency-Key', 'test-idem-015')
           .send({
@@ -315,7 +315,7 @@ describe('Donation Routes Integration Tests', () => {
 
       test('should reject amount above maximum', async () => {
         const response = await request(app)
-          .post('/donations')
+          .post('/api/v1/donations')
           .set('X-API-Key', 'test-key-1')
           .set('X-Idempotency-Key', 'test-idem-016')
           .send({
@@ -341,7 +341,7 @@ describe('Donation Routes Integration Tests', () => {
 
         // First request
         const response1 = await request(app)
-          .post('/donations')
+          .post('/api/v1/donations')
           .set('X-API-Key', 'test-key-1')
           .set('X-Idempotency-Key', idempotencyKey)
           .send(requestData);
@@ -350,7 +350,7 @@ describe('Donation Routes Integration Tests', () => {
 
         // Second request with same idempotency key
         const response2 = await request(app)
-          .post('/donations')
+          .post('/api/v1/donations')
           .set('X-API-Key', 'test-key-1')
           .set('X-Idempotency-Key', idempotencyKey)
           .send(requestData);
@@ -361,7 +361,7 @@ describe('Donation Routes Integration Tests', () => {
 
       test('should reject request without idempotency key', async () => {
         const response = await request(app)
-          .post('/donations')
+          .post('/api/v1/donations')
           .set('X-API-Key', 'test-key-1')
           .send({
             amount: '100',
@@ -376,7 +376,7 @@ describe('Donation Routes Integration Tests', () => {
     describe('Authentication', () => {
       test('should reject request without API key', async () => {
         const response = await request(app)
-          .post('/donations')
+          .post('/api/v1/donations')
           .set('X-Idempotency-Key', 'test-idem-017')
           .send({
             amount: '100',
@@ -389,7 +389,7 @@ describe('Donation Routes Integration Tests', () => {
 
       test('should reject request with invalid API key', async () => {
         const response = await request(app)
-          .post('/donations')
+          .post('/api/v1/donations')
           .set('X-API-Key', 'invalid-key')
           .set('X-Idempotency-Key', 'test-idem-018')
           .send({
@@ -407,7 +407,7 @@ describe('Donation Routes Integration Tests', () => {
     beforeEach(async () => {
       // Create some test donations
       await request(app)
-        .post('/donations')
+        .post('/api/v1/donations')
         .set('X-API-Key', 'test-key-1')
         .set('X-Idempotency-Key', 'test-list-001')
         .send({
@@ -417,7 +417,7 @@ describe('Donation Routes Integration Tests', () => {
         });
 
       await request(app)
-        .post('/donations')
+        .post('/api/v1/donations')
         .set('X-API-Key', 'test-key-1')
         .set('X-Idempotency-Key', 'test-list-002')
         .send({
@@ -429,7 +429,7 @@ describe('Donation Routes Integration Tests', () => {
 
     test('should return all donations', async () => {
       const response = await request(app)
-        .get('/donations')
+        .get('/api/v1/donations')
         .set('X-API-Key', 'test-key-1');
 
       expect(response.status).toBe(200);
@@ -440,7 +440,7 @@ describe('Donation Routes Integration Tests', () => {
 
     test('should return donations with correct structure', async () => {
       const response = await request(app)
-        .get('/donations')
+        .get('/api/v1/donations')
         .set('X-API-Key', 'test-key-1');
 
       expect(response.status).toBe(200);
@@ -458,7 +458,7 @@ describe('Donation Routes Integration Tests', () => {
       // Create multiple donations
       for (let i = 0; i < 15; i++) {
         await request(app)
-          .post('/donations')
+          .post('/api/v1/donations')
           .set('X-API-Key', 'test-key-1')
           .set('X-Idempotency-Key', `test-recent-${i}`)
           .send({
@@ -471,7 +471,7 @@ describe('Donation Routes Integration Tests', () => {
 
     test('should return recent donations with default limit', async () => {
       const response = await request(app)
-        .get('/donations/recent')
+        .get('/api/v1/donations/recent')
         .set('X-API-Key', 'test-key-1');
 
       expect(response.status).toBe(200);
@@ -483,7 +483,7 @@ describe('Donation Routes Integration Tests', () => {
 
     test('should respect custom limit parameter', async () => {
       const response = await request(app)
-        .get('/donations/recent?limit=5')
+        .get('/api/v1/donations/recent?limit=5')
         .set('X-API-Key', 'test-key-1');
 
       expect(response.status).toBe(200);
@@ -493,7 +493,7 @@ describe('Donation Routes Integration Tests', () => {
 
     test('should enforce maximum limit of 100', async () => {
       const response = await request(app)
-        .get('/donations/recent?limit=200')
+        .get('/api/v1/donations/recent?limit=200')
         .set('X-API-Key', 'test-key-1');
 
       expect(response.status).toBe(200);
@@ -502,7 +502,7 @@ describe('Donation Routes Integration Tests', () => {
 
     test('should return donations in descending order by timestamp', async () => {
       const response = await request(app)
-        .get('/donations/recent?limit=5')
+        .get('/api/v1/donations/recent?limit=5')
         .set('X-API-Key', 'test-key-1');
 
       expect(response.status).toBe(200);
@@ -517,7 +517,7 @@ describe('Donation Routes Integration Tests', () => {
 
     test('should reject invalid limit parameter', async () => {
       const response = await request(app)
-        .get('/donations/recent?limit=invalid')
+        .get('/api/v1/donations/recent?limit=invalid')
         .set('X-API-Key', 'test-key-1');
 
       expect(response.status).toBe(400);
@@ -525,7 +525,7 @@ describe('Donation Routes Integration Tests', () => {
 
     test('should sanitize sensitive data', async () => {
       const response = await request(app)
-        .get('/donations/recent')
+        .get('/api/v1/donations/recent')
         .set('X-API-Key', 'test-key-1');
 
       expect(response.status).toBe(200);
@@ -539,7 +539,7 @@ describe('Donation Routes Integration Tests', () => {
 
     beforeEach(async () => {
       const createResponse = await request(app)
-        .post('/donations')
+        .post('/api/v1/donations')
         .set('X-API-Key', 'test-key-1')
         .set('X-Idempotency-Key', 'test-get-specific-001')
         .send({
@@ -554,7 +554,7 @@ describe('Donation Routes Integration Tests', () => {
 
     test('should return specific donation by ID', async () => {
       const response = await request(app)
-        .get(`/donations/${donationId}`)
+        .get(`/api/v1/donations/${donationId}`)
         .set('X-API-Key', 'test-key-1');
 
       expect(response.status).toBe(200);
@@ -564,7 +564,7 @@ describe('Donation Routes Integration Tests', () => {
 
     test('should return 404 for non-existent donation', async () => {
       const response = await request(app)
-        .get('/donations/non-existent-id')
+        .get('/api/v1/donations/non-existent-id')
         .set('X-API-Key', 'test-key-1');
 
       expect(response.status).toBe(404);
@@ -575,7 +575,7 @@ describe('Donation Routes Integration Tests', () => {
   describe('GET /donations/limits - Get Donation Limits', () => {
     test('should return donation limits', async () => {
       const response = await request(app)
-        .get('/donations/limits')
+        .get('/api/v1/donations/limits')
         .set('X-API-Key', 'test-key-1');
 
       expect(response.status).toBe(200);
@@ -589,7 +589,7 @@ describe('Donation Routes Integration Tests', () => {
 
     test('should return numeric limits', async () => {
       const response = await request(app)
-        .get('/donations/limits')
+        .get('/api/v1/donations/limits')
         .set('X-API-Key', 'test-key-1');
 
       expect(response.status).toBe(200);
@@ -603,7 +603,7 @@ describe('Donation Routes Integration Tests', () => {
     test('should verify valid transaction hash', async () => {
       // Create a donation first
       const createResponse = await request(app)
-        .post('/donations')
+        .post('/api/v1/donations')
         .set('X-API-Key', 'test-key-1')
         .set('X-Idempotency-Key', 'test-verify-001')
         .send({
@@ -616,7 +616,7 @@ describe('Donation Routes Integration Tests', () => {
 
       // Verify the transaction
       const response = await request(app)
-        .post('/donations/verify')
+        .post('/api/v1/donations/verify')
         .set('X-API-Key', 'test-key-1')
         .send({
           transactionHash
@@ -629,7 +629,7 @@ describe('Donation Routes Integration Tests', () => {
 
     test('should reject verification without transaction hash', async () => {
       const response = await request(app)
-        .post('/donations/verify')
+        .post('/api/v1/donations/verify')
         .set('X-API-Key', 'test-key-1')
         .send({});
 
@@ -639,7 +639,7 @@ describe('Donation Routes Integration Tests', () => {
 
     test('should handle non-existent transaction hash', async () => {
       const response = await request(app)
-        .post('/donations/verify')
+        .post('/api/v1/donations/verify')
         .set('X-API-Key', 'test-key-1')
         .send({
           transactionHash: 'non-existent-hash'
@@ -655,7 +655,7 @@ describe('Donation Routes Integration Tests', () => {
 
     beforeEach(async () => {
       await request(app)
-        .post('/donations')
+        .post('/api/v1/donations')
         .set('X-API-Key', 'test-key-1')
         .set('X-Idempotency-Key', 'test-update-status-001')
         .send({
@@ -670,7 +670,7 @@ describe('Donation Routes Integration Tests', () => {
 
     test('should update donation status', async () => {
       const response = await request(app)
-        .patch(`/donations/${donationId}/status`)
+        .patch(`/api/v1/donations/${donationId}/status`)
         .set('X-API-Key', 'test-key-1')
         .send({
           status: 'confirmed',
@@ -685,7 +685,7 @@ describe('Donation Routes Integration Tests', () => {
 
     test('should reject invalid status', async () => {
       const response = await request(app)
-        .patch(`/donations/${donationId}/status`)
+        .patch(`/api/v1/donations/${donationId}/status`)
         .set('X-API-Key', 'test-key-1')
         .send({
           status: 'invalid-status'
@@ -697,7 +697,7 @@ describe('Donation Routes Integration Tests', () => {
 
     test('should reject update without status', async () => {
       const response = await request(app)
-        .patch(`/donations/${donationId}/status`)
+        .patch(`/api/v1/donations/${donationId}/status`)
         .set('X-API-Key', 'test-key-1')
         .send({});
 
@@ -710,7 +710,7 @@ describe('Donation Routes Integration Tests', () => {
     test('should complete full donation lifecycle', async () => {
       // Step 1: Check limits
       const limitsResponse = await request(app)
-        .get('/donations/limits')
+        .get('/api/v1/donations/limits')
         .set('X-API-Key', 'test-key-1');
 
       expect(limitsResponse.status).toBe(200);
@@ -719,7 +719,7 @@ describe('Donation Routes Integration Tests', () => {
       // Step 2: Create donation within limits
       const donationAmount = (minAmount + maxAmount) / 2;
       const createResponse = await request(app)
-        .post('/donations')
+        .post('/api/v1/donations')
         .set('X-API-Key', 'test-key-1')
         .set('X-Idempotency-Key', 'test-e2e-001')
         .send({
@@ -734,7 +734,7 @@ describe('Donation Routes Integration Tests', () => {
 
       // Step 3: Verify transaction
       const verifyResponse = await request(app)
-        .post('/donations/verify')
+        .post('/api/v1/donations/verify')
         .set('X-API-Key', 'test-key-1')
         .send({ transactionHash });
 
@@ -742,7 +742,7 @@ describe('Donation Routes Integration Tests', () => {
 
       // Step 4: Check recent donations
       const recentResponse = await request(app)
-        .get('/donations/recent?limit=1')
+        .get('/api/v1/donations/recent?limit=1')
         .set('X-API-Key', 'test-key-1');
 
       expect(recentResponse.status).toBe(200);
@@ -750,7 +750,7 @@ describe('Donation Routes Integration Tests', () => {
 
       // Step 5: Get all donations
       const allResponse = await request(app)
-        .get('/donations')
+        .get('/api/v1/donations')
         .set('X-API-Key', 'test-key-1');
 
       expect(allResponse.status).toBe(200);
@@ -761,7 +761,7 @@ describe('Donation Routes Integration Tests', () => {
   describe('Error Handling', () => {
     test('should handle malformed JSON', async () => {
       const response = await request(app)
-        .post('/donations')
+        .post('/api/v1/donations')
         .set('X-API-Key', 'test-key-1')
         .set('X-Idempotency-Key', 'test-error-001')
         .set('Content-Type', 'application/json')
@@ -772,7 +772,7 @@ describe('Donation Routes Integration Tests', () => {
 
     test('should handle missing Content-Type header', async () => {
       const response = await request(app)
-        .post('/donations')
+        .post('/api/v1/donations')
         .set('X-API-Key', 'test-key-1')
         .set('X-Idempotency-Key', 'test-error-002')
         .send({
@@ -791,7 +791,7 @@ describe('Donation Routes Integration Tests', () => {
       // Note: Rate limiting behavior depends on configuration
       // This test verifies the endpoint accepts requests
       const response = await request(app)
-        .post('/donations')
+        .post('/api/v1/donations')
         .set('X-API-Key', 'test-key-1')
         .set('X-Idempotency-Key', 'test-rate-001')
         .send({

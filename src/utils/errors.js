@@ -15,41 +15,54 @@
  * Numeric codes provide stable API error handling
  */
 const ERROR_CODES = {
-  // Validation errors (400)
-  VALIDATION_ERROR: 'VALIDATION_ERROR',
-  INVALID_REQUEST: 'INVALID_REQUEST',
-  INVALID_LIMIT: 'INVALID_LIMIT',
-  INVALID_OFFSET: 'INVALID_OFFSET',
-  INVALID_DATE_FORMAT: 'INVALID_DATE_FORMAT',
-  INVALID_AMOUNT: 'INVALID_AMOUNT',
-  INVALID_FREQUENCY: 'INVALID_FREQUENCY',
-  MISSING_REQUIRED_FIELD: 'MISSING_REQUIRED_FIELD',
-  IDEMPOTENCY_KEY_REQUIRED: 'IDEMPOTENCY_KEY_REQUIRED',
+  // Validation errors (1000-1099)
+  VALIDATION_ERROR:        { code: 'VALIDATION_ERROR',        numeric: 1000 },
+  INVALID_REQUEST:         { code: 'INVALID_REQUEST',         numeric: 1001 },
+  INVALID_LIMIT:           { code: 'INVALID_LIMIT',           numeric: 1002 },
+  INVALID_OFFSET:          { code: 'INVALID_OFFSET',          numeric: 1003 },
+  INVALID_DATE_FORMAT:     { code: 'INVALID_DATE_FORMAT',     numeric: 1004 },
+  INVALID_AMOUNT:          { code: 'INVALID_AMOUNT',          numeric: 1005 },
+  INVALID_FREQUENCY:       { code: 'INVALID_FREQUENCY',       numeric: 1006 },
+  MISSING_REQUIRED_FIELD:  { code: 'MISSING_REQUIRED_FIELD',  numeric: 1007 },
+  IDEMPOTENCY_KEY_REQUIRED:{ code: 'IDEMPOTENCY_KEY_REQUIRED',numeric: 1008 },
+  INVALID_SCHEMA_VERSION:  { code: 'INVALID_SCHEMA_VERSION',  numeric: 1009 },
 
-  // Authentication/Authorization errors (401, 403)
-  UNAUTHORIZED: 'UNAUTHORIZED',
-  ACCESS_DENIED: 'ACCESS_DENIED',
-  INSUFFICIENT_PERMISSIONS: 'INSUFFICIENT_PERMISSIONS',
+  // Authentication/Authorization errors (2000-2099)
+  UNAUTHORIZED:             { code: 'UNAUTHORIZED',             numeric: 2000 },
+  ACCESS_DENIED:            { code: 'ACCESS_DENIED',            numeric: 2001 },
+  INSUFFICIENT_PERMISSIONS: { code: 'INSUFFICIENT_PERMISSIONS', numeric: 2002 },
+  INVALID_API_KEY:          { code: 'INVALID_API_KEY',          numeric: 2003 },
 
-  // Not found errors (404)
-  NOT_FOUND: 'NOT_FOUND',
-  WALLET_NOT_FOUND: 'WALLET_NOT_FOUND',
-  TRANSACTION_NOT_FOUND: 'TRANSACTION_NOT_FOUND',
-  USER_NOT_FOUND: 'USER_NOT_FOUND',
-  DONATION_NOT_FOUND: 'DONATION_NOT_FOUND',
-  ENDPOINT_NOT_FOUND: 'ENDPOINT_NOT_FOUND',
+  // Not found errors (3000-3099)
+  NOT_FOUND:            { code: 'NOT_FOUND',            numeric: 3000 },
+  WALLET_NOT_FOUND:     { code: 'WALLET_NOT_FOUND',     numeric: 3001 },
+  TRANSACTION_NOT_FOUND:{ code: 'TRANSACTION_NOT_FOUND',numeric: 3002 },
+  USER_NOT_FOUND:       { code: 'USER_NOT_FOUND',       numeric: 3003 },
+  DONATION_NOT_FOUND:   { code: 'DONATION_NOT_FOUND',   numeric: 3004 },
+  ENDPOINT_NOT_FOUND:   { code: 'ENDPOINT_NOT_FOUND',   numeric: 3005 },
 
-  // Business logic errors (422)
-  DUPLICATE_TRANSACTION: 'DUPLICATE_TRANSACTION',
-  DUPLICATE_DONATION: 'DUPLICATE_DONATION',
-  INSUFFICIENT_BALANCE: 'INSUFFICIENT_BALANCE',
-  TRANSACTION_FAILED: 'TRANSACTION_FAILED',
+  // Conflict/Duplicate errors (4000-4099)
+  DUPLICATE_TRANSACTION: { code: 'DUPLICATE_TRANSACTION', numeric: 4000 },
+  DUPLICATE_DONATION:    { code: 'DUPLICATE_DONATION',    numeric: 4001 },
 
-  // Server errors (500)
-  INTERNAL_ERROR: 'INTERNAL_ERROR',
-  DATABASE_ERROR: 'DATABASE_ERROR',
-  VERIFICATION_FAILED: 'VERIFICATION_FAILED',
-  SERVICE_UNAVAILABLE: 'SERVICE_UNAVAILABLE',
+  // Business logic errors (5000-5099)
+  INSUFFICIENT_BALANCE: { code: 'INSUFFICIENT_BALANCE', numeric: 5000 },
+  TRANSACTION_FAILED:   { code: 'TRANSACTION_FAILED',   numeric: 5001 },
+  FEE_BUMP_MAX_ATTEMPTS:  { code: 'FEE_BUMP_MAX_ATTEMPTS',  numeric: 5010 },
+  FEE_BUMP_EXCEEDS_CAP:   { code: 'FEE_BUMP_EXCEEDS_CAP',   numeric: 5011 },
+  FEE_BUMP_INVALID_STATE: { code: 'FEE_BUMP_INVALID_STATE', numeric: 5012 },
+  FEE_BUMP_NO_ENVELOPE:   { code: 'FEE_BUMP_NO_ENVELOPE',   numeric: 5013 },
+  FEE_BUMP_FAILED:        { code: 'FEE_BUMP_FAILED',        numeric: 5014 },
+
+  // Rate limiting errors (6000-6099)
+  RATE_LIMIT_EXCEEDED: { code: 'RATE_LIMIT_EXCEEDED', numeric: 6000 },
+
+  // Server errors (9000-9099)
+  INTERNAL_ERROR:        { code: 'INTERNAL_ERROR',        numeric: 9000 },
+  DATABASE_ERROR:        { code: 'DATABASE_ERROR',        numeric: 9001 },
+  VERIFICATION_FAILED:   { code: 'VERIFICATION_FAILED',   numeric: 9002 },
+  SERVICE_UNAVAILABLE:   { code: 'SERVICE_UNAVAILABLE',   numeric: 9003 },
+  STELLAR_NETWORK_ERROR: { code: 'STELLAR_NETWORK_ERROR', numeric: 9004 },
 };
 
 /**
@@ -60,26 +73,16 @@ class AppError extends Error {
     super(message);
     this.name = this.constructor.name;
 
-    // Handle both old string codes and new structured error codes
-    if (typeof errorCode === "string") {
-      // Legacy support - look up the structured error code
-      const structuredCode = Object.values(ERROR_CODES).find(
-        (c) => c.code === errorCode,
-      );
-      if (structuredCode) {
-        this.errorCode = structuredCode.code;
-        this.numericCode = structuredCode.numeric;
-      } else {
-        // Fallback for unknown codes
-        this.errorCode = errorCode;
-        this.numericCode = 9000; // Default to internal error
-      }
-    } else if (errorCode && typeof errorCode === "object") {
-      // New structured error code
+    if (errorCode && typeof errorCode === 'object' && errorCode.code) {
+      // Structured error code object
       this.errorCode = errorCode.code;
       this.numericCode = errorCode.numeric;
+    } else if (typeof errorCode === 'string') {
+      // Legacy string code - look up structured version
+      const structured = Object.values(ERROR_CODES).find(c => c.code === errorCode);
+      this.errorCode = errorCode;
+      this.numericCode = structured ? structured.numeric : ERROR_CODES.INTERNAL_ERROR.numeric;
     } else {
-      // Default fallback
       this.errorCode = ERROR_CODES.INTERNAL_ERROR.code;
       this.numericCode = ERROR_CODES.INTERNAL_ERROR.numeric;
     }

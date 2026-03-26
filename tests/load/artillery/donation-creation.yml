@@ -1,0 +1,45 @@
+# Artillery load test — Donation Creation
+# Run: npx artillery run tests/load/artillery/donation-creation.yml --target http://localhost:3000
+# Requires a running API server with MOCK_STELLAR=true
+
+config:
+  target: "http://localhost:3000"
+  phases:
+    - name: "Warm-up"
+      duration: 30
+      arrivalRate: 2
+    - name: "Ramp-up"
+      duration: 60
+      arrivalRate: 2
+      rampTo: 20
+    - name: "Sustained load"
+      duration: 120
+      arrivalRate: 20
+    - name: "Cool-down"
+      duration: 30
+      arrivalRate: 2
+  defaults:
+    headers:
+      X-API-Key: "test-load-key"
+      Content-Type: "application/json"
+  plugins:
+    expect: {}
+  ensure:
+    p95: 500
+    p99: 1000
+    maxErrorRate: 5
+
+scenarios:
+  - name: "Create donation"
+    flow:
+      - post:
+          url: "/donations"
+          json:
+            amount: "{{ $randomNumber(1, 100) }}.00"
+            recipient: "GBXXXXDONATIONRECIPIENTADDRESSXXXXX{{ $randomString(10) }}"
+            donor: "GBXXXXDONORSENDERADDRESSXXXXXXXXXX{{ $randomString(10) }}"
+            memo: "load-test-{{ $randomString(8) }}"
+            currency: "XLM"
+          expect:
+            - statusCode: 201
+              ifTrue: "response.body.success === true"
