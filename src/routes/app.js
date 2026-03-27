@@ -55,6 +55,7 @@ const { responseFormatterMiddleware } = require('../utils/responseFormatter');
 const trackQuotaUsage = require('../middleware/quotaTracker');
 const { startQuotaResetJob } = require('../jobs/quotaResetJob');
 const { createDeduplicationMiddleware } = require('../middleware/deduplication');
+const { fieldFilterMiddleware } = require('../middleware/fieldFilter');
 const {
   logStartupDiagnostics,
   logShutdownDiagnostics,
@@ -177,6 +178,9 @@ app.get('/metrics', requireApiKey, requireAdmin(), async (req, res) => {
 });
 // Content-based request deduplication (for requests without idempotency keys)
 app.use(createDeduplicationMiddleware());
+
+// Response field filtering (?fields=id,amount,status)
+app.use(fieldFilterMiddleware());
 
 // Routes
 app.use('/wallets', walletRoutes);
