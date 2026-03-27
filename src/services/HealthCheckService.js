@@ -56,7 +56,7 @@ async function checkDatabase() {
  * In mock mode this always resolves immediately.
  *
  * @param {Object} stellarService - StellarService or MockStellarService instance
- * @returns {Promise<{status: string, responseTime: number, network?: string, horizonUrl?: string, error?: string}>}
+ * @returns {Promise<{status: string, responseTime: number, network?: string, horizonUrl?: string, circuitBreaker?: Object, error?: string}>}
  */
 async function checkStellar(stellarService) {
   const result = await runCheck('stellar', async () => {
@@ -74,6 +74,9 @@ async function checkStellar(stellarService) {
     network: stellarService.getNetwork ? stellarService.getNetwork() : undefined,
     environment: stellarService.getEnvironment ? stellarService.getEnvironment().name : undefined,
     horizonUrl: stellarService.getHorizonUrl ? stellarService.getHorizonUrl() : undefined,
+    circuitBreaker: stellarService.circuitBreaker
+      ? stellarService.circuitBreaker.getStatus()
+      : undefined,
   };
 }
 

@@ -19,6 +19,7 @@ const { STELLAR_NETWORKS, HORIZON_URLS } = require('../constants');
 const StellarErrorHandler = require('../utils/stellarErrorHandler');
 const log = require('../utils/log');
 const { withTimeout, TIMEOUT_DEFAULTS, TimeoutError } = require('../utils/timeoutHandler');
+const { CircuitBreaker } = require('../utils/circuitBreaker');
 const {
   toStellarSdkAsset,
   normalizeHorizonAsset,
@@ -55,6 +56,14 @@ class StellarService extends StellarServiceInterface {
       submit: config.submitTimeout || TIMEOUT_DEFAULTS.STELLAR_SUBMIT,
       stream: config.streamTimeout || TIMEOUT_DEFAULTS.STELLAR_STREAM,
     };
+
+    // Circuit breaker — protects all Horizon API calls
+    this.circuitBreaker = new CircuitBreaker({
+      failureThreshold: config.circuitBreakerThreshold ?? 5,
+      windowMs: config.circuitBreakerWindowMs ?? 60_000,
+      cooldownMs: config.circuitBreakerCooldownMs ?? 30_000,
+      name: 'horizon',
+    });
   }
 
   getNetwork() {
@@ -156,7 +165,10 @@ class StellarService extends StellarServiceInterface {
   }
 
   /**
-   * Execute an operation with automatic retry on transient errors and timeout
+   * Execute an operation with automatic retry on transient errors and timeout.
+   * All calls are wrapped by the circuit breaker — if Horizon is down the
+   * circuit opens and subsequent calls fail fast without hitting the network.
+   *
    * @private
    * @param {Function} operation - Async operation to execute
    * @param {string} operationName - Name of operation for logging
@@ -171,8 +183,17 @@ class StellarService extends StellarServiceInterface {
 
     for (let attempt = 1; attempt <= maxAttempts; attempt++) {
       try {
-        return await withTimeout(operation(), timeoutMs, operationName);
+        // Each attempt goes through the circuit breaker so that failures are
+        // counted and the circuit can open mid-retry if the threshold is hit.
+        return await this.circuitBreaker.execute(() =>
+          withTimeout(operation(), timeoutMs, operationName)
+        );
       } catch (error) {
+        // Fast-fail immediately when the circuit is open — no retries
+        if (error.circuitOpen) {
+          throw error;
+        }
+
         lastError = error;
 
         // Log timeout errors
