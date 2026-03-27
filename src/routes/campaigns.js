@@ -350,4 +350,54 @@ router.get('/:id/progress/stream', requireApiKey, async (req, res, next) => {
   SseManager.addClient(clientId, keyId, filter, res);
 });
 
+// ── Pledge routes (Issue #404) ────────────────────────────────────────────────
+
+const pledgeRouter = require('express').Router({ mergeParams: true });
+const Pledge = require('../models/Pledge');
+const { checkAndFulfill } = require('../services/PledgeFulfillmentService');
+const { validateSchema: vs } = require('../middleware/schemaValidation');
+
+const createPledgeSchema = vs({
+  body: {
+    fields: {
+      donor_wallet_id: { type: 'string', required: true, maxLength: 56 },
+      amount:          { type: 'number', required: true, min: 0.0000001 },
+      expires_at:      { type: 'string', required: true },
+    },
+  },
+});
+
+pledgeRouter.post('/', requireApiKey, createPledgeSchema, async (req, res, next) => {
+  try {
+    await Pledge.initTable();
+    const campaign = await Database.get(`SELECT * FROM campaigns WHERE id = ?`, [req.params.id]);
+    if (!campaign) return res.status(404).json({ success: false, error: 'Campaign not found' });
+    if (campaign.status !== 'active') {
+      return res.status(400).json({ success: false, error: 'Campaign is not active' });
+    }
+
+    const { donor_wallet_id, amount, expires_at } = req.body;
+    const pledge = await Pledge.create({
+      campaign_id: campaign.id,
+      donor_wallet_id,
+      amount,
+      expires_at,
+    });
+
+    await checkAndFulfill(campaign.id);
+
+    res.status(201).json({ success: true, data: pledge });
+  } catch (err) { next(err); }
+});
+
+pledgeRouter.get('/', requireApiKey, async (req, res, next) => {
+  try {
+    await Pledge.initTable();
+    const pledges = await Pledge.listByCampaign(req.params.id);
+    res.json({ success: true, count: pledges.length, data: pledges });
+  } catch (err) { next(err); }
+});
+
+router.use('/:id/pledges', pledgeRouter);
+
 module.exports = router;
