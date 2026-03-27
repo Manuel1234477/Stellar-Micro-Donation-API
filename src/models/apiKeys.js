@@ -21,7 +21,11 @@ const CREATE_TABLE_SQL = `
     rotated_to_id INTEGER,
     signing_required INTEGER NOT NULL DEFAULT 0,
     key_secret TEXT,
-    allowed_ips TEXT
+    allowed_ips TEXT,
+    monthly_quota INTEGER,
+    quota_used INTEGER NOT NULL DEFAULT 0,
+    quota_reset_at INTEGER
+    tenant_id TEXT NOT NULL DEFAULT 'default'
   )
 `;
 
@@ -46,8 +50,28 @@ async function initializeApiKeysTable() {
       if (!detail.includes('duplicate column')) throw err;
     }
   }
+  // Add quota columns to existing tables
+  try {
+    await db.run(`ALTER TABLE api_keys ADD COLUMN monthly_quota INTEGER`);
+  } catch (err) {
+    const detail = (err.details && err.details.originalError) || err.message || '';
+    if (!detail.includes('duplicate column')) throw err;
+  }
+  try {
+    await db.run(`ALTER TABLE api_keys ADD COLUMN quota_used INTEGER NOT NULL DEFAULT 0`);
+  } catch (err) {
+    const detail = (err.details && err.details.originalError) || err.message || '';
+    if (!detail.includes('duplicate column')) throw err;
+  }
+  try {
+    await db.run(`ALTER TABLE api_keys ADD COLUMN quota_reset_at INTEGER`);
+  } catch (err) {
+    const detail = (err.details && err.details.originalError) || err.message || '';
+    if (!detail.includes('duplicate column')) throw err;
+  }
 }
 
+async function createApiKey({ name, role = 'user', expiresInDays, createdBy, metadata = {}, gracePeriodDays = 30, signingRequired = false, allowedIps = null, monthlyQuota = null }) {
 /**
  * Create a new API key.
  *
@@ -82,8 +106,14 @@ async function createApiKey({
   const now = Date.now();
   const expiresAt = expiresInDays ? now + expiresInDays * 24 * 60 * 60 * 1000 : null;
   const allowedIpsJson = allowedIps && allowedIps.length > 0 ? JSON.stringify(allowedIps) : null;
+  
+  // Set quota reset to first of next month if quota is specified
+  const quotaResetAt = monthlyQuota ? getNextMonthFirstDay() : null;
 
   const result = await db.run(
+    `INSERT INTO api_keys (key_hash, key_prefix, name, role, status, created_by, metadata, expires_at, created_at, grace_period_days, signing_required, key_secret, allowed_ips, monthly_quota, quota_used, quota_reset_at)
+     VALUES (?, ?, ?, ?, 'active', ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?)`,
+    [keyHash, keyPrefix, name, role, createdBy || null, JSON.stringify(metadata), expiresAt, now, gracePeriodDays, signingRequired ? 1 : 0, keySecret, allowedIpsJson, monthlyQuota, quotaResetAt]
     `INSERT INTO api_keys
        (key_hash, key_prefix, name, role, status, created_by, metadata, expires_at,
         created_at, grace_period_days, signing_required, key_secret, allowed_ips, notification_email)
@@ -109,6 +139,9 @@ async function createApiKey({
     gracePeriodDays,
     signingRequired: !!signingRequired,
     allowedIps: allowedIps || null,
+    monthlyQuota,
+    quotaUsed: 0,
+    quotaResetAt: quotaResetAt ? new Date(quotaResetAt).toISOString() : null,
     notificationEmail: notificationEmail || null,
   };
 }
@@ -133,6 +166,14 @@ async function validateApiKey(rawKey) {
   if (row.status === API_KEY_STATUS.REVOKED) return null;
   if (row.expires_at && row.expires_at < now) return null;
 
+  // Check and reset quota if needed
+  if (row.monthly_quota && row.quota_reset_at && row.quota_reset_at <= now) {
+    await resetQuota(row.id);
+    row.quota_used = 0;
+    row.quota_reset_at = getNextMonthFirstDay();
+  }
+
+  // Update last_used_at
   await db.run('UPDATE api_keys SET last_used_at = ? WHERE id = ?', [now, row.id]);
 
   return {
@@ -150,6 +191,9 @@ async function validateApiKey(rawKey) {
     signingRequired: !!row.signing_required,
     keySecret: row.key_secret || null,
     allowedIps: row.allowed_ips ? JSON.parse(row.allowed_ips) : null,
+    monthlyQuota: row.monthly_quota,
+    quotaUsed: row.quota_used || 0,
+    quotaResetAt: row.quota_reset_at,
     notificationEmail: row.notification_email || null,
   };
 }
@@ -319,6 +363,76 @@ async function revokeExpiredDeprecatedKeys() {
 }
 
 /**
+ * Get the first day of next month at midnight UTC
+ * @returns {number} Timestamp in milliseconds
+ */
+function getNextMonthFirstDay() {
+  const now = new Date();
+  const year = now.getUTCFullYear();
+  const month = now.getUTCMonth();
+  // Next month (0-11, so +1 wraps to next year if needed)
+  const nextMonth = month === 11 ? 0 : month + 1;
+  const nextYear = month === 11 ? year + 1 : year;
+  return Date.UTC(nextYear, nextMonth, 1, 0, 0, 0, 0);
+}
+
+/**
+ * Reset quota for a specific API key
+ * @param {number} keyId - API key ID
+ * @returns {Promise<boolean>} True if reset successful
+ */
+async function resetQuota(keyId) {
+  await initializeApiKeysTable();
+  const nextReset = getNextMonthFirstDay();
+  const result = await db.run(
+    `UPDATE api_keys SET quota_used = 0, quota_reset_at = ? WHERE id = ?`,
+    [nextReset, keyId]
+  );
+  return result.changes > 0;
+}
+
+/**
+ * Increment quota usage for an API key
+ * @param {number} keyId - API key ID
+ * @returns {Promise<{quotaUsed: number, quotaRemaining: number|null}>}
+ */
+async function incrementQuota(keyId) {
+  await initializeApiKeysTable();
+  const row = await db.get(`SELECT monthly_quota, quota_used FROM api_keys WHERE id = ?`, [keyId]);
+  
+  if (!row) {
+    throw new Error('API key not found');
+  }
+
+  const newUsed = (row.quota_used || 0) + 1;
+  await db.run(`UPDATE api_keys SET quota_used = ? WHERE id = ?`, [newUsed, keyId]);
+
+  return {
+    quotaUsed: newUsed,
+    quotaRemaining: row.monthly_quota ? row.monthly_quota - newUsed : null,
+  };
+}
+
+/**
+ * Reset all quotas for keys that have passed their reset date
+ * Called by background scheduler on the first of each month
+ * @returns {Promise<number>} Number of keys reset
+ */
+async function resetExpiredQuotas() {
+  await initializeApiKeysTable();
+  const now = Date.now();
+  const nextReset = getNextMonthFirstDay();
+  
+  const result = await db.run(
+    `UPDATE api_keys 
+     SET quota_used = 0, quota_reset_at = ?
+     WHERE monthly_quota IS NOT NULL 
+       AND quota_reset_at IS NOT NULL 
+       AND quota_reset_at <= ?`,
+    [nextReset, now]
+  );
+  
+  return result.changes;
  * Fetch active keys that expire within the given number of days and have not yet
  * received a notification at this threshold level.
  *
@@ -386,6 +500,10 @@ module.exports = {
   cleanupOldKeys,
   rotateApiKey,
   revokeExpiredDeprecatedKeys,
+  incrementQuota,
+  resetQuota,
+  resetExpiredQuotas,
+  getNextMonthFirstDay,
   getKeysExpiringWithin,
   markExpiryNotificationSent,
 };

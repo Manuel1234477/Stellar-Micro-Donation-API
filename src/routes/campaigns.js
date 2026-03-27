@@ -185,4 +185,169 @@ router.get('/:id/donations', async (req, res, next) => {
   }
 });
 
+/**
+ * GET /campaigns/:id/impact
+ * Returns the aggregate impact summary for a campaign based on its total donations
+ * and defined impact metrics.
+ */
+router.get('/:id/impact', async (req, res, next) => {
+  try {
+    const ImpactMetricService = require('../services/ImpactMetricService');
+    const summary = await ImpactMetricService.calculateCampaignImpact(parseInt(req.params.id, 10));
+    res.json({ success: true, data: summary });
+  } catch (error) {
+    next(error);
+  }
+ * GET /campaigns/:id/progress/stream
+ * Server-Sent Events (SSE) endpoint for real-time campaign progress updates.
+ * 
+ * Connection string for clients:
+ *   const eventSource = new EventSource('/api/campaigns/:id/progress/stream', {
+ *     headers: { 'X-API-Key': 'your-api-key' }
+ *   });
+ *   eventSource.addEventListener('progress_update', (e) => {
+ *     const data = JSON.parse(e.data);
+ *     console.log(`Progress: ${data.progress_percentage}% (${data.current_amount}/${data.goal_amount})`);
+ *   });
+ * 
+ * Event types:
+ *   - progress_update: Sent whenever a donation is received (shows current progress)
+ *   - milestone_reached: Sent when a milestone (25%, 50%, 75%, 100%) is reached
+ *   - goal_reached: Sent when the campaign goal is fully reached
+ */
+router.get('/:id/progress/stream', requireApiKey, async (req, res, next) => {
+  const log = require('../utils/log');
+  const { v4: uuidv4 } = require('uuid');
+  const SseManager = require('../services/SseManager');
+  const DonationService = require('../services/DonationService');
+  const donationEvents = require('../events/donationEvents');
+  
+  const campaignId = req.params.id;
+  const clientId = uuidv4();
+  const keyId = req.user?.id || req.headers['x-api-key'] || 'anonymous';
+
+  // Verify campaign exists
+  try {
+    const campaign = await Database.get('SELECT * FROM campaigns WHERE id = ?', [campaignId]);
+    if (!campaign) {
+      return res.status(404).json({ success: false, error: 'Campaign not found' });
+    }
+  } catch (error) {
+    return next(error);
+  }
+
+  // Check connection limit
+  if (SseManager.connectionCount(keyId) >= SseManager.MAX_CONNECTIONS_PER_KEY) {
+    return res.status(429).json({
+      success: false,
+      error: `Too many connections for this API key. Maximum: ${SseManager.MAX_CONNECTIONS_PER_KEY}`
+    });
+  }
+
+  // Set SSE headers
+  res.setHeader('Content-Type', 'text/event-stream');
+  res.setHeader('Cache-Control', 'no-cache');
+  res.setHeader('Connection', 'keep-alive');
+  res.setHeader('X-Accel-Buffering', 'no'); // Disable buffering in nginx
+  res.setHeader('Access-Control-Allow-Origin', '*');
+
+  log.info('SSE', `Campaign progress stream connected: ${clientId}`, { campaignId, keyId });
+
+  // Send initial state
+  try {
+    const campaign = await Database.get('SELECT * FROM campaigns WHERE id = ?', [campaignId]);
+    const progressPercentage = Math.round((campaign.current_amount / campaign.goal_amount) * 100);
+    
+    const initialData = {
+      event: 'initial',
+      data: {
+        campaign_id: campaignId,
+        campaign_name: campaign.name,
+        goal_amount: campaign.goal_amount,
+        current_amount: campaign.current_amount,
+        progress_percentage: progressPercentage,
+        status: campaign.status,
+        timestamp: new Date().toISOString()
+      }
+    };
+    
+    res.write(`data: ${JSON.stringify(initialData.data)}\n\n`);
+  } catch (error) {
+    log.error('SSE', 'Failed to send initial state', { campaignId, error: error.message });
+  }
+
+  // Heartbeat to keep connection alive
+  const heartbeatInterval = setInterval(() => {
+    try {
+      res.write(': heartbeat\n\n');
+    } catch (error) {
+      log.warn('SSE', 'Failed to send heartbeat', { clientId, error: error.message });
+      clearInterval(heartbeatInterval);
+    }
+  }, SseManager.HEARTBEAT_INTERVAL_MS);
+
+  // Listen for progress updates and milestone events
+  const progressHandler = async () => {
+    try {
+      const campaign = await Database.get('SELECT * FROM campaigns WHERE id = ?', [campaignId]);
+      if (!campaign) return;
+
+      const progressPercentage = Math.round((campaign.current_amount / campaign.goal_amount) * 100);
+      
+      const data = {
+        campaign_id: campaignId,
+        campaign_name: campaign.name,
+        goal_amount: campaign.goal_amount,
+        current_amount: campaign.current_amount,
+        progress_percentage: progressPercentage,
+        status: campaign.status,
+        timestamp: new Date().toISOString()
+      };
+
+      res.write(`event: progress_update\ndata: ${JSON.stringify(data)}\n\n`);
+    } catch (error) {
+      log.error('SSE', 'Failed to send progress update', { campaignId, error: error.message });
+    }
+  };
+
+  const milestoneHandler = (data) => {
+    if (data.campaign_id === parseInt(campaignId)) {
+      try {
+        res.write(`event: milestone_reached\ndata: ${JSON.stringify(data)}\n\n`);
+      } catch (error) {
+        log.error('SSE', 'Failed to send milestone event', { campaignId, error: error.message });
+      }
+    }
+  };
+
+  // Note: In a production system, you'd use a proper message queue or event bus
+  // For now, we'll use the DonationService's event system
+  donationEvents.registerHook('campaign.goal_reached', (data) => {
+    if (data.campaign_id === parseInt(campaignId)) {
+      try {
+        res.write(`event: goal_reached\ndata: ${JSON.stringify(data)}\n\n`);
+      } catch (error) {
+        log.error('SSE', 'Failed to send goal_reached event', { campaignId, error: error.message });
+      }
+    }
+  });
+
+  // Handle client disconnect
+  req.on('close', () => {
+    clearInterval(heartbeatInterval);
+    SseManager.removeClient(clientId);
+    log.info('SSE', `Campaign progress stream disconnected: ${clientId}`, { campaignId });
+  });
+
+  req.on('error', (error) => {
+    clearInterval(heartbeatInterval);
+    SseManager.removeClient(clientId);
+    log.error('SSE', 'Client connection error', { clientId, error: error.message });
+  });
+
+  // Add client to SSE manager
+  const filter = { campaignId };
+  SseManager.addClient(clientId, keyId, filter, res);
+});
+
 module.exports = router;

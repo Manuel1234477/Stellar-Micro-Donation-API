@@ -17,8 +17,12 @@ const LimitService = require('../services/LimitService');
 const Database = require('../utils/database');
 const { ValidationError, NotFoundError, ERROR_CODES } = require('../utils/errors');
 const WalletService = require('../services/WalletService');
+const Database = require('../utils/database');
+const { getStellarService } = require('../config/stellar');
+const log = require('../utils/log');
 const { validateSchema } = require('../middleware/schemaValidation');
 const { parseCursorPaginationQuery } = require('../utils/pagination');
+const { validateDataEntry } = require('../middleware/validateDataEntry');
 // eslint-disable-next-line no-unused-vars
 const { sanitizeLabel, sanitizeName } = require('../utils/sanitizer');
 const { payloadSizeLimiter, ENDPOINT_LIMITS } = require('../middleware/payloadSizeLimiter');
@@ -468,81 +472,251 @@ router.get('/:publicKey/transactions', checkPermission(PERMISSIONS.WALLETS_READ)
   }
 });
 
-const bumpSequenceSchema = validateSchema({
-  params: {
-    fields: {
-      id: { type: 'integerString', required: true },
-    },
-  },
-  body: {
-    fields: {
-      secret: { type: 'string', required: true, minLength: 56, maxLength: 56 },
-      bumpTo: { type: 'string', required: true, minLength: 1, maxLength: 30 },
-    },
-  },
-});
-
 /**
- * POST /wallets/:id/bump-sequence
- * Bump the Stellar sequence number for a wallet to a specific value.
- * Useful for invalidating pre-signed transactions (time-locked escrow, etc.).
- *
- * Requires admin authentication. The `secret` in the request body is the
- * Stellar secret key of the account whose sequence number will be bumped.
- *
- * @param {string} req.params.id - Wallet ID
- * @param {string} req.body.secret - Stellar secret key of the account
- * @param {string} req.body.bumpTo - Target sequence number (must be > current)
- * @returns {{ success: boolean, data: { hash, ledger, newSequence } }}
+ * POST /wallets/:id/data
+ * Create or update a data entry on the wallet's Stellar account
+ * Body: { secretKey, key, value }
+ * 
+ * SECURITY WARNING: Data entries are publicly readable on-chain.
+ * Do not store PII, secrets, or sensitive information.
  */
-router.post(
-  '/:id/bump-sequence',
-  checkPermission(PERMISSIONS.ADMIN_ALL),
-  bumpSequenceSchema,
+router.post('/:id/data', 
+  checkPermission(PERMISSIONS.WALLETS_UPDATE), 
+  walletIdSchema,
+  validateDataEntry,
   async (req, res, next) => {
     try {
       const { id } = req.params;
-      const { secret, bumpTo } = req.body;
+      const { secretKey, key, value } = req.body;
 
-      // Verify wallet exists in our system
-      const wallet = walletService.getWalletById(id);
+      if (!secretKey) {
+        throw new ValidationError(
+          'Secret key is required to set data entries',
+          null,
+          ERROR_CODES.MISSING_REQUIRED_FIELD
+        );
+      }
 
-      const stellarService = require('../config/serviceContainer').getStellarService();
-      const result = await stellarService.bumpSequence(secret, bumpTo);
+      const result = await walletService.setAccountData(id, secretKey, key, value);
 
       await AuditLogService.log({
         category: AuditLogService.CATEGORY.WALLET_OPERATION,
-        action: AuditLogService.ACTION.BUMP_SEQUENCE_EXECUTED,
-        severity: AuditLogService.SEVERITY.HIGH,
+        action: 'DATA_ENTRY_SET',
+        severity: AuditLogService.SEVERITY.MEDIUM,
         result: 'SUCCESS',
         userId: req.user && req.user.id,
         requestId: req.id,
         ipAddress: req.ip,
-        resource: `/wallets/${id}/bump-sequence`,
-        details: {
-          walletId: id,
-          walletAddress: wallet.address,
-          bumpTo,
-          hash: result.hash,
-        },
-      }).catch(() => {});
+        resource: `/wallets/${id}/data`,
+        details: { walletId: id, key, txHash: result.hash }
+      });
 
-      res.json({ success: true, data: result });
+      res.status(201).json({
+        success: true,
+        data: {
+          hash: result.hash,
+          ledger: result.ledger
+        }
+      });
     } catch (error) {
-      await AuditLogService.log({
-        category: AuditLogService.CATEGORY.WALLET_OPERATION,
-        action: AuditLogService.ACTION.BUMP_SEQUENCE_FAILED,
-        severity: AuditLogService.SEVERITY.HIGH,
-        result: 'FAILURE',
-        userId: req.user && req.user.id,
-        requestId: req.id,
-        ipAddress: req.ip,
-        resource: `/wallets/${req.params.id}/bump-sequence`,
-        details: { walletId: req.params.id, error: error.message },
-      }).catch(() => {});
       next(error);
     }
   }
 );
+
+/**
+ * GET /wallets/:id/data
+ * Fetch all current data entries for a wallet from the Stellar network
+ */
+router.get('/:id/data',
+  checkPermission(PERMISSIONS.WALLETS_READ),
+  walletIdSchema,
+  async (req, res, next) => {
+    try {
+      const { id } = req.params;
+
+      const result = await walletService.getAccountData(id);
+
+      res.json({
+        success: true,
+        data: result.entries || {},
+        count: Object.keys(result.entries || {}).length
+      });
+    } catch (error) {
+      next(error);
+    }
+  }
+);
+
+/**
+ * DELETE /wallets/:id/data/:key
+ * Remove a specific data entry from the wallet's Stellar account
+ * Body: { secretKey }
+ * 
+ * Deletion is done by setting the value to null in a manageData operation.
+ */
+router.delete('/:id/data/:key',
+  checkPermission(PERMISSIONS.WALLETS_UPDATE),
+  async (req, res, next) => {
+    try {
+      const { id, key } = req.params;
+      const { secretKey } = req.body;
+
+      // Validate wallet ID
+      const walletId = parseInt(id, 10);
+      if (isNaN(walletId) || walletId < 1) {
+        throw new ValidationError('Invalid wallet ID', null, ERROR_CODES.INVALID_REQUEST);
+      }
+
+      if (!secretKey) {
+        throw new ValidationError(
+          'Secret key is required to delete data entries',
+          null,
+          ERROR_CODES.MISSING_REQUIRED_FIELD
+        );
+      }
+
+      if (!key) {
+        throw new ValidationError(
+          'Data entry key is required',
+          null,
+          ERROR_CODES.MISSING_REQUIRED_FIELD
+        );
+      }
+
+      const result = await walletService.deleteAccountData(walletId, secretKey, key);
+
+      await AuditLogService.log({
+        category: AuditLogService.CATEGORY.WALLET_OPERATION,
+        action: 'DATA_ENTRY_DELETED',
+        severity: AuditLogService.SEVERITY.MEDIUM,
+        result: 'SUCCESS',
+        userId: req.user && req.user.id,
+        requestId: req.id,
+        ipAddress: req.ip,
+        resource: `/wallets/${id}/data/${key}`,
+        details: { walletId: id, key, txHash: result.hash }
+      });
+
+      res.json({
+        success: true,
+        data: {
+          hash: result.hash,
+          ledger: result.ledger
+        }
+      });
+    } catch (error) {
+      next(error);
+    }
+  }
+);
+ * POST /wallets/:id/merge
+ * Merge a wallet into a destination account.
+ *
+ * Transfers all XLM from the source wallet to the destination, closes the
+ * source account on the Stellar network, and soft-deletes the wallet record.
+ *
+ * @requires wallets:delete permission
+ * @body {string}  destinationPublicKey - Stellar public key of the receiving account
+ * @body {string}  sourceSecret         - Secret key of the wallet being merged
+ * @body {boolean} confirm              - Must be exactly `true` to proceed
+ */
+router.post('/:id/merge', checkPermission(PERMISSIONS.WALLETS_DELETE), async (req, res, next) => {
+  try {
+    const { destinationPublicKey, sourceSecret, confirm } = req.body;
+
+    // ── Confirmation gate ────────────────────────────────────────────────────
+    if (confirm !== true) {
+      return res.status(400).json({
+        success: false,
+        error: 'Account merge requires explicit confirmation. Set confirm: true to proceed.',
+      });
+    }
+
+    // ── Required fields ──────────────────────────────────────────────────────
+    if (!destinationPublicKey || !sourceSecret) {
+      return res.status(400).json({
+        success: false,
+        error: 'Missing required fields: destinationPublicKey, sourceSecret',
+      });
+    }
+
+    // ── Lookup source wallet ─────────────────────────────────────────────────
+    const sourceWallet = await Database.get(
+      'SELECT id, publicKey, mergedAt FROM users WHERE id = ?',
+      [req.params.id]
+    );
+
+    if (!sourceWallet) {
+      return res.status(404).json({ success: false, error: 'Wallet not found' });
+    }
+
+    if (sourceWallet.mergedAt) {
+      return res.status(409).json({
+        success: false,
+        error: 'Wallet has already been merged and closed',
+      });
+    }
+
+    if (sourceWallet.publicKey === destinationPublicKey) {
+      return res.status(400).json({
+        success: false,
+        error: 'Source and destination wallets cannot be the same',
+      });
+    }
+
+    // ── Execute merge on Stellar ─────────────────────────────────────────────
+    const stellarService = getStellarService();
+    const mergeResult = await stellarService.mergeAccount(sourceSecret, destinationPublicKey);
+
+    // ── Soft-delete source wallet ────────────────────────────────────────────
+    const now = new Date().toISOString();
+    await Database.run(
+      'UPDATE users SET mergedAt = ?, mergedInto = ? WHERE id = ?',
+      [now, destinationPublicKey, sourceWallet.id]
+    );
+
+    // ── Write audit log ──────────────────────────────────────────────────────
+    await Database.run(
+      `INSERT INTO wallet_merge_audit
+         (sourceWalletId, sourcePublicKey, destinationPublicKey, mergedAmount,
+          transactionHash, ledger, performedBy, timestamp)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+      [
+        sourceWallet.id,
+        sourceWallet.publicKey,
+        destinationPublicKey,
+        mergeResult.mergedAmount,
+        mergeResult.hash,
+        mergeResult.ledger,
+        req.user ? req.user.id : 'unknown',
+        now,
+      ]
+    );
+
+    log.info('WALLET_ROUTE', 'Wallet merged', {
+      sourceId: sourceWallet.id,
+      sourcePublicKey: sourceWallet.publicKey,
+      destinationPublicKey,
+      hash: mergeResult.hash,
+    });
+
+    return res.json({
+      success: true,
+      message: 'Account merged successfully. Source account has been closed.',
+      data: {
+        sourceWalletId: sourceWallet.id,
+        sourcePublicKey: sourceWallet.publicKey,
+        destinationPublicKey,
+        mergedAmount: mergeResult.mergedAmount,
+        transactionHash: mergeResult.hash,
+        ledger: mergeResult.ledger,
+        mergedAt: now,
+      },
+    });
+  } catch (error) {
+    next(error);
+  }
+});
 
 module.exports = router;

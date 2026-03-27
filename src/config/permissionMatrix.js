@@ -84,7 +84,10 @@ const ROUTE_PERMISSIONS = [
   { method: 'DELETE', path: '/api-keys/:id', permission: PERMISSIONS.ADMIN_ALL },
   { method: 'POST', path: '/api-keys/cleanup', permission: PERMISSIONS.ADMIN_ALL },
   { method: 'GET', path: '/abuse-signals', permission: PERMISSIONS.ADMIN_ALL },
-  { method: 'POST', path: '/reconcile', permission: PERMISSIONS.ADMIN_ALL }
+  { method: 'POST', path: '/reconcile', permission: PERMISSIONS.ADMIN_ALL },
+  { method: 'GET', path: '/geo-blocking', permission: PERMISSIONS.ADMIN_ALL },
+  { method: 'PUT', path: '/geo-blocking', permission: PERMISSIONS.ADMIN_ALL },
+  { method: 'POST', path: '/geo-blocking/reload-db', permission: PERMISSIONS.ADMIN_ALL }
 ];
 
 module.exports = {

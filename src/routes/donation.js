@@ -27,6 +27,8 @@ const { parseAssetInput } = require('../utils/stellarAsset');
 
 const { getStellarService } = require('../config/stellar');
 const DonationService = require('../services/DonationService');
+const { calculateCostBreakdown } = require('../utils/costBreakdown');
+
 const Transaction = require('./models/transaction');
 const { LIFECYCLE_STAGES } = require('../middleware/requestLifecycle');
 const federation = require('../utils/federation');
@@ -140,10 +142,31 @@ const createDonationSchema = validateSchema({
         required: false,
         nullable: true,
       },
+      validAfter: {
+        type: 'integerString',
+        required: false,
+        nullable: true,
+        min: 0,
+      },
+      validBefore: {
+        type: 'integerString',
+        required: false,
+        nullable: true,
+        min: 0,
+      },
     },
     validate: (body) => {
       if ((body.sourceAsset && !body.sourceAmount) || (!body.sourceAsset && body.sourceAmount)) {
         return 'sourceAsset and sourceAmount must be provided together';
+      }
+
+      // Validate time bounds: if both provided, validAfter must be < validBefore
+      if (body.validAfter && body.validBefore) {
+        const validAfter = Number(body.validAfter);
+        const validBefore = Number(body.validBefore);
+        if (validAfter >= validBefore) {
+          return 'validAfter must be less than validBefore';
+        }
       }
 
       return null;
@@ -445,9 +468,23 @@ router.post('/batch', payloadSizeLimiter(ENDPOINT_LIMITS.batchDonation), safeBat
  */
 router.post('/', payloadSizeLimiter(ENDPOINT_LIMITS.singleDonation), donationRateLimiter, requireApiKey, requireIdempotency, createDonationSchema, async (req, res, next) => {
   try {
-    const { amount, currency, donor, recipient, memo, memoType, notes, tags, encryptMemo } = req.body;
-    const { amount, currency, donor, recipient, memo, memoType, notes, tags, anonymous } = req.body;
-    const { amount, currency, donor, recipient, memo, memoType, notes, tags, sourceAsset, sourceAmount } = req.body;
+    const { amount, currency, donor, recipient, memo, memoType, notes, tags, encryptMemo, validAfter, validBefore } = req.body;
+    const { amount, currency, donor, recipient, memo, memoType, notes, tags, anonymous, validAfter, validBefore } = req.body;
+    const { amount, currency, donor, recipient, memo, memoType, notes, tags, sourceAsset, sourceAmount, validAfter, validBefore } = req.body;
+    const {
+      amount,
+      currency,
+      donor,
+      recipient,
+      memo,
+      memoType,
+      notes,
+      tags,
+      encryptMemo,
+      anonymous,
+      sourceAsset,
+      sourceAmount
+    } = req.body;
 
     // Basic validation
     if (!amount || !recipient) {
@@ -477,6 +514,20 @@ router.post('/', payloadSizeLimiter(ENDPOINT_LIMITS.singleDonation), donationRat
           error: `Invalid sourceAmount: ${sourceAmountValidation.error}`
         });
       }
+    }
+
+    // Validate time bounds strictly: validAfter < validBefore
+    const parsedValidAfter = validAfter ? Number(validAfter) : 0;
+    const parsedValidBefore = validBefore ? Number(validBefore) : 0;
+
+    if (parsedValidAfter && parsedValidBefore && parsedValidAfter >= parsedValidBefore) {
+      return res.status(400).json({
+        success: false,
+        error: {
+          code: 'INVALID_TIME_BOUNDS',
+          message: 'validAfter must be strictly less than validBefore'
+        }
+      });
     }
 
     // Validate memo type + value combination
@@ -531,6 +582,8 @@ router.post('/', payloadSizeLimiter(ENDPOINT_LIMITS.singleDonation), donationRat
       tags,
       memoEnvelope,
       encryptionMetadata,
+      validAfter: parsedValidAfter,
+      validBefore: parsedValidBefore,
       idempotencyKey: req.idempotency.key,
       apiKeyId: req.apiKey ? req.apiKey.id : null,
       apiKeyRole: req.apiKey ? req.apiKey.role : (req.user?.role || 'user'),
@@ -806,6 +859,58 @@ router.get('/recent', checkPermission(PERMISSIONS.DONATIONS_READ), recentDonatio
 });
 
 /**
+ * GET /donations/cost-breakdown
+ * Return an itemized cost breakdown for a proposed donation.
+ *
+ * Query parameters:
+ *   @param {string}  amount              - Donation amount in XLM (required, > 0)
+ *   @param {string}  [sender]            - Sender public key (optional, for future balance checks)
+ *   @param {number}  [surgeFeeMultiplier=1]    - Surge fee multiplier (>= 1)
+ *   @param {number}  [xlmUsdRate=0]      - Current XLM/USD rate for USD equivalents
+ *
+ * Platform fee is read from PLATFORM_FEE_PERCENT env variable (default 0).
+ *
+ * @access donations:read
+ */
+router.get('/cost-breakdown', checkPermission(PERMISSIONS.DONATIONS_READ), (req, res, next) => {
+  try {
+    const { amount, surgeFeeMultiplier, xlmUsdRate } = req.query;
+
+    if (!amount) {
+      return res.status(400).json({
+        success: false,
+        error: 'Query parameter "amount" is required',
+      });
+    }
+
+    const amountValidation = validateFloat(amount);
+    if (!amountValidation.valid) {
+      return res.status(400).json({
+        success: false,
+        error: `Invalid amount: ${amountValidation.error}`,
+      });
+    }
+
+    // Read platform fee from env (default 0, max 100)
+    const platformFeePercent = Math.min(
+      Math.max(parseFloat(process.env.PLATFORM_FEE_PERCENT || '0') || 0, 0),
+      100
+    );
+
+    const surgeMultiplier = surgeFeeMultiplier
+      ? Math.max(parseFloat(surgeFeeMultiplier) || 1, 1)
+      : 1;
+
+    const usdRate = xlmUsdRate ? parseFloat(xlmUsdRate) || 0 : 0;
+
+    const breakdown = calculateCostBreakdown({
+      amount: amountValidation.value,
+      surgeFeeMultiplier: surgeMultiplier,
+      platformFeePercent,
+      xlmUsdRate: usdRate,
+    });
+
+    return res.json({ success: true, data: breakdown });
  * GET /donations/:id/receipt
  * Generate and return a PDF receipt for a confirmed donation.
  */
@@ -1125,5 +1230,49 @@ router.post(
     }
   }
 );
+
+/**
+ * GET /donations/:id/impact
+ * Calculate the real-world impact of a specific donation based on its campaign's impact metrics.
+ *
+ * Returns an array of impact breakdowns per metric (e.g. "5 meals delivered").
+ * Returns an empty impact array if the donation has no campaign_id or no metrics are defined.
+ */
+router.get('/:id/impact', checkPermission(PERMISSIONS.DONATIONS_READ), donationIdParamSchema, async (req, res, next) => {
+  try {
+    const ImpactMetricService = require('../services/ImpactMetricService');
+    const transaction = donationService.getDonationById(req.params.id);
+
+    if (!transaction.campaign_id) {
+      return res.json({
+        success: true,
+        data: {
+          donation_id: transaction.id,
+          amount: transaction.amount,
+          campaign_id: null,
+          impact: [],
+          message: 'No campaign associated with this donation',
+        },
+      });
+    }
+
+    const impact = await ImpactMetricService.calculateDonationImpact(
+      parseFloat(transaction.amount),
+      transaction.campaign_id
+    );
+
+    res.json({
+      success: true,
+      data: {
+        donation_id: transaction.id,
+        amount: transaction.amount,
+        campaign_id: transaction.campaign_id,
+        impact,
+      },
+    });
+  } catch (error) {
+    next(error);
+  }
+});
 
 module.exports = router;

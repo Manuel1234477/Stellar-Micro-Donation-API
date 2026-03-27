@@ -112,6 +112,28 @@ const validateUrl = (value, varName) => {
 };
 
 /**
+ * Validate IP address or CIDR range
+ */
+const isValidIPOrCIDR = (ip) => {
+  const ipRegex = /^(?:[0-9]{1,3}\.){3}[0-9]{1,3}$/;
+  const cidrRegex = /^(?:[0-9]{1,3}\.){3}[0-9]{1,3}\/[0-9]{1,2}$/;
+
+  if (ipRegex.test(ip)) {
+    const parts = ip.split('.').map(Number);
+    return parts.every(part => part >= 0 && part <= 255);
+  }
+
+  if (cidrRegex.test(ip)) {
+    const [ipPart, mask] = ip.split('/');
+    const maskNum = parseInt(mask);
+    const parts = ipPart.split('.').map(Number);
+    return parts.every(part => part >= 0 && part <= 255) && maskNum >= 0 && maskNum <= 32;
+  }
+
+  return false;
+};
+
+/**
  * Load and validate configuration
  */
 const loadConfig = () => {
@@ -182,6 +204,31 @@ const loadConfig = () => {
   for (const varName of booleanVars) {
     if (process.env[varName] && process.env[varName] !== 'true' && process.env[varName] !== 'false') {
       errors.push(`${varName} must be either "true" or "false". Received: "${process.env[varName]}".`);
+    }
+  }
+
+  // Validate geo-blocking configuration
+  if (process.env.GEO_BLOCKED_COUNTRIES) {
+    const countries = process.env.GEO_BLOCKED_COUNTRIES.split(',').map(c => c.trim().toUpperCase());
+    const invalidCountries = countries.filter(c => !/^[A-Z]{2}$/.test(c));
+    if (invalidCountries.length > 0) {
+      errors.push(`GEO_BLOCKED_COUNTRIES contains invalid country codes: ${invalidCountries.join(', ')}`);
+    }
+  }
+
+  if (process.env.GEO_ALLOWED_COUNTRIES) {
+    const countries = process.env.GEO_ALLOWED_COUNTRIES.split(',').map(c => c.trim().toUpperCase());
+    const invalidCountries = countries.filter(c => !/^[A-Z]{2}$/.test(c));
+    if (invalidCountries.length > 0) {
+      errors.push(`GEO_ALLOWED_COUNTRIES contains invalid country codes: ${invalidCountries.join(', ')}`);
+    }
+  }
+
+  if (process.env.GEO_ALLOWED_IPS) {
+    const ips = process.env.GEO_ALLOWED_IPS.split(',').map(ip => ip.trim());
+    const invalidIPs = ips.filter(ip => !isValidIPOrCIDR(ip));
+    if (invalidIPs.length > 0) {
+      errors.push(`GEO_ALLOWED_IPS contains invalid IP addresses/CIDR ranges: ${invalidIPs.join(', ')}`);
     }
   }
 
@@ -278,6 +325,20 @@ const buildConfig = (env, isProduction, isTest) => {
     requireInProduction: isProduction,
   };
 
+  // Geo-blocking configuration
+  const geoBlocking = {
+    blockedCountries: process.env.GEO_BLOCKED_COUNTRIES
+      ? process.env.GEO_BLOCKED_COUNTRIES.split(',').map(country => country.trim().toUpperCase()).filter(Boolean)
+      : [],
+    allowedCountries: process.env.GEO_ALLOWED_COUNTRIES
+      ? process.env.GEO_ALLOWED_COUNTRIES.split(',').map(country => country.trim().toUpperCase()).filter(Boolean)
+      : [],
+    allowedIPs: process.env.GEO_ALLOWED_IPS
+      ? process.env.GEO_ALLOWED_IPS.split(',').map(ip => ip.trim()).filter(Boolean)
+      : [],
+    maxmindDbPath: process.env.MAXMIND_DB_PATH || path.join(__dirname, '../../data/GeoLite2-Country.mmdb'),
+  };
+
   // Application metadata
   const app = {
     name: 'stellar-micro-donation-api',
@@ -293,6 +354,7 @@ const buildConfig = (env, isProduction, isTest) => {
     donations,
     logging,
     encryption,
+    geoBlocking,
     app,
   };
   

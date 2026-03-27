@@ -1,0 +1,85 @@
+# Implementation Plan
+
+- [x] 1. Write bug condition exploration test
+  - **Property 1: Bug Condition** - Unimplemented Methods Throw
+  - **CRITICAL**: This test MUST FAIL on unfixed code - failure confirms the bug exists
+  - **DO NOT attempt to fix the test or the code when it fails**
+  - **NOTE**: This test encodes the expected behavior - it will validate the fix when it passes after implementation
+  - **GOAL**: Surface counterexamples that demonstrate all eleven methods throw "must be implemented"
+  - **Scoped PBT Approach**: Scope the property to each of the eleven concrete failing methods for reproducibility
+  - Test file: `tests/fix-mockstellarservice-to-implement-all-stellarser.test.js`
+  - For each of the eleven methods, assert the call does NOT throw and returns a meaningful mock value:
+    - `loadAccount(knownPublicKey)` → assert result has `id`, `sequence`, `balances`
+    - `submitTransaction(mockTx)` → assert result has `hash`, `ledger`, `status`
+    - `buildPaymentTransaction(src, dst, amount, {})` → assert `result._isMockTransaction === true && result._unsigned === true`
+    - `getAccountSequence(knownPublicKey)` → assert result is a string
+    - `buildTransaction(src, [], {})` → assert `result._isMockTransaction === true && result._unsigned === true`
+    - `signTransaction(mockTx, secretKey)` → assert `result._signed === true`
+    - `getAccountBalances(knownPublicKey)` → assert result is an array with `asset_type` and `balance` fields
+    - `getTransaction(knownHash)` → assert result has `hash` or `transactionId`
+    - `isValidAddress('GABC...' valid G-key)` → assert result is `true`
+    - `stroopsToXlm(10000000)` → assert result is `'1.0000000'`
+    - `xlmToStroops(1)` → assert result is `10000000`
+  - Run test on UNFIXED code: `npm test tests/fix-mockstellarservice-to-implement-all-stellarser.test.js`
+  - **EXPECTED OUTCOME**: Test FAILS with "must be implemented" errors (this is correct - it proves the bug exists)
+  - Document counterexamples found (e.g., `mockService.loadAccount('G...')` throws `Error: loadAccount() must be implemented`)
+  - Mark task complete when test is written, run, and failure is documented
+  - _Requirements: 1.1, 1.2, 1.3, 1.4, 1.5, 1.6, 1.7, 1.8, 1.9, 1.10, 1.11_
+
+- [x] 2. Write preservation property tests (BEFORE implementing fix)
+  - **Property 2: Preservation** - Existing Method Behavior Unchanged
+  - **IMPORTANT**: Follow observation-first methodology
+  - Observe behavior on UNFIXED code for already-implemented methods (isBugCondition returns false)
+  - Observe: `createWallet()` returns `{ publicKey, secretKey }` with correct key formats
+  - Observe: `getBalance(publicKey)` returns `{ balance, asset }` for known accounts
+  - Observe: `estimateFee(1)` returns `{ feeStroops, feeXLM, baseFee, surgeProtection, surgeMultiplier }`
+  - Observe: `isValidAddress('invalid')` returns `false` (not throws) — preservation requirement 3.12
+  - Write property-based tests capturing observed behavior patterns from Preservation Requirements:
+    - For all valid wallet public keys: `createWallet()` always returns object with `publicKey` starting with 'G' and `secretKey` starting with 'S'
+    - For all known accounts: `getBalance(publicKey)` always returns numeric balance without throwing
+    - For any positive integer n: `estimateFee(n)` always returns object with `feeStroops` and `feeXLM` fields
+    - For any non-G-key string: `isValidAddress(addr)` always returns `false` without throwing
+  - Run tests on UNFIXED code: `npm test tests/fix-mockstellarservice-to-implement-all-stellarser.test.js`
+  - **EXPECTED OUTCOME**: Tests PASS (this confirms baseline behavior to preserve)
+  - Mark task complete when tests are written, run, and passing on unfixed code
+  - _Requirements: 3.1, 3.2, 3.3, 3.4, 3.5, 3.6, 3.7, 3.8, 3.9, 3.10, 3.11, 3.12_
+
+- [x] 3. Fix MockStellarService — implement all eleven missing methods
+
+  - [x] 3.1 Implement the fix in `src/services/MockStellarService.js`
+    - Add `loadAccount(publicKey)`: look up `this.wallets.get(publicKey)`, return `{ id: publicKey, sequence: wallet.sequence, balances: [{ asset_type: 'native', asset_code: 'XLM', balance: wallet.balance }] }`, throw `NotFoundError` if not found
+    - Add `submitTransaction(transaction)`: generate mock hash, store in `this.transactions` keyed by `transaction.source`, return `{ hash, ledger, status: 'confirmed' }`
+    - Add `buildPaymentTransaction(sourcePublicKey, destinationPublicKey, amount, options)`: return `{ type: 'payment', source: sourcePublicKey, destination: destinationPublicKey, amount, options, _isMockTransaction: true, _unsigned: true }`
+    - Add `getAccountSequence(publicKey)`: look up `this.wallets.get(publicKey)`, return `String(wallet.sequence)`, throw `NotFoundError` if not found
+    - Add `buildTransaction(sourcePublicKey, operations, options)`: return `{ type: 'transaction', source: sourcePublicKey, operations, options, _isMockTransaction: true, _unsigned: true }`
+    - Add `signTransaction(transaction, secretKey)`: return `{ ...transaction, _signed: true, _secretKey: secretKey }`
+    - Add `getAccountBalances(publicKey)`: look up `this.wallets.get(publicKey)`, build array from `wallet.assetBalances` plus native entry, throw `NotFoundError` if not found
+    - Add `getTransaction(transactionHash)`: search all `this.transactions` entries for record matching `tx.transactionId` or `tx.hash`, return record if found, throw `NotFoundError` otherwise
+    - Add `isValidAddress(address)`: return `/^G[A-Z2-7]{55}$/.test(address)` — must never throw
+    - Add `stroopsToXlm(stroops)`: return `(Number(stroops) / 10_000_000).toFixed(7)`
+    - Add `xlmToStroops(xlm)`: return `Math.round(Number(xlm) * 10_000_000)`
+    - _Bug_Condition: isBugCondition(call) where call.methodName IN ['loadAccount', 'submitTransaction', 'buildPaymentTransaction', 'getAccountSequence', 'buildTransaction', 'signTransaction', 'getAccountBalances', 'getTransaction', 'isValidAddress', 'stroopsToXlm', 'xlmToStroops']_
+    - _Expected_Behavior: each method returns meaningful mock value without throwing, per expectedBehavior pseudocode in design_
+    - _Preservation: all existing methods (createWallet, getBalance, sendDonation, estimateFee, buildAndSubmitFeeBumpTransaction, discoverBestPath, pathPayment, verifyTransaction, streamTransactions, createClaimableBalance, claimBalance) must remain unchanged_
+    - _Requirements: 2.1, 2.2, 2.3, 2.4, 2.5, 2.6, 2.7, 2.8, 2.9, 2.10, 2.11_
+
+  - [x] 3.2 Verify bug condition exploration test now passes
+    - **Property 1: Expected Behavior** - Unimplemented Methods Return Mock Values
+    - **IMPORTANT**: Re-run the SAME test from task 1 - do NOT write a new test
+    - The test from task 1 encodes the expected behavior for all eleven methods
+    - When this test passes, it confirms all eleven methods return correct mock values
+    - Run: `npm test tests/fix-mockstellarservice-to-implement-all-stellarser.test.js`
+    - **EXPECTED OUTCOME**: Test PASSES (confirms bug is fixed)
+    - _Requirements: 2.1, 2.2, 2.3, 2.4, 2.5, 2.6, 2.7, 2.8, 2.9, 2.10, 2.11_
+
+  - [x] 3.3 Verify preservation tests still pass
+    - **Property 2: Preservation** - Existing Method Behavior Unchanged
+    - **IMPORTANT**: Re-run the SAME tests from task 2 - do NOT write new tests
+    - Run preservation property tests from step 2
+    - **EXPECTED OUTCOME**: Tests PASS (confirms no regressions)
+    - Confirm all tests still pass after fix (no regressions)
+    - _Requirements: 3.1, 3.2, 3.3, 3.4, 3.5, 3.6, 3.7, 3.8, 3.9, 3.10, 3.11, 3.12_
+
+- [x] 4. Checkpoint - Ensure all tests pass
+  - Run full test suite: `npm test tests/fix-mockstellarservice-to-implement-all-stellarser.test.js`
+  - Ensure all tests pass, ask the user if questions arise.

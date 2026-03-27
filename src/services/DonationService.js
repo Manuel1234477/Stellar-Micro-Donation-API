@@ -103,7 +103,6 @@ class DonationService {
    * @param {string} params.requestId - Request ID for logging
    * @returns {Promise<Object>} Donation result with transaction details
    */
-  async sendCustodialDonation({ senderId, receiverId, amount, memo, notes, tags, apiKeyId, idempotencyKey, requestId, campaign_id }) {
   async sendCustodialDonation({ senderId, receiverId, amount, memo, notes, tags, apiKeyId, campaign_id, idempotencyKey, requestId }) {
     log.debug('DONATION_SERVICE', 'Processing custodial donation', {
       requestId,
@@ -491,8 +490,6 @@ class DonationService {
    * @param {string} params.idempotencyKey - Idempotency key
    * @returns {Object} Created transaction
    */
-  async createDonationRecord({ amount, currency = 'XLM', donor, recipient, memo, notes, tags, memoType = 'text', apiKeyId, apiKeyRole = 'user', idempotencyKey, receivedAmount, sessionId, campaign_id = null, memoEnvelope = null, encryptionMetadata = null }) {
-  async createDonationRecord({ amount, currency = 'XLM', donor, recipient, memo, notes, tags, memoType = 'text', apiKeyId, apiKeyRole = 'user', idempotencyKey, receivedAmount, sessionId, anonymous = false, campaign_id }) {
   async createDonationRecord({
     amount,
     currency = 'XLM',
@@ -507,9 +504,14 @@ class DonationService {
     idempotencyKey,
     receivedAmount,
     sessionId,
-    campaign_id,
+    campaign_id = null,
+    anonymous = false,
     sourceAsset,
     sourceAmount,
+    validAfter = 0,
+    validBefore = 0,
+    memoEnvelope = null,
+    encryptionMetadata = null,
   }) {
     // Sanitize identifiers
     const rawDonor = donor ? sanitizeIdentifier(donor) : 'Anonymous';
@@ -614,6 +616,8 @@ class DonationService {
           amount: normalizedSourceAmount.toString(),
           memo: memoResult.sanitized,
           asset: normalizedSourceAsset,
+          validAfter,
+          validBefore,
         });
         paymentMethod = 'direct';
       } else {
@@ -656,6 +660,8 @@ class DonationService {
               amount: normalizedSourceAmount.toString(),
               memo: memoResult.sanitized,
               asset: normalizedSourceAsset,
+              validAfter,
+              validBefore,
             });
             paymentMethod = 'direct';
             fallbackUsed = true;
@@ -702,6 +708,9 @@ class DonationService {
       // Anonymous donation fields
       anonymous: anonymous === true,
       pseudonymousId: pseudonymousId || null,
+      // Time-bound transaction fields
+      validAfter: validAfter || 0,
+      validBefore: validBefore || 0,
     });
 
     if (campaign_id) {
@@ -756,10 +765,83 @@ class DonationService {
   }
 
   /**
-   * Update campaign progress and trigger Webhooks if goal met
+   * Calculate milestone percentages for a campaign (0.25, 0.5, 0.75, 1.0)
+   * @param {number} totalRaised - Total amount raised
+   * @param {number} goalAmount - Campaign goal amount
+   * @returns {number[]} Array of milestones that have been reached (as decimals)
+   */
+  checkMilestones(totalRaised, goalAmount) {
+    const milestones = [0.25, 0.5, 0.75, 1.0];
+    const currentProgress = totalRaised / goalAmount;
+    
+    return milestones.filter(m => currentProgress >= m);
+  }
+
+  /**
+   * Get notified milestones for a campaign (stored as JSON)
+   * @param {Object} campaign - Campaign record from database
+   * @returns {number[]} Array of milestone decimals already notified
+   */
+  getNotifiedMilestones(campaign) {
+    if (!campaign.notified_milestones) return [];
+    
+    try {
+      const notified = JSON.parse(campaign.notified_milestones);
+      return Array.isArray(notified) ? notified : [];
+    } catch (err) {
+      log.warn('CAMPAIGN', 'Failed to parse notified_milestones JSON', { error: err.message });
+      return [];
+    }
+  }
+
+  /**
+   * Emit milestone reached event for SSE clients
+   * @param {number} campaignId - Campaign ID
+   * @param {Object} campaign - Campaign record
+   * @param {number[]} newMilestones - Array of newly reached milestones
+   */
+  async emitMilestoneEvents(campaignId, campaign, newMilestones) {
+    const SseManager = require('./SseManager');
+    const { EventEmitter } = require('events');
+    
+    // Create a local event emitter for campaign milestone events
+    const campaignEmitter = new EventEmitter();
+    
+    for (const milestone of newMilestones) {
+      const progressPercentage = Math.round(milestone * 100);
+      const data = {
+        campaign_id: campaignId,
+        campaign_name: campaign.name,
+        milestone_percentage: progressPercentage,
+        current_amount: campaign.current_amount,
+        goal_amount: campaign.goal_amount,
+        progress_percentage: Math.round((campaign.current_amount / campaign.goal_amount) * 100),
+        timestamp: new Date().toISOString()
+      };
+
+      // Emit for in-memory SSE streaming
+      campaignEmitter.emit('milestone_reached', data);
+      
+      // Also broadcast via SseManager if it has campaign progress support
+      if (SseManager.broadcastCampaignProgress) {
+        SseManager.broadcastCampaignProgress(data);
+      }
+
+      log.info('CAMPAIGN', `Milestone ${progressPercentage}% reached for campaign ${campaignId}`, data);
+    }
+
+    return campaignEmitter;
+  }
+
+  /**
+   * Update campaign progress with milestone detection and webhook dispatch
+   * @param {number} campaignId - Campaign ID
+   * @param {number} amount - Donation amount
    */
   async processCampaignContribution(campaignId, amount) {
     const WebhookService = require('./WebhookService');
+    const donationEvents = require('../events/donationEvents');
+    
     const updateResult = await Database.run(
       `UPDATE campaigns 
        SET current_amount = current_amount + ? 
@@ -767,21 +849,110 @@ class DonationService {
       [amount, campaignId]
     );
 
-    if (updateResult && updateResult.changes > 0) {
-      const campaign = await Database.get('SELECT * FROM campaigns WHERE id = ?', [campaignId]);
+    if (!updateResult || updateResult.changes === 0) {
+      log.debug('CAMPAIGN', 'No active campaign found or update had no effect', { campaignId });
+      return;
+    }
+
+    // Fetch updated campaign
+    const campaign = await Database.get('SELECT * FROM campaigns WHERE id = ?', [campaignId]);
+    if (!campaign) {
+      log.warn('CAMPAIGN', 'Campaign not found after update', { campaignId });
+      return;
+    }
+
+    // Check for new milestones
+    const reachedMilestones = this.checkMilestones(campaign.current_amount, campaign.goal_amount);
+    const notifiedMilestones = this.getNotifiedMilestones(campaign);
+    const newMilestones = reachedMilestones.filter(m => !notifiedMilestones.includes(m));
+
+    // Update notified milestones in the database
+    if (newMilestones.length > 0) {
+      const updatedNotified = [...notifiedMilestones, ...newMilestones];
       
-      if (campaign && campaign.current_amount >= campaign.goal_amount) {
-        await Database.run(`UPDATE campaigns SET status = 'completed' WHERE id = ?`, [campaignId]);
+      try {
+        await Database.run(
+          `UPDATE campaigns 
+           SET notified_milestones = ?, last_milestone_notification = CURRENT_TIMESTAMP 
+           WHERE id = ?`,
+          [JSON.stringify(updatedNotified), campaignId]
+        );
         
-        await WebhookService.deliver('campaign.completed', {
+        log.info('CAMPAIGN', `Updated notified milestones for campaign ${campaignId}`, { updatedNotified });
+      } catch (err) {
+        log.error('CAMPAIGN', 'Failed to update notified_milestones', { campaignId, error: err.message });
+      }
+
+      // Emit milestone events for SSE
+      try {
+        await this.emitMilestoneEvents(campaignId, campaign, newMilestones);
+      } catch (err) {
+        log.error('CAMPAIGN', 'Failed to emit milestone events', { campaignId, error: err.message });
+      }
+
+      // Dispatch webhooks for each new milestone
+      for (const milestone of newMilestones) {
+        const progressPercentage = Math.round(milestone * 100);
+        
+        try {
+          await WebhookService.deliver('campaign.milestone', {
+            campaign_id: campaignId,
+            name: campaign.name,
+            milestone_percentage: progressPercentage,
+            current_amount: campaign.current_amount,
+            goal_amount: campaign.goal_amount,
+            progress_percentage: Math.round((campaign.current_amount / campaign.goal_amount) * 100),
+            timestamp: new Date().toISOString()
+          });
+          
+          log.info('CAMPAIGN', `Webhook dispatched for ${progressPercentage}% milestone`, { campaignId });
+        } catch (err) {
+          log.error('CAMPAIGN', 'Failed to dispatch milestone webhook', { campaignId, milestone, error: err.message });
+        }
+      }
+    }
+
+    // Check if goal is reached
+    if (campaign.current_amount >= campaign.goal_amount && campaign.status === 'active') {
+      try {
+        // Update campaign status to closed and set closed_at timestamp
+        await Database.run(
+          `UPDATE campaigns 
+           SET status = 'closed', closed_at = CURRENT_TIMESTAMP 
+           WHERE id = ?`,
+          [campaignId]
+        );
+
+        // Emit goal reached event
+        try {
+          const goalReachedData = {
+            campaign_id: campaignId,
+            campaign_name: campaign.name,
+            goal_amount: campaign.goal_amount,
+            final_amount: campaign.current_amount,
+            reached_at: new Date().toISOString()
+          };
+          
+          donationEvents.emitLifecycleEvent('campaign.goal_reached', goalReachedData);
+        } catch (err) {
+          log.error('CAMPAIGN', 'Failed to emit goal reached event', { campaignId, error: err.message });
+        }
+
+        // Dispatch goal reached webhook
+        await WebhookService.deliver('campaign.goal_reached', {
           campaign_id: campaignId,
           name: campaign.name,
           goal_amount: campaign.goal_amount,
           final_amount: campaign.current_amount,
-          completed_at: new Date().toISOString()
+          reached_at: new Date().toISOString()
         });
-        
-        log.info('CAMPAIGN', `Campaign ${campaignId} reached its goal and is now completed`);
+
+        log.info('CAMPAIGN', `Campaign ${campaignId} reached its goal and is now closed`, {
+          goalAmount: campaign.goal_amount,
+          finalAmount: campaign.current_amount
+        });
+      } catch (err) {
+        log.error('CAMPAIGN', 'Failed to process goal reached', { campaignId, error: err.message });
       }
     }
   }
@@ -999,7 +1170,6 @@ class DonationService {
       transactions = transactions.filter(tx => tx.tags && tx.tags.includes(filters.tag));
     }
 
-    const result = paginateCollection(transactions, {
     const sortBy = filters.sortBy || 'timestamp';
     const order = filters.order || 'desc';
     const useCustomSort = sortBy !== 'timestamp' || order !== 'desc';

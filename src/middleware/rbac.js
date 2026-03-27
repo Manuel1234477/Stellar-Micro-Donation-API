@@ -152,10 +152,12 @@ exports.checkAllPermissions = (permissions) => {
 /**
  * Administrative Access Enforcer
  * Intent: Hard-check for the 'admin' role, bypassing granular permission checks for global access.
+ * When TOTP is enabled on the API key, a valid TOTP code must be supplied via the
+ * X-TOTP-Code request header (or the request body field `totpCode`).
  * Flow: Checks req.user.role strictly. Prevents 'guest' or 'user' roles from accessing management endpoints.
  */
 exports.requireAdmin = () => {
-  return (req, res, next) => {
+  return async (req, res, next) => {
     try {
       if (!req.user || req.user.role === 'guest') {
         throw new UnauthorizedError('Authentication required');
@@ -181,6 +183,58 @@ exports.requireAdmin = () => {
 
         throw new ForbiddenError('Admin access required');
       }
+
+      // ── TOTP second-factor check ──────────────────────────────────────────
+      // Only applies to DB-backed keys (not legacy env keys)
+      const keyId = req.apiKey && !req.apiKey.isLegacy ? req.apiKey.id : null;
+      if (keyId) {
+        try {
+          const TOTPService = require('../services/TOTPService');
+          const totpEnabled = await TOTPService.isTotpEnabled(keyId);
+          if (totpEnabled) {
+            const totpCode = req.get('X-TOTP-Code') || (req.body && req.body.totpCode);
+            if (!totpCode) {
+              res.setHeader('X-TOTP-Required', 'true');
+              return res.status(401).json({
+                success: false,
+                error: {
+                  code: 'TOTP_REQUIRED',
+                  message: 'This admin key requires a TOTP code. Supply it via the X-TOTP-Code header.',
+                },
+              });
+            }
+            const totpValid = await TOTPService.verify(keyId, String(totpCode));
+            const backupValid = !totpValid && await TOTPService.verifyBackupCode(keyId, String(totpCode));
+            if (!totpValid && !backupValid) {
+              res.setHeader('X-TOTP-Required', 'true');
+              AuditLogService.log({
+                category: AuditLogService.CATEGORY.AUTHORIZATION,
+                action: 'TOTP_VERIFICATION_FAILED',
+                severity: AuditLogService.SEVERITY.HIGH,
+                result: 'FAILURE',
+                userId: req.user.id,
+                requestId: req.id,
+                ipAddress: req.ip,
+                resource: req.path,
+                reason: 'Invalid TOTP code',
+              }).catch(() => {});
+              return res.status(401).json({
+                success: false,
+                error: {
+                  code: 'INVALID_TOTP',
+                  message: 'Invalid or expired TOTP code',
+                },
+              });
+            }
+          }
+        } catch (totpErr) {
+          // Non-fatal: if TOTP columns don't exist yet, skip the check
+          if (!totpErr.message || !totpErr.message.includes('no such column')) {
+            throw totpErr;
+          }
+        }
+      }
+      // ── End TOTP check ────────────────────────────────────────────────────
 
       // Audit log: Admin access granted
       AuditLogService.log({

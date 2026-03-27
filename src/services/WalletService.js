@@ -290,6 +290,80 @@ class WalletService {
 
     return result;
   }
+
+  /**
+   * Set or update an account data entry
+   * @param {string|number} walletId - Wallet ID
+   * @param {string} secretKey - Secret key of the wallet owner
+   * @param {string} key - Data entry key (max 64 bytes)
+   * @param {string} value - Data entry value (max 64 bytes)
+   * @returns {Promise<Object>} Transaction result with hash and ledger
+   */
+  async setAccountData(walletId, secretKey, key, value) {
+    if (!this.stellarService) {
+      throw new ValidationError('Stellar service not available', null, ERROR_CODES.SERVICE_UNAVAILABLE);
+    }
+
+    const wallet = this.getWalletById(walletId);
+    if (!wallet) {
+      throw new NotFoundError('Wallet not found', ERROR_CODES.WALLET_NOT_FOUND);
+    }
+
+    // Call Stellar service to set the data entry
+    const result = await this.stellarService.setAccountData(secretKey, key, value);
+    return result;
+  }
+
+  /**
+   * Delete an account data entry
+   * @param {string|number} walletId - Wallet ID
+   * @param {string} secretKey - Secret key of the wallet owner
+   * @param {string} key - Data entry key to delete
+   * @returns {Promise<Object>} Transaction result with hash and ledger
+   */
+  async deleteAccountData(walletId, secretKey, key) {
+    if (!this.stellarService) {
+      throw new ValidationError('Stellar service not available', null, ERROR_CODES.SERVICE_UNAVAILABLE);
+    }
+
+    const wallet = this.getWalletById(walletId);
+    if (!wallet) {
+      throw new NotFoundError('Wallet not found', ERROR_CODES.WALLET_NOT_FOUND);
+    }
+
+    // Call Stellar service to delete the data entry
+    const result = await this.stellarService.deleteAccountData(secretKey, key);
+    return result;
+  }
+
+  /**
+   * Get all account data entries for a wallet (from on-chain Horizon API)
+   * Note: This requires querying the Stellar network, which will be called
+   * by StellarService if we implement a getAccountData method.
+   * For now, returns data from the mock service for testing.
+   * @param {string|number} walletId - Wallet ID
+   * @returns {Promise<Object>} Account data entries
+   */
+  async getAccountData(walletId) {
+    if (!this.stellarService) {
+      throw new ValidationError('Stellar service not available', null, ERROR_CODES.SERVICE_UNAVAILABLE);
+    }
+
+    const wallet = this.getWalletById(walletId);
+    if (!wallet) {
+      throw new NotFoundError('Wallet not found', ERROR_CODES.WALLET_NOT_FOUND);
+    }
+
+    // For real Stellar service, we would query Horizon here
+    // For now, return simulated data for mock service
+    if (this.stellarService.getNetwork) {
+      // Pass the wallet address to get its data
+      // This would be implemented in StellarService if needed
+      return { entries: {} };
+    }
+
+    return { entries: {} };
+  }
 }
 
 module.exports = WalletService;

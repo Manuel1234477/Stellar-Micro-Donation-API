@@ -39,6 +39,10 @@ class RecurringDonationScheduler {
     /** How often the scheduler polls for due donations (ms) */
     this.checkInterval = 60_000; // 1 minute
 
+    // Backup configuration (default: daily)
+    this.backupInterval = parseInt(process.env.BACKUP_INTERVAL_MS, 10) || 24 * 60 * 60 * 1000;
+    this.lastBackupAt = 0;
+
     // Retry configuration
     this.maxRetries = 3;
     this.initialBackoffMs = 1_000;  // 1 second
@@ -211,6 +215,19 @@ class RecurringDonationScheduler {
           await retentionService.runAll();
         } catch (retentionError) {
           log.error('RECURRING_SCHEDULER', 'Retention job failed', { error: retentionError.message });
+        }
+      }
+
+      // Run scheduled database backup once per backupInterval
+      if (now2 - this.lastBackupAt >= this.backupInterval) {
+        this.lastBackupAt = now2;
+        try {
+          const BackupService = require('./BackupService');
+          const backupService = new BackupService();
+          const result = await backupService.backup();
+          log.info('RECURRING_SCHEDULER', 'Scheduled backup completed', { backupId: result.backupId });
+        } catch (backupError) {
+          log.error('RECURRING_SCHEDULER', 'Scheduled backup failed', { error: backupError.message });
         }
       }
     } catch (error) {

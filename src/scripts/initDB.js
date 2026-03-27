@@ -37,7 +37,8 @@ function createUsersTable(db) {
         deleted_at DATETIME DEFAULT NULL,
         daily_limit REAL DEFAULT NULL,
         monthly_limit REAL DEFAULT NULL,
-        per_transaction_limit REAL DEFAULT NULL
+        per_transaction_limit REAL DEFAULT NULL,
+        tenant_id TEXT NOT NULL DEFAULT 'default'
       )
     `;
 
@@ -69,6 +70,9 @@ function createTransactionsTable(db) {
         stellar_tx_id TEXT UNIQUE,
         is_orphan INTEGER NOT NULL DEFAULT 0,
         campaign_id INTEGER,
+        validAfter INTEGER DEFAULT 0,
+        validBefore INTEGER DEFAULT 0,
+        tenant_id TEXT NOT NULL DEFAULT 'default',
         FOREIGN KEY (campaign_id) REFERENCES campaigns(id),
         FOREIGN KEY (senderId) REFERENCES users(id),
         FOREIGN KEY (receiverId) REFERENCES users(id)
@@ -120,6 +124,7 @@ function createCampaignsTable(db) {
         createdAt DATETIME DEFAULT CURRENT_TIMESTAMP,
         updatedAt DATETIME DEFAULT CURRENT_TIMESTAMP,
         deleted_at DATETIME DEFAULT NULL,
+        tenant_id TEXT NOT NULL DEFAULT 'default',
         FOREIGN KEY (created_by) REFERENCES users(id)
       )
     `;
@@ -146,7 +151,8 @@ function createStudentFeeTables(db) {
         paidAmount REAL NOT NULL DEFAULT 0,
         createdAt DATETIME DEFAULT CURRENT_TIMESTAMP,
         updatedAt DATETIME DEFAULT CURRENT_TIMESTAMP,
-        deleted_at DATETIME DEFAULT NULL
+        deleted_at DATETIME DEFAULT NULL,
+        tenant_id TEXT NOT NULL DEFAULT 'default'
       )`, (err) => { if (err) return reject(err); });
 
       db.run(`CREATE TABLE IF NOT EXISTS fee_payments (
@@ -156,6 +162,7 @@ function createStudentFeeTables(db) {
         note TEXT,
         paidAt DATETIME DEFAULT CURRENT_TIMESTAMP,
         deleted_at DATETIME DEFAULT NULL,
+        tenant_id TEXT NOT NULL DEFAULT 'default',
         FOREIGN KEY (feeId) REFERENCES student_fees(id)
       )`, (err) => {
         if (err) return reject(err);

@@ -47,6 +47,11 @@ class MockStellarService extends StellarServiceInterface {
     };
 
     this.requestTimestamps = [];
+    
+    // Mock system time for testing time-bound transactions
+    // Can be overridden via setMockSystemTime() for testing clock-based failures
+    this.mockSystemTime = null;
+    
     this.failureSimulation = {
       enabled: false,
       type: null,
@@ -75,8 +80,240 @@ class MockStellarService extends StellarServiceInterface {
     this.failureSimulation.maxConsecutiveFailures = max;
   }
 
+  /**
+   * Set mock system time for testing time-bound transactions.
+   * @param {number} unixTimestamp - Unix timestamp in seconds (or null to use real time)
+   */
+  setMockSystemTime(unixTimestamp) {
+    this.mockSystemTime = unixTimestamp;
+  }
+
+  /**
+   * Get current system time in Unix seconds.
+   * Returns mock time if set, otherwise current real time.
+   * @returns {number} Unix timestamp in seconds
+   */
+  getCurrentSystemTime() {
+    if (this.mockSystemTime !== null) {
+      return this.mockSystemTime;
+    }
+    return Math.floor(Date.now() / 1000);
+  }
+
+  /**
+   * Reset mock system time to use real time.
+   */
+  resetMockSystemTime() {
+    this.mockSystemTime = null;
+  }
+
   getNetwork() { return this.network; }
   getHorizonUrl() { return this.horizonUrl; }
+
+  /**
+   * Load account state from mock wallet storage.
+   * @param {string} address
+   * @returns {Promise<Object>}
+   */
+  async loadAccount(address) {
+    if (!this.isValidAddress(address)) {
+      throw new ValidationError('Invalid Stellar address');
+    }
+
+    const account = this.wallets.get(address);
+    if (!account) {
+      throw new NotFoundError('Account not found in mock wallets', ERROR_CODES.WALLET_NOT_FOUND);
+    }
+
+    return {
+      accountId: () => address,
+      sequenceNumber: () => account.sequence || '1',
+      balances: account.balances || [{ asset_type: 'native', balance: account.balance || '0.0000000' }],
+    };
+  }
+
+  /**
+   * Validate a Stellar public key.
+   * @param {string} address
+   * @returns {boolean}
+   */
+  isValidAddress(address) {
+    return typeof address === 'string' && /^G[A-Z2-7]{55}$/.test(address);
+  }
+
+  /**
+   * Return mock account sequence number for an address.
+   * @param {string} address
+   * @returns {Promise<string>}
+   */
+  async getAccountSequence(address) {
+    if (!this.isValidAddress(address)) {
+      throw new ValidationError('Invalid Stellar address');
+    }
+    const account = this.wallets.get(address);
+    if (!account) {
+      throw new NotFoundError('Account not found in mock wallets', ERROR_CODES.WALLET_NOT_FOUND);
+    }
+    return account.sequence || '12345';
+  }
+
+  /**
+   * Convert stroops to XLM.
+   * @param {string|number} stroops
+   * @returns {string}
+   */
+  stroopsToXlm(stroops) {
+    const numberValue = Number(stroops);
+    if (Number.isNaN(numberValue)) {
+      throw new ValidationError('Invalid stroops amount');
+    }
+    return (numberValue / 1e7).toFixed(7);
+  }
+
+  /**
+   * Convert XLM to stroops.
+   * @param {string|number} xlm
+   * @returns {string}
+   */
+  xlmToStroops(xlm) {
+    const numberValue = Number(xlm);
+    if (Number.isNaN(numberValue)) {
+      throw new ValidationError('Invalid XLM amount');
+    }
+    return BigInt(Math.round(numberValue * 1e7)).toString();
+  }
+
+  /**
+   * Build a mock Stellar transaction.
+   * @param {string} sourcePublicKey
+   * @param {Array<Object>} operations
+   * @param {Object} options
+   * @returns {Promise<Object>}
+   */
+  async buildTransaction(sourcePublicKey, operations, options = {}) {
+    if (!this.isValidAddress(sourcePublicKey)) {
+      throw new ValidationError('Invalid source public key');
+    }
+    return {
+      sourcePublicKey,
+      operations: Array.isArray(operations) ? operations : [],
+      options,
+      mockTransactionId: `mock_tx_${crypto.randomBytes(8).toString('hex')}`,
+    };
+  }
+
+  /**
+   * Build a mock payment transaction.
+   * @param {string} sourcePublicKey
+   * @param {string} destinationPublicKey
+   * @param {string|number} amount
+   * @param {Object} options
+   * @returns {Promise<Object>}
+   */
+  async buildPaymentTransaction(sourcePublicKey, destinationPublicKey, amount, options = {}) {
+    if (!this.isValidAddress(sourcePublicKey) || !this.isValidAddress(destinationPublicKey)) {
+      throw new ValidationError('Invalid source or destination public key');
+    }
+
+    return this.buildTransaction(sourcePublicKey, [{
+      type: 'payment',
+      destination: destinationPublicKey,
+      amount: String(amount),
+      asset: options.asset || NATIVE_ASSET,
+    }], options);
+  }
+
+  /**
+   * Sign a mock transaction.
+   * @param {Object} transaction
+   * @param {string} secretKey
+   * @returns {Promise<Object>}
+   */
+  async signTransaction(transaction, secretKey) {
+    if (!transaction || typeof transaction !== 'object') {
+      throw new ValidationError('Invalid transaction');
+    }
+    if (!secretKey || typeof secretKey !== 'string') {
+      throw new ValidationError('Invalid secret key');
+    }
+
+    return {
+      ...transaction,
+      signature: `mock_sign_${crypto.randomBytes(12).toString('hex')}`,
+      signedBy: secretKey,
+      hash: `mock_hash_${crypto.randomBytes(12).toString('hex')}`,
+    };
+  }
+
+  /**
+   * Set a flag to make the next submitTransaction call fail.
+   * @param {boolean} shouldFail
+   * @returns {void}
+   */
+  setSubmitTransactionFailure(shouldFail) {
+    this._submitTransactionShouldFail = Boolean(shouldFail);
+  }
+
+  /**
+   * Submit a mock transaction.
+   * @param {Object} tx
+   * @returns {Promise<Object>}
+   */
+  async submitTransaction(tx) {
+    if (!tx || typeof tx !== 'object') {
+      throw new ValidationError('Invalid transaction');
+    }
+
+    if (this._submitTransactionShouldFail) {
+      this._submitTransactionShouldFail = false;
+      throw new BusinessLogicError(ERROR_CODES.TRANSACTION_FAILED, 'Mock submitTransaction failure');
+    }
+
+    const hash = tx.hash || `mock_submitted_${crypto.randomBytes(12).toString('hex')}`;
+    return {
+      successful: true,
+      hash,
+      ledger: Math.floor(Math.random() * 1000000) + 1,
+      result: 'success',
+    };
+  }
+
+  /**
+   * Return account balances for a mock account.
+   * @param {string} publicKey
+   * @returns {Promise<Object>}
+   */
+  async getAccountBalances(publicKey) {
+    if (!this.isValidAddress(publicKey)) {
+      throw new ValidationError('Invalid public key');
+    }
+    const account = this.wallets.get(publicKey);
+    if (!account) {
+      throw new NotFoundError('Account not found', ERROR_CODES.WALLET_NOT_FOUND);
+    }
+    this._ensureAssetBalances(account);
+    return { balances: [{ asset_type: 'native', balance: account.assetBalances.native }] };
+  }
+
+  /**
+   * Get a mock transaction by hash.
+   * @param {string} transactionHash
+   * @returns {Promise<Object>}
+   */
+  async getTransaction(transactionHash) {
+    if (!transactionHash || typeof transactionHash !== 'string') {
+      throw new ValidationError('Invalid transaction hash');
+    }
+
+    for (const txList of this.transactions.values()) {
+      const tx = txList.find((item) => item.transactionId === transactionHash || item.hash === transactionHash);
+      if (tx) {
+        return tx;
+      }
+    }
+
+    throw new NotFoundError('Transaction not found', ERROR_CODES.TRANSACTION_NOT_FOUND);
+  }
 
   _isRetryableError(error) {
     return Boolean(error && error.details && error.details.retryable);
@@ -546,9 +783,11 @@ class MockStellarService extends StellarServiceInterface {
    * @param {string} [params.memo] - Transaction memo
    * @param {string} [params.memoType='text'] - Stellar memo type
    * @param {Object} [params.asset=NATIVE_ASSET] - Asset to transfer
+   * @param {number} [params.validAfter=0] - Unix timestamp of minimum valid time (0 = no limit)
+   * @param {number} [params.validBefore=0] - Unix timestamp of maximum valid time (0 = no limit)
    * @returns {Promise<{transactionId: string, ledger: number, status: string, confirmedAt: string}>}
    */
-  async sendDonation({ sourceSecret, destinationPublic, amount, memo, memoType = 'text', asset = NATIVE_ASSET }) {
+  async sendDonation({ sourceSecret, destinationPublic, amount, memo, memoType = 'text', asset = NATIVE_ASSET, validAfter = 0, validBefore = 0 }) {
     return this._executeWithRetry(async () => {
       await this._simulateNetworkDelay();
       this._checkRateLimit();
@@ -557,6 +796,30 @@ class MockStellarService extends StellarServiceInterface {
       this._validateAmount(amount);
       this._simulateFailure();
       this._simulateRandomFailure();
+
+      // Validate time bounds: validAfter < validBefore if both are set
+      if (validAfter && validBefore && validAfter >= validBefore) {
+        throw new ValidationError('validAfter must be strictly less than validBefore');
+      }
+
+      // Check time bounds against current mock system time
+      const currentTime = this.getCurrentSystemTime();
+      
+      if (validAfter && currentTime < validAfter) {
+        throw new BusinessLogicError(
+          ERROR_CODES.TRANSACTION_FAILED,
+          `Transaction error: Time bounds violation. Current time (${currentTime}) is before validAfter (${validAfter}). Transaction is not yet valid.`,
+          { retryable: false }
+        );
+      }
+
+      if (validBefore && currentTime > validBefore) {
+        throw new BusinessLogicError(
+          ERROR_CODES.TRANSACTION_FAILED,
+          `Transaction error: Time bounds violation. Current time (${currentTime}) is after validBefore (${validBefore}). Transaction has expired.`,
+          { retryable: false }
+        );
+      }
 
       const MemoValidator = require('../utils/memoValidator');
       if (memo) {
@@ -601,6 +864,8 @@ class MockStellarService extends StellarServiceInterface {
         asset: serializeAsset(asset),
         memo: memo || '',
         memoType,
+        validAfter: validAfter || 0,
+        validBefore: validBefore || 0,
         timestamp: new Date().toISOString(),
         ledger: Math.floor(Math.random() * 1000000) + 1000000,
         status: 'confirmed',
@@ -1370,6 +1635,296 @@ class MockStellarService extends StellarServiceInterface {
   }
 
   /**
+   * Merge a source account into a destination account (mock implementation).
+   *
+   * Transfers the entire balance of the source account to the destination,
+   * then marks the source wallet as merged/closed in the in-memory store.
+   *
+   * @param {string} sourceSecret      - Secret key of the account to merge (close)
+   * @param {string} destinationPublic - Public key of the account to receive all funds
+   * @returns {Promise<{hash: string, ledger: number, mergedAmount: string}>}
+   * @throws {ValidationError}    If keys are invalid or accounts are the same
+   * @throws {NotFoundError}      If source or destination account does not exist
+   * @throws {BusinessLogicError} If simulated failure is active
+   */
+  async mergeAccount(sourceSecret, destinationPublic) {
+    return this._executeWithRetry(async () => {
+      await this._simulateNetworkDelay();
+      this._checkRateLimit();
+      this._validateSecretKey(sourceSecret);
+      this._validatePublicKey(destinationPublic);
+      this._simulateFailure();
+
+      // Resolve source wallet by secret key
+      let sourceWallet = null;
+      for (const wallet of this.wallets.values()) {
+        if (wallet.secretKey === sourceSecret) {
+          sourceWallet = wallet;
+          break;
+        }
+      }
+
+      if (!sourceWallet) {
+        throw new ValidationError(
+          'Invalid source secret key. The provided secret key does not match any account.'
+        );
+      }
+
+      if (sourceWallet.publicKey === destinationPublic) {
+        throw new ValidationError('Source and destination accounts cannot be the same.');
+      }
+
+      const destWallet = this.wallets.get(destinationPublic);
+      if (!destWallet) {
+        throw new NotFoundError(
+          `Destination account not found. The account ${destinationPublic} does not exist on the network.`,
+          ERROR_CODES.WALLET_NOT_FOUND
+        );
+      }
+
+      const mergedAmount = sourceWallet.balance;
+      const mergedAmountNum = parseFloat(mergedAmount);
+
+      // Transfer entire balance to destination
+      destWallet.balance = (parseFloat(destWallet.balance) + mergedAmountNum).toFixed(7);
+
+      // Close source account (zero balance, mark merged)
+      sourceWallet.balance = '0';
+      sourceWallet.merged = true;
+      sourceWallet.mergedAt = new Date().toISOString();
+      sourceWallet.mergedInto = destinationPublic;
+
+      const hash = 'mock_merge_' + crypto.randomBytes(16).toString('hex');
+      const ledger = Math.floor(Math.random() * 1000000) + 1000000;
+
+      // Record merge transaction for both accounts
+      const tx = {
+        hash,
+        type: 'account_merge',
+        source: sourceWallet.publicKey,
+        destination: destinationPublic,
+        amount: mergedAmount,
+        timestamp: new Date().toISOString(),
+        ledger,
+        status: 'confirmed',
+        fee: '0.0000100',
+      };
+
+      if (!this.transactions.has(sourceWallet.publicKey)) {
+        this.transactions.set(sourceWallet.publicKey, []);
+      }
+      if (!this.transactions.has(destinationPublic)) {
+        this.transactions.set(destinationPublic, []);
+      }
+      this.transactions.get(sourceWallet.publicKey).push(tx);
+      this.transactions.get(destinationPublic).push(tx);
+
+      log.info('MOCK_STELLAR_SERVICE', 'Account merge simulated', {
+        source: `${sourceWallet.publicKey.substring(0, 8)}...`,
+        destination: `${destinationPublic.substring(0, 8)}...`,
+        mergedAmount,
+      });
+
+      return { hash, ledger, mergedAmount };
+    });
+  }
+
+  /**
+   * Issue a custom Stellar asset to a recipient (mock implementation).
+   *
+   * Validates inputs, creates an in-memory asset balance for the recipient,
+   * and records the issuance transaction.
+   *
+   * @param {string} issuerSecret    - Secret key of the issuer account
+   * @param {string} assetCode       - Asset code (1-12 alphanumeric characters)
+   * @param {string} amount          - Amount to issue
+   * @param {string} recipientPublic - Public key of the recipient
+   * @returns {Promise<{hash: string, ledger: number, assetCode: string, issuerPublic: string, amount: string}>}
+   * @throws {ValidationError}    If inputs are invalid
+   * @throws {BusinessLogicError} If simulated failure is active
+   */
+  async issueAsset(issuerSecret, assetCode, amount, recipientPublic) {
+    return this._executeWithRetry(async () => {
+      await this._simulateNetworkDelay();
+      this._checkRateLimit();
+      this._validateSecretKey(issuerSecret);
+      this._validatePublicKey(recipientPublic);
+      this._simulateFailure();
+
+      if (!assetCode || !/^[A-Za-z0-9]{1,12}$/.test(assetCode)) {
+        throw new ValidationError('Asset code must be 1-12 alphanumeric characters');
+      }
+
+      const amountNum = parseFloat(amount);
+      if (isNaN(amountNum) || amountNum <= 0) {
+        throw new ValidationError('Amount must be a positive number');
+      }
+
+      // Resolve issuer wallet
+      let issuerWallet = null;
+      for (const w of this.wallets.values()) {
+        if (w.secretKey === issuerSecret) { issuerWallet = w; break; }
+      }
+      if (!issuerWallet) {
+        throw new ValidationError('Invalid issuer secret key. No matching account found.');
+      }
+
+      if (issuerWallet.publicKey === recipientPublic) {
+        throw new ValidationError('Issuer and recipient cannot be the same account');
+      }
+
+      // Ensure recipient wallet exists
+      if (!this.wallets.has(recipientPublic)) {
+        throw new NotFoundError(
+          `Recipient account not found: ${recipientPublic}`,
+          ERROR_CODES.WALLET_NOT_FOUND
+        );
+      }
+
+      // Track asset balances: assetKey -> Map<holderPublic, balance>
+      if (!this.assetBalances) this.assetBalances = new Map();
+      const assetKey = `${assetCode}:${issuerWallet.publicKey}`;
+      if (!this.assetBalances.has(assetKey)) this.assetBalances.set(assetKey, new Map());
+
+      const holders = this.assetBalances.get(assetKey);
+      const current = parseFloat(holders.get(recipientPublic) || '0');
+      holders.set(recipientPublic, (current + amountNum).toFixed(7));
+
+      const hash = 'mock_issue_' + crypto.randomBytes(16).toString('hex');
+      const ledger = Math.floor(Math.random() * 1000000) + 1000000;
+
+      const tx = {
+        hash, type: 'asset_issuance', assetCode,
+        issuer: issuerWallet.publicKey, recipient: recipientPublic,
+        amount: amountNum.toFixed(7), timestamp: new Date().toISOString(),
+        ledger, status: 'confirmed',
+      };
+
+      if (!this.transactions.has(issuerWallet.publicKey)) this.transactions.set(issuerWallet.publicKey, []);
+      if (!this.transactions.has(recipientPublic)) this.transactions.set(recipientPublic, []);
+      this.transactions.get(issuerWallet.publicKey).push(tx);
+      this.transactions.get(recipientPublic).push(tx);
+
+      log.info('MOCK_STELLAR_SERVICE', 'Asset issued', {
+        assetCode, amount: amountNum.toFixed(7),
+        issuer: `${issuerWallet.publicKey.substring(0, 8)}...`,
+        recipient: `${recipientPublic.substring(0, 8)}...`,
+      });
+
+      return {
+        hash, ledger, assetCode,
+        issuerPublic: issuerWallet.publicKey,
+        amount: amountNum.toFixed(7),
+      };
+    });
+  }
+
+  /**
+   * Burn a custom Stellar asset by sending it back to the issuer (mock implementation).
+   *
+   * Deducts the amount from the holder's in-memory balance.
+   *
+   * @param {string} holderSecret  - Secret key of the asset holder
+   * @param {string} assetCode     - Asset code to burn
+   * @param {string} issuerPublic  - Public key of the asset issuer
+   * @param {string} amount        - Amount to burn
+   * @returns {Promise<{hash: string, ledger: number, assetCode: string, amount: string}>}
+   * @throws {ValidationError}    If inputs are invalid or insufficient balance
+   * @throws {BusinessLogicError} If simulated failure is active
+   */
+  async burnAsset(holderSecret, assetCode, issuerPublic, amount) {
+    return this._executeWithRetry(async () => {
+      await this._simulateNetworkDelay();
+      this._checkRateLimit();
+      this._validateSecretKey(holderSecret);
+      this._validatePublicKey(issuerPublic);
+      this._simulateFailure();
+
+      if (!assetCode || !/^[A-Za-z0-9]{1,12}$/.test(assetCode)) {
+        throw new ValidationError('Asset code must be 1-12 alphanumeric characters');
+      }
+
+      const amountNum = parseFloat(amount);
+      if (isNaN(amountNum) || amountNum <= 0) {
+        throw new ValidationError('Amount must be a positive number');
+      }
+
+      // Resolve holder wallet
+      let holderWallet = null;
+      for (const w of this.wallets.values()) {
+        if (w.secretKey === holderSecret) { holderWallet = w; break; }
+      }
+      if (!holderWallet) {
+        throw new ValidationError('Invalid holder secret key. No matching account found.');
+      }
+
+      if (holderWallet.publicKey === issuerPublic) {
+        throw new ValidationError('Holder and issuer cannot be the same account');
+      }
+
+      if (!this.assetBalances) this.assetBalances = new Map();
+      const assetKey = `${assetCode}:${issuerPublic}`;
+      const holders = this.assetBalances.get(assetKey);
+      const currentBalance = parseFloat((holders && holders.get(holderWallet.publicKey)) || '0');
+
+      if (currentBalance < amountNum) {
+        throw new BusinessLogicError(
+          ERROR_CODES.TRANSACTION_FAILED,
+          `Insufficient asset balance. Have ${currentBalance.toFixed(7)}, need ${amountNum.toFixed(7)}`
+        );
+      }
+
+      // Deduct from holder
+      if (!holders) this.assetBalances.set(assetKey, new Map());
+      this.assetBalances.get(assetKey).set(
+        holderWallet.publicKey,
+        (currentBalance - amountNum).toFixed(7)
+      );
+
+      const hash = 'mock_burn_' + crypto.randomBytes(16).toString('hex');
+      const ledger = Math.floor(Math.random() * 1000000) + 1000000;
+
+      const tx = {
+        hash, type: 'asset_burn', assetCode,
+        issuer: issuerPublic, holder: holderWallet.publicKey,
+        amount: amountNum.toFixed(7), timestamp: new Date().toISOString(),
+        ledger, status: 'confirmed',
+      };
+
+      if (!this.transactions.has(holderWallet.publicKey)) this.transactions.set(holderWallet.publicKey, []);
+      this.transactions.get(holderWallet.publicKey).push(tx);
+
+      log.info('MOCK_STELLAR_SERVICE', 'Asset burned', {
+        assetCode, amount: amountNum.toFixed(7),
+        holder: `${holderWallet.publicKey.substring(0, 8)}...`,
+      });
+
+      return { hash, ledger, assetCode, amount: amountNum.toFixed(7) };
+    });
+  }
+
+  /**
+   * Get all holders of a specific asset (mock implementation).
+   *
+   * @param {string} assetCode    - Asset code
+   * @param {string} issuerPublic - Issuer public key
+   * @returns {Array<{holderPublicKey: string, balance: string}>}
+   */
+  getAssetHolders(assetCode, issuerPublic) {
+    if (!this.assetBalances) return [];
+    const assetKey = `${assetCode}:${issuerPublic}`;
+    const holders = this.assetBalances.get(assetKey);
+    if (!holders) return [];
+    return Array.from(holders.entries())
+      .filter(([, bal]) => parseFloat(bal) > 0)
+      .map(([holderPublicKey, balance]) => ({ holderPublicKey, balance }));
+  }
+
+
+
+  /**
+   * Get mock service state (useful for testing)
+   * @private
    * Get the mock order book for a trading pair.
    *
    * @param {string} sellingAsset - Base asset ('XLM' or 'CODE:ISSUER')
@@ -1486,6 +2041,232 @@ class MockStellarService extends StellarServiceInterface {
   }
 
   /**
+   * Set or update an account data entry (mock implementation)
+   * @param {string} secret - Secret key of the account
+   * @param {string} key - Data entry key
+   * @param {string} value - Data entry value
+   * @returns {Promise<{hash: string, ledger: number}>}
+   */
+  async setAccountData(secret, key, value) {
+    await this._simulateNetworkDelay();
+    this._checkRateLimit();
+    this._simulateFailure();
+
+    const publicKey = this._secretToPublic(secret);
+   * Load a mock account object for the given public key.
+   * @param {string} publicKey - Stellar public key
+   * @returns {Promise<{id: string, sequence: string, balances: Array}>}
+   * @throws {NotFoundError} if the account does not exist
+   */
+  async loadAccount(publicKey) {
+    const wallet = this.wallets.get(publicKey);
+    if (!wallet) {
+      throw new NotFoundError(
+        `Account not found. The account ${publicKey} does not exist on the network.`,
+        ERROR_CODES.WALLET_NOT_FOUND
+      );
+    }
+
+    // Initialize data_attr if it doesn't exist
+    if (!wallet.data_attr) {
+      wallet.data_attr = {};
+    }
+
+    // Store the value (base64-encoded to simulate Stellar's binary storage)
+    wallet.data_attr[key] = Buffer.from(value).toString('base64');
+
+    const txId = crypto.randomBytes(32).toString('hex');
+    const ledger = Math.floor(Math.random() * 1000000) + 1000000;
+    return { hash: txId, ledger };
+  }
+
+  /**
+   * Delete an account data entry by setting its value to null
+   * @param {string} secret - Secret key of the account
+   * @param {string} key - Data entry key to delete
+   * @returns {Promise<{hash: string, ledger: number}>}
+   */
+  async deleteAccountData(secret, key) {
+    await this._simulateNetworkDelay();
+    this._checkRateLimit();
+    this._simulateFailure();
+
+    const publicKey = this._secretToPublic(secret);
+    return {
+      id: publicKey,
+      sequence: wallet.sequence,
+      balances: [{ asset_type: 'native', asset_code: 'XLM', balance: wallet.balance }],
+    };
+  }
+
+  /**
+   * Submit a mock transaction and store it.
+   * @param {Object} transaction - Mock transaction object (must have _isMockTransaction: true)
+   * @returns {Promise<{hash: string, ledger: number, status: string}>}
+   */
+  async submitTransaction(transaction) {
+    const hash = crypto.randomBytes(32).toString('hex');
+    const ledger = Math.floor(Math.random() * 1000000) + 1000000;
+    const key = (transaction && transaction.source) || '_submitted';
+    if (!this.transactions.has(key)) {
+      this.transactions.set(key, []);
+    }
+    this.transactions.get(key).push({ ...transaction, hash, ledger, status: 'confirmed' });
+    return { hash, ledger, status: 'confirmed' };
+  }
+
+  /**
+   * Build a mock unsigned payment transaction envelope.
+   * @param {string} sourcePublicKey - Source account public key
+   * @param {string} destinationPublicKey - Destination account public key
+   * @param {string} amount - Amount to send
+   * @param {Object} options - Additional options
+   * @returns {Promise<Object>} Unsigned mock transaction
+   */
+  async buildPaymentTransaction(sourcePublicKey, destinationPublicKey, amount, options) {
+    return {
+      type: 'payment',
+      source: sourcePublicKey,
+      destination: destinationPublicKey,
+      amount,
+      options,
+      _isMockTransaction: true,
+      _unsigned: true,
+    };
+  }
+
+  /**
+   * Get the current sequence number for an account.
+   * @param {string} publicKey - Stellar public key
+   * @returns {Promise<string>} Sequence number as a string
+   * @throws {NotFoundError} if the account does not exist
+   */
+  async getAccountSequence(publicKey) {
+    const wallet = this.wallets.get(publicKey);
+    if (!wallet) {
+      throw new NotFoundError(
+        `Account not found. The account ${publicKey} does not exist on the network.`,
+        ERROR_CODES.WALLET_NOT_FOUND
+      );
+    }
+    return String(wallet.sequence);
+  }
+
+  /**
+   * Build a mock unsigned transaction envelope with arbitrary operations.
+   * @param {string} sourcePublicKey - Source account public key
+   * @param {Array} operations - Array of operation objects
+   * @param {Object} options - Additional options
+   * @returns {Promise<Object>} Unsigned mock transaction
+   */
+  async buildTransaction(sourcePublicKey, operations, options) {
+    return {
+      type: 'transaction',
+      source: sourcePublicKey,
+      operations,
+      options,
+      _isMockTransaction: true,
+      _unsigned: true,
+    };
+  }
+
+  /**
+   * Sign a mock transaction with the given secret key.
+   * @param {Object} transaction - Mock transaction to sign
+   * @param {string} secretKey - Secret key to sign with
+   * @returns {Promise<Object>} Signed mock transaction
+   */
+  async signTransaction(transaction, secretKey) {
+    return { ...transaction, _signed: true, _secretKey: secretKey };
+  }
+
+  /**
+   * Get all balances for an account.
+   * @param {string} publicKey - Stellar public key
+   * @returns {Promise<Array>} Array of balance objects with asset_type, asset_code, and balance
+   * @throws {NotFoundError} if the account does not exist
+   */
+  async getAccountBalances(publicKey) {
+    const wallet = this.wallets.get(publicKey);
+    if (!wallet) {
+      throw new NotFoundError(
+        `Account not found. The account ${publicKey} does not exist on the network.`,
+        ERROR_CODES.WALLET_NOT_FOUND
+      );
+    }
+
+    // Initialize data_attr if it doesn't exist
+    if (!wallet.data_attr) {
+      wallet.data_attr = {};
+    }
+
+    // Delete the key
+    delete wallet.data_attr[key];
+
+    const txId = crypto.randomBytes(32).toString('hex');
+    const ledger = Math.floor(Math.random() * 1000000) + 1000000;
+    return { hash: txId, ledger };
+    const balances = [{ asset_type: 'native', asset_code: 'XLM', balance: wallet.balance }];
+    if (wallet.assetBalances) {
+      for (const [key, balance] of Object.entries(wallet.assetBalances)) {
+        if (key !== 'native') {
+          balances.push({ asset_type: 'credit_alphanum4', asset_code: key, balance });
+        }
+      }
+    }
+    return balances;
+  }
+
+  /**
+   * Retrieve a stored transaction by its hash.
+   * @param {string} transactionHash - Transaction hash to look up
+   * @returns {Promise<Object>} The stored transaction record
+   * @throws {NotFoundError} if the transaction does not exist
+   */
+  async getTransaction(transactionHash) {
+    for (const txList of this.transactions.values()) {
+      if (!Array.isArray(txList)) continue;
+      const found = txList.find(
+        (tx) => tx.transactionId === transactionHash || tx.hash === transactionHash
+      );
+      if (found) return found;
+    }
+    throw new NotFoundError(
+      `Transaction not found. The transaction ${transactionHash} does not exist on the network.`,
+      ERROR_CODES.TRANSACTION_NOT_FOUND
+    );
+  }
+
+  /**
+   * Check whether an address is a valid Stellar public key.
+   * Returns false for null/undefined/invalid inputs — never throws.
+   * @param {string} address - Address to validate
+   * @returns {boolean}
+   */
+  isValidAddress(address) {
+    if (!address || typeof address !== 'string') return false;
+    return /^G[A-Z2-7]{55}$/.test(address);
+  }
+
+  /**
+   * Convert stroops to XLM.
+   * @param {number|string} stroops - Amount in stroops
+   * @returns {string} XLM amount with 7 decimal places
+   */
+  stroopsToXlm(stroops) {
+    return (Number(stroops) / 10_000_000).toFixed(7);
+  }
+
+  /**
+   * Convert XLM to stroops.
+   * @param {number|string} xlm - Amount in XLM
+   * @returns {number} Amount in stroops (integer)
+   */
+  xlmToStroops(xlm) {
+    return Math.round(Number(xlm) * 10_000_000);
+  }
+
+  /**
    * Derive a mock public key from a secret key (deterministic for test consistency).
    * @private
    */
@@ -1503,6 +2284,64 @@ class MockStellarService extends StellarServiceInterface {
       pub += base32[parseInt(hash[i % 64], 16) % 32];
     }
     return pub;
+  }
+
+  /**
+   * Get the inflation destination for a wallet by public key.
+   * @param {string} publicKey - Stellar public key
+   * @returns {Promise<string|null>} The inflation destination or null if not set / not found
+   */
+  async getInflationDestination(publicKey) {
+    const wallet = this.wallets.get(publicKey);
+    if (!wallet) return null;
+    return wallet.inflationDestination || null;
+  }
+
+  /**
+   * Set the inflation destination for a wallet.
+   * @param {string} sourceSecret - Secret key of the source account
+   * @param {string} destinationPublicKey - Stellar public key to set as inflation destination
+   * @returns {Promise<{hash: string, ledger: number}>}
+   * @throws {ValidationError} If destinationPublicKey is not a valid Stellar public key
+   */
+  async setInflationDestination(sourceSecret, destinationPublicKey) {
+    if (
+      !destinationPublicKey ||
+      typeof destinationPublicKey !== 'string' ||
+      !destinationPublicKey.startsWith('G') ||
+      destinationPublicKey.length !== 56 ||
+      !/^G[A-Z2-7]{55}$/.test(destinationPublicKey)
+    ) {
+      throw new ValidationError(
+        'Invalid destination: must be a valid Stellar public key (56-character Base32 string starting with G).'
+      );
+    }
+
+    const sourceWallet = this._findWalletBySecret(sourceSecret);
+    if (!sourceWallet) {
+      throw new ValidationError('Invalid source secret key. The provided secret key does not match any account.');
+    }
+
+    sourceWallet.inflationDestination = destinationPublicKey;
+
+    const hash = `mock_${crypto.randomBytes(16).toString('hex')}`;
+    const ledger = Math.floor(Math.random() * 1000000) + 1;
+
+    return { hash, ledger };
+  }
+
+  // Interface compliance methods
+  isValidAddress(address) {
+    // Simple validation for mock: check format
+    return typeof address === 'string' && /^G[A-Z2-7]{55}$/.test(address);
+  }
+
+  stroopsToXlm(stroops) {
+    return (parseInt(stroops) / 10000000).toFixed(7);
+  }
+
+  xlmToStroops(xlm) {
+    return Math.floor(parseFloat(xlm) * 10000000).toString();
   }
 }
 
