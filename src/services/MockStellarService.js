@@ -2304,6 +2304,48 @@ class MockStellarService extends StellarServiceInterface {
   }
 
   /**
+   * Get the home domain for a wallet by public key.
+   * @param {string} publicKey - Stellar public key
+   * @returns {Promise<string|null>} The home domain or null if not set / not found
+   */
+  async getHomeDomain(publicKey) {
+    const wallet = this.wallets.get(publicKey);
+    if (!wallet) return null;
+    return wallet.homeDomain || null;
+  }
+
+  /**
+   * Set the home domain for a wallet.
+   * @param {string} sourceSecret - Secret key of the source account
+   * @param {string} domain - Hostname to set as home domain (no protocol, no path, max 32 chars)
+   * @returns {Promise<{hash: string, ledger: number}>}
+   * @throws {ValidationError} If domain format is invalid
+   */
+  async setHomeDomain(sourceSecret, domain) {
+    if (!domain || typeof domain !== 'string') {
+      throw new ValidationError('domain must be a non-empty string');
+    }
+    if (domain.length > 32) {
+      throw new ValidationError('domain must be 32 characters or fewer per Stellar spec');
+    }
+    if (!/^[a-zA-Z0-9]([a-zA-Z0-9\-]{0,61}[a-zA-Z0-9])?(\.[a-zA-Z0-9]([a-zA-Z0-9\-]{0,61}[a-zA-Z0-9])?)*$/.test(domain)) {
+      throw new ValidationError('domain must be a valid hostname with no protocol or path');
+    }
+
+    const sourceWallet = this._findWalletBySecret(sourceSecret);
+    if (!sourceWallet) {
+      throw new ValidationError('Invalid source secret key. The provided secret key does not match any account.');
+    }
+
+    sourceWallet.homeDomain = domain;
+
+    const hash = `mock_${crypto.randomBytes(16).toString('hex')}`;
+    const ledger = Math.floor(Math.random() * 1000000) + 1;
+
+    return { hash, ledger };
+  }
+
+  /**
    * Get the inflation destination for a wallet by public key.
    * @param {string} publicKey - Stellar public key
    * @returns {Promise<string|null>} The inflation destination or null if not set / not found

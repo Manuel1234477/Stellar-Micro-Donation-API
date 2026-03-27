@@ -976,6 +976,105 @@ class StellarService extends StellarServiceInterface {
 
 
   /**
+   * Get the home domain for a Stellar account.
+   *
+   * @param {string} publicKey - Public key of the account to query
+   * @returns {Promise<string|null>} The home_domain field, or null if unset or on error
+   */
+  async getHomeDomain(publicKey) {
+    try {
+      const account = await this._executeWithRetry(
+        () => this.server.loadAccount(publicKey),
+        'loadAccountForHomeDomain'
+      );
+      return account.home_domain || null;
+    } catch (error) {
+      return null;
+    }
+  }
+
+  /**
+   * Set the home domain for a Stellar account.
+   *
+   * NOTE: stellar.toml is verified at https://<domain>/.well-known/stellar.toml
+   * before the transaction is submitted. The domain must serve a valid stellar.toml
+   * (2xx response within 5 seconds) or this method will throw a ValidationError.
+   *
+   * @param {string} sourceSecret - Secret key of the source account
+   * @param {string} domain - Hostname to set as home domain (no protocol, no path, max 32 chars)
+   * @returns {Promise<{hash: string, ledger: number}>}
+   * @throws {ValidationError} If domain format is invalid or stellar.toml is unreachable/non-2xx
+   * @throws {BusinessLogicError} If the Stellar network rejects the transaction
+   */
+  async setHomeDomain(sourceSecret, domain) {
+    const { ValidationError } = require('../utils/errors');
+    const https = require('https');
+
+    // Validate domain: hostname only, no protocol, no path, max 32 chars
+    if (!domain || typeof domain !== 'string') {
+      throw new ValidationError('domain must be a non-empty string');
+    }
+    if (domain.length > 32) {
+      throw new ValidationError('domain must be 32 characters or fewer per Stellar spec');
+    }
+    if (!/^[a-zA-Z0-9]([a-zA-Z0-9\-]{0,61}[a-zA-Z0-9])?(\.[a-zA-Z0-9]([a-zA-Z0-9\-]{0,61}[a-zA-Z0-9])?)*$/.test(domain)) {
+      throw new ValidationError('domain must be a valid hostname with no protocol or path');
+    }
+
+    // Verify stellar.toml exists and returns 2xx within 5 seconds
+    await new Promise((resolve, reject) => {
+      const url = `https://${domain}/.well-known/stellar.toml`;
+      const req = https.get(url, { timeout: 5000 }, (res) => {
+        if (res.statusCode >= 200 && res.statusCode < 300) {
+          res.resume();
+          resolve();
+        } else {
+          res.resume();
+          reject(new ValidationError(
+            `stellar.toml verification failed: https://${domain}/.well-known/stellar.toml returned HTTP ${res.statusCode}`
+          ));
+        }
+      });
+      req.on('timeout', () => {
+        req.destroy();
+        reject(new ValidationError(
+          `stellar.toml verification failed: request to https://${domain}/.well-known/stellar.toml timed out after 5 seconds`
+        ));
+      });
+      req.on('error', (err) => {
+        reject(new ValidationError(
+          `stellar.toml verification failed: could not reach https://${domain}/.well-known/stellar.toml — ${err.message}`
+        ));
+      });
+    });
+
+    return StellarErrorHandler.wrap(async () => {
+      const sourceKeypair = StellarSdk.Keypair.fromSecret(sourceSecret);
+      const sourceAccount = await this._executeWithRetry(
+        () => this.server.loadAccount(sourceKeypair.publicKey()),
+        'loadAccountForSetHomeDomain'
+      );
+
+      const transaction = new StellarSdk.TransactionBuilder(sourceAccount, {
+        fee: this.baseFee,
+        networkPassphrase: this.networkPassphrase,
+      })
+        .addOperation(StellarSdk.Operation.setOptions({ homeDomain: domain }))
+        .setTimeout(30)
+        .build();
+
+      transaction.sign(sourceKeypair);
+
+      const result = await this._submitTransactionWithNetworkSafety(transaction);
+
+      log.info('STELLAR_SERVICE', 'Home domain set', {
+        source: sourceKeypair.publicKey(),
+        homeDomain: domain,
+        hash: result.hash,
+      });
+
+      return { hash: result.hash, ledger: result.ledger };
+    }, 'setHomeDomain');
    * Query Horizon for an account and normalise the outcome into a discriminated union.
    *
    * This method never throws — all outcomes are returned as plain values so callers

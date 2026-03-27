@@ -179,7 +179,9 @@ router.get('/:id', checkPermission(PERMISSIONS.WALLETS_READ), walletIdSchema, as
     if (!wallet) {
       return res.status(404).json({ success: false, error: 'Wallet not found' });
     }
-    res.json({ success: true, data: wallet });
+    const stellarSvc = getStellarService();
+    const homeDomain = await stellarSvc.getHomeDomain(wallet.address || wallet.publicKey).catch(() => null);
+    res.json({ success: true, data: { ...wallet, homeDomain: homeDomain || null } });
   } catch (error) {
     next(error);
   }
@@ -214,6 +216,62 @@ router.patch('/:id', checkPermission(PERMISSIONS.WALLETS_UPDATE), walletUpdateSc
     });
 
     res.json({ success: true, data: wallet });
+  } catch (error) {
+    next(error);
+  }
+});
+
+/**
+ * PATCH /wallets/:id/home-domain
+ * Set the home domain on a wallet's Stellar account.
+ * Body: { domain: string, sourceSecret: string }
+ */
+router.patch('/:id/home-domain', checkPermission(PERMISSIONS.WALLETS_UPDATE), walletIdSchema, async (req, res, next) => {
+  try {
+    const { domain, sourceSecret } = req.body;
+
+    if (!domain || !sourceSecret) {
+      return res.status(400).json({
+        success: false,
+        error: 'Missing required fields: domain, sourceSecret',
+      });
+    }
+
+    const wallet = await walletService.getWalletById(req.params.id);
+    if (!wallet) {
+      return res.status(404).json({ success: false, error: 'Wallet not found' });
+    }
+
+    const stellarSvc = getStellarService();
+    let result;
+    try {
+      result = await stellarSvc.setHomeDomain(sourceSecret, domain);
+    } catch (err) {
+      if (err && err.name === 'ValidationError') {
+        return next(err);
+      }
+      return res.status(502).json({
+        success: false,
+        error: 'Stellar network error while setting home domain',
+      });
+    }
+
+    await AuditLogService.log({
+      category: AuditLogService.CATEGORY.WALLET_OPERATION,
+      action: AuditLogService.ACTION.HOME_DOMAIN_UPDATED,
+      severity: AuditLogService.SEVERITY.MEDIUM,
+      result: 'SUCCESS',
+      userId: req.user && req.user.id,
+      requestId: req.id,
+      ipAddress: req.ip,
+      resource: `/wallets/${req.params.id}/home-domain`,
+      details: { walletId: req.params.id, homeDomain: domain, txHash: result.hash },
+    });
+
+    return res.json({
+      success: true,
+      data: { homeDomain: domain },
+    });
   } catch (error) {
     next(error);
   }
