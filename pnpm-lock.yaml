@@ -46,8 +46,8 @@ importers:
         specifier: ^8.57.1
         version: 8.57.1
       eslint-plugin-no-secrets:
-        specifier: ^2.2.2
-        version: 2.2.2(eslint@8.57.1)
+        specifier: ^2.3.3
+        version: 2.3.3(eslint@8.57.1)
       eslint-plugin-security:
         specifier: ^4.0.0
         version: 4.0.0
@@ -1105,6 +1105,8 @@ packages:
     engines: {node: '>=6.0'}
     hasBin: true
 
+  eslint-plugin-no-secrets@2.3.3:
+    resolution: {integrity: sha512-sroCsCscpwQxZ/O9Ml69w5qt/2nvHhXDeyUnSqSC5dMANGxt4rQgUn7xbPvDmhbMPmUCAc2Y3SRU0cXet7kNWQ==}
   eslint-plugin-no-secrets@2.2.2:
     resolution: {integrity: sha512-zGOhV0YA+Vu6NvZ8eF3TNGyi5m2eTL2N+dbg+mvK6GqKpe3Q8TJl66cLhZRaRDIF0FtMGpTKkcz1aGZTYhMXlA==}
     engines: {node: '>=18', npm: '>=8'}
@@ -2094,6 +2096,9 @@ packages:
 
   path-to-regexp@8.3.0:
     resolution: {integrity: sha512-7jdwVIRtsP8MYpdXSwOS0YdD0Du+qOoF/AEPIt88PcCFrZCzx41oxku1jD88hZBwbNUIEfpqvuhjFaMAqMTWnA==}
+
+  pdfkit@0.18.0:
+    resolution: {integrity: sha512-NvUwSDZ0eYEzqAiWwVQkRkjYUkZ48kcsHuCO31ykqPPIVkwoSDjDGiwIgHHNtsiwls3z3P/zy4q00hl2chg2Ug==}
 
   pdfkit@0.18.0:
     resolution: {integrity: sha512-NvUwSDZ0eYEzqAiWwVQkRkjYUkZ48kcsHuCO31ykqPPIVkwoSDjDGiwIgHHNtsiwls3z3P/zy4q00hl2chg2Ug==}
@@ -3404,6 +3409,78 @@ snapshots:
   abbrev@1.1.1:
     optional: true
 
+  accepts@1.3.8:
+    dependencies:
+      '@typescript-eslint/tsconfig-utils': 8.57.2(typescript@5.9.3)
+      '@typescript-eslint/types': 8.57.2
+      debug: 4.4.3
+      typescript: 5.9.3
+    transitivePeerDependencies:
+      - supports-color
+
+  '@typescript-eslint/tsconfig-utils@8.57.2(typescript@5.9.3)':
+    dependencies:
+      typescript: 5.9.3
+
+  '@typescript-eslint/types@8.57.2': {}
+
+  '@typescript-eslint/typescript-estree@8.57.2(typescript@5.9.3)':
+    dependencies:
+      '@typescript-eslint/project-service': 8.57.2(typescript@5.9.3)
+      '@typescript-eslint/tsconfig-utils': 8.57.2(typescript@5.9.3)
+      '@typescript-eslint/types': 8.57.2
+      '@typescript-eslint/visitor-keys': 8.57.2
+      debug: 4.4.3
+      minimatch: 10.2.4
+      semver: 7.7.4
+      tinyglobby: 0.2.15
+      ts-api-utils: 2.5.0(typescript@5.9.3)
+      typescript: 5.9.3
+    transitivePeerDependencies:
+      - supports-color
+
+  '@typescript-eslint/visitor-keys@8.57.2':
+    dependencies:
+      '@typescript-eslint/types': 8.57.2
+      eslint-visitor-keys: 5.0.1
+
+  '@ungap/structured-clone@1.3.0': {}
+
+  '@vue/compiler-core@3.5.30':
+    dependencies:
+      '@babel/parser': 7.29.2
+      '@vue/shared': 3.5.30
+      entities: 7.0.1
+      estree-walker: 2.0.2
+      source-map-js: 1.2.1
+
+  '@vue/compiler-dom@3.5.30':
+    dependencies:
+      '@vue/compiler-core': 3.5.30
+      '@vue/shared': 3.5.30
+
+  '@vue/compiler-sfc@3.5.30':
+    dependencies:
+      '@babel/parser': 7.29.2
+      '@vue/compiler-core': 3.5.30
+      '@vue/compiler-dom': 3.5.30
+      '@vue/compiler-ssr': 3.5.30
+      '@vue/shared': 3.5.30
+      estree-walker: 2.0.2
+      magic-string: 0.30.21
+      postcss: 8.5.8
+      source-map-js: 1.2.1
+
+  '@vue/compiler-ssr@3.5.30':
+    dependencies:
+      '@vue/compiler-dom': 3.5.30
+      '@vue/shared': 3.5.30
+
+  '@vue/shared@3.5.30': {}
+
+  abbrev@1.1.1:
+    optional: true
+
   accepts@2.0.0:
     dependencies:
       mime-types: 3.0.2
@@ -4012,6 +4089,7 @@ snapshots:
     optionalDependencies:
       source-map: 0.6.1
 
+  eslint-plugin-no-secrets@2.3.3(eslint@8.57.1):
   eslint-plugin-no-secrets@2.2.2(eslint@8.57.1):
     dependencies:
       eslint: 8.57.1
@@ -5258,6 +5336,15 @@ snapshots:
   path-parse@1.0.7: {}
 
   path-to-regexp@8.3.0: {}
+
+  pdfkit@0.18.0:
+    dependencies:
+      '@noble/ciphers': 1.3.0
+      '@noble/hashes': 1.8.0
+      fontkit: 2.0.4
+      js-md5: 0.8.3
+      linebreak: 1.1.0
+      png-js: 1.0.0
 
   pdfkit@0.18.0:
     dependencies:
