@@ -54,6 +54,18 @@ const ERROR_CODES = {
   FEE_BUMP_NO_ENVELOPE:   { code: 'FEE_BUMP_NO_ENVELOPE',   numeric: 5013 },
   FEE_BUMP_FAILED:        { code: 'FEE_BUMP_FAILED',        numeric: 5014 },
 
+  // Routing errors (5020-5029)
+  ROUTING_STRATEGY_REQUIRED: { code: 'ROUTING_STRATEGY_REQUIRED', numeric: 5020 },
+  INVALID_ROUTING_STRATEGY:  { code: 'INVALID_ROUTING_STRATEGY',  numeric: 5021 },
+  POOL_NAME_REQUIRED:        { code: 'POOL_NAME_REQUIRED',        numeric: 5022 },
+  POOL_NOT_FOUND:            { code: 'POOL_NOT_FOUND',            numeric: 5023 },
+  POOL_EMPTY:                { code: 'POOL_EMPTY',                numeric: 5024 },
+  POOL_ALREADY_EXISTS:       { code: 'POOL_ALREADY_EXISTS',       numeric: 5025 },
+  RECIPIENT_NOT_IN_POOL:     { code: 'RECIPIENT_NOT_IN_POOL',     numeric: 5026 },
+  DONOR_COORDINATES_REQUIRED:{ code: 'DONOR_COORDINATES_REQUIRED',numeric: 5027 },
+  NO_ELIGIBLE_RECIPIENTS:    { code: 'NO_ELIGIBLE_RECIPIENTS',    numeric: 5028 },
+  NO_ACTIVE_CAMPAIGNS:       { code: 'NO_ACTIVE_CAMPAIGNS',       numeric: 5029 },
+
   // Rate limiting errors (6000-6099)
   RATE_LIMIT_EXCEEDED: { code: 'RATE_LIMIT_EXCEEDED', numeric: 6000 },
 

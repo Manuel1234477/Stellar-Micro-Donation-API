@@ -30,6 +30,7 @@ const DonationService = require('../services/DonationService');
 const { calculateCostBreakdown } = require('../utils/costBreakdown');
 
 const Transaction = require('./models/transaction');
+const serviceContainer = require('../config/serviceContainer');
 const { LIFECYCLE_STAGES } = require('../middleware/requestLifecycle');
 const federation = require('../utils/federation');
 const stellarService = getStellarService();
@@ -97,8 +98,9 @@ const createDonationSchema = validateSchema({
       },
       recipient: {
         type: 'string',
-        required: true,
+        required: false,
         maxLength: 255,
+        nullable: true,
       },
       memo: {
         type: 'string',
@@ -142,6 +144,27 @@ const createDonationSchema = validateSchema({
         required: false,
         nullable: true,
       },
+      routingStrategy: {
+        type: 'string',
+        required: false,
+        nullable: true,
+        enum: ['highest-need', 'geographic', 'campaign-urgency', 'round-robin'],
+      },
+      poolName: {
+        type: 'string',
+        required: false,
+        nullable: true,
+        maxLength: 255,
+      },
+      donorLatitude: {
+        type: 'number',
+        required: false,
+        nullable: true,
+      },
+      donorLongitude: {
+        type: 'number',
+        required: false,
+        nullable: true,
       validAfter: {
         type: 'integerString',
         required: false,
@@ -213,6 +236,18 @@ const donationIdParamSchema = validateSchema({
   params: {
     fields: {
       id: { type: 'string', required: true, trim: true, minLength: 1 },
+    },
+  },
+});
+
+/**
+ * Schema for POST /donations/simulate
+ * Requires a non-empty, trimmed XDR string.
+ */
+const simulateSchema = validateSchema({
+  body: {
+    fields: {
+      xdr: { type: 'string', required: true, trim: true, minLength: 1 },
     },
   },
 });
@@ -468,6 +503,46 @@ router.post('/batch', payloadSizeLimiter(ENDPOINT_LIMITS.batchDonation), safeBat
 });
 
 /**
+ * POST /donations/simulate
+ * Dry-run simulate a Stellar transaction without submitting it to the network.
+ *
+ * Request body:
+ *   - xdr {string} (required) — Base64-encoded Stellar transaction envelope XDR
+ *
+ * Response schema (Simulation_Result envelope):
+ *   200 { success: true,  data: Simulation_Result }  — simulation succeeded
+ *   422 { success: false, data: Simulation_Result }  — simulation returned success: false
+ *   400 { ... }                                       — missing/empty xdr (schema middleware)
+ *   401 { ... }                                       — unauthenticated (requireApiKey)
+ *   429 { ... }                                       — rate limit exceeded
+ *   500 { success: false, error: 'Internal server error' } — unexpected error (no stack trace)
+ *
+ * Security: This endpoint is strictly read-only. No transaction is ever submitted to
+ * the Stellar network. The underlying simulateTransaction() method only performs local
+ * XDR decoding and a read-only Horizon fee stats query.
+ */
+router.post('/simulate', payloadSizeLimiter(ENDPOINT_LIMITS.singleDonation),
+  donationRateLimiter, requireApiKey, simulateSchema, async (req, res) => {
+    try {
+      const { xdr } = req.body;
+      const result = await stellarService.simulateTransaction(xdr);
+
+      if (!result.success) {
+        return res.status(422).json({ success: false, data: result });
+      }
+
+      return res.status(200).json({ success: true, data: result });
+    } catch (error) {
+      log.error('DONATION_ROUTE', 'Unexpected error during simulation', {
+        requestId: req.id,
+        error: error.message,
+      });
+      return res.status(500).json({ success: false, error: 'Internal server error' });
+    }
+  }
+);
+
+/**
  * POST /donations
  * Create a non-custodial donation record
  */
@@ -490,14 +565,52 @@ router.post('/', payloadSizeLimiter(ENDPOINT_LIMITS.singleDonation), donationRat
       sourceAsset,
       sourceAmount,
       mintCertificate,
+      routingStrategy,
+      poolName,
+      donorLatitude,
+      donorLongitude,
     } = req.body;
 
+    // Determine recipient — either explicit or via routing
+    let resolvedRecipientInput = recipient;
+    let routingResult = null;
+
+    if (!resolvedRecipientInput && !routingStrategy) {
+      throw new ValidationError(
+        'Either recipient or routingStrategy is required',
+        null,
+        ERROR_CODES.ROUTING_STRATEGY_REQUIRED
+      );
+    }
+
+    if (!resolvedRecipientInput && routingStrategy) {
+      if (!poolName) {
+        throw new ValidationError(
+          'poolName is required when routingStrategy is provided',
+          null,
+          ERROR_CODES.POOL_NAME_REQUIRED
+        );
+      }
+
+      const donationRouter = serviceContainer.getDonationRouter();
+      routingResult = await donationRouter.route({
+        poolName,
+        routingStrategy,
+        donorCoordinates: (donorLatitude != null && donorLongitude != null)
+          ? { lat: donorLatitude, lon: donorLongitude }
+          : null,
+        donationId: req.idempotency.key,
+        now: new Date(),
+      });
+      resolvedRecipientInput = routingResult.recipientId;
+    }
+
     // Basic validation
-    if (!amount || !recipient) {
+    if (!amount || !resolvedRecipientInput) {
       throw new ValidationError('Missing required fields: amount, recipient', null, ERROR_CODES.MISSING_REQUIRED_FIELD);
     }
 
-    if (typeof recipient !== 'string' || (donor && typeof donor !== 'string')) {
+    if (typeof resolvedRecipientInput !== 'string' || (donor && typeof donor !== 'string')) {
       return res.status(400).json({
         error: 'Malformed request: donor and recipient must be strings'
       });
@@ -549,9 +662,9 @@ router.post('/', payloadSizeLimiter(ENDPOINT_LIMITS.singleDonation), donationRat
     }
 
     // Resolve federation address if needed (e.g. alice*example.com → GABC...)
-    let resolvedRecipient = recipient;
-    if (federation.isFederationAddress(recipient)) {
-      resolvedRecipient = await federation.resolveRecipient(recipient);
+    let resolvedRecipient = resolvedRecipientInput;
+    if (federation.isFederationAddress(resolvedRecipientInput)) {
+      resolvedRecipient = await federation.resolveRecipient(resolvedRecipientInput);
     }
 
     // Optionally encrypt memo using recipient's Stellar public key (ECDH)
@@ -674,6 +787,13 @@ router.post('/', payloadSizeLimiter(ENDPOINT_LIMITS.singleDonation), donationRat
           ...(feeEstimate.surgeProtection && {
             feeWarning: 'Network fees are elevated (surge pricing active).'
           }),
+        }),
+        ...(routingResult && {
+          routing: {
+            recipientId: routingResult.recipientId,
+            recipientName: routingResult.recipientName,
+            routingDecisionId: routingResult.routingDecisionId,
+          },
         }),
       }
     };

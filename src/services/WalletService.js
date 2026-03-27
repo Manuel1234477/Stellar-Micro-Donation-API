@@ -90,6 +90,25 @@ class WalletService {
   }
 
   /**
+   * Create a wallet record for an existing on-chain account (bulk import).
+   * Unlike `createWallet`, this method does NOT trigger Friendbot funding,
+   * platform sponsorship, or any Stellar network calls — the account already
+   * exists on-chain and its balance has been fetched by the caller.
+   * @param {string} publicKey - Stellar public key (wallet address)
+   * @param {string|null} balance - XLM balance from Horizon, or null for unfunded accounts
+   * @returns {Object} Created wallet record
+   */
+  createWalletRecord(publicKey, balance) {
+    const sanitizedAddress = sanitizeStellarAddress(publicKey);
+
+    return Wallet.create({
+      address: sanitizedAddress,
+      balance: balance ?? null,
+      importedVia: 'bulk-import',
+    });
+  }
+
+  /**
    * Get all wallets
    * @returns {Array} Array of wallet objects
    */

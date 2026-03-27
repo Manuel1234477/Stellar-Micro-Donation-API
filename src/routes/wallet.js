@@ -11,13 +11,13 @@
 
 const express = require('express');
 const router = express.Router();
+const requireApiKey = require('../middleware/apiKey');
 const { checkPermission, requireAdmin } = require('../middleware/rbac');
 const { PERMISSIONS } = require('../utils/permissions');
 const LimitService = require('../services/LimitService');
 const Database = require('../utils/database');
 const { ValidationError, NotFoundError, ERROR_CODES } = require('../utils/errors');
 const WalletService = require('../services/WalletService');
-const Database = require('../utils/database');
 const { getStellarService } = require('../config/stellar');
 const log = require('../utils/log');
 const { validateSchema } = require('../middleware/schemaValidation');
@@ -26,8 +26,11 @@ const { validateDataEntry } = require('../middleware/validateDataEntry');
 // eslint-disable-next-line no-unused-vars
 const { sanitizeLabel, sanitizeName } = require('../utils/sanitizer');
 const { payloadSizeLimiter, ENDPOINT_LIMITS } = require('../middleware/payloadSizeLimiter');
+const { bulkImportRateLimiter } = require('../middleware/rateLimiter');
+const BulkWalletImportService = require('../services/BulkWalletImportService');
 
 const walletService = new WalletService(require('../config/serviceContainer').getStellarService());
+const stellarService = require('../config/serviceContainer').getStellarService();
 const AuditLogService = require('../services/AuditLogService');
 const walletCreateSchema = validateSchema({
   body: {
@@ -801,5 +804,79 @@ router.get('/:id/certificates', checkPermission(PERMISSIONS.WALLETS_READ), walle
     next(error);
   }
 });
+ * POST /wallets/bulk-import
+ * Import multiple existing Stellar wallets in a single request.
+ * Middleware chain: requireApiKey → bulkImportRateLimiter → Content-Type check →
+ *   batch size validation → checkPermission(WALLETS_CREATE)
+ */
+router.post(
+  '/bulk-import',
+  requireApiKey,
+  bulkImportRateLimiter,
+  (req, res, next) => {
+    const contentType = req.headers['content-type'] || '';
+    if (!contentType.includes('application/json')) {
+      return res.status(415).json({
+        success: false,
+        error: {
+          code: 'UNSUPPORTED_MEDIA_TYPE',
+          message: 'Content-Type must be application/json'
+        }
+      });
+    }
+    next();
+  },
+  (req, res, next) => {
+    const wallets = req.body && req.body.wallets;
+    if (!Array.isArray(wallets) || wallets.length === 0) {
+      return res.status(422).json({
+        success: false,
+        error: {
+          code: 'INVALID_BATCH',
+          message: 'wallets array must not be empty'
+        }
+      });
+    }
+    if (wallets.length > 100) {
+      return res.status(422).json({
+        success: false,
+        error: {
+          code: 'BATCH_TOO_LARGE',
+          message: `Batch size limit exceeded: maximum 100 wallets per request, got ${wallets.length}`
+        }
+      });
+    }
+    next();
+  },
+  checkPermission(PERMISSIONS.WALLETS_CREATE),
+  async (req, res, next) => {
+    try {
+      const { wallets } = req.body;
+      const bulkImportService = new BulkWalletImportService(walletService, stellarService);
+      const { results, summary } = await bulkImportService.importBatch(wallets, req.apiKey.id);
+
+      await AuditLogService.log({
+        category: AuditLogService.CATEGORY.WALLET_OPERATION,
+        action: AuditLogService.ACTION.BULK_WALLET_IMPORT,
+        severity: AuditLogService.SEVERITY.MEDIUM,
+        result: 'SUCCESS',
+        userId: req.apiKey.id,
+        requestId: req.id,
+        ipAddress: req.ip,
+        resource: '/wallets/bulk-import',
+        details: {
+          batchSize: wallets.length,
+          succeeded: summary.succeeded,
+          duplicates: summary.duplicates,
+          failed: summary.failed
+        }
+      });
+
+      return res.status(200).json({ results, summary });
+    } catch (error) {
+      next(error);
+    }
+  }
+);
 
 module.exports = router;

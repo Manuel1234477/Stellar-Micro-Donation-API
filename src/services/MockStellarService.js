@@ -1435,6 +1435,74 @@ class MockStellarService extends StellarServiceInterface {
   }
 
   /**
+   * Simulate (dry-run) a Stellar transaction without hitting any real Horizon endpoint.
+   *
+   * Behavior:
+   * - Returns `success: false` with a descriptive error if `xdr` is falsy, empty, or null.
+   * - Returns `success: false` with the configured failure message when failure simulation
+   *   is enabled (`this.failureSimulation.enabled` is true).
+   * - Otherwise returns `success: true` with a realistic `estimatedFee` based on the
+   *   configured mock fee multiplier, a stub `estimatedResult`, and a `simulatedAt` timestamp.
+   *
+   * Configurable failure modes:
+   * - Call `enableFailureSimulation(type)` before invoking this method to trigger a
+   *   `success: false` result. The `errors` array will reflect the configured failure type.
+   *
+   * IMPORTANT: This method never calls any real Horizon network endpoint.
+   *
+   * @param {string} xdr - Base64-encoded Stellar transaction envelope XDR (not validated in mock)
+   * @returns {Promise<{
+   *   success: boolean,
+   *   estimatedFee?: { stroops: number, xlm: string },
+   *   estimatedResult?: { operationType: string, sourceAccount: string|null, destinationAccount: string|null },
+   *   errors?: string[],
+   *   simulatedAt: string
+   * }>} Simulation_Result
+   */
+  async simulateTransaction(xdr) {
+    const simulatedAt = new Date().toISOString();
+
+    // Guard: xdr must be a non-empty string
+    if (!xdr || typeof xdr !== 'string' || xdr.trim() === '') {
+      return {
+        success: false,
+        errors: ['xdr is required and must be a non-empty string'],
+        simulatedAt,
+      };
+    }
+
+    // Failure simulation
+    if (this.failureSimulation.enabled) {
+      const failureType = this.failureSimulation.type || 'unknown';
+      return {
+        success: false,
+        errors: [`Simulation failed: ${failureType}`],
+        simulatedAt,
+      };
+    }
+
+    // Return a realistic success result
+    const BASE_FEE_STROOPS = 100;
+    const multiplier = this.config.feeMultiplier !== undefined ? this.config.feeMultiplier : 1;
+    const feePerOp = Math.round(BASE_FEE_STROOPS * multiplier);
+    const estimatedFeeStroops = feePerOp; // mock assumes 1 operation
+
+    return {
+      success: true,
+      estimatedFee: {
+        stroops: estimatedFeeStroops,
+        xlm: (estimatedFeeStroops / 1e7).toFixed(7),
+      },
+      estimatedResult: {
+        operationType: 'payment',
+        sourceAccount: null,
+        destinationAccount: null,
+      },
+      simulatedAt,
+    };
+  }
+
+  /**
    * Estimate the transaction fee for a given number of operations.
    * Simulates fee variations including surge pricing.
    * @param {number} [operationCount=1]
