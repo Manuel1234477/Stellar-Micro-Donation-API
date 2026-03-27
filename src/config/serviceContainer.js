@@ -15,6 +15,7 @@ const RecurringDonationScheduler = require('../services/RecurringDonationSchedul
 const TransactionReconciliationService = require('../services/TransactionReconciliationService');
 const IdempotencyService = require('../services/IdempotencyService');
 const TransactionSyncService = require('../services/TransactionSyncService');
+const TransactionSyncScheduler = require('../services/TransactionSyncScheduler');
 const NetworkStatusService = require('../services/NetworkStatusService');
 const FeeBumpService = require('../services/FeeBumpService');
 const AuditLogService = require('../services/AuditLogService');
@@ -57,6 +58,10 @@ class ServiceContainer {
       this.stellarService
     );
 
+    this.transactionSyncScheduler = new TransactionSyncScheduler(
+      this.stellarService
+    );
+
     // Initialize Network Status Service
     this.networkStatusService = new NetworkStatusService(this.stellarService);
 
@@ -91,6 +96,10 @@ class ServiceContainer {
 
   getTransactionSyncService() {
     return this.transactionSyncService;
+  }
+
+  getTransactionSyncScheduler() {
+    return this.transactionSyncScheduler;
   }
 
   getNetworkStatusService() {

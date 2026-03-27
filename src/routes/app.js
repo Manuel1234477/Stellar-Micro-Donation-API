@@ -83,6 +83,7 @@ const stellarService = serviceContainer.getStellarService();
 const reconciliationService = serviceContainer.getTransactionReconciliationService();
 const recurringDonationScheduler = serviceContainer.getRecurringDonationScheduler();
 const networkStatusService = serviceContainer.getNetworkStatusService();
+const transactionSyncScheduler = serviceContainer.getTransactionSyncScheduler();
 
 // Initialize replay detection cleanup timer (will be started in startServer)
 let replayCleanupTimer = null;
@@ -279,6 +280,7 @@ app.get('/health', async (req, res) => {
   health.clientIp = req.ip;
   health.protocol = req.protocol;
   health.requestId = req.id;
+  health.transactionSync = transactionSyncScheduler.getSyncStatus();
   
   const httpStatus = health.status === 'unhealthy' ? 503 : 200;
   return res.status(httpStatus).json(health);
@@ -475,6 +477,20 @@ app.post('/admin/reconcile', require('../middleware/rbac').requireAdmin(), async
   }
 });
 
+// Admin sync endpoint — triggers immediate transaction sync for all wallets
+app.post('/admin/sync', require('../middleware/rbac').requireAdmin(), async (req, res, next) => {
+  try {
+    const result = await transactionSyncScheduler.syncAllWallets();
+    res.json({
+      success: true,
+      message: 'Transaction sync complete',
+      data: result,
+    });
+  } catch (error) {
+    next(error);
+  }
+});
+
 // Orphaned transactions stats (admin only)
 app.get('/admin/orphaned-transactions', require('../middleware/rbac').requireAdmin(), async (req, res, next) => {
   try {
@@ -543,6 +559,7 @@ async function startServer() {
       recurringDonationScheduler.start();
       reconciliationService.start();
       auditLogRetentionService.start();
+      transactionSyncScheduler.start();
       
       // Start quota reset job
       const stopQuotaResetJob = startQuotaResetJob();
@@ -621,6 +638,7 @@ async function startServer() {
           recurringDonationScheduler.stop();
           reconciliationService.stop();
           auditLogRetentionService.stop();
+          transactionSyncScheduler.stop();
           require('../workers/expiryWorker').stop();
           
           // Stop quota reset job

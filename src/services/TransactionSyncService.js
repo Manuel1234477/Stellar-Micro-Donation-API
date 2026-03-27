@@ -33,8 +33,9 @@ class TransactionSyncService {
   }
 
   /**
-   * Sync wallet transactions from Stellar network to local database
-   * Fetches transactions from Horizon and creates local records for new ones
+   * Sync wallet transactions from Stellar network to local database.
+   * Fetches only transactions AFTER the wallet's last_cursor (incremental sync).
+   * On success, updates wallet's last_cursor and last_synced_at.
    * @param {string} publicKey - Stellar public key to sync
    * @param {number} maxTransactions - Limit for unbounded fetching
    * @returns {Promise<{synced: number, transactions: Array}>} Sync results
@@ -42,14 +43,14 @@ class TransactionSyncService {
   async syncWalletTransactions(publicKey, maxTransactions = 500) {
     const startTime = Date.now();
     const wallet = Wallet.getByAddress(publicKey);
-    const lastCursor = wallet ? wallet.last_synced_cursor : undefined;
+    const lastCursor = wallet ? (wallet.last_cursor || wallet.last_synced_cursor) : undefined;
 
     const horizonTxs = await this._fetchHorizonTransactions(publicKey, maxTransactions, lastCursor);
     const syncedTxs = [];
 
     // Horizon returns asc when fetching forward from cursor
     for (const tx of horizonTxs) {
-      const existing = Transaction.getByField('stellarTxId', tx.id);
+      const existing = Transaction.getByStellarTxId(tx.id);
       if (!existing) {
         const newTx = Transaction.create({
           stellarTxId: tx.id,
@@ -66,7 +67,13 @@ class TransactionSyncService {
       // Update the cursor using the latest transaction fetched
       // Txs are in asc order, so the last one is the newest
       const latestTx = horizonTxs[horizonTxs.length - 1];
-      Wallet.update(wallet.id, { last_synced_cursor: latestTx.paging_token });
+      Wallet.update(wallet.id, {
+        last_cursor: latestTx.paging_token,
+        last_synced_at: new Date().toISOString(),
+      });
+    } else if (wallet) {
+      // Even if no new txs, update last_synced_at to record the sync attempt
+      Wallet.update(wallet.id, { last_synced_at: new Date().toISOString() });
     }
 
     const duration = Date.now() - startTime;

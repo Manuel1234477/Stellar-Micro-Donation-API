@@ -38,6 +38,8 @@ class Wallet {
       ownerName: walletData.ownerName || null,
       createdAt: new Date().toISOString(),
       deletedAt: null, // Initialized for soft-delete support
+      last_synced_at: null,
+      last_cursor: null,
       ...walletData
     };
     wallets.push(newWallet);
