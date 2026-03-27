@@ -32,6 +32,7 @@ const campaignsRoutes = require('./campaigns');
 const offersRoutes = require('./offers');
 const tagsRoutes = require('./tags');
 const leaderboardRoutes = require('./leaderboard');
+const encryptionRoutes = require('./encryption');
 const { errorHandler, notFoundHandler } = require('../middleware/errorHandler');
 const logger = require('../middleware/logger');
 const { attachUserRole } = require('../middleware/rbac');
@@ -183,6 +184,7 @@ app.use('/admin/transactions', (req, res, next) => {
 app.use('/network', networkRoutes);
 app.use('/webhooks', webhooksRoutes);
 app.use('/campaigns', campaignsRoutes);
+app.use('/encryption', encryptionRoutes);
 app.use('/offers', offersRoutes);
 app.use('/tags', tagsRoutes);
 app.use('/leaderboard', leaderboardRoutes);
