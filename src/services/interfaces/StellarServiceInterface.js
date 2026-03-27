@@ -127,6 +127,9 @@ class StellarServiceInterface {
   async getCertificatesForWallet(_publicKey) {
     void _publicKey;
     throw new Error('getCertificatesForWallet() must be implemented');
+  async simulateTransaction(_xdr) {
+    void _xdr;
+    throw new Error('simulateTransaction() must be implemented');
   }
 }
 

@@ -976,6 +976,44 @@ class StellarService extends StellarServiceInterface {
 
 
   /**
+   * Query Horizon for an account and normalise the outcome into a discriminated union.
+   *
+   * This method never throws — all outcomes are returned as plain values so callers
+   * do not need to inspect raw Horizon error shapes.
+   *
+   * @param {string} publicKey - Stellar public key to look up
+   * @returns {Promise<
+   *   { balance: string } |
+   *   { notFound: true } |
+   *   { error: true }
+   * >}
+   *   - `{ balance }` — account exists; `balance` is the native XLM balance string
+   *   - `{ notFound: true }` — Horizon returned 404 (account not yet funded)
+   *   - `{ error: true }` — any other Horizon or network error
+   */
+  async getAccountInfo(publicKey) {
+    try {
+      const account = await this._executeWithRetry(
+        () => this.server.loadAccount(publicKey),
+        'getAccountInfo'
+      );
+      const nativeBalance = account.balances.find(b => b.asset_type === 'native');
+      return { balance: nativeBalance ? nativeBalance.balance : '0' };
+    } catch (error) {
+      const status = error && error.response && error.response.status;
+      if (status === 404) {
+        return { notFound: true };
+      }
+      log.warn('STELLAR_SERVICE', 'getAccountInfo failed with non-404 error', {
+        publicKey,
+        status,
+        error: error.message,
+      });
+      return { error: true };
+    }
+  }
+
+  /**
    * Get the inflation destination for a Stellar account.
    *
    * @param {string} publicKey - Public key of the account to query
@@ -995,6 +1033,93 @@ class StellarService extends StellarServiceInterface {
       });
       return null;
     }
+  }
+
+  /**
+   * Simulate (dry-run) a Stellar transaction without submitting it to the network.
+   *
+   * This method decodes the provided XDR, fetches current fee stats from Horizon
+   * (read-only), and returns an estimated fee and expected operation outcome.
+   *
+   * IMPORTANT: This method NEVER calls `server.submitTransaction`,
+   * `server.submitAsyncTransaction`, or any equivalent Horizon submission endpoint.
+   * No transaction is broadcast to the Stellar network.
+   *
+   * @param {string} xdr - Base64-encoded Stellar transaction envelope XDR
+   * @returns {Promise<{
+   *   success: boolean,
+   *   estimatedFee?: { stroops: number, xlm: string },
+   *   estimatedResult?: { operationType: string, sourceAccount: string|null, destinationAccount: string|null },
+   *   feeWarning?: string,
+   *   errors?: string[],
+   *   simulatedAt: string
+   * }>} Simulation_Result — never throws for expected failure modes
+   */
+  async simulateTransaction(xdr) {
+    const simulatedAt = new Date().toISOString();
+
+    // Guard: xdr must be a non-empty string
+    if (!xdr || typeof xdr !== 'string') {
+      return { success: false, errors: ['xdr is required'], simulatedAt };
+    }
+
+    // Decode the XDR locally — no network call
+    let tx;
+    try {
+      tx = StellarSdk.TransactionBuilder.fromXDR(xdr, this.networkPassphrase);
+    } catch (parseErr) {
+      return {
+        success: false,
+        errors: [`Failed to decode XDR: ${parseErr.message}`],
+        simulatedAt,
+      };
+    }
+
+    // Fetch fee stats (read-only Horizon call) with fallback
+    const BASE_FEE_STROOPS = parseInt(StellarSdk.BASE_FEE, 10); // 100
+    let recommendedFeePerOp = BASE_FEE_STROOPS;
+    let feeWarning;
+
+    try {
+      const feeStats = await this.server.feeStats();
+      const p70 = parseInt(
+        (feeStats.fee_charged && feeStats.fee_charged.p70) ||
+        (feeStats.max_fee && feeStats.max_fee.p70) ||
+        BASE_FEE_STROOPS,
+        10
+      );
+      recommendedFeePerOp = Math.max(p70, BASE_FEE_STROOPS);
+    } catch (_feeErr) {
+      recommendedFeePerOp = BASE_FEE_STROOPS;
+      feeWarning = 'Fee estimate is based on the Stellar network base fee (100 stroops/op); live fee stats were unavailable.';
+    }
+
+    const operationCount = tx.operations.length;
+    const estimatedFeeStroops = recommendedFeePerOp * operationCount;
+
+    // Build estimatedResult from the first operation
+    const firstOp = tx.operations[0];
+    const estimatedResult = {
+      operationType: firstOp ? firstOp.type : 'unknown',
+      sourceAccount: (firstOp && firstOp.source) || tx.source || null,
+      destinationAccount: (firstOp && firstOp.destination) || null,
+    };
+
+    const result = {
+      success: true,
+      estimatedFee: {
+        stroops: estimatedFeeStroops,
+        xlm: (estimatedFeeStroops / 1e7).toFixed(7),
+      },
+      estimatedResult,
+      simulatedAt,
+    };
+
+    if (feeWarning) {
+      result.feeWarning = feeWarning;
+    }
+
+    return result;
   }
 
   /**

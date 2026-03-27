@@ -28,6 +28,7 @@ const dbAdminRoutes = require('./admin/db');
 const retentionAdminRoutes = require('./admin/retention');
 const backupAdminRoutes = require('./admin/backup');
 const matchingProgramsAdminRoutes = require('./admin/matchingPrograms');
+const routingAdminRoutes = require('./admin/routing');
 const impactMetricsAdminRoutes = require('./admin/impactMetrics');
 const networkRoutes = require('./network');
 const webhooksRoutes = require('./webhooks');
@@ -192,6 +193,7 @@ app.use('/admin/db', dbAdminRoutes);
 app.use('/admin/retention', retentionAdminRoutes);
 app.use('/admin', backupAdminRoutes);
 app.use('/admin/matching-programs', matchingProgramsAdminRoutes);
+app.use('/admin/routing', routingAdminRoutes);
 app.use('/admin/impact-metrics', impactMetricsAdminRoutes);
 app.use('/admin/geo-blocking', require('./admin/geoBlocking'));
 

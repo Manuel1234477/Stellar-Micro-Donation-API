@@ -95,6 +95,9 @@ const AUDIT_ACTION = {
 
   // Wallet Inflation Destination
   INFLATION_DESTINATION_UPDATED: 'INFLATION_DESTINATION_UPDATED',
+
+  // Bulk Operations
+  BULK_WALLET_IMPORT: 'BULK_WALLET_IMPORT',
 };
 
 class AuditLogService {
