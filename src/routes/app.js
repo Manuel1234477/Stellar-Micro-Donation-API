@@ -53,6 +53,7 @@ const WebhookService = require('../services/WebhookService');
 const { validateRBAC } = require('../utils/rbacValidator');
 const log = require('../utils/log');
 const requestId = require('../middleware/requestId');
+const { attachLifecycleTracking } = require('../middleware/requestLifecycle');
 const serviceContainer = require('../config/serviceContainer');
 const { payloadSizeLimiter } = require('../middleware/payloadSizeLimiter');
 const { createCorsMiddleware } = require('../middleware/cors');
@@ -119,6 +120,7 @@ app.use((req, res, next) => {
 
 // Middleware
 app.use(requestId);
+app.use(attachLifecycleTracking);
 
 // Attach res.success / res.failure envelope helpers (must be after requestId)
 app.use(responseFormatterMiddleware());
