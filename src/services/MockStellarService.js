@@ -1807,6 +1807,81 @@ class MockStellarService extends StellarServiceInterface {
    * @param {string} assetCode       - Asset code (1-12 alphanumeric characters)
    * @param {string} amount          - Amount to issue
    * @param {string} recipientPublic - Public key of the recipient
+  /**
+   * Mock implementation of addTrustline (changeTrust operation).
+   *
+   * Stores the trustline limit in `this.trustlines` keyed by
+   * `${accountPublic}:${assetCode}:${issuerPublic}` so tests can verify state.
+   *
+   * @param {string} accountSecret - Secret key of the trusting account
+   * @param {string} assetCode     - Asset code (1-12 alphanumeric characters)
+   * @param {string} issuerPublic  - Public key of the asset issuer
+   * @param {string|null} [limit]  - Trust limit string, or null for unlimited
+   * @returns {Promise<{hash: string, ledger: number, assetCode: string, issuerPublic: string, limit: string}>}
+   * @throws {ValidationError} If inputs are invalid or limit exceeds Stellar maximum
+   */
+  async addTrustline(accountSecret, assetCode, issuerPublic, limit = null) {
+    await this._simulateNetworkDelay();
+    this._checkRateLimit();
+    this._validateSecretKey(accountSecret);
+    this._validatePublicKey(issuerPublic);
+    this._simulateFailure();
+
+    if (!assetCode || !/^[A-Za-z0-9]{1,12}$/.test(assetCode)) {
+      throw new ValidationError('Asset code must be 1-12 alphanumeric characters');
+    }
+
+    const STELLAR_MAX_LIMIT = '922337203685.4775807';
+
+    if (limit !== null && limit !== undefined) {
+      const limitNum = parseFloat(limit);
+      if (isNaN(limitNum) || limitNum <= 0) {
+        throw new ValidationError('Trust limit must be a positive numeric string');
+      }
+      if (parseFloat(limit) > parseFloat(STELLAR_MAX_LIMIT)) {
+        throw new ValidationError(`Trust limit cannot exceed Stellar maximum of ${STELLAR_MAX_LIMIT}`);
+      }
+    }
+
+    // Resolve account public key from secret
+    let accountPublic = null;
+    for (const w of this.wallets.values()) {
+      if (w.secretKey === accountSecret) { accountPublic = w.publicKey; break; }
+    }
+    if (!accountPublic) {
+      throw new ValidationError('Invalid account secret key. No matching account found.');
+    }
+
+    const resolvedLimit = limit !== null && limit !== undefined ? String(limit) : STELLAR_MAX_LIMIT;
+
+    // Store trustline state for test verification
+    if (!this.trustlines) this.trustlines = new Map();
+    const key = `${accountPublic}:${assetCode}:${issuerPublic}`;
+    this.trustlines.set(key, { assetCode, issuerPublic, limit: resolvedLimit, accountPublic });
+
+    const hash = 'mock_trustline_' + crypto.randomBytes(16).toString('hex');
+    const ledger = Math.floor(Math.random() * 1000000) + 1000000;
+
+    log.info('MOCK_STELLAR_SERVICE', 'Trustline established', {
+      assetCode, issuerPublic, limit: resolvedLimit, hash,
+    });
+
+    return { hash, ledger, assetCode, issuerPublic, limit: resolvedLimit };
+  }
+
+  /**
+   * Retrieve a stored trustline from mock state (test helper).
+   * @param {string} accountPublic - Public key of the trusting account
+   * @param {string} assetCode     - Asset code
+   * @param {string} issuerPublic  - Issuer public key
+   * @returns {Object|undefined}
+   */
+  getTrustline(accountPublic, assetCode, issuerPublic) {
+    if (!this.trustlines) return undefined;
+    return this.trustlines.get(`${accountPublic}:${assetCode}:${issuerPublic}`);
+  }
+
+  /**
    * @returns {Promise<{hash: string, ledger: number, assetCode: string, issuerPublic: string, amount: string}>}
    * @throws {ValidationError}    If inputs are invalid
    * @throws {BusinessLogicError} If simulated failure is active

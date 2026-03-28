@@ -782,6 +782,133 @@ router.post('/:id/merge', checkPermission(PERMISSIONS.WALLETS_DELETE), async (re
   }
 });
 
+// ─── Trustline Endpoints ──────────────────────────────────────────────────────
+
+/** Maximum trust limit allowed by the Stellar network */
+const STELLAR_MAX_LIMIT = '922337203685.4775807';
+
+/**
+ * Validate a trust limit string.
+ * @param {string} limit - Limit value to validate
+ * @returns {string|null} Error message, or null if valid
+ */
+function validateTrustLimit(limit) {
+  const num = parseFloat(limit);
+  if (isNaN(num) || num <= 0) return 'limit must be a positive numeric string';
+  if (num > parseFloat(STELLAR_MAX_LIMIT)) {
+    return `limit cannot exceed Stellar maximum of ${STELLAR_MAX_LIMIT}`;
+  }
+  return null;
+}
+
+const trustlineCreateSchema = validateSchema({
+  params: { fields: { id: { type: 'integerString', required: true } } },
+  body: {
+    fields: {
+      secretKey:    { type: 'string', required: true },
+      assetCode:    { type: 'string', required: true, trim: true, minLength: 1, maxLength: 12 },
+      issuerPublic: { type: 'string', required: true, trim: true },
+      limit:        { type: 'string', required: false, nullable: true },
+    },
+  },
+});
+
+const trustlineUpdateSchema = validateSchema({
+  params: {
+    fields: {
+      id:    { type: 'integerString', required: true },
+      asset: { type: 'string', required: true },
+    },
+  },
+  body: {
+    fields: {
+      secretKey:    { type: 'string', required: true },
+      issuerPublic: { type: 'string', required: true, trim: true },
+      limit:        { type: 'string', required: true },
+    },
+  },
+});
+
+/**
+ * POST /wallets/:id/trustlines
+ * Create a trustline for a custom asset on the wallet's Stellar account.
+ * Optionally set a custom trust limit.
+ *
+ * @body {string}      secretKey    - Secret key of the wallet account
+ * @body {string}      assetCode    - Asset code (1-12 alphanumeric characters)
+ * @body {string}      issuerPublic - Public key of the asset issuer
+ * @body {string|null} [limit]      - Optional trust limit (positive numeric string,
+ *   max "922337203685.4775807"). Omit for unlimited.
+ */
+router.post('/:id/trustlines', checkPermission(PERMISSIONS.WALLETS_UPDATE), trustlineCreateSchema, async (req, res, next) => {
+  try {
+    const { secretKey, assetCode, issuerPublic, limit } = req.body;
+
+    if (limit !== null && limit !== undefined) {
+      const err = validateTrustLimit(limit);
+      if (err) return res.status(400).json({ success: false, error: { code: 'INVALID_LIMIT', message: err } });
+    }
+
+    const stellar = getStellarService();
+    const result = await stellar.addTrustline(secretKey, assetCode, issuerPublic, limit || null);
+
+    await AuditLogService.log({
+      category: AuditLogService.CATEGORY.WALLET_OPERATION,
+      action: 'TRUSTLINE_CREATED',
+      severity: AuditLogService.SEVERITY.MEDIUM,
+      result: 'SUCCESS',
+      userId: req.user && req.user.id,
+      requestId: req.id,
+      ipAddress: req.ip,
+      resource: `/wallets/${req.params.id}/trustlines`,
+      details: { walletId: req.params.id, assetCode, issuerPublic, limit: result.limit, txHash: result.hash },
+    });
+
+    return res.status(201).json({ success: true, data: result });
+  } catch (error) {
+    next(error);
+  }
+});
+
+/**
+ * PATCH /wallets/:id/trustlines/:asset
+ * Update the trust limit for an existing trustline without removing it.
+ *
+ * @param {string} asset         - Asset code in the URL path
+ * @body {string} secretKey      - Secret key of the wallet account
+ * @body {string} issuerPublic   - Public key of the asset issuer
+ * @body {string} limit          - New trust limit (positive numeric string,
+ *   max "922337203685.4775807")
+ */
+router.patch('/:id/trustlines/:asset', checkPermission(PERMISSIONS.WALLETS_UPDATE), trustlineUpdateSchema, async (req, res, next) => {
+  try {
+    const { asset } = req.params;
+    const { secretKey, issuerPublic, limit } = req.body;
+
+    const err = validateTrustLimit(limit);
+    if (err) return res.status(400).json({ success: false, error: { code: 'INVALID_LIMIT', message: err } });
+
+    const stellar = getStellarService();
+    const result = await stellar.addTrustline(secretKey, asset, issuerPublic, limit);
+
+    await AuditLogService.log({
+      category: AuditLogService.CATEGORY.WALLET_OPERATION,
+      action: 'TRUSTLINE_UPDATED',
+      severity: AuditLogService.SEVERITY.MEDIUM,
+      result: 'SUCCESS',
+      userId: req.user && req.user.id,
+      requestId: req.id,
+      ipAddress: req.ip,
+      resource: `/wallets/${req.params.id}/trustlines/${asset}`,
+      details: { walletId: req.params.id, assetCode: asset, issuerPublic, limit: result.limit, txHash: result.hash },
+    });
+
+    return res.json({ success: true, data: result });
+  } catch (error) {
+    next(error);
+  }
+});
+
 // ─── Account Set Options ──────────────────────────────────────────────────────
 
 const walletOptionsSchema = validateSchema({

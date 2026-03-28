@@ -913,6 +913,74 @@ class StellarService extends StellarServiceInterface {
   }
 
   /**
+   * Create or update a trustline for a custom Stellar asset.
+   *
+   * Uses the Stellar SDK `changeTrust` operation. Omitting `limit` (or passing
+   * `null`) sets the trustline to the network maximum (unlimited).
+   *
+   * @param {string} accountSecret - Secret key of the account establishing the trustline
+   * @param {string} assetCode     - Asset code (1-12 alphanumeric characters)
+   * @param {string} issuerPublic  - Public key of the asset issuer
+   * @param {string|null} [limit]  - Maximum amount to trust as a string. Must be a
+   *   positive numeric string ≤ "922337203685.4775807". Omit or pass null for unlimited.
+   * @returns {Promise<{hash: string, ledger: number, assetCode: string, issuerPublic: string, limit: string}>}
+   * @throws {ValidationError}    If inputs are invalid or limit exceeds Stellar maximum
+   * @throws {BusinessLogicError} If the Stellar operation fails
+   */
+  async addTrustline(accountSecret, assetCode, issuerPublic, limit = null) {
+    return StellarErrorHandler.wrap(async () => {
+      const { ValidationError } = require('../utils/errors');
+
+      if (!assetCode || !/^[A-Za-z0-9]{1,12}$/.test(assetCode)) {
+        throw new ValidationError('Asset code must be 1-12 alphanumeric characters');
+      }
+
+      const STELLAR_MAX_LIMIT = '922337203685.4775807';
+
+      if (limit !== null && limit !== undefined) {
+        const limitNum = parseFloat(limit);
+        if (isNaN(limitNum) || limitNum <= 0) {
+          throw new ValidationError('Trust limit must be a positive numeric string');
+        }
+        if (parseFloat(limit) > parseFloat(STELLAR_MAX_LIMIT)) {
+          throw new ValidationError(`Trust limit cannot exceed Stellar maximum of ${STELLAR_MAX_LIMIT}`);
+        }
+      }
+
+      const keypair = StellarSdk.Keypair.fromSecret(accountSecret);
+      const asset = new StellarSdk.Asset(assetCode, issuerPublic);
+
+      const account = await this._executeWithRetry(() =>
+        this.server.loadAccount(keypair.publicKey())
+      );
+
+      const opParams = { asset };
+      if (limit !== null && limit !== undefined) {
+        opParams.limit = String(limit);
+      }
+
+      const transaction = new StellarSdk.TransactionBuilder(account, {
+        fee: StellarSdk.BASE_FEE,
+        networkPassphrase: this._getNetworkPassphrase(),
+      })
+        .addOperation(StellarSdk.Operation.changeTrust(opParams))
+        .setTimeout(30)
+        .build();
+
+      transaction.sign(keypair);
+      const result = await this._submitTransactionWithNetworkSafety(transaction);
+
+      const resolvedLimit = limit !== null && limit !== undefined ? String(limit) : STELLAR_MAX_LIMIT;
+
+      log.info('STELLAR_SERVICE', 'Trustline established', {
+        assetCode, issuerPublic, limit: resolvedLimit, hash: result.hash,
+      });
+
+      return { hash: result.hash, ledger: result.ledger, assetCode, issuerPublic, limit: resolvedLimit };
+    }, 'addTrustline');
+  }
+
+  /**
    * Issue a custom Stellar asset to a recipient.
    *
    * Flow:
