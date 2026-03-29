@@ -142,7 +142,12 @@ const ROUTE_PERMISSIONS = [
   { method: 'POST', path: '/reconcile', permission: PERMISSIONS.ADMIN_ALL },
   { method: 'GET', path: '/geo-blocking', permission: PERMISSIONS.ADMIN_ALL },
   { method: 'PUT', path: '/geo-blocking', permission: PERMISSIONS.ADMIN_ALL },
-  { method: 'POST', path: '/geo-blocking/reload-db', permission: PERMISSIONS.ADMIN_ALL }
+  { method: 'POST', path: '/geo-blocking/reload-db', permission: PERMISSIONS.ADMIN_ALL },
+  { method: 'GET', path: '/geo/rules', permission: PERMISSIONS.ADMIN_ALL },
+  { method: 'POST', path: '/geo/block', permission: PERMISSIONS.ADMIN_ALL },
+  { method: 'DELETE', path: '/geo/block/:countryCode', permission: PERMISSIONS.ADMIN_ALL },
+  { method: 'POST', path: '/geo/allow', permission: PERMISSIONS.ADMIN_ALL },
+  { method: 'DELETE', path: '/geo/allow/:countryCode', permission: PERMISSIONS.ADMIN_ALL }
 ];
 
 module.exports = {

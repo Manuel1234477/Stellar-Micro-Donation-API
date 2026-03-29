@@ -242,6 +242,7 @@ app.use('/admin/impact-metrics', impactMetricsAdminRoutes);
 app.use('/impact', impactRoutes);
 app.use('/admin/analytics', adminAnalyticsRoutes);
 app.use('/admin/reconciliation', reconciliationAdminRoutes);
+app.use('/admin/geo', require('./admin/geoBlocking'));
 app.use('/admin/geo-blocking', require('./admin/geoBlocking'));
 app.use('/admin/cors', require('./admin/corsOrigins'));
 
