@@ -18,6 +18,7 @@ const {
   withAsyncContext,
   generateCorrelationHeaders,
 } = require('../utils/correlation');
+const { withSpan, injectTraceHeaders } = require('../utils/tracing');
 
 const MAX_RETRIES = 3;
 const BASE_BACKOFF_MS = 1000;
@@ -52,16 +53,18 @@ class WebhookService {
 
     return new Promise((resolve) => {
       const transport = parsedUrl.protocol === 'https:' ? https : http;
+      // Inject W3C traceparent for distributed tracing (issue #632)
+      const outboundHeaders = injectTraceHeaders({
+        'Content-Type': 'application/json',
+        'Content-Length': Buffer.byteLength(body),
+        'User-Agent': 'Stellar-Donation-API/1.0',
+      });
       const options = {
         hostname: parsedUrl.hostname,
         port: parsedUrl.port || (parsedUrl.protocol === 'https:' ? 443 : 80),
         path: parsedUrl.pathname + parsedUrl.search,
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Content-Length': Buffer.byteLength(body),
-          'User-Agent': 'Stellar-Donation-API/1.0',
-        },
+        headers: outboundHeaders,
         timeout: 10000,
       };
 

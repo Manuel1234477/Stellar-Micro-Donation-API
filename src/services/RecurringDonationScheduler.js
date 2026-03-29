@@ -26,6 +26,7 @@ const {
   withAsyncContext,
   getCorrelationSummary,
 } = require('../utils/correlation');
+const { withSpanInContext, extractTraceContext, injectTraceHeaders, getCurrentTraceparent } = require('../utils/tracing');
 
 class RecurringDonationScheduler {
   /**
@@ -113,6 +114,18 @@ class RecurringDonationScheduler {
 
     return withBackgroundContext('process_schedules', async () => {
       const { correlationId, traceId } = getCorrelationSummary();
+      // Propagate trace context through scheduler job (issue #632)
+      const traceparent = getCurrentTraceparent();
+      const jobContext = traceparent
+        ? extractTraceContext({ traceparent })
+        : undefined;
+
+      const runWithTrace = (name, fn) =>
+        jobContext
+          ? withSpanInContext(name, jobContext, { 'scheduler.job': 'process_schedules' }, fn)
+          : fn();
+
+      return runWithTrace('scheduler.processSchedules', async () => {
       try {
         const now = new Date().toISOString();
 
@@ -203,6 +216,7 @@ class RecurringDonationScheduler {
         });
         this.logFailure('PROCESS_SCHEDULES', null, error.message);
       }
+      }); // end runWithTrace
     });
   }
 

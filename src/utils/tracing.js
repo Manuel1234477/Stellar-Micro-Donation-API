@@ -419,6 +419,99 @@ function getActiveSpanContext() {
   return api.isSpanContextValid(ctx) ? ctx : null;
 }
 
+// ─── In-Memory Trace Store (issue #632) ──────────────────────────────────────
+
+const MAX_STORED_TRACES = 1000;
+
+/** @type {Map<string, {traceId: string, spans: Array, startedAt: string}>} */
+const _traceStore = new Map();
+/** Insertion-order queue for eviction */
+const _traceQueue = [];
+
+/**
+ * Record a span into the in-memory trace store.
+ * Evicts the oldest trace when the store exceeds MAX_STORED_TRACES.
+ *
+ * @param {string} traceId
+ * @param {Object} spanData
+ */
+function recordSpan(traceId, spanData) {
+  if (!traceId) return;
+
+  if (!_traceStore.has(traceId)) {
+    if (_traceQueue.length >= MAX_STORED_TRACES) {
+      const oldest = _traceQueue.shift();
+      _traceStore.delete(oldest);
+    }
+    _traceStore.set(traceId, { traceId, spans: [], startedAt: new Date().toISOString() });
+    _traceQueue.push(traceId);
+  }
+
+  _traceStore.get(traceId).spans.push({ ...spanData, recordedAt: new Date().toISOString() });
+}
+
+/**
+ * Retrieve a stored trace by ID.
+ *
+ * @param {string} traceId
+ * @returns {{traceId: string, spans: Array, startedAt: string}|null}
+ */
+function getTrace(traceId) {
+  return _traceStore.get(traceId) || null;
+}
+
+/** @returns {number} */
+function getTraceCount() {
+  return _traceStore.size;
+}
+
+/** Clear all stored traces (for testing). */
+function _clearTraceStore() {
+  _traceStore.clear();
+  _traceQueue.length = 0;
+}
+
+// ─── Context-propagating span wrapper (issue #632) ────────────────────────────
+
+/**
+ * Run an async function inside a new span under the given OTel context.
+ * Records the span in the in-memory trace store.
+ *
+ * @param {string} spanName
+ * @param {import('@opentelemetry/api').Context} parentContext
+ * @param {Object} [attributes]
+ * @param {Function} fn
+ * @returns {Promise<*>}
+ */
+async function withSpanInContext(spanName, parentContext, attributes, fn) {
+  if (typeof attributes === 'function') {
+    fn = attributes;
+    attributes = {};
+  }
+
+  const tracer = getTracer();
+  const ctx = parentContext || api.context.active();
+
+  return api.context.with(ctx, () =>
+    tracer.startActiveSpan(spanName, { attributes }, ctx, async (span) => {
+      const spanCtx = span.spanContext();
+      try {
+        const result = await fn(span);
+        span.setStatus({ code: api.SpanStatusCode.OK });
+        recordSpan(spanCtx.traceId, { name: spanName, spanId: spanCtx.spanId, attributes, status: 'ok' });
+        return result;
+      } catch (err) {
+        span.recordException(err);
+        span.setStatus({ code: api.SpanStatusCode.ERROR, message: err.message });
+        recordSpan(spanCtx.traceId, { name: spanName, spanId: spanCtx.spanId, attributes, status: 'error', error: err.message });
+        throw err;
+      } finally {
+        span.end();
+      }
+    })
+  );
+}
+
 // ─── Exports ──────────────────────────────────────────────────────────────────
 
 module.exports = {
@@ -433,6 +526,7 @@ module.exports = {
   // Span helpers
   withSpan,
   startSpan,
+  withSpanInContext,
 
   // Middleware
   httpTracingMiddleware,
@@ -446,6 +540,12 @@ module.exports = {
   extractTraceContext,
   getCurrentTraceparent,
   getActiveSpanContext,
+
+  // In-memory trace store (issue #632)
+  recordSpan,
+  getTrace,
+  getTraceCount,
+  _clearTraceStore,
 
   // Constants (exported for tests)
   TRACEPARENT_HEADER,
