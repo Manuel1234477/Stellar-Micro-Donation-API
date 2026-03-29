@@ -25,9 +25,10 @@ const FLAG_SCOPES = {
 /**
  * Feature flag cache - in-memory cache for performance
  * Structure: { flagName: { scope: value, ... }, ... }
+ * TTL: 10 seconds for real-time flag updates during runtime changes
  */
 const flagCache = new Map();
-const CACHE_TTL_MS = 60000; // 1 minute cache TTL
+const CACHE_TTL_MS = 10000; // 10 second cache TTL for runtime responsiveness
 let lastCacheRefresh = 0;
 
 /**
@@ -424,6 +425,116 @@ async function clearAllFlags() {
   }
 }
 
+/**
+ * Get all effective flags for an API key
+ * Returns the enabled state of all flags for this specific key,
+ * applying precedence: api_key > environment > global
+ * 
+ * @param {string} apiKeyId - API key ID for evaluation
+ * @param {string} environment - Environment name for evaluation
+ * @returns {Promise<Object>} - Object mapping flag names to enabled status
+ */
+async function getEffectiveFlagsForKey(apiKeyId, environment = null) {
+  try {
+    await refreshCacheIfNeeded();
+
+    const effectiveFlags = {};
+    
+    // Iterate through all flags and evaluate for this key
+    for (const [flagName, flagScopes] of flagCache) {
+      // Check API key-specific flag (highest priority)
+      if (apiKeyId) {
+        const apiKeyScopeKey = `${FLAG_SCOPES.API_KEY}:${apiKeyId}`;
+        if (apiKeyScopeKey in flagScopes) {
+          effectiveFlags[flagName] = flagScopes[apiKeyScopeKey];
+          continue;
+        }
+      }
+
+      // Check environment-specific flag (medium priority)
+      if (environment) {
+        const envScopeKey = `${FLAG_SCOPES.ENVIRONMENT}:${environment}`;
+        if (envScopeKey in flagScopes) {
+          effectiveFlags[flagName] = flagScopes[envScopeKey];
+          continue;
+        }
+      }
+
+      // Check global flag (lowest priority)
+      if (FLAG_SCOPES.GLOBAL in flagScopes) {
+        effectiveFlags[flagName] = flagScopes[FLAG_SCOPES.GLOBAL];
+      }
+    }
+
+    return effectiveFlags;
+  } catch (error) {
+    log.error('FEATURE_FLAGS', 'Error getting effective flags for key', {
+      apiKeyId,
+      environment,
+      error: error.message
+    });
+    throw error;
+  }
+}
+
+/**
+ * Get flag override for a specific API key
+ * Returns the override value or null if not set
+ * 
+ * @param {string} flagName - Name of the flag
+ * @param {string} apiKeyId - API key ID
+ * @returns {Promise<Object|null>} - Flag record or null
+ */
+async function getFlagOverrideForKey(flagName, apiKeyId) {
+  return getFlag(flagName, FLAG_SCOPES.API_KEY, apiKeyId);
+}
+
+/**
+ * Set flag override for a specific API key
+ * This allows per-key testing and beta features
+ * 
+ * @param {string} flagName - Name of the flag
+ * @param {boolean} enabled - Whether to enable for this key
+ * @param {string} apiKeyId - API key ID
+ * @param {Object} options - Additional options
+ * @returns {Promise<Object>} - Updated flag record
+ */
+async function setFlagOverrideForKey(flagName, enabled, apiKeyId, options = {}) {
+  return setFlag(
+    flagName,
+    enabled,
+    FLAG_SCOPES.API_KEY,
+    apiKeyId,
+    { ...options, updatedBy: options.updatedBy || 'api-override' }
+  );
+}
+
+/**
+ * Clear flag override for a specific API key
+ * 
+ * @param {string} flagName - Name of the flag
+ * @param {string} apiKeyId - API key ID
+ * @returns {Promise<boolean>} - Whether deletion was successful
+ */
+async function clearFlagOverrideForKey(flagName, apiKeyId) {
+  return deleteFlag(flagName, FLAG_SCOPES.API_KEY, apiKeyId, 'system');
+}
+
+/**
+ * Get cache statistics for monitoring
+ * 
+ * @returns {Object} - Cache statistics
+ */
+function getCacheStats() {
+  return {
+    cacheSize: flagCache.size,
+    lastRefreshTime: new Date(lastCacheRefresh),
+    cacheAgeMs: Date.now() - lastCacheRefresh,
+    ttlMs: CACHE_TTL_MS,
+    needsRefresh: Date.now() - lastCacheRefresh > CACHE_TTL_MS
+  };
+}
+
 module.exports = {
   // Constants
   FLAG_SCOPES,
@@ -438,13 +549,20 @@ module.exports = {
   getFlagsByScope,
   getAllFlags,
   getFlag,
+  getEffectiveFlagsForKey,
 
   // Mutation
   setFlag,
   deleteFlag,
   loadFlagsFromEnv,
 
-  // Testing
+  // Per-key overrides
+  getFlagOverrideForKey,
+  setFlagOverrideForKey,
+  clearFlagOverrideForKey,
+
+  // Testing & Monitoring
   clearAllFlags,
-  refreshCache
+  refreshCache,
+  getCacheStats
 };

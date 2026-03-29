@@ -387,4 +387,208 @@ router.delete('/:name', checkPermission(PERMISSIONS.ADMIN_ALL), async (req, res,
   }
 });
 
+/**
+ * POST /admin/feature-flags/:flag/enable
+ * Enable a global feature flag (convenience endpoint)
+ * 
+ * Creates flag if it doesn't exist, sets enabled=true
+ */
+router.post('/:flag/enable', checkPermission(PERMISSIONS.ADMIN_ALL), async (req, res, next) => {
+  try {
+    const { flag } = req.params;
+    const { description } = req.body || {};
+
+    if (!flag || typeof flag !== 'string' || flag.trim() === '') {
+      throw new ValidationError('Invalid flag name', { field: 'flag' });
+    }
+
+    // Check if flag exists
+    const existing = await featureFlagsUtil.getFlag(
+      flag,
+      featureFlagsUtil.FLAG_SCOPES.GLOBAL,
+      null
+    );
+
+    // Set or update flag to enabled
+    const flagRecord = await featureFlagsUtil.setFlag(
+      flag,
+      true,
+      featureFlagsUtil.FLAG_SCOPES.GLOBAL,
+      null,
+      {
+        description: description || existing?.description || `Enabled at ${new Date().toISOString()}`,
+        updatedBy: `admin:${req.user?.id || 'unknown'}`
+      }
+    );
+
+    // Audit log
+    AuditLogService.log({
+      category: AuditLogService.CATEGORY.ADMIN,
+      action: AuditLogService.ACTION.FEATURE_FLAG_UPDATED,
+      severity: AuditLogService.SEVERITY.MEDIUM,
+      result: 'SUCCESS',
+      userId: req.user?.id,
+      apiKeyId: req.apiKey?.id,
+      requestId: req.id,
+      ipAddress: req.ip,
+      resource: req.path,
+      details: { flagName: flag, action: 'enable' }
+    }).catch(() => {});
+
+    res.json({
+      success: true,
+      message: `Feature flag enabled: ${flag}`,
+      data: {
+        name: flagRecord.name,
+        enabled: true,
+        scope: 'global'
+      }
+    });
+  } catch (error) {
+    next(error);
+  }
+});
+
+/**
+ * POST /admin/feature-flags/:flag/disable
+ * Disable a global feature flag (convenience endpoint)
+ * 
+ * Creates flag if it doesn't exist, sets enabled=false
+ */
+router.post('/:flag/disable', checkPermission(PERMISSIONS.ADMIN_ALL), async (req, res, next) => {
+  try {
+    const { flag } = req.params;
+    const { description } = req.body || {};
+
+    if (!flag || typeof flag !== 'string' || flag.trim() === '') {
+      throw new ValidationError('Invalid flag name', { field: 'flag' });
+    }
+
+    // Check if flag exists
+    const existing = await featureFlagsUtil.getFlag(
+      flag,
+      featureFlagsUtil.FLAG_SCOPES.GLOBAL,
+      null
+    );
+
+    // Set or update flag to disabled
+    const flagRecord = await featureFlagsUtil.setFlag(
+      flag,
+      false,
+      featureFlagsUtil.FLAG_SCOPES.GLOBAL,
+      null,
+      {
+        description: description || existing?.description || `Disabled at ${new Date().toISOString()}`,
+        updatedBy: `admin:${req.user?.id || 'unknown'}`
+      }
+    );
+
+    // Audit log
+    AuditLogService.log({
+      category: AuditLogService.CATEGORY.ADMIN,
+      action: AuditLogService.ACTION.FEATURE_FLAG_UPDATED,
+      severity: AuditLogService.SEVERITY.MEDIUM,
+      result: 'SUCCESS',
+      userId: req.user?.id,
+      apiKeyId: req.apiKey?.id,
+      requestId: req.id,
+      ipAddress: req.ip,
+      resource: req.path,
+      details: { flagName: flag, action: 'disable' }
+    }).catch(() => {});
+
+    res.json({
+      success: true,
+      message: `Feature flag disabled: ${flag}`,
+      data: {
+        name: flagRecord.name,
+        enabled: false,
+        scope: 'global'
+      }
+    });
+  } catch (error) {
+    next(error);
+  }
+});
+
+/**
+ * POST /admin/feature-flags/:flag/override
+ * Set a per-API-key flag override (for beta testing)
+ * 
+ * Body:
+ * {
+ *   api_key_id: string (required) - API key to override for
+ *   enabled: boolean (required) - Whether to enable for this key
+ *   description: string (optional)
+ * }
+ */
+const overrideFlagSchema = validateSchema({
+  body: {
+    fields: {
+      api_key_id: { type: 'string', required: true, trim: true, minLength: 1 },
+      enabled: { type: 'boolean', required: true },
+      description: { type: 'string', required: false, maxLength: 500, nullable: true }
+    }
+  }
+});
+
+router.post('/:flag/override', 
+  checkPermission(PERMISSIONS.ADMIN_ALL), 
+  overrideFlagSchema, 
+  async (req, res, next) => {
+    try {
+      const { flag } = req.params;
+      const { api_key_id, enabled, description } = req.body;
+
+      if (!flag || typeof flag !== 'string' || flag.trim() === '') {
+        throw new ValidationError('Invalid flag name', { field: 'flag' });
+      }
+
+      // Set flag override for this API key
+      const override = await featureFlagsUtil.setFlagOverrideForKey(
+        flag,
+        enabled,
+        api_key_id,
+        {
+          description: description || `Override for ${api_key_id}`,
+          updatedBy: `admin:${req.user?.id || 'unknown'}`
+        }
+      );
+
+      // Audit log
+      AuditLogService.log({
+        category: AuditLogService.CATEGORY.ADMIN,
+        action: AuditLogService.ACTION.FEATURE_FLAG_UPDATED,
+        severity: AuditLogService.SEVERITY.MEDIUM,
+        result: 'SUCCESS',
+        userId: req.user?.id,
+        apiKeyId: req.apiKey?.id,
+        requestId: req.id,
+        ipAddress: req.ip,
+        resource: req.path,
+        details: {
+          flagName: flag,
+          action: 'override',
+          targetApiKeyId: api_key_id,
+          enabled
+        }
+      }).catch(() => {});
+
+      res.status(201).json({
+        success: true,
+        message: `Flag override set: ${flag} for API key ${api_key_id}`,
+        data: {
+          flag,
+          api_key_id,
+          enabled: Boolean(override.enabled),
+          scope: 'api_key',
+          description: override.description
+        }
+      });
+    } catch (error) {
+      next(error);
+    }
+  }
+);
+
 module.exports = router;
