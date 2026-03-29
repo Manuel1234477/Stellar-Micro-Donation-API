@@ -6,13 +6,13 @@
  * DEPENDENCIES: PaymentChannelService, middleware (auth, rbac)
  *
  * Endpoints:
- *   POST   /channels              — Open a new channel
- *   GET    /channels              — List channels (optional ?status= filter)
- *   GET    /channels/:id          — Get a single channel
- *   POST   /channels/:id/update   — Apply an off-chain state update
- *   POST   /channels/:id/settle   — Settle channel on-chain
- *   POST   /channels/:id/dispute  — Raise a dispute
- *   DELETE /channels/:id          — Force-close a timed-out channel
+ *   POST   /channels/open              — Open a new channel
+ *   GET    /channels                  — List channels (optional ?status= filter)
+ *   GET    /channels/:id               — Get a single channel
+ *   POST   /channels/:id/update        — Apply an off-chain state update
+ *   POST   /channels/:id/close         — Settle channel on-chain
+ *   POST   /channels/:id/dispute       — Raise a dispute
+ *   DELETE /channels/:id               — Force-close a timed-out channel
  */
 
 'use strict';
@@ -33,13 +33,13 @@ channelService.initTable().catch((err) =>
   log.error('CHANNELS', 'Failed to init payment_channels table', { error: err.message })
 );
 
-// ─── POST /channels ───────────────────────────────────────────────────────────
+// ─── POST /channels/open ──────────────────────────────────────────────────────
 
 /**
  * Open a new payment channel.
  * Body: { senderKey, receiverKey, capacity, fundingTxId?, metadata? }
  */
-router.post('/', requireApiKey, checkPermission(PERMISSIONS.DONATIONS_CREATE), async (req, res, next) => {
+router.post('/open', requireApiKey, checkPermission(PERMISSIONS.DONATIONS_CREATE), async (req, res, next) => {
   try {
     const { senderKey, receiverKey, capacity, fundingTxId, metadata } = req.body;
     const channel = await channelService.openChannel({ senderKey, receiverKey, capacity: Number(capacity), fundingTxId, metadata });
@@ -100,15 +100,15 @@ router.post('/:id/update', requireApiKey, checkPermission(PERMISSIONS.DONATIONS_
   }
 });
 
-// ─── POST /channels/:id/settle ────────────────────────────────────────────────
+// ─── POST /channels/:id/close ────────────────────────────────────────────────
 
 /**
  * Settle the channel on-chain.
  * Body: { senderSecret }
  */
-router.post('/:id/settle', requireApiKey, checkPermission(PERMISSIONS.DONATIONS_CREATE), async (req, res, next) => {
+router.post('/:id/close', requireApiKey, checkPermission(PERMISSIONS.DONATIONS_CREATE), async (req, res, next) => {
   try {
-    const channel = await channelService.settleChannel({
+    const channel = await channelService.closeChannel({
       channelId: req.params.id,
       senderSecret: req.body.senderSecret,
     });

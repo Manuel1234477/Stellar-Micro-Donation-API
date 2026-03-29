@@ -41,6 +41,7 @@ const tiersRoutes = require('./tiers');
 const offersRoutes = require('./offers');
 const tagsRoutes = require('./tags');
 const leaderboardRoutes = require('./leaderboard');
+const { router: federationLookupRoutes } = require('./federationLookup');
 const { errorHandler, notFoundHandler } = require('../middleware/errorHandler');
 const logger = require('../middleware/logger');
 const { attachUserRole } = require('../middleware/rbac');
@@ -214,6 +215,7 @@ app.use('/corporate-matching', corporateMatchingRoutes);
 app.use('/admin/routing', routingAdminRoutes);
 app.use('/admin/impact-metrics', impactMetricsAdminRoutes);
 app.use('/admin/geo-blocking', require('./admin/geoBlocking'));
+app.use('/admin/cors', require('./admin/corsOrigins'));
 
 // Fee bump admin route — lazy access to serviceContainer
 app.use('/admin/transactions', (req, res, next) => {
@@ -230,6 +232,7 @@ app.use('/offers', offersRoutes);
 app.use('/orderbook/:baseAsset/:counterAsset', require('./orderbook'));
 app.use('/tags', tagsRoutes);
 app.use('/leaderboard', leaderboardRoutes);
+app.use('/federation', federationLookupRoutes);
 app.use('/auth', authRoutes);
 
 // Exchange rates endpoint

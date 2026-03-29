@@ -28,6 +28,7 @@ const { parseAssetInput } = require('../utils/stellarAsset');
 const { getStellarService } = require('../config/stellar');
 const DonationService = require('../services/DonationService');
 const { calculateCostBreakdown } = require('../utils/costBreakdown');
+const LimitService = require('../services/LimitService');
 
 const Transaction = require('./models/transaction');
 const serviceContainer = require('../config/serviceContainer');
@@ -165,6 +166,7 @@ const createDonationSchema = validateSchema({
         type: 'number',
         required: false,
         nullable: true,
+      },
       validAfter: {
         type: 'integerString',
         required: false,
@@ -563,9 +565,6 @@ router.post('/simulate', payloadSizeLimiter(ENDPOINT_LIMITS.singleDonation),
  */
 router.post('/', payloadSizeLimiter(ENDPOINT_LIMITS.singleDonation), donationRateLimiter, requireApiKey, requireIdempotency, createDonationSchema, async (req, res, next) => {
   try {
-    const { amount, currency, donor, recipient, memo, memoType, notes, tags, encryptMemo, validAfter, validBefore } = req.body;
-    const { amount, currency, donor, recipient, memo, memoType, notes, tags, anonymous, validAfter, validBefore } = req.body;
-    const { amount, currency, donor, recipient, memo, memoType, notes, tags, sourceAsset, sourceAmount, validAfter, validBefore } = req.body;
     const {
       amount,
       currency,
@@ -833,6 +832,26 @@ router.post('/', payloadSizeLimiter(ENDPOINT_LIMITS.singleDonation), donationRat
     };
 
     await storeIdempotencyResponse(req, response);
+
+    // Attach per-wallet limit headers (best-effort, non-blocking)
+    try {
+      if (transaction && transaction.senderId) {
+        const Database = require('../utils/database');
+        const config = require('../config');
+        const sender = await Database.get(
+          'SELECT per_transaction_limit FROM users WHERE id = ?',
+          [transaction.senderId]
+        );
+        const globalMax = config.donations.maxAmount;
+        const globalMin = config.donations.minAmount || 0.0000001;
+        const effectiveMax = (sender && sender.per_transaction_limit != null)
+          ? sender.per_transaction_limit
+          : globalMax;
+        res.set('X-Wallet-Limit-Min', String(globalMin));
+        res.set('X-Wallet-Limit-Max', String(effectiveMax));
+      }
+    } catch (_) { /* best-effort */ }
+
     res.status(201).json(response);
   } catch (error) {
     next(error);
@@ -1137,6 +1156,12 @@ router.get('/cost-breakdown', checkPermission(PERMISSIONS.DONATIONS_READ), (req,
     });
 
     return res.json({ success: true, data: breakdown });
+  } catch (error) {
+    next(error);
+  }
+});
+
+/**
  * GET /donations/:id/receipt
  * Generate and return a PDF receipt for a confirmed donation.
  */

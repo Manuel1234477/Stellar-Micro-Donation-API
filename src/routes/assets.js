@@ -6,11 +6,12 @@
  * DEPENDENCIES: Database, StellarService, middleware (auth, RBAC)
  *
  * Endpoints:
- *   POST /assets/issue          – issue a custom asset to a recipient
- *   POST /assets/burn           – burn (send back to issuer) a custom asset
- *   GET  /assets/:code/holders  – list all holders of an asset
- *   GET  /assets/:code/metadata – get asset metadata
- *   PUT  /assets/:code/metadata – create or update asset metadata
+ *   POST /assets/issue              – issue a custom asset (admin)
+ *   POST /assets/:code/distribute   – distribute asset from distributor to recipient (admin)
+ *   POST /assets/burn               – burn (send back to issuer) a custom asset
+ *   GET  /assets/:code/holders      – list all holders of an asset
+ *   GET  /assets/:code/metadata     – get asset metadata
+ *   PUT  /assets/:code/metadata     – create or update asset metadata
  */
 
 'use strict';
@@ -86,21 +87,21 @@ async function upsertHolding(assetCode, issuerPublic, holderPublic, delta) {
 
 /**
  * @route   POST /assets/issue
- * @desc    Issue a custom Stellar asset to a recipient
- * @access  donations:create (reuse existing permission)
+ * @desc    Issue a custom Stellar asset to a distributor account (admin only)
+ * @access  admin
  *
- * @body {string} issuerSecret      - Secret key of the issuer account
- * @body {string} assetCode         - Asset code (1-12 alphanumeric)
- * @body {string} amount            - Amount to issue
- * @body {string} recipientPublic   - Recipient Stellar public key
+ * @body {string} issuerSecret           - Secret key of the issuer account
+ * @body {string} assetCode              - Asset code (1-12 alphanumeric)
+ * @body {string} distributorPublicKey   - Public key of the distributor receiving the issued supply
+ * @body {string} amount                 - Amount to issue
  */
-router.post('/issue', checkPermission(PERMISSIONS.DONATIONS_CREATE), async (req, res, next) => {
+router.post('/issue', requireAdmin(), async (req, res, next) => {
   try {
-    const { issuerSecret, assetCode, amount, recipientPublic } = req.body;
+    const { issuerSecret, assetCode, distributorPublicKey, amount } = req.body;
 
     const required = validateRequiredFields(
-      { issuerSecret, assetCode, amount, recipientPublic },
-      ['issuerSecret', 'assetCode', 'amount', 'recipientPublic']
+      { issuerSecret, assetCode, amount, distributorPublicKey },
+      ['issuerSecret', 'assetCode', 'amount', 'distributorPublicKey']
     );
     if (!required.valid) {
       return res.status(400).json({
@@ -122,15 +123,22 @@ router.post('/issue', checkPermission(PERMISSIONS.DONATIONS_CREATE), async (req,
     }
 
     const stellar = getStellarService();
-    const result = await stellar.issueAsset(issuerSecret, assetCode, amount, recipientPublic);
+    const result = await stellar.issueAsset(issuerSecret, assetCode, amount, distributorPublicKey);
 
-    // Persist metadata + holdings
     await upsertAssetRecord(assetCode, result.issuerPublic, amountResult.value, 0);
-    await upsertHolding(assetCode, result.issuerPublic, recipientPublic, amountResult.value);
+    await upsertHolding(assetCode, result.issuerPublic, distributorPublicKey, amountResult.value);
 
-    log.info('ASSET_ROUTE', 'Asset issued', {
-      assetCode, issuerPublic: result.issuerPublic, recipientPublic, amount,
-    });
+    await AuditLogService.log({
+      category: AuditLogService.CATEGORY.FINANCIAL_OPERATION,
+      action: 'ASSET_ISSUED',
+      severity: AuditLogService.SEVERITY.HIGH,
+      result: 'SUCCESS',
+      userId: req.user && req.user.id,
+      requestId: req.id,
+      ipAddress: req.ip,
+      resource: `/assets/issue`,
+      details: { assetCode, issuerPublic: result.issuerPublic, distributorPublicKey, amount: result.amount, hash: result.hash },
+    }).catch(() => {});
 
     return res.status(201).json({
       success: true,
@@ -138,7 +146,86 @@ router.post('/issue', checkPermission(PERMISSIONS.DONATIONS_CREATE), async (req,
       data: {
         assetCode: result.assetCode,
         issuerPublic: result.issuerPublic,
-        recipientPublic,
+        distributorPublicKey,
+        amount: result.amount,
+        transactionHash: result.hash,
+        ledger: result.ledger,
+      },
+    });
+  } catch (error) {
+    next(error);
+  }
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// POST /assets/:code/distribute
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * @route   POST /assets/:code/distribute
+ * @desc    Distribute a custom asset from a distributor account to a recipient (admin only)
+ * @access  admin
+ *
+ * @body {string} distributorSecret  - Secret key of the distributor account
+ * @body {string} issuerPublicKey    - Public key of the asset issuer
+ * @body {string} recipientPublicKey - Public key of the recipient
+ * @body {string} amount             - Amount to distribute
+ */
+router.post('/:code/distribute', requireAdmin(), async (req, res, next) => {
+  try {
+    const { code } = req.params;
+    const { distributorSecret, issuerPublicKey, recipientPublicKey, amount } = req.body;
+
+    if (!isValidAssetCode(code)) {
+      return res.status(400).json({ success: false, error: 'Invalid asset code.' });
+    }
+
+    const required = validateRequiredFields(
+      { distributorSecret, issuerPublicKey, recipientPublicKey, amount },
+      ['distributorSecret', 'issuerPublicKey', 'recipientPublicKey', 'amount']
+    );
+    if (!required.valid) {
+      return res.status(400).json({
+        success: false,
+        error: `Missing required fields: ${required.missing.join(', ')}`,
+      });
+    }
+
+    const amountResult = validateFloat(amount);
+    if (!amountResult.valid) {
+      return res.status(400).json({ success: false, error: `Invalid amount: ${amountResult.error}` });
+    }
+
+    const stellar = getStellarService();
+    const result = await stellar.distributeAsset(
+      distributorSecret, code, issuerPublicKey, recipientPublicKey, amount
+    );
+
+    // Update local holdings: deduct from distributor, credit recipient
+    const StellarSdk = require('stellar-sdk');
+    const distributorPublic = StellarSdk.Keypair.fromSecret(distributorSecret).publicKey();
+    await upsertHolding(code, issuerPublicKey, distributorPublic, -amountResult.value);
+    await upsertHolding(code, issuerPublicKey, recipientPublicKey, amountResult.value);
+
+    await AuditLogService.log({
+      category: AuditLogService.CATEGORY.FINANCIAL_OPERATION,
+      action: 'ASSET_DISTRIBUTED',
+      severity: AuditLogService.SEVERITY.HIGH,
+      result: 'SUCCESS',
+      userId: req.user && req.user.id,
+      requestId: req.id,
+      ipAddress: req.ip,
+      resource: `/assets/${code}/distribute`,
+      details: { assetCode: code, issuerPublicKey, distributorPublic, recipientPublicKey, amount: result.amount, hash: result.hash },
+    }).catch(() => {});
+
+    return res.status(201).json({
+      success: true,
+      message: `Asset ${code} distributed successfully`,
+      data: {
+        assetCode: code,
+        issuerPublicKey,
+        recipientPublicKey,
         amount: result.amount,
         transactionHash: result.hash,
         ledger: result.ledger,

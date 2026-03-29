@@ -24,6 +24,7 @@ const log = require('./log');
 const DEFAULT_POOL_SIZE = 5;
 const DEFAULT_ACQUIRE_TIMEOUT = TIMEOUT_DEFAULTS.DATABASE;
 const DEFAULT_SLOW_QUERY_THRESHOLD_MS = 100;
+const DEFAULT_SLOW_QUERY_BUFFER_SIZE = 100;
 const MAX_SLOW_QUERY_ENTRIES = 1000;
 const SLOW_QUERY_WINDOW_MS = 24 * 60 * 60 * 1000;
 const DB_PATH = path.join(__dirname, '../../data/stellar_donations.db');
@@ -56,6 +57,7 @@ class Database {
     totalQueries: 0,
     totalDurationMs: 0,
     slowQueryThresholdMs: DEFAULT_SLOW_QUERY_THRESHOLD_MS,
+    slowQueryBufferSize: DEFAULT_SLOW_QUERY_BUFFER_SIZE,
     slowQueries: [],
     recentDurations: [],
   };
@@ -133,7 +135,7 @@ class Database {
   /**
    * Read and validate query monitoring configuration from environment variables.
    *
-   * @returns {{slowQueryThresholdMs: number}} Validated monitoring config.
+   * @returns {{slowQueryThresholdMs: number, slowQueryBufferSize: number}} Validated monitoring config.
    */
   static getPerformanceConfiguration() {
     return {
@@ -141,6 +143,11 @@ class Database {
         'SLOW_QUERY_THRESHOLD_MS',
         process.env.SLOW_QUERY_THRESHOLD_MS,
         DEFAULT_SLOW_QUERY_THRESHOLD_MS
+      ),
+      slowQueryBufferSize: this.parsePositiveIntegerEnv(
+        'SLOW_QUERY_BUFFER_SIZE',
+        process.env.SLOW_QUERY_BUFFER_SIZE,
+        DEFAULT_SLOW_QUERY_BUFFER_SIZE
       ),
     };
   }
@@ -164,12 +171,13 @@ class Database {
    * @param {Object} entry - Query execution details.
    * @param {string} entry.method - Database method used.
    * @param {string} entry.sql - SQL statement executed.
+   * @param {Array} [entry.params=[]] - Query parameters.
    * @param {number} entry.durationMs - Query duration in milliseconds.
    * @param {boolean} [entry.failed=false] - Whether the query ended in failure.
    * @param {boolean} [entry.timedOut=false] - Whether the query timed out.
    * @returns {void}
    */
-  static recordQueryExecution({ method, sql, durationMs, failed = false, timedOut = false }) {
+  static recordQueryExecution({ method, sql, params = [], durationMs, failed = false, timedOut = false }) {
     const state = this.performanceState;
     const timestamp = Date.now();
     const normalizedDurationMs = Number.isFinite(durationMs) && durationMs >= 0
@@ -184,6 +192,7 @@ class Database {
     if (normalizedDurationMs > thresholdMs) {
       const slowQueryEntry = {
         sql,
+        params,
         method,
         durationMs: normalizedDurationMs,
         timestamp,
@@ -192,9 +201,10 @@ class Database {
         timedOut,
       };
 
+      const bufferSize = Math.min(state.slowQueryBufferSize, MAX_SLOW_QUERY_ENTRIES);
       state.slowQueries.push(slowQueryEntry);
-      if (state.slowQueries.length > MAX_SLOW_QUERY_ENTRIES) {
-        state.slowQueries.splice(0, state.slowQueries.length - MAX_SLOW_QUERY_ENTRIES);
+      if (state.slowQueries.length > bufferSize) {
+        state.slowQueries.splice(0, state.slowQueries.length - bufferSize);
       }
 
       log.warn('DATABASE', 'Slow query detected', {
@@ -202,6 +212,7 @@ class Database {
         durationMs: normalizedDurationMs,
         thresholdMs,
         sql,
+        params,
         failed,
         timedOut,
       });
@@ -255,15 +266,47 @@ class Database {
   }
 
   /**
+   * Compute aggregate query statistics including p95 and p99 latency percentiles.
+   *
+   * @returns {{totalQueries: number, averageDurationMs: number, p95Ms: number, p99Ms: number, slowQueryCount: number, thresholdMs: number}}
+   */
+  static getQueryStats() {
+    this.prunePerformanceState();
+
+    const state = this.performanceState;
+    const durations = state.recentDurations.map(entry => entry.durationMs).sort((a, b) => a - b);
+    const count = durations.length;
+
+    const percentile = (p) => {
+      if (count === 0) return 0;
+      const idx = Math.ceil((p / 100) * count) - 1;
+      return durations[Math.max(0, idx)];
+    };
+
+    const avg = count === 0 ? 0 : Number((durations.reduce((s, d) => s + d, 0) / count).toFixed(3));
+
+    return {
+      totalQueries: state.totalQueries,
+      averageDurationMs: avg,
+      p95Ms: percentile(95),
+      p99Ms: percentile(99),
+      slowQueryCount: state.slowQueries.length,
+      thresholdMs: state.slowQueryThresholdMs,
+    };
+  }
+
+  /**
    * Reset query performance state for test isolation and shutdown cleanup.
    *
    * @returns {void}
    */
   static resetPerformanceMetrics() {
+    const config = this.getPerformanceConfiguration();
     this.performanceState = {
       totalQueries: 0,
       totalDurationMs: 0,
-      slowQueryThresholdMs: this.getPerformanceConfiguration().slowQueryThresholdMs,
+      slowQueryThresholdMs: config.slowQueryThresholdMs,
+      slowQueryBufferSize: config.slowQueryBufferSize,
       slowQueries: [],
       recentDurations: [],
     };
@@ -420,6 +463,7 @@ class Database {
       state.acquireTimeout = config.acquireTimeout;
       state.closing = false;
       this.performanceState.slowQueryThresholdMs = performanceConfig.slowQueryThresholdMs;
+      this.performanceState.slowQueryBufferSize = performanceConfig.slowQueryBufferSize;
 
       const connection = await this.createConnectionRecord();
       connection.inUse = false;
@@ -652,6 +696,7 @@ class Database {
       Database.recordQueryExecution({
         method,
         sql,
+        params,
         durationMs,
         failed: Boolean(err),
         timedOut,
@@ -697,6 +742,7 @@ class Database {
           Database.recordQueryExecution({
             method,
             sql,
+            params,
             durationMs,
             failed: true,
             timedOut: true,

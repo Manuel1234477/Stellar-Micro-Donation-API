@@ -723,6 +723,46 @@ StatsService.getDashboardData = function getDashboardData({ period = '30d', gran
   return result;
 };
 
+/**
+ * Get anonymous vs identified donation breakdown
+ * @param {Date} startDate - Start date for aggregation
+ * @param {Date} endDate - End date for aggregation
+ * @returns {object} Breakdown with anonymous and identified totals
+ */
+static getAnonymousBreakdown(startDate, endDate) {
+  const transactions = Transaction.getByDateRange(startDate, endDate);
+  let anonymousCount = 0;
+  let anonymousAmount = 0;
+  let identifiedCount = 0;
+  let identifiedAmount = 0;
+
+  transactions.forEach(tx => {
+    const amount = parseFloat(tx.amount) || 0;
+    if (tx.anonymous) {
+      anonymousCount += 1;
+      anonymousAmount += amount;
+    } else {
+      identifiedCount += 1;
+      identifiedAmount += amount;
+    }
+  });
+
+  return {
+    anonymous: {
+      count: anonymousCount,
+      totalAmount: +anonymousAmount.toFixed(7),
+    },
+    identified: {
+      count: identifiedCount,
+      totalAmount: +identifiedAmount.toFixed(7),
+    },
+    total: {
+      count: anonymousCount + identifiedCount,
+      totalAmount: +(anonymousAmount + identifiedAmount).toFixed(7),
+    },
+  };
+}
+
 // Invalidate dashboard cache whenever a new donation is created
 const donationEvents = require('../events/donationEvents');
 donationEvents.on('donation.created', () => {

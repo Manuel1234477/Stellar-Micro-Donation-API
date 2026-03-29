@@ -60,4 +60,21 @@ router.get('/slow-queries', checkPermission(PERMISSIONS.ADMIN_ALL), (req, res, n
   }
 });
 
+/**
+ * GET /admin/db/query-stats
+ * Returns aggregate query performance statistics including p95 and p99 latency.
+ */
+router.get('/query-stats', checkPermission(PERMISSIONS.ADMIN_ALL), (req, res, next) => {
+  try {
+    const stats = Database.getQueryStats();
+
+    res.json({
+      success: true,
+      data: stats,
+    });
+  } catch (error) {
+    next(error);
+  }
+});
+
 module.exports = router;

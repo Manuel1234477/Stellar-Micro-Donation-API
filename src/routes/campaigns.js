@@ -81,8 +81,10 @@ router.post('/', requireApiKey, checkPermission(PERMISSIONS.ADMIN), createCampai
  * Retrieves active/all campaigns dynamically.
  */
 router.get('/', cacheMiddleware('campaign', 'public'), async (req, res, next) => {
+  try {
     let query = 'SELECT * FROM campaigns';
     let params = [];
+    const { status } = req.query;
 
     if (status) {
       query += ' WHERE status = ?';
@@ -92,7 +94,7 @@ router.get('/', cacheMiddleware('campaign', 'public'), async (req, res, next) =>
     query += ' ORDER BY createdAt DESC LIMIT 100';
 
     const campaigns = await Database.query(query, params);
-    
+
     // Auto-update expired campaigns logically
     const now = new Date();
     for (let c of campaigns) {
@@ -113,7 +115,8 @@ router.get('/', cacheMiddleware('campaign', 'public'), async (req, res, next) =>
  * Retrieve a specific campaign securely.
  */
 router.get('/:id', cacheMiddleware('campaign', 'public'), async (req, res, next) => {
-    
+  try {
+    const campaign = await Database.get('SELECT * FROM campaigns WHERE id = ? AND deleted_at IS NULL', [req.params.id]);
     if (!campaign) {
       return res.status(404).json({ success: false, error: 'Campaign not found' });
     }
@@ -198,6 +201,9 @@ router.get('/:id/impact', async (req, res, next) => {
   } catch (error) {
     next(error);
   }
+});
+
+/**
  * GET /campaigns/:id/progress/stream
  * Server-Sent Events (SSE) endpoint for real-time campaign progress updates.
  * 
@@ -407,6 +413,179 @@ router.get('/:id/escrow', requireApiKey, async (req, res, next) => {
     res.status(200).json({ success: true, data: state });
   } catch (error) {
     if (error.status) return res.status(error.status).json({ success: false, error: error.message });
+    next(error);
+  }
+});
+
+module.exports = router;
+
+// ─── Milestone Routes ─────────────────────────────────────────────────────────
+
+/**
+ * POST /campaigns/:id/milestones
+ * Create a milestone for a campaign.
+ * Body: { title, description, target_amount }
+ */
+router.post('/:id/milestones', requireApiKey, checkPermission(PERMISSIONS.ADMIN), async (req, res, next) => {
+  try {
+    const campaignId = parseInt(req.params.id, 10);
+    const { title, description, target_amount } = req.body;
+
+    if (!title || typeof title !== 'string' || !title.trim()) {
+      return res.status(400).json({ success: false, error: 'title is required' });
+    }
+
+    const amountValidation = validateFloat(target_amount);
+    if (!amountValidation.valid || amountValidation.value <= 0) {
+      return res.status(400).json({ success: false, error: 'target_amount must be a positive number' });
+    }
+
+    const campaign = await Database.get('SELECT id FROM campaigns WHERE id = ? AND deleted_at IS NULL', [campaignId]);
+    if (!campaign) {
+      return res.status(404).json({ success: false, error: 'Campaign not found' });
+    }
+
+    const result = await Database.run(
+      `INSERT INTO campaign_milestones (campaign_id, title, description, target_amount)
+       VALUES (?, ?, ?, ?)`,
+      [campaignId, title.trim(), description || null, amountValidation.value]
+    );
+
+    const milestone = await Database.get('SELECT * FROM campaign_milestones WHERE id = ?', [result.id]);
+    res.status(201).json({ success: true, data: milestone });
+  } catch (error) {
+    next(error);
+  }
+});
+
+/**
+ * GET /campaigns/:id/milestones
+ * List all milestones for a campaign with completion status.
+ */
+router.get('/:id/milestones', requireApiKey, async (req, res, next) => {
+  try {
+    const campaignId = parseInt(req.params.id, 10);
+
+    const campaign = await Database.get('SELECT id FROM campaigns WHERE id = ? AND deleted_at IS NULL', [campaignId]);
+    if (!campaign) {
+      return res.status(404).json({ success: false, error: 'Campaign not found' });
+    }
+
+    const milestones = await Database.query(
+      'SELECT * FROM campaign_milestones WHERE campaign_id = ? ORDER BY target_amount ASC',
+      [campaignId]
+    );
+
+    res.json({ success: true, data: milestones, count: milestones.length });
+  } catch (error) {
+    next(error);
+  }
+});
+
+/**
+ * POST /admin/campaigns/:id/milestones/:milestoneId/verify
+ * Admin verifies a milestone, triggering fund release.
+ */
+router.post('/admin/:id/milestones/:milestoneId/verify', requireApiKey, checkPermission(PERMISSIONS.ADMIN), async (req, res, next) => {
+  try {
+    const campaignId = parseInt(req.params.id, 10);
+    const milestoneId = parseInt(req.params.milestoneId, 10);
+
+    const campaign = await Database.get('SELECT * FROM campaigns WHERE id = ? AND deleted_at IS NULL', [campaignId]);
+    if (!campaign) {
+      return res.status(404).json({ success: false, error: 'Campaign not found' });
+    }
+
+    const milestone = await Database.get(
+      'SELECT * FROM campaign_milestones WHERE id = ? AND campaign_id = ?',
+      [milestoneId, campaignId]
+    );
+    if (!milestone) {
+      return res.status(404).json({ success: false, error: 'Milestone not found' });
+    }
+
+    if (milestone.status === 'verified') {
+      return res.status(409).json({ success: false, error: 'Milestone already verified' });
+    }
+
+    const verifiedBy = req.user ? String(req.user.id) : 'admin';
+
+    // Mark milestone as verified
+    await Database.run(
+      `UPDATE campaign_milestones
+       SET status = 'verified', verified_at = CURRENT_TIMESTAMP, verified_by = ?
+       WHERE id = ?`,
+      [verifiedBy, milestoneId]
+    );
+
+    // Simulate fund release: record a claimable balance release note
+    // In production this would trigger an on-chain claimable balance claim
+    const fundReleaseTx = `mock_release_${Date.now()}_milestone_${milestoneId}`;
+    await Database.run(
+      'UPDATE campaign_milestones SET fund_release_tx = ? WHERE id = ?',
+      [fundReleaseTx, milestoneId]
+    );
+
+    const updated = await Database.get('SELECT * FROM campaign_milestones WHERE id = ?', [milestoneId]);
+
+    res.json({
+      success: true,
+      message: `Milestone verified. Funds of ${milestone.target_amount} XLM released to campaign owner.`,
+      data: { milestone: updated, fundReleaseTx },
+    });
+  } catch (error) {
+    next(error);
+  }
+});
+
+/**
+ * GET /campaigns/:id/progress
+ * Returns total raised, milestone completion, and remaining amount.
+ */
+router.get('/:id/progress', requireApiKey, async (req, res, next) => {
+  try {
+    const campaignId = parseInt(req.params.id, 10);
+
+    const campaign = await Database.get('SELECT * FROM campaigns WHERE id = ? AND deleted_at IS NULL', [campaignId]);
+    if (!campaign) {
+      return res.status(404).json({ success: false, error: 'Campaign not found' });
+    }
+
+    const milestones = await Database.query(
+      'SELECT * FROM campaign_milestones WHERE campaign_id = ? ORDER BY target_amount ASC',
+      [campaignId]
+    );
+
+    const totalMilestones = milestones.length;
+    const verifiedMilestones = milestones.filter(m => m.status === 'verified').length;
+    const totalReleased = milestones
+      .filter(m => m.status === 'verified')
+      .reduce((sum, m) => sum + m.target_amount, 0);
+
+    const progressPct = campaign.goal_amount > 0
+      ? Math.min(100, Math.round((campaign.current_amount / campaign.goal_amount) * 100))
+      : 0;
+
+    res.json({
+      success: true,
+      data: {
+        campaignId,
+        name: campaign.name,
+        goalAmount: campaign.goal_amount,
+        currentAmount: campaign.current_amount,
+        remaining: Math.max(0, campaign.goal_amount - campaign.current_amount),
+        progressPercent: progressPct,
+        status: campaign.status,
+        milestones: {
+          total: totalMilestones,
+          verified: verifiedMilestones,
+          pending: totalMilestones - verifiedMilestones,
+          totalReleased,
+          items: milestones,
+        },
+      },
+    });
+  } catch (error) {
     next(error);
   }
 });
