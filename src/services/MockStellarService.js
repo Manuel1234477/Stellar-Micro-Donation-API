@@ -2273,334 +2273,6 @@ class MockStellarService extends StellarServiceInterface {
    * @returns {Promise<{id: string, sequence: string, balances: Array}>}
    * @throws {NotFoundError} if the account does not exist
    */
-  async loadAccount(publicKey) {
-    const wallet = this.wallets.get(publicKey);
-    if (!wallet) {
-      throw new NotFoundError(
-        `Account not found. The account ${publicKey} does not exist on the network.`,
-        ERROR_CODES.WALLET_NOT_FOUND
-      );
-    }
-
-    // Initialize data_attr if it doesn't exist
-    if (!wallet.data_attr) {
-      wallet.data_attr = {};
-    }
-
-    // Store the value (base64-encoded to simulate Stellar's binary storage)
-    wallet.data_attr[key] = Buffer.from(value).toString('base64');
-
-    const txId = crypto.randomBytes(32).toString('hex');
-    const ledger = Math.floor(Math.random() * 1000000) + 1000000;
-    return { hash: txId, ledger };
-  }
-
-  /**
-   * Delete an account data entry by setting its value to null
-   * @param {string} secret - Secret key of the account
-   * @param {string} key - Data entry key to delete
-   * @returns {Promise<{hash: string, ledger: number}>}
-   */
-  async deleteAccountData(secret, key) {
-    await this._simulateNetworkDelay();
-    this._checkRateLimit();
-    this._simulateFailure();
-
-    const publicKey = this._secretToPublic(secret);
-    return {
-      id: publicKey,
-      sequence: wallet.sequence,
-      balances: [{ asset_type: 'native', asset_code: 'XLM', balance: wallet.balance }],
-    };
-  }
-
-  /**
-   * Submit a mock transaction and store it.
-   * @param {Object} transaction - Mock transaction object (must have _isMockTransaction: true)
-   * @returns {Promise<{hash: string, ledger: number, status: string}>}
-   */
-  async submitTransaction(transaction) {
-    const hash = crypto.randomBytes(32).toString('hex');
-    const ledger = Math.floor(Math.random() * 1000000) + 1000000;
-    const key = (transaction && transaction.source) || '_submitted';
-    if (!this.transactions.has(key)) {
-      this.transactions.set(key, []);
-    }
-    this.transactions.get(key).push({ ...transaction, hash, ledger, status: 'confirmed' });
-    return { hash, ledger, status: 'confirmed' };
-  }
-
-  /**
-   * Build a mock unsigned payment transaction envelope.
-   * @param {string} sourcePublicKey - Source account public key
-   * @param {string} destinationPublicKey - Destination account public key
-   * @param {string} amount - Amount to send
-   * @param {Object} options - Additional options
-   * @returns {Promise<Object>} Unsigned mock transaction
-   */
-  async buildPaymentTransaction(sourcePublicKey, destinationPublicKey, amount, options) {
-    return {
-      type: 'payment',
-      source: sourcePublicKey,
-      destination: destinationPublicKey,
-      amount,
-      options,
-      _isMockTransaction: true,
-      _unsigned: true,
-    };
-  }
-
-  /**
-   * Get the current sequence number for an account.
-   * @param {string} publicKey - Stellar public key
-   * @returns {Promise<string>} Sequence number as a string
-   * @throws {NotFoundError} if the account does not exist
-   */
-  async getAccountSequence(publicKey) {
-    const wallet = this.wallets.get(publicKey);
-    if (!wallet) {
-      throw new NotFoundError(
-        `Account not found. The account ${publicKey} does not exist on the network.`,
-        ERROR_CODES.WALLET_NOT_FOUND
-      );
-    }
-    return String(wallet.sequence);
-  }
-
-  /**
-   * Build a mock unsigned transaction envelope with arbitrary operations.
-   * @param {string} sourcePublicKey - Source account public key
-   * @param {Array} operations - Array of operation objects
-   * @param {Object} options - Additional options
-   * @returns {Promise<Object>} Unsigned mock transaction
-   */
-  async buildTransaction(sourcePublicKey, operations, options) {
-    return {
-      type: 'transaction',
-      source: sourcePublicKey,
-      operations,
-      options,
-      _isMockTransaction: true,
-      _unsigned: true,
-    };
-  }
-
-  /**
-   * Sign a mock transaction with the given secret key.
-   * @param {Object} transaction - Mock transaction to sign
-   * @param {string} secretKey - Secret key to sign with
-   * @returns {Promise<Object>} Signed mock transaction
-   */
-  async signTransaction(transaction, secretKey) {
-    return { ...transaction, _signed: true, _secretKey: secretKey };
-  }
-
-  /**
-   * Get all balances for an account.
-   * @param {string} publicKey - Stellar public key
-   * @returns {Promise<Array>} Array of balance objects with asset_type, asset_code, and balance
-   * @throws {NotFoundError} if the account does not exist
-   */
-  async getAccountBalances(publicKey) {
-    const wallet = this.wallets.get(publicKey);
-    if (!wallet) {
-      throw new NotFoundError(
-        `Account not found. The account ${publicKey} does not exist on the network.`,
-        ERROR_CODES.WALLET_NOT_FOUND
-      );
-    }
-
-    // Initialize data_attr if it doesn't exist
-    if (!wallet.data_attr) {
-      wallet.data_attr = {};
-    }
-
-    // Delete the key
-    delete wallet.data_attr[key];
-
-    const txId = crypto.randomBytes(32).toString('hex');
-    const ledger = Math.floor(Math.random() * 1000000) + 1000000;
-    return { hash: txId, ledger };
-    const balances = [{ asset_type: 'native', asset_code: 'XLM', balance: wallet.balance }];
-    if (wallet.assetBalances) {
-      for (const [key, balance] of Object.entries(wallet.assetBalances)) {
-        if (key !== 'native') {
-          balances.push({ asset_type: 'credit_alphanum4', asset_code: key, balance });
-        }
-      }
-    }
-    return balances;
-  }
-
-  /**
-   * Retrieve a stored transaction by its hash.
-   * @param {string} transactionHash - Transaction hash to look up
-   * @returns {Promise<Object>} The stored transaction record
-   * @throws {NotFoundError} if the transaction does not exist
-   */
-  async getTransaction(transactionHash) {
-    for (const txList of this.transactions.values()) {
-      if (!Array.isArray(txList)) continue;
-      const found = txList.find(
-        (tx) => tx.transactionId === transactionHash || tx.hash === transactionHash
-      );
-      if (found) return found;
-    }
-    throw new NotFoundError(
-      `Transaction not found. The transaction ${transactionHash} does not exist on the network.`,
-      ERROR_CODES.TRANSACTION_NOT_FOUND
-    );
-  }
-
-  /**
-   * Check whether an address is a valid Stellar public key.
-   * Returns false for null/undefined/invalid inputs — never throws.
-   * @param {string} address - Address to validate
-   * @returns {boolean}
-   */
-  isValidAddress(address) {
-    if (!address || typeof address !== 'string') return false;
-    return /^G[A-Z2-7]{55}$/.test(address);
-  }
-
-  /**
-   * Convert stroops to XLM.
-   * @param {number|string} stroops - Amount in stroops
-   * @returns {string} XLM amount with 7 decimal places
-   */
-  stroopsToXlm(stroops) {
-    return (Number(stroops) / 10_000_000).toFixed(7);
-  }
-
-  /**
-   * Convert XLM to stroops.
-   * @param {number|string} xlm - Amount in XLM
-   * @returns {number} Amount in stroops (integer)
-   */
-  xlmToStroops(xlm) {
-    return Math.round(Number(xlm) * 10_000_000);
-  }
-
-  /**
-   * Derive a mock public key from a secret key (deterministic for test consistency).
-   * @private
-   */
-  _secretToPublic(secretKey) {
-    // Check if we have a wallet with this secret
-    for (const [pub, wallet] of this.wallets.entries()) {
-      if (wallet.secretKey === secretKey) return pub;
-    }
-    // Deterministic derivation for unknown secrets: hash S→G
-    const hash = crypto.createHash('sha256').update(secretKey).digest('hex');
-    // eslint-disable-next-line no-secrets/no-secrets
-    const base32 = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ234567';
-    let pub = 'G';
-    for (let i = 0; i < 55; i++) {
-      pub += base32[parseInt(hash[i % 64], 16) % 32];
-    }
-    return pub;
-  }
-
-  /**
-   * Get the home domain for a wallet by public key.
-   * @param {string} publicKey - Stellar public key
-   * @returns {Promise<string|null>} The home domain or null if not set / not found
-   */
-  async getHomeDomain(publicKey) {
-    const wallet = this.wallets.get(publicKey);
-    if (!wallet) return null;
-    return wallet.homeDomain || null;
-  }
-
-  /**
-   * Set the home domain for a wallet.
-   * @param {string} sourceSecret - Secret key of the source account
-   * @param {string} domain - Hostname to set as home domain (no protocol, no path, max 32 chars)
-   * @returns {Promise<{hash: string, ledger: number}>}
-   * @throws {ValidationError} If domain format is invalid
-   */
-  async setHomeDomain(sourceSecret, domain) {
-    if (!domain || typeof domain !== 'string') {
-      throw new ValidationError('domain must be a non-empty string');
-    }
-    if (domain.length > 32) {
-      throw new ValidationError('domain must be 32 characters or fewer per Stellar spec');
-    }
-    if (!/^[a-zA-Z0-9]([a-zA-Z0-9\-]{0,61}[a-zA-Z0-9])?(\.[a-zA-Z0-9]([a-zA-Z0-9\-]{0,61}[a-zA-Z0-9])?)*$/.test(domain)) {
-      throw new ValidationError('domain must be a valid hostname with no protocol or path');
-    }
-
-    const sourceWallet = this._findWalletBySecret(sourceSecret);
-    if (!sourceWallet) {
-      throw new ValidationError('Invalid source secret key. The provided secret key does not match any account.');
-    }
-
-    sourceWallet.homeDomain = domain;
-
-    const hash = `mock_${crypto.randomBytes(16).toString('hex')}`;
-    const ledger = Math.floor(Math.random() * 1000000) + 1;
-
-    return { hash, ledger };
-  }
-
-  /**
-   * Get the inflation destination for a wallet by public key.
-   * @param {string} publicKey - Stellar public key
-   * @returns {Promise<string|null>} The inflation destination or null if not set / not found
-   */
-  async getInflationDestination(publicKey) {
-    const wallet = this.wallets.get(publicKey);
-    if (!wallet) return null;
-    return wallet.inflationDestination || null;
-  }
-
-  /**
-   * Set the inflation destination for a wallet.
-   * @param {string} sourceSecret - Secret key of the source account
-   * @param {string} destinationPublicKey - Stellar public key to set as inflation destination
-   * @returns {Promise<{hash: string, ledger: number}>}
-   * @throws {ValidationError} If destinationPublicKey is not a valid Stellar public key
-   */
-  async setInflationDestination(sourceSecret, destinationPublicKey) {
-    if (
-      !destinationPublicKey ||
-      typeof destinationPublicKey !== 'string' ||
-      !destinationPublicKey.startsWith('G') ||
-      destinationPublicKey.length !== 56 ||
-      !/^G[A-Z2-7]{55}$/.test(destinationPublicKey)
-    ) {
-      throw new ValidationError(
-        'Invalid destination: must be a valid Stellar public key (56-character Base32 string starting with G).'
-      );
-    }
-
-    const sourceWallet = this._findWalletBySecret(sourceSecret);
-    if (!sourceWallet) {
-      throw new ValidationError('Invalid source secret key. The provided secret key does not match any account.');
-    }
-
-    sourceWallet.inflationDestination = destinationPublicKey;
-
-    const hash = `mock_${crypto.randomBytes(16).toString('hex')}`;
-    const ledger = Math.floor(Math.random() * 1000000) + 1;
-
-    return { hash, ledger };
-  }
-
-  // Interface compliance methods
-  isValidAddress(address) {
-    // Simple validation for mock: check format
-    return typeof address === 'string' && /^G[A-Z2-7]{55}$/.test(address);
-  }
-
-  stroopsToXlm(stroops) {
-    return (parseInt(stroops) / 10000000).toFixed(7);
-  }
-
-  xlmToStroops(xlm) {
-    return Math.floor(parseFloat(xlm) * 10000000).toString();
-  }
-
   /**
    * Mock implementation of setOptions.
    * Tracks account flags and home domain in the wallet record.
@@ -2638,6 +2310,44 @@ class MockStellarService extends StellarServiceInterface {
     if (options.inflationDest !== undefined) wallet.inflationDestination = options.inflationDest;
 
     const hash = `mock_${require('crypto').randomBytes(16).toString('hex')}`;
+    const ledger = Math.floor(Math.random() * 1000000) + 1;
+    return { hash, ledger };
+  }
+
+  /**
+   * Get the home domain for a mock account.
+   * @param {string} publicKey
+   * @returns {Promise<string|null>}
+   */
+  async getHomeDomain(publicKey) {
+    const wallet = this.wallets.get(publicKey);
+    return (wallet && wallet.homeDomain) || null;
+  }
+
+  /**
+   * Set the home domain on a mock account.
+   * Validates domain format (same rules as StellarService) but skips network fetch.
+   * @param {string} sourceSecret
+   * @param {string} domain
+   * @returns {Promise<{hash: string, ledger: number}>}
+   */
+  async setHomeDomain(sourceSecret, domain) {
+    if (!domain || typeof domain !== 'string') {
+      throw new ValidationError('domain must be a non-empty string');
+    }
+    if (domain.length > 32) {
+      throw new ValidationError('domain must be 32 characters or fewer per Stellar spec');
+    }
+    if (!/^[a-zA-Z0-9]([a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?(\.[a-zA-Z0-9]([a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?)*$/.test(domain)) {
+      throw new ValidationError('domain must be a valid hostname with no protocol or path');
+    }
+
+    const wallet = this._findWalletBySecret(sourceSecret);
+    if (!wallet) throw new ValidationError('Invalid secret key');
+
+    wallet.homeDomain = domain;
+
+    const hash = `mock_${crypto.randomBytes(16).toString('hex')}`;
     const ledger = Math.floor(Math.random() * 1000000) + 1;
     return { hash, ledger };
   }
