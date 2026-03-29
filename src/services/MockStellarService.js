@@ -2725,6 +2725,68 @@ class MockStellarService extends StellarServiceInterface {
    * @param {string} buyingAsset  - Counter asset key
    * @param {Object} data         - Order book snapshot to push to listeners
    */
+  /**
+   * Mock implementation of distributeAsset.
+   * Simulates sending a custom asset from a distributor to a recipient.
+   *
+   * @param {string} distributorSecret  - Secret key of the distributor
+   * @param {string} assetCode          - Asset code
+   * @param {string} issuerPublicKey    - Public key of the issuer
+   * @param {string} recipientPublicKey - Public key of the recipient
+   * @param {string} amount             - Amount to distribute
+   * @returns {Promise<{hash: string, ledger: number, assetCode: string, issuerPublicKey: string, recipientPublicKey: string, amount: string}>}
+   */
+  async distributeAsset(distributorSecret, assetCode, issuerPublicKey, recipientPublicKey, amount) {
+    return this._executeWithRetry(async () => {
+      await this._simulateNetworkDelay();
+      this._simulateFailure();
+
+      const { ValidationError } = require('../utils/errors');
+      if (!assetCode || !/^[A-Za-z0-9]{1,12}$/.test(assetCode)) {
+        throw new ValidationError('Asset code must be 1-12 alphanumeric characters');
+      }
+
+      // Resolve distributor wallet from mock wallets
+      let distributorPublic = null;
+      for (const w of this.wallets.values()) {
+        if (w.secretKey === distributorSecret) { distributorPublic = w.publicKey; break; }
+      }
+      if (!distributorPublic) {
+        throw new ValidationError('Invalid distributor secret key. No matching account found.');
+      }
+
+      if (distributorPublic === recipientPublicKey) {
+        throw new ValidationError('Distributor and recipient cannot be the same account');
+      }
+
+      const parsedAmount = parseFloat(amount);
+      if (isNaN(parsedAmount) || parsedAmount <= 0) {
+        throw new ValidationError('Amount must be a positive number');
+      }
+
+      // Deduct from distributor holdings
+      if (!this.assetBalances) this.assetBalances = new Map();
+      const assetKey = `${assetCode}:${issuerPublicKey}`;
+      if (!this.assetBalances.has(assetKey)) this.assetBalances.set(assetKey, new Map());
+      const holders = this.assetBalances.get(assetKey);
+
+      const distBalance = parseFloat(holders.get(distributorPublic) || '0');
+      if (distBalance < parsedAmount) {
+        throw new ValidationError('Insufficient asset balance for distribution');
+      }
+      holders.set(distributorPublic, (distBalance - parsedAmount).toFixed(7));
+
+      // Credit recipient
+      const recipBalance = parseFloat(holders.get(recipientPublicKey) || '0');
+      holders.set(recipientPublicKey, (recipBalance + parsedAmount).toFixed(7));
+
+      const hash = `mock_distribute_${Date.now()}_${Math.random().toString(36).slice(2)}`;
+      const ledger = Math.floor(Math.random() * 1000000) + 1000000;
+
+      return { hash, ledger, assetCode, issuerPublicKey, recipientPublicKey, amount: parsedAmount.toFixed(7) };
+    }, 'distributeAsset');
+  }
+
   triggerOrderbookUpdate(sellingAsset, buyingAsset, data) {
     if (!this._orderbookListeners) return;
     const key = `${sellingAsset}:${buyingAsset}`;

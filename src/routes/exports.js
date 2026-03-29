@@ -2,6 +2,7 @@ const express = require('express');
 const router = express.Router();
 const requireApiKey = require('../middleware/apiKey');
 const { validateSchema } = require('../middleware/schemaValidation');
+const { requireTier } = require('../middleware/rbac');
 const ExportService = require('../services/ExportService');
 const { ValidationError, NotFoundError } = require('../utils/errors');
 
@@ -33,8 +34,9 @@ const exportIdSchema = validateSchema({
 /**
  * POST /exports
  * Initiate asynchronous export generation.
+ * Requires 'pro' tier or higher.
  */
-router.post('/', requireApiKey, createExportSchema, async (req, res, next) => {
+router.post('/', requireApiKey, requireTier('pro'), createExportSchema, async (req, res, next) => {
   try {
     const { type, format, startDate, endDate } = req.body;
     const exportId = await ExportService.initiateExport({

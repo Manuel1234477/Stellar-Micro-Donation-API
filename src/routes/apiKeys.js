@@ -609,4 +609,25 @@ router.get('/:id/anomalies', requireAdmin, apiKeyIdParamSchema, async (req, res,
   }
 });
 
+/**
+ * GET /api-keys/:id/tier
+ * Returns the subscription tier for the given API key (admin only).
+ */
+router.get('/:id/tier', requireAdmin(), apiKeyIdParamSchema, async (req, res, next) => {
+  try {
+    const Database = require('../utils/database');
+    const keyId = parseInt(req.params.id, 10);
+    const row = await Database.get(
+      'SELECT id, name, tier FROM api_keys WHERE id = ? AND status != ?',
+      [keyId, 'revoked']
+    );
+    if (!row) {
+      return res.status(404).json({ success: false, error: { code: 'NOT_FOUND', message: 'API key not found' } });
+    }
+    res.json({ success: true, data: { id: row.id, name: row.name, tier: row.tier || 'free' } });
+  } catch (error) {
+    next(error);
+  }
+});
+
 module.exports = router;

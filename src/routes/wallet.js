@@ -1019,3 +1019,39 @@ router.patch('/:id/options', checkPermission(PERMISSIONS.WALLETS_UPDATE), wallet
 });
 
 module.exports = router;
+
+// ─────────────────────────────────────────────────────────────────────────────
+// POST /wallets/bulk-import  (enterprise tier required)
+// ─────────────────────────────────────────────────────────────────────────────
+
+const { requireTier } = require('../middleware/rbac');
+
+/**
+ * @route   POST /wallets/bulk-import
+ * @desc    Bulk import wallet addresses (enterprise tier only)
+ * @access  wallets:create + enterprise tier
+ */
+router.post(
+  '/bulk-import',
+  checkPermission(PERMISSIONS.WALLETS_CREATE),
+  requireTier('enterprise'),
+  bulkImportRateLimiter,
+  payloadSizeLimiter(ENDPOINT_LIMITS.bulkImport || 1024 * 1024),
+  async (req, res, next) => {
+    try {
+      const { wallets } = req.body;
+      if (!Array.isArray(wallets) || wallets.length === 0) {
+        return res.status(400).json({
+          success: false,
+          error: { code: 'VALIDATION_ERROR', message: 'wallets must be a non-empty array' },
+        });
+      }
+      const result = await BulkWalletImportService.importWallets(wallets, req.user);
+      res.status(207).json({ success: true, data: result });
+    } catch (error) {
+      next(error);
+    }
+  }
+);
+
+module.exports = router;

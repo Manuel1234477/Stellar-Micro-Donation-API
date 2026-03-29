@@ -1918,6 +1918,63 @@ class StellarService extends StellarServiceInterface {
    * @param {Function} onUpdate     - Callback invoked with each order book update
    * @returns {Function} close — call to terminate the Horizon stream and prevent memory leaks
    */
+  /**
+   * Distribute a custom Stellar asset from a distributor account to a recipient.
+   *
+   * The distributor must already hold the asset (received from the issuer).
+   * The recipient must have an existing trustline for the asset.
+   *
+   * @param {string} distributorSecret  - Secret key of the distributor account
+   * @param {string} assetCode          - Asset code (1-12 alphanumeric)
+   * @param {string} issuerPublicKey    - Public key of the asset issuer
+   * @param {string} recipientPublicKey - Public key of the recipient
+   * @param {string} amount             - Amount to distribute
+   * @returns {Promise<{hash: string, ledger: number, assetCode: string, issuerPublicKey: string, recipientPublicKey: string, amount: string}>}
+   */
+  async distributeAsset(distributorSecret, assetCode, issuerPublicKey, recipientPublicKey, amount) {
+    return StellarErrorHandler.wrap(async () => {
+      const { ValidationError } = require('../utils/errors');
+
+      if (!assetCode || !/^[A-Za-z0-9]{1,12}$/.test(assetCode)) {
+        throw new ValidationError('Asset code must be 1-12 alphanumeric characters');
+      }
+
+      const distributorKeypair = StellarSdk.Keypair.fromSecret(distributorSecret);
+      const distributorPublic = distributorKeypair.publicKey();
+
+      if (distributorPublic === recipientPublicKey) {
+        throw new ValidationError('Distributor and recipient cannot be the same account');
+      }
+
+      const asset = new StellarSdk.Asset(assetCode, issuerPublicKey);
+
+      const distributorAccount = await this._executeWithRetry(() =>
+        this.server.loadAccount(distributorPublic)
+      );
+
+      const transaction = new StellarSdk.TransactionBuilder(distributorAccount, {
+        fee: StellarSdk.BASE_FEE,
+        networkPassphrase: this._getNetworkPassphrase(),
+      })
+        .addOperation(StellarSdk.Operation.payment({
+          destination: recipientPublicKey,
+          asset,
+          amount: amount.toString(),
+        }))
+        .setTimeout(30)
+        .build();
+
+      transaction.sign(distributorKeypair);
+      const result = await this._submitTransactionWithNetworkSafety(transaction);
+
+      log.info('STELLAR_SERVICE', 'Asset distributed', {
+        assetCode, issuerPublicKey, distributorPublic, recipientPublicKey, amount, hash: result.hash,
+      });
+
+      return { hash: result.hash, ledger: result.ledger, assetCode, issuerPublicKey, recipientPublicKey, amount };
+    }, 'distributeAsset');
+  }
+
   streamOrderbook(sellingAsset, buyingAsset, onUpdate) {
     const baseAsset = sellingAsset === 'XLM'
       ? StellarSdk.Asset.native()

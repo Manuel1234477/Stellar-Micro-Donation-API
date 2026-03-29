@@ -13,7 +13,7 @@ const express = require('express');
 const router = express.Router();
 const StatsService = require('../services/StatsService');
 const { validateDateRange } = require('../middleware/validation');
-const { checkPermission } = require('../middleware/rbac');
+const { checkPermission, requireTier } = require('../middleware/rbac');
 const { PERMISSIONS } = require('../utils/permissions');
 const { validateSchema } = require('../middleware/schemaValidation');
 const AuditLogService = require('../services/AuditLogService');
@@ -310,7 +310,7 @@ router.get('/analytics-fees', checkPermission(PERMISSIONS.STATS_READ), auditStat
  * Get donation analytics for a specific wallet
  * Query params: startDate, endDate (optional, ISO format)
  */
-router.get('/wallet/:walletAddress/analytics', checkPermission(PERMISSIONS.STATS_READ), walletAnalyticsSchema, (req, res, next) => {
+router.get('/wallet/:walletAddress/analytics', checkPermission(PERMISSIONS.STATS_READ), requireTier('pro'), walletAnalyticsSchema, (req, res, next) => {
   try {
     const { walletAddress } = req.params;
     const { startDate, endDate } = req.query;

@@ -215,7 +215,7 @@ app.use('/corporate-matching', corporateMatchingRoutes);
 app.use('/admin/routing', routingAdminRoutes);
 app.use('/admin/impact-metrics', impactMetricsAdminRoutes);
 app.use('/admin/geo-blocking', require('./admin/geoBlocking'));
-app.use('/admin/wallets', require('./admin/walletLimits'));
+app.use('/admin/cors', require('./admin/corsOrigins'));
 
 // Fee bump admin route — lazy access to serviceContainer
 app.use('/admin/transactions', (req, res, next) => {
