@@ -167,6 +167,52 @@ module.exports = async () => {
       status TEXT NOT NULL DEFAULT 'held',
       created_at DATETIME DEFAULT CURRENT_TIMESTAMP
     )`);
+    await Database.run(`CREATE TABLE IF NOT EXISTS recurring_donations (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      donorId INTEGER NOT NULL,
+      recipientId INTEGER NOT NULL,
+      amount REAL NOT NULL,
+      frequency TEXT NOT NULL,
+      nextExecutionDate DATETIME NOT NULL,
+      lastExecutionDate DATETIME,
+      startDate DATETIME DEFAULT CURRENT_TIMESTAMP,
+      status TEXT DEFAULT 'active',
+      executionCount INTEGER DEFAULT 0,
+      failureCount INTEGER DEFAULT 0,
+      maxExecutions INTEGER,
+      customIntervalDays INTEGER,
+      webhookUrl TEXT,
+      pausedAt DATETIME,
+      resumedAt DATETIME,
+      createdAt DATETIME DEFAULT CURRENT_TIMESTAMP,
+      FOREIGN KEY (donorId) REFERENCES users(id),
+      FOREIGN KEY (recipientId) REFERENCES users(id)
+    )`);
+    await Database.run(`CREATE TABLE IF NOT EXISTS wallet_merge_audit (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      sourceWalletId INTEGER NOT NULL,
+      sourcePublicKey TEXT NOT NULL,
+      destinationPublicKey TEXT NOT NULL,
+      mergedAmount TEXT,
+      transactionHash TEXT,
+      ledger INTEGER,
+      performedBy TEXT,
+      timestamp DATETIME DEFAULT CURRENT_TIMESTAMP
+    )`);
+    // Add mergedAt/mergedInto columns to users if not present
+    try {
+      await Database.run(`ALTER TABLE users ADD COLUMN mergedAt DATETIME`);
+    } catch (_) {}
+    try {
+      await Database.run(`ALTER TABLE users ADD COLUMN mergedInto TEXT`);
+    } catch (_) {}
+    // Add pausedAt/resumedAt to recurring_donations if not present (for existing DBs)
+    try {
+      await Database.run(`ALTER TABLE recurring_donations ADD COLUMN pausedAt DATETIME`);
+    } catch (_) {}
+    try {
+      await Database.run(`ALTER TABLE recurring_donations ADD COLUMN resumedAt DATETIME`);
+    } catch (_) {}
   } catch (e) {
     // Ignore errors - tables may already exist
   }

@@ -210,3 +210,23 @@ router.delete('/subscriptions/:subId', checkPermission(PERMISSIONS.STREAM_DELETE
 });
 
 module.exports = router;
+
+// ─────────────────────────────────────────────────────────────────────────────
+// GET /tiers/features  (public — no auth required)
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * @route   GET /tiers/features
+ * @desc    List all subscription tiers with their features and limits (public)
+ * @access  Public
+ */
+router.get('/features', (req, res) => {
+  const { TIER_FEATURES, TIER_ORDER } = require('../config/permissionMatrix');
+  const data = TIER_ORDER.map(tier => ({
+    tier,
+    ...TIER_FEATURES[tier],
+  }));
+  res.json({ success: true, data });
+});
+
+module.exports = router;

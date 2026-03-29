@@ -1,6 +1,61 @@
 const { PERMISSIONS } = require('../utils/permissions');
 
 /**
+ * Subscription Tier Feature Matrix
+ *
+ * Defines which features are available at each subscription tier.
+ * Tiers are ordered: free < basic < pro < enterprise
+ */
+const TIER_ORDER = ['free', 'basic', 'pro', 'enterprise'];
+
+const TIER_FEATURES = {
+  free: {
+    label: 'Free',
+    features: ['donations:create', 'donations:read', 'wallets:read', 'stats:read'],
+    limits: { donationsPerDay: 10, wallets: 5, exportFormats: [] },
+    description: 'Basic donation functionality',
+  },
+  basic: {
+    label: 'Basic',
+    features: ['donations:create', 'donations:read', 'wallets:read', 'wallets:create', 'stats:read', 'transactions:read'],
+    limits: { donationsPerDay: 100, wallets: 20, exportFormats: ['json'] },
+    description: 'Standard features for small organizations',
+  },
+  pro: {
+    label: 'Pro',
+    features: [
+      'donations:create', 'donations:read', 'wallets:read', 'wallets:create',
+      'stats:read', 'transactions:read', 'advanced_analytics', 'export',
+    ],
+    limits: { donationsPerDay: 1000, wallets: 200, exportFormats: ['json', 'csv'] },
+    description: 'Advanced analytics and export for growing organizations',
+  },
+  enterprise: {
+    label: 'Enterprise',
+    features: [
+      'donations:create', 'donations:read', 'wallets:read', 'wallets:create',
+      'stats:read', 'transactions:read', 'advanced_analytics', 'export', 'bulk_import',
+    ],
+    limits: { donationsPerDay: -1, wallets: -1, exportFormats: ['json', 'csv'] },
+    description: 'Unlimited access including bulk import',
+  },
+};
+
+/**
+ * Check whether a given tier meets the minimum required tier.
+ *
+ * @param {string} keyTier - The API key's current tier
+ * @param {string} minTier - The minimum required tier
+ * @returns {boolean}
+ */
+function tierMeetsMinimum(keyTier, minTier) {
+  const keyIdx = TIER_ORDER.indexOf(keyTier || 'free');
+  const minIdx = TIER_ORDER.indexOf(minTier || 'free');
+  if (keyIdx === -1 || minIdx === -1) return false;
+  return keyIdx >= minIdx;
+}
+
+/**
  * Permission Matrix - Defines which permissions each role should have
  * This is the source of truth for RBAC configuration
  */
@@ -92,5 +147,8 @@ const ROUTE_PERMISSIONS = [
 
 module.exports = {
   PERMISSION_MATRIX,
-  ROUTE_PERMISSIONS
+  ROUTE_PERMISSIONS,
+  TIER_FEATURES,
+  TIER_ORDER,
+  tierMeetsMinimum,
 };

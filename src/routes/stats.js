@@ -13,7 +13,7 @@ const express = require('express');
 const router = express.Router();
 const StatsService = require('../services/StatsService');
 const { validateDateRange } = require('../middleware/validation');
-const { checkPermission } = require('../middleware/rbac');
+const { checkPermission, requireTier } = require('../middleware/rbac');
 const { PERMISSIONS } = require('../utils/permissions');
 const { validateSchema } = require('../middleware/schemaValidation');
 const AuditLogService = require('../services/AuditLogService');
@@ -310,7 +310,7 @@ router.get('/analytics-fees', checkPermission(PERMISSIONS.STATS_READ), auditStat
  * Get donation analytics for a specific wallet
  * Query params: startDate, endDate (optional, ISO format)
  */
-router.get('/wallet/:walletAddress/analytics', checkPermission(PERMISSIONS.STATS_READ), walletAnalyticsSchema, (req, res, next) => {
+router.get('/wallet/:walletAddress/analytics', checkPermission(PERMISSIONS.STATS_READ), requireTier('pro'), walletAnalyticsSchema, (req, res, next) => {
   try {
     const { walletAddress } = req.params;
     const { startDate, endDate } = req.query;
@@ -504,6 +504,32 @@ router.get('/dashboard', checkPermission(PERMISSIONS.STATS_READ), (req, res, nex
     if (error.statusCode === 400) {
       return res.status(400).json({ success: false, error: { code: 'INVALID_PARAM', message: error.message } });
     }
+    next(error);
+  }
+});
+
+/**
+ * GET /stats/anonymous-breakdown
+ * Get breakdown of anonymous vs identified donations
+ *
+ * Query params:
+ *   startDate {string} - ISO date string (default: 30 days ago)
+ *   endDate   {string} - ISO date string (default: now)
+ */
+router.get('/anonymous-breakdown', checkPermission(PERMISSIONS.STATS_READ), (req, res, next) => {
+  try {
+    const { startDate, endDate } = req.query;
+    const start = startDate ? new Date(startDate) : new Date(Date.now() - 30 * 24 * 60 * 60 * 1000);
+    const end = endDate ? new Date(endDate) : new Date();
+
+    if (isNaN(start.getTime()) || isNaN(end.getTime())) {
+      return res.status(400).json({ success: false, error: { code: 'INVALID_PARAM', message: 'Invalid date format' } });
+    }
+
+    const data = StatsService.getAnonymousBreakdown(start, end);
+
+    res.json({ success: true, data });
+  } catch (error) {
     next(error);
   }
 });

@@ -16,6 +16,7 @@ const { validateApiKey } = require('../models/apiKeys');
 const config = require('../config');
 const AuditLogService = require('../services/AuditLogService');
 const perKeyRateLimit = require('./perKeyRateLimit');
+const { tierMeetsMinimum } = require('../config/permissionMatrix');
 
 /**
  * Role-Based Access Control (RBAC) Configuration
@@ -421,6 +422,52 @@ exports.attachUserRole = () => {
       // Apply per-key rate limiting if a DB-backed key is present
       if (req.apiKey && !req.apiKey.isLegacy && req.apiKey.id) {
         return perKeyRateLimit(req, res, next);
+      }
+
+      next();
+    } catch (error) {
+      next(error);
+    }
+  };
+};
+
+/**
+ * Subscription Tier Gate Middleware Factory
+ *
+ * Returns a middleware that enforces a minimum subscription tier.
+ * If the API key's tier is below the required minimum, responds with HTTP 402
+ * and an X-Required-Tier header indicating the minimum tier needed.
+ *
+ * Admin keys bypass tier gating entirely.
+ *
+ * @param {string} minTier - Minimum required tier: 'free' | 'basic' | 'pro' | 'enterprise'
+ * @returns {Function} Express middleware
+ */
+exports.requireTier = (minTier) => {
+  return (req, res, next) => {
+    try {
+      if (!req.user) {
+        throw new UnauthorizedError('Authentication required');
+      }
+
+      // Admin role bypasses tier gating
+      if (req.user.role === 'admin') {
+        return next();
+      }
+
+      const keyTier = (req.apiKey && req.apiKey.tier) || req.user.tier || 'free';
+
+      if (!tierMeetsMinimum(keyTier, minTier)) {
+        res.setHeader('X-Required-Tier', minTier);
+        return res.status(402).json({
+          success: false,
+          error: {
+            code: 'TIER_REQUIRED',
+            message: `This feature requires the '${minTier}' tier or higher. Your current tier: '${keyTier}'.`,
+            requiredTier: minTier,
+            currentTier: keyTier,
+          },
+        });
       }
 
       next();

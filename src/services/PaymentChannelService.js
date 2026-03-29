@@ -281,7 +281,7 @@ class PaymentChannelService {
    * @param {string} params.senderSecret - Sender's secret key (funds the on-chain payment)
    * @returns {Promise<object>} Settled channel record with stellarTxId
    */
-  async settleChannel({ channelId, senderSecret }) {
+  async closeChannel({ channelId, senderSecret }) {
     if (!channelId) throw new ValidationError('channelId is required', null, ERROR_CODES.MISSING_REQUIRED_FIELD);
     if (!senderSecret) throw new ValidationError('senderSecret is required', null, ERROR_CODES.MISSING_REQUIRED_FIELD);
 
@@ -398,7 +398,7 @@ class PaymentChannelService {
    * @param {string} params.senderSecret - Sender's secret key
    * @returns {Promise<object>} Closed channel record
    */
-  async closeChannel({ channelId, senderSecret }) {
+  async forceCloseChannel({ channelId, senderSecret }) {
     if (!channelId) throw new ValidationError('channelId is required', null, ERROR_CODES.MISSING_REQUIRED_FIELD);
     if (!senderSecret) throw new ValidationError('senderSecret is required', null, ERROR_CODES.MISSING_REQUIRED_FIELD);
 
@@ -414,7 +414,7 @@ class PaymentChannelService {
     if (channel.status === 'open' && !timedOut) {
       throw new BusinessLogicError(
         ERROR_CODES.TRANSACTION_FAILED,
-        'Channel has not timed out yet. Use settleChannel to close an active channel.'
+        'Channel has not timed out yet. Use closeChannel to close an active channel.'
       );
     }
 

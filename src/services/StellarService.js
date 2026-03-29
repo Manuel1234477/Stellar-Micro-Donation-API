@@ -913,6 +913,64 @@ class StellarService extends StellarServiceInterface {
   }
 
   /**
+   * Validate whether an account is eligible for merging.
+   *
+   * Checks for blocking conditions: open offers, non-native trustlines with
+   * non-zero balances, and account data entries.
+   *
+   * @param {string} publicKey - Public key of the account to check
+   * @returns {Promise<{eligible: boolean, blockers: Array<{type: string, detail: string}>}>}
+   */
+  async validateMergeEligibility(publicKey) {
+    return StellarErrorHandler.wrap(async () => {
+      const { ValidationError } = require('../utils/errors');
+      if (!publicKey || typeof publicKey !== 'string') {
+        throw new ValidationError('Invalid public key');
+      }
+
+      const account = await this._executeWithRetry(() =>
+        this.server.loadAccount(publicKey)
+      );
+
+      const blockers = [];
+
+      // Check for non-native trustlines with non-zero balances
+      for (const balance of account.balances) {
+        if (balance.asset_type !== 'native') {
+          const bal = parseFloat(balance.balance);
+          if (bal > 0) {
+            blockers.push({
+              type: 'non_zero_trustline',
+              detail: `Non-zero trustline: ${balance.asset_code || balance.asset_type} (balance: ${balance.balance})`
+            });
+          }
+        }
+      }
+
+      // Check for open offers via Horizon
+      try {
+        const offersPage = await this._executeWithRetry(() =>
+          this.server.offers().forAccount(publicKey).limit(1).call()
+        );
+        if (offersPage.records && offersPage.records.length > 0) {
+          blockers.push({ type: 'open_offers', detail: 'Account has open DEX offers' });
+        }
+      } catch (_) { /* best-effort */ }
+
+      // Check for data entries
+      const dataEntries = Object.keys(account.data_attr || account.data || {});
+      if (dataEntries.length > 0) {
+        blockers.push({
+          type: 'data_entries',
+          detail: `Account has ${dataEntries.length} data entr${dataEntries.length === 1 ? 'y' : 'ies'}`
+        });
+      }
+
+      return { eligible: blockers.length === 0, blockers };
+    }, 'validateMergeEligibility');
+  }
+
+  /**
    * Create or update a trustline for a custom Stellar asset.
    *
    * Uses the Stellar SDK `changeTrust` operation. Omitting `limit` (or passing
@@ -1860,6 +1918,63 @@ class StellarService extends StellarServiceInterface {
    * @param {Function} onUpdate     - Callback invoked with each order book update
    * @returns {Function} close — call to terminate the Horizon stream and prevent memory leaks
    */
+  /**
+   * Distribute a custom Stellar asset from a distributor account to a recipient.
+   *
+   * The distributor must already hold the asset (received from the issuer).
+   * The recipient must have an existing trustline for the asset.
+   *
+   * @param {string} distributorSecret  - Secret key of the distributor account
+   * @param {string} assetCode          - Asset code (1-12 alphanumeric)
+   * @param {string} issuerPublicKey    - Public key of the asset issuer
+   * @param {string} recipientPublicKey - Public key of the recipient
+   * @param {string} amount             - Amount to distribute
+   * @returns {Promise<{hash: string, ledger: number, assetCode: string, issuerPublicKey: string, recipientPublicKey: string, amount: string}>}
+   */
+  async distributeAsset(distributorSecret, assetCode, issuerPublicKey, recipientPublicKey, amount) {
+    return StellarErrorHandler.wrap(async () => {
+      const { ValidationError } = require('../utils/errors');
+
+      if (!assetCode || !/^[A-Za-z0-9]{1,12}$/.test(assetCode)) {
+        throw new ValidationError('Asset code must be 1-12 alphanumeric characters');
+      }
+
+      const distributorKeypair = StellarSdk.Keypair.fromSecret(distributorSecret);
+      const distributorPublic = distributorKeypair.publicKey();
+
+      if (distributorPublic === recipientPublicKey) {
+        throw new ValidationError('Distributor and recipient cannot be the same account');
+      }
+
+      const asset = new StellarSdk.Asset(assetCode, issuerPublicKey);
+
+      const distributorAccount = await this._executeWithRetry(() =>
+        this.server.loadAccount(distributorPublic)
+      );
+
+      const transaction = new StellarSdk.TransactionBuilder(distributorAccount, {
+        fee: StellarSdk.BASE_FEE,
+        networkPassphrase: this._getNetworkPassphrase(),
+      })
+        .addOperation(StellarSdk.Operation.payment({
+          destination: recipientPublicKey,
+          asset,
+          amount: amount.toString(),
+        }))
+        .setTimeout(30)
+        .build();
+
+      transaction.sign(distributorKeypair);
+      const result = await this._submitTransactionWithNetworkSafety(transaction);
+
+      log.info('STELLAR_SERVICE', 'Asset distributed', {
+        assetCode, issuerPublicKey, distributorPublic, recipientPublicKey, amount, hash: result.hash,
+      });
+
+      return { hash: result.hash, ledger: result.ledger, assetCode, issuerPublicKey, recipientPublicKey, amount };
+    }, 'distributeAsset');
+  }
+
   streamOrderbook(sellingAsset, buyingAsset, onUpdate) {
     const baseAsset = sellingAsset === 'XLM'
       ? StellarSdk.Asset.native()
@@ -1882,6 +1997,101 @@ class StellarService extends StellarServiceInterface {
     });
 
     return close;
+  }
+
+  /**
+   * Open a payment channel by creating and funding an escrow account
+   * @param {string} sourceSecret - Source account secret key
+   * @param {string} recipientPublicKey - Recipient public key
+   * @param {string} depositAmount - Amount to deposit in the channel
+   * @returns {Promise<Object>} Transaction result
+   */
+  async openChannel(sourceSecret, recipientPublicKey, depositAmount) {
+    // Create escrow account and fund it
+    const escrowKeypair = StellarSdk.Keypair.random();
+    const escrowPublicKey = escrowKeypair.publicKey();
+
+    // Create account operation
+    const createAccountOp = StellarSdk.Operation.createAccount({
+      destination: escrowPublicKey,
+      startingBalance: depositAmount,
+    });
+
+    // Set options to add recipient as signer
+    const setOptionsOp = StellarSdk.Operation.setOptions({
+      signer: {
+        ed25519PublicKey: recipientPublicKey,
+        weight: 1,
+      },
+    });
+
+    const sourceKeypair = StellarSdk.Keypair.fromSecret(sourceSecret);
+    const account = await this.server.loadAccount(sourceKeypair.publicKey());
+
+    const transaction = new StellarSdk.TransactionBuilder(account, {
+      fee: this.baseFee,
+      networkPassphrase: this.networkPassphrase,
+    })
+      .addOperation(createAccountOp)
+      .addOperation(setOptionsOp)
+      .setTimeout(30)
+      .build();
+
+    transaction.sign(sourceKeypair);
+
+    const result = await this.server.submitTransaction(transaction);
+    return {
+      escrowPublicKey,
+      escrowSecret: escrowKeypair.secret(),
+      transactionId: result.hash,
+      ledger: result.ledger,
+    };
+  }
+
+  /**
+   * Update channel balance (off-chain, no Stellar call needed)
+   * @param {string} channelId - Channel ID
+   * @param {string} newAmount - New balance amount
+   * @returns {Promise<Object>} Updated channel state
+   */
+  async updateChannel(channelId, newAmount) {
+    // Off-chain update, just return success
+    return { channelId, balance: newAmount, updated: true };
+  }
+
+  /**
+   * Close channel by submitting settlement transaction
+   * @param {string} channelId - Channel ID
+   * @param {string} escrowSecret - Escrow account secret
+   * @param {string} recipientPublicKey - Recipient public key
+   * @param {string} amount - Amount to settle
+   * @returns {Promise<Object>} Transaction result
+   */
+  async closeChannel(channelId, escrowSecret, recipientPublicKey, amount) {
+    const escrowKeypair = StellarSdk.Keypair.fromSecret(escrowSecret);
+    const account = await this.server.loadAccount(escrowKeypair.publicKey());
+
+    const paymentOp = StellarSdk.Operation.payment({
+      destination: recipientPublicKey,
+      asset: StellarSdk.Asset.native(),
+      amount: amount,
+    });
+
+    const transaction = new StellarSdk.TransactionBuilder(account, {
+      fee: this.baseFee,
+      networkPassphrase: this.networkPassphrase,
+    })
+      .addOperation(paymentOp)
+      .setTimeout(30)
+      .build();
+
+    transaction.sign(escrowKeypair);
+
+    const result = await this.server.submitTransaction(transaction);
+    return {
+      transactionId: result.hash,
+      ledger: result.ledger,
+    };
   }
 
 }

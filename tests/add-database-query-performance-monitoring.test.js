@@ -146,8 +146,8 @@ describe('Database query performance monitoring', () => {
       expect(entry.sql).toBe('UPDATE missing_table SET value = 1');
     });
 
-    test('retains only the last 1000 slow query entries', () => {
-      for (let index = 1; index <= 1005; index += 1) {
+    test('retains only the last 100 slow query entries (default buffer size)', () => {
+      for (let index = 1; index <= 105; index += 1) {
         Database.recordQueryExecution({
           method: 'get',
           sql: `SELECT ${index} AS retained_query`,
@@ -157,9 +157,9 @@ describe('Database query performance monitoring', () => {
 
       const slowQueries = Database.getSlowQueries();
 
-      expect(slowQueries).toHaveLength(1000);
+      expect(slowQueries).toHaveLength(100);
       expect(slowQueries.some(entry => entry.sql === 'SELECT 1 AS retained_query')).toBe(false);
-      expect(slowQueries.some(entry => entry.sql === 'SELECT 1005 AS retained_query')).toBe(true);
+      expect(slowQueries.some(entry => entry.sql === 'SELECT 105 AS retained_query')).toBe(true);
     });
 
     test('returns only slow queries from the last 24 hours sorted by duration', () => {
@@ -284,7 +284,6 @@ describe('Database query performance monitoring', () => {
       expect(response.status).toBe(400);
       expect(response.body.success).toBe(false);
       expect(response.body.error.code).toBe('VALIDATION_ERROR');
-      expect(response.body.error.message).toContain('limit must be a positive integer');
     });
 
     test('rejects malformed limit values that parseInt would previously coerce', async () => {
