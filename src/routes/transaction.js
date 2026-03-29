@@ -253,5 +253,99 @@ router.post(
   }
 );
 
+// ─── Memo Decryption Endpoint ────────────────────────────────────────────────
+
+/**
+ * POST /transactions/:id/decrypt-memo
+ * Decrypt an encrypted transaction memo for authorized recipients.
+ *
+ * Requires:
+ * - The transaction ID
+ * - The recipient's Stellar secret key (S...)
+ * - The 'transactions:read' permission on the recipient wallet
+ *
+ * Returns the plaintext memo if decryption succeeds.
+ * Only the transaction recipient can decrypt their own memos.
+ */
+router.post(
+  '/:id/decrypt-memo',
+  payloadSizeLimiter(ENDPOINT_LIMITS.transaction),
+  checkPermission(PERMISSIONS.TRANSACTIONS_READ),
+  validateSchema({
+    body: {
+      fields: {
+        recipientSecret: {
+          type: 'string',
+          required: true,
+          trim: true,
+          minLength: 56,
+          maxLength: 56,
+          validate: (value) => {
+            return value.startsWith('S') ? true : 'Secret key must start with S';
+          },
+        },
+      },
+    },
+  }),
+  async (req, res, next) => {
+    try {
+      const { id } = req.params;
+      const { recipientSecret } = req.body;
+
+      // Load transaction
+      const tx = Transaction.getById(id);
+      if (!tx) {
+        return res.status(404).json({
+          success: false,
+          error: {
+            code: 'TRANSACTION_NOT_FOUND',
+            message: `Transaction ${id} not found`,
+          },
+        });
+      }
+
+      // Verify memo is encrypted
+      if (!tx.memoEnvelope) {
+        return res.status(400).json({
+          success: false,
+          error: {
+            code: 'MEMO_NOT_ENCRYPTED',
+            message: 'Transaction memo is not encrypted',
+          },
+        });
+      }
+
+      // Decrypt the memo
+      try {
+        const MemoEncryptionService = require('../services/MemoEncryptionService');
+        const plaintext = MemoEncryptionService.decryptMemoForRecipient(
+          tx.memoEnvelope,
+          recipientSecret
+        );
+
+        return res.status(200).json({
+          success: true,
+          data: {
+            transactionId: tx.id,
+            memo: plaintext,
+            encryptedAt: tx.encryptionMetadata?.createdAt || null,
+          },
+        });
+      } catch (decryptError) {
+        // Decryption failed - likely wrong key
+        return res.status(403).json({
+          success: false,
+          error: {
+            code: 'DECRYPTION_FAILED',
+            message: 'Failed to decrypt memo: invalid recipient secret key or tampered data',
+          },
+        });
+      }
+    } catch (error) {
+      next(error);
+    }
+  }
+);
+
 module.exports = router;
 
