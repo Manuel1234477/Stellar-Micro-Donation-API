@@ -81,6 +81,8 @@ router.post('/', requireApiKey, checkPermission(PERMISSIONS.ADMIN), createCampai
  * Retrieves active/all campaigns dynamically.
  */
 router.get('/', cacheMiddleware('campaign', 'public'), async (req, res, next) => {
+  try {
+    const { status } = req.query;
     let query = 'SELECT * FROM campaigns';
     let params = [];
 
@@ -113,7 +115,8 @@ router.get('/', cacheMiddleware('campaign', 'public'), async (req, res, next) =>
  * Retrieve a specific campaign securely.
  */
 router.get('/:id', cacheMiddleware('campaign', 'public'), async (req, res, next) => {
-    
+  try {
+    const campaign = await Database.get('SELECT * FROM campaigns WHERE id = ?', [req.params.id]);
     if (!campaign) {
       return res.status(404).json({ success: false, error: 'Campaign not found' });
     }
@@ -198,6 +201,9 @@ router.get('/:id/impact', async (req, res, next) => {
   } catch (error) {
     next(error);
   }
+});
+
+/**
  * GET /campaigns/:id/progress/stream
  * Server-Sent Events (SSE) endpoint for real-time campaign progress updates.
  * 

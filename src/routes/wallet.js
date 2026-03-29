@@ -21,7 +21,6 @@ const WalletService = require('../services/WalletService');
 const { getStellarService } = require('../config/stellar');
 const log = require('../utils/log');
 const { cacheMiddleware } = require('../middleware/caching');
-const { cacheMiddleware } = require('../middleware/caching');
 const { validateSchema } = require('../middleware/schemaValidation');
 const { parseCursorPaginationQuery } = require('../utils/pagination');
 const { validateDataEntry } = require('../middleware/validateDataEntry');
@@ -176,6 +175,11 @@ router.get('/:id/balance', checkPermission(PERMISSIONS.WALLETS_READ), walletIdSc
  * Get a specific wallet
  */
 router.get('/:id', checkPermission(PERMISSIONS.WALLETS_READ), walletIdSchema, cacheMiddleware('wallet', 'private'), async (req, res, next) => {
+  try {
+    const wallet = await Database.get(
+      'SELECT id, publicKey, label, ownerName, createdAt FROM users WHERE id = ?',
+      [req.params.id]
+    );
     if (!wallet) {
       return res.status(404).json({ success: false, error: 'Wallet not found' });
     }
@@ -673,6 +677,47 @@ router.delete('/:id/data/:key',
 );
 
 /**
+ * GET /wallets/:id/merge/eligibility
+ * Check whether a wallet account is eligible for merging.
+ * Returns all blocking conditions (open offers, non-zero trustlines, data entries).
+ */
+router.get('/:id/merge/eligibility', checkPermission(PERMISSIONS.WALLETS_READ), walletIdSchema, async (req, res, next) => {
+  try {
+    const wallet = await Database.get(
+      'SELECT id, publicKey, mergedAt FROM users WHERE id = ?',
+      [req.params.id]
+    );
+
+    if (!wallet) {
+      return res.status(404).json({ success: false, error: 'Wallet not found' });
+    }
+
+    if (wallet.mergedAt) {
+      return res.status(409).json({
+        success: false,
+        error: 'Wallet has already been merged and closed',
+        data: { eligible: false, blockers: [{ type: 'already_merged', detail: 'Wallet was merged on ' + wallet.mergedAt }] }
+      });
+    }
+
+    const stellarSvc = getStellarService();
+    const result = await stellarSvc.validateMergeEligibility(wallet.publicKey);
+
+    res.json({
+      success: true,
+      data: {
+        walletId: wallet.id,
+        publicKey: wallet.publicKey,
+        eligible: result.eligible,
+        blockers: result.blockers,
+      }
+    });
+  } catch (error) {
+    next(error);
+  }
+});
+
+/**
  * POST /wallets/:id/merge
  * Merge a wallet into a destination account.
  *
@@ -730,6 +775,17 @@ router.post('/:id/merge', checkPermission(PERMISSIONS.WALLETS_DELETE), async (re
 
     // ── Execute merge on Stellar ─────────────────────────────────────────────
     const stellarService = getStellarService();
+
+    // Pre-merge eligibility check
+    const eligibility = await stellarService.validateMergeEligibility(sourceWallet.publicKey);
+    if (!eligibility.eligible) {
+      return res.status(400).json({
+        success: false,
+        error: 'Account is not eligible for merge',
+        data: { blockers: eligibility.blockers }
+      });
+    }
+
     const mergeResult = await stellarService.mergeAccount(sourceSecret, destinationPublicKey);
 
     // ── Soft-delete source wallet ────────────────────────────────────────────

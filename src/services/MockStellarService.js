@@ -1798,6 +1798,59 @@ class MockStellarService extends StellarServiceInterface {
   }
 
   /**
+   * Validate whether a mock account is eligible for merging.
+   *
+   * Checks for open offers, non-native trustlines with non-zero balances,
+   * and data entries in the mock wallet store.
+   *
+   * @param {string} publicKey - Public key of the account to check
+   * @returns {Promise<{eligible: boolean, blockers: Array<{type: string, detail: string}>}>}
+   */
+  async validateMergeEligibility(publicKey) {
+    if (!this.isValidAddress(publicKey)) {
+      throw new ValidationError('Invalid Stellar address');
+    }
+
+    const wallet = this.wallets.get(publicKey);
+    if (!wallet) {
+      throw new NotFoundError('Account not found in mock wallets', ERROR_CODES.WALLET_NOT_FOUND);
+    }
+
+    const blockers = [];
+
+    // Check non-native balances
+    if (wallet.balances) {
+      for (const balance of wallet.balances) {
+        if (balance.asset_type !== 'native') {
+          const bal = parseFloat(balance.balance || '0');
+          if (bal > 0) {
+            blockers.push({
+              type: 'non_zero_trustline',
+              detail: `Non-zero trustline: ${balance.asset_code || balance.asset_type} (balance: ${balance.balance})`
+            });
+          }
+        }
+      }
+    }
+
+    // Check open offers
+    if (wallet.openOffers && wallet.openOffers.length > 0) {
+      blockers.push({ type: 'open_offers', detail: 'Account has open DEX offers' });
+    }
+
+    // Check data entries
+    const dataEntries = Object.keys(wallet.dataEntries || {});
+    if (dataEntries.length > 0) {
+      blockers.push({
+        type: 'data_entries',
+        detail: `Account has ${dataEntries.length} data entr${dataEntries.length === 1 ? 'y' : 'ies'}`
+      });
+    }
+
+    return { eligible: blockers.length === 0, blockers };
+  }
+
+  /**
    * Issue a custom Stellar asset to a recipient (mock implementation).
    *
    * Validates inputs, creates an in-memory asset balance for the recipient,

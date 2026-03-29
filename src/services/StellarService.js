@@ -913,6 +913,64 @@ class StellarService extends StellarServiceInterface {
   }
 
   /**
+   * Validate whether an account is eligible for merging.
+   *
+   * Checks for blocking conditions: open offers, non-native trustlines with
+   * non-zero balances, and account data entries.
+   *
+   * @param {string} publicKey - Public key of the account to check
+   * @returns {Promise<{eligible: boolean, blockers: Array<{type: string, detail: string}>}>}
+   */
+  async validateMergeEligibility(publicKey) {
+    return StellarErrorHandler.wrap(async () => {
+      const { ValidationError } = require('../utils/errors');
+      if (!publicKey || typeof publicKey !== 'string') {
+        throw new ValidationError('Invalid public key');
+      }
+
+      const account = await this._executeWithRetry(() =>
+        this.server.loadAccount(publicKey)
+      );
+
+      const blockers = [];
+
+      // Check for non-native trustlines with non-zero balances
+      for (const balance of account.balances) {
+        if (balance.asset_type !== 'native') {
+          const bal = parseFloat(balance.balance);
+          if (bal > 0) {
+            blockers.push({
+              type: 'non_zero_trustline',
+              detail: `Non-zero trustline: ${balance.asset_code || balance.asset_type} (balance: ${balance.balance})`
+            });
+          }
+        }
+      }
+
+      // Check for open offers via Horizon
+      try {
+        const offersPage = await this._executeWithRetry(() =>
+          this.server.offers().forAccount(publicKey).limit(1).call()
+        );
+        if (offersPage.records && offersPage.records.length > 0) {
+          blockers.push({ type: 'open_offers', detail: 'Account has open DEX offers' });
+        }
+      } catch (_) { /* best-effort */ }
+
+      // Check for data entries
+      const dataEntries = Object.keys(account.data_attr || account.data || {});
+      if (dataEntries.length > 0) {
+        blockers.push({
+          type: 'data_entries',
+          detail: `Account has ${dataEntries.length} data entr${dataEntries.length === 1 ? 'y' : 'ies'}`
+        });
+      }
+
+      return { eligible: blockers.length === 0, blockers };
+    }, 'validateMergeEligibility');
+  }
+
+  /**
    * Create or update a trustline for a custom Stellar asset.
    *
    * Uses the Stellar SDK `changeTrust` operation. Omitting `limit` (or passing
