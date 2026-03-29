@@ -337,6 +337,18 @@ class RecurringDonationScheduler {
           traceId,
         });
 
+        // Publish GraphQL subscription event
+        const pubsub = require('../graphql/pubsub');
+        pubsub.publish(pubsub.TOPICS.RECURRING_DONATION_EXECUTED, {
+          scheduleId: schedule.id,
+          donor: schedule.donorPublicKey,
+          recipient: schedule.recipientPublicKey,
+          amount: schedule.amount,
+          txHash: txResult.hash,
+          executionCount: newCount,
+          timestamp: new Date().toISOString(),
+        });
+
         await this.logExecution(schedule.id, 'SUCCESS', txResult.hash, null, 1);
       } catch (error) {
         await this.logExecution(schedule.id, 'FAILED', null, error.message, 1);

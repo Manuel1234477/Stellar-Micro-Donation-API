@@ -87,4 +87,40 @@ class PubSub {
 /** Singleton instance shared across the application */
 const pubsub = new PubSub();
 
+/** Subscription topic constants */
+pubsub.TOPICS = {
+  DONATION_CREATED: 'DONATION_CREATED',
+  DONATION_COMPLETED: 'DONATION_COMPLETED',
+  RECURRING_DONATION_EXECUTED: 'RECURRING_DONATION_EXECUTED',
+  // Legacy
+  TRANSACTION_CREATED: 'TRANSACTION_CREATED',
+};
+
+/**
+ * Return an AsyncIterator that only yields payloads matching the given filter.
+ * @param {string} topic
+ * @param {object} [filter] - { walletAddress, campaignId, minAmount }
+ * @returns {AsyncIterator}
+ */
+pubsub.filteredIterator = function (topic, filter = {}) {
+  const { walletAddress, campaignId, minAmount } = filter;
+  const base = this.asyncIterator(topic);
+
+  return {
+    async next() {
+      while (true) {
+        const result = await base.next();
+        if (result.done) return result;
+        const p = result.value;
+        if (walletAddress && p.donor !== walletAddress && p.recipient !== walletAddress) continue;
+        if (campaignId != null && p.campaign_id !== campaignId) continue;
+        if (minAmount != null && p.amount < minAmount) continue;
+        return result;
+      }
+    },
+    return() { return base.return(); },
+    [Symbol.asyncIterator]() { return this; },
+  };
+};
+
 module.exports = pubsub;

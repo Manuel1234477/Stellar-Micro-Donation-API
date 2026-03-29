@@ -780,6 +780,23 @@ class DonationService {
       transaction.memoCollisionReason = null;
     }
 
+    // Publish GraphQL subscription events
+    const pubsub = require('../graphql/pubsub');
+    const donationEvent = {
+      id: transaction.id,
+      donor: transaction.donor,
+      recipient: transaction.recipient,
+      amount: transaction.amount,
+      status: transaction.status,
+      stellarTxId: transaction.stellarTxId,
+      campaign_id: transaction.campaign_id || null,
+      timestamp: transaction.timestamp,
+    };
+    pubsub.publish(pubsub.TOPICS.DONATION_CREATED, donationEvent);
+    if (transaction.status === TRANSACTION_STATES.CONFIRMED) {
+      pubsub.publish(pubsub.TOPICS.DONATION_COMPLETED, donationEvent);
+    }
+
     return transaction;
   }
 
