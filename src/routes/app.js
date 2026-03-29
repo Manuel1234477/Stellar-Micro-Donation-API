@@ -5,6 +5,8 @@ const walletRoutes = require('./wallet');
 const statsRoutes = require('./stats');
 const streamRoutes = require('./stream');
 const recurringDonationScheduler = require('../services/RecurringDonationScheduler');
+const NetworkStatusService = require('../services/NetworkStatusService');
+const { router: networkRoutes, setService: setNetworkService } = require('./network');
 
 const app = express();
 
@@ -22,6 +24,7 @@ app.use('/donations', donationRoutes);
 app.use('/wallets', walletRoutes);
 app.use('/stats', statsRoutes);
 app.use('/stream', streamRoutes);
+app.use('/network', networkRoutes);
 
 // Health check endpoint
 app.get('/health', (req, res) => {
@@ -59,6 +62,14 @@ app.listen(PORT, () => {
   
   // Start the recurring donation scheduler
   recurringDonationScheduler.start();
+
+  // Start network status monitoring
+  const networkStatusService = new NetworkStatusService({ horizonUrl: config.horizonUrl });
+  networkStatusService.on('network.degraded', (status) => {
+    console.warn('[NetworkStatus] network.degraded event:', JSON.stringify(status));
+  });
+  setNetworkService(networkStatusService);
+  networkStatusService.start();
 });
 
 module.exports = app;
