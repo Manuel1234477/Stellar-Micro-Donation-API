@@ -20,7 +20,6 @@ const { thresholdsRouter } = require('./signers');
 const recoveryRoutes = require('./recovery');
 const statsRoutes = require('./stats');
 const streamRoutes = require('./stream');
-const recurringDonationScheduler = require('../services/RecurringDonationScheduler');
 const NetworkStatusService = require('../services/NetworkStatusService');
 const { router: networkRoutes, setService: setNetworkService } = require('./network');
 const docsRoutes = require('./docs');
@@ -501,7 +500,6 @@ process.on('unhandledRejection', (reason, promise) => {
   });
 });
 
-const PORT = config.server.port;
 let cleanupInterval = null;
 
 async function startServer() {
