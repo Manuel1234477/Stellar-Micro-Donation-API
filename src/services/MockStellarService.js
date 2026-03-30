@@ -1729,6 +1729,17 @@ class MockStellarService extends StellarServiceInterface {
    * @param {number} [params.offerId=0]  - 0 to create; existing ID to update/cancel
    * @returns {Promise<{offerId: number, transactionId: string, ledger: number}>}
    */
+  /**
+   * Create or update a mock DEX offer.
+   * @param {Object} params
+   * @param {string} params.sourceSecret
+   * @param {string} params.sellingAsset
+   * @param {string} params.buyingAsset
+   * @param {string} params.amount
+   * @param {string} params.price
+   * @param {number} [params.offerId=0]
+   * @returns {Promise<{offerId: number, transactionId: string, ledger: number}>}
+   */
   async createOffer({ sourceSecret, sellingAsset, buyingAsset, amount, price, offerId = 0 }) {
     await this._simulateNetworkDelay();
     this._checkRateLimit();
@@ -1757,11 +1768,14 @@ class MockStellarService extends StellarServiceInterface {
       const existing = this.offers.get(offerId);
       if (!existing) throw new NotFoundError(`Offer ${offerId} not found`, ERROR_CODES.NOT_FOUND);
       if (existing.seller !== sourcePublic) throw new BusinessLogicError(ERROR_CODES.TRANSACTION_FAILED, 'Not the offer owner');
+      if (parseFloat(existing.amount) === 0) throw new BusinessLogicError(ERROR_CODES.TRANSACTION_FAILED, 'Offer already filled or cancelled');
       if (amountNum === 0) {
-        this.offers.delete(offerId);
+        existing.amount = '0.0000000';
+        existing.status = 'cancelled';
       } else {
         existing.amount = amountNum.toFixed(7);
         existing.price = priceNum.toFixed(7);
+        existing.status = 'active';
       }
       const txId = crypto.randomBytes(32).toString('hex');
       const ledger = Math.floor(Math.random() * 1000000) + 1000000;
@@ -1778,6 +1792,7 @@ class MockStellarService extends StellarServiceInterface {
       amount: amountNum.toFixed(7),
       price: priceNum.toFixed(7),
       createdAt: new Date().toISOString(),
+      status: 'active',
     });
 
     const txId = crypto.randomBytes(32).toString('hex');
@@ -1795,9 +1810,28 @@ class MockStellarService extends StellarServiceInterface {
    * @param {number} params.offerId      - ID of the offer to cancel
    * @returns {Promise<{transactionId: string, ledger: number}>}
    */
+  /**
+   * Cancel a mock DEX offer.
+   * @param {Object} params
+   * @param {string} params.sourceSecret
+   * @param {string} params.sellingAsset
+   * @param {string} params.buyingAsset
+   * @param {number} params.offerId
+   * @returns {Promise<{transactionId: string, ledger: number}>}
+   */
   async cancelOffer({ sourceSecret, sellingAsset, buyingAsset, offerId }) {
     const result = await this.createOffer({ sourceSecret, sellingAsset, buyingAsset, amount: '0', price: '1', offerId });
     return { transactionId: result.transactionId, ledger: result.ledger };
+  }
+
+  /**
+   * List all open offers for a wallet.
+   * @param {string} publicKey
+   * @returns {Promise<Array>}
+   */
+  async listOffers(publicKey) {
+    if (!this.offers) return [];
+    return Array.from(this.offers.values()).filter(o => o.seller === publicKey && o.status === 'active');
   }
 
   /**

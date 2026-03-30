@@ -1,4 +1,70 @@
 /**
+ * PUT /wallets/:id/inflation-destination
+ * Set the inflation destination for a wallet's Stellar account.
+ * Body: { destinationPublicKey: string, sourceSecret: string }
+ * Requires wallets:write permission.
+ */
+router.put('/:id/inflation-destination', checkPermission(PERMISSIONS.WALLETS_UPDATE), walletIdSchema, async (req, res, next) => {
+  try {
+    const { destinationPublicKey, sourceSecret } = req.body;
+    if (!destinationPublicKey || !sourceSecret) {
+      return res.status(400).json({ success: false, error: 'Missing required fields: destinationPublicKey, sourceSecret' });
+    }
+    // Validate destination public key format (G...)
+    if (!/^G[A-Z2-7]{55}$/.test(destinationPublicKey)) {
+      return res.status(400).json({ success: false, error: 'Invalid Stellar public key for inflation destination' });
+    }
+    const wallet = await walletService.getWalletById(req.params.id);
+    if (!wallet) {
+      return res.status(404).json({ success: false, error: 'Wallet not found' });
+    }
+    // Only the account owner can set inflation destination
+    if (!req.user || String(wallet.ownerId) !== String(req.user.id)) {
+      return res.status(403).json({ success: false, error: 'Only the account owner may set the inflation destination' });
+    }
+    const stellarSvc = getStellarService();
+    let result;
+    try {
+      result = await stellarSvc.setInflationDestination(sourceSecret, destinationPublicKey);
+    } catch (err) {
+      if (err && err.name === 'ValidationError') return next(err);
+      return res.status(502).json({ success: false, error: 'Stellar network error while setting inflation destination' });
+    }
+    await AuditLogService.log({
+      category: AuditLogService.CATEGORY.WALLET_OPERATION,
+      action: 'INFLATION_DESTINATION_UPDATED',
+      severity: AuditLogService.SEVERITY.MEDIUM,
+      result: 'SUCCESS',
+      userId: req.user && req.user.id,
+      requestId: req.id,
+      ipAddress: req.ip,
+      resource: `/wallets/${req.params.id}/inflation-destination`,
+      details: { walletId: req.params.id, inflationDestination: destinationPublicKey, txHash: result.hash },
+    });
+    return res.json({ success: true, data: { inflationDestination: destinationPublicKey, hash: result.hash, ledger: result.ledger } });
+  } catch (error) {
+    next(error);
+  }
+});
+
+/**
+ * GET /wallets/:id/inflation-destination
+ * Returns the current inflation destination set on the wallet's Stellar account.
+ */
+router.get('/:id/inflation-destination', checkPermission(PERMISSIONS.WALLETS_READ), walletIdSchema, async (req, res, next) => {
+  try {
+    const wallet = await walletService.getWalletById(req.params.id);
+    if (!wallet) {
+      return res.status(404).json({ success: false, error: 'Wallet not found' });
+    }
+    const stellarSvc = getStellarService();
+    const inflationDest = await stellarSvc.getInflationDestination(wallet.address || wallet.publicKey).catch(() => null);
+    return res.json({ success: true, data: { inflationDestination: inflationDest || null } });
+  } catch (error) {
+    next(error);
+  }
+});
+/**
  * Wallet Routes - API Endpoint Layer
  * 
  * RESPONSIBILITY: HTTP request handling for wallet operations
