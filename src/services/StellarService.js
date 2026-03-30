@@ -2409,6 +2409,69 @@ class StellarService extends StellarServiceInterface {
     }, 'findPaymentPaths');
   }
 
+  /**
+   * Set a data entry on a Stellar account via manageData operation.
+   * @param {string} sourceSecret - Account secret key
+   * @param {string} key - Data entry key (max 64 bytes)
+   * @param {string} value - Data entry value (max 64 bytes)
+   * @returns {Promise<{hash: string, ledger: number}>}
+   */
+  async setDataEntry(sourceSecret, key, value) {
+    return StellarErrorHandler.wrap(async () => {
+      const keypair = StellarSdk.Keypair.fromSecret(sourceSecret);
+      const account = await this._executeWithRetry(
+        () => this.server.loadAccount(keypair.publicKey()),
+        'loadAccountForDataEntry'
+      );
+
+      const tx = new StellarSdk.TransactionBuilder(account, {
+        fee: this.baseFee,
+        networkPassphrase: this._getNetworkPassphrase(),
+      })
+        .addOperation(StellarSdk.Operation.manageData({ name: key, value }))
+        .setTimeout(30)
+        .build();
+
+      tx.sign(keypair);
+      const result = await this._executeWithRetry(
+        () => this.server.submitTransaction(tx),
+        'submitDataEntry'
+      );
+
+      return { hash: result.hash, ledger: result.ledger };
+    }, 'setDataEntry');
+  }
+
+  /**
+   * Delete a data entry from a Stellar account.
+   * @param {string} sourceSecret - Account secret key
+   * @param {string} key - Data entry key to delete
+   * @returns {Promise<{hash: string, ledger: number}>}
+   */
+  async deleteDataEntry(sourceSecret, key) {
+    return this.setDataEntry(sourceSecret, key, null);
+  }
+
+  /**
+   * Get all data entries for a Stellar account.
+   * @param {string} publicKey - Account public key
+   * @returns {Promise<Object>} Key-value map of data entries (values decoded from base64)
+   */
+  async getDataEntries(publicKey) {
+    return StellarErrorHandler.wrap(async () => {
+      const account = await this._executeWithRetry(
+        () => this.server.loadAccount(publicKey),
+        'loadAccountForDataEntries'
+      );
+
+      const entries = {};
+      for (const [k, v] of Object.entries(account.data_attr || {})) {
+        entries[k] = Buffer.from(v, 'base64').toString('utf8');
+      }
+      return entries;
+    }, 'getDataEntries');
+  }
+
 }
 
 module.exports = StellarService;

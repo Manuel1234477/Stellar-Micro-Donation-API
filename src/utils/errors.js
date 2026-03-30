@@ -69,12 +69,15 @@ const ERROR_CODES = {
   // Rate limiting errors (6000-6099)
   RATE_LIMIT_EXCEEDED: { code: 'RATE_LIMIT_EXCEEDED', numeric: 6000 },
 
-  // Server errors (9000-9099)
+  // Server errors (9000-9999)
   INTERNAL_ERROR:        { code: 'INTERNAL_ERROR',        numeric: 9000 },
   DATABASE_ERROR:        { code: 'DATABASE_ERROR',        numeric: 9001 },
   VERIFICATION_FAILED:   { code: 'VERIFICATION_FAILED',   numeric: 9002 },
   SERVICE_UNAVAILABLE:   { code: 'SERVICE_UNAVAILABLE',   numeric: 9003 },
   STELLAR_NETWORK_ERROR: { code: 'STELLAR_NETWORK_ERROR', numeric: 9004 },
+  EXTERNAL_SERVICE_ERROR:{ code: 'EXTERNAL_SERVICE_ERROR',numeric: 9005 },
+  RESOURCE_CONFLICT:     { code: 'RESOURCE_CONFLICT',     numeric: 4009 },
+  NOT_IMPLEMENTED:       { code: 'NOT_IMPLEMENTED',       numeric: 9006 },
 };
 
 /**
@@ -188,9 +191,11 @@ class InternalError extends AppError {
  * Database error (500)
  */
 class DatabaseError extends AppError {
-  constructor(message, originalError = null) {
-    const details = originalError ? { originalError: originalError.message } : null;
-    super(ERROR_CODES.DATABASE_ERROR, message, 500, details);
+  constructor(message = "A database error occurred", originalError = null) {
+    // Audit: We store originalError for internal logging if needed, 
+    // but the base class message is normalized.
+    super(ERROR_CODES.DATABASE_ERROR, message, 500, null);
+    this.originalError = originalError;
   }
 }
 

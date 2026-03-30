@@ -26,7 +26,11 @@ class GeoBlockMiddleware {
     this.initialized = false;
     this.ruleService = options.ruleService || GeoRuleService;
     this.auditLogService = options.auditLogService || AuditLogService;
-    this.initPromise = this.initialize();
+    if (process.env.NODE_ENV !== 'test') {
+      this.initPromise = this.initialize();
+    } else {
+      this.initPromise = Promise.resolve();
+    }
   }
 
   /**

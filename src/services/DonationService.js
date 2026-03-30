@@ -25,6 +25,7 @@ const { checkConfirmations } = require('../utils/confirmationChecker');
 const { CONFIRMATION_LEDGER_THRESHOLD } = require('../config/confirmationThreshold');
 
 const LimitService = require('./LimitService');
+const DonationVelocityService = require('./DonationVelocityService');
 const MatchingProgramService = require('./MatchingProgramService');
 const CorporateMatchingService = require('./CorporateMatchingService');
 const log = require('../utils/log');
@@ -131,6 +132,9 @@ class DonationService {
     // Check per-wallet donation limits
     await LimitService.checkLimits(senderId, amount);
 
+    // Check per-recipient velocity limits (before Stellar transaction)
+    await DonationVelocityService.checkVelocityLimits(senderId, receiverId, amount);
+
     // Sanitize memo to prevent XSS and injection attacks
     const sanitizedMemo = memo ? sanitizeMemo(memo) : undefined;
 
@@ -166,6 +170,11 @@ class DonationService {
         log.error('DONATION_SERVICE', 'Failed to update campaign contribution', { error: err.message });
       });
     }
+
+    // Record velocity usage (non-blocking)
+    DonationVelocityService.recordDonation(senderId, receiverId, amount).catch(err => {
+      log.error('DONATION_SERVICE', 'Failed to record velocity', { error: err.message });
+    });
 
     // Process donation matching programs (non-blocking)
     let matchingDonations = [];

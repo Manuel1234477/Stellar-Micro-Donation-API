@@ -228,5 +228,3 @@ router.get('/features', (req, res) => {
   }));
   res.json({ success: true, data });
 });
-
-module.exports = router;

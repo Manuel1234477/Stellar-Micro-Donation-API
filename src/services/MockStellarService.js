@@ -1757,6 +1757,17 @@ class MockStellarService extends StellarServiceInterface {
    * @param {number} [params.offerId=0]  - 0 to create; existing ID to update/cancel
    * @returns {Promise<{offerId: number, transactionId: string, ledger: number}>}
    */
+  /**
+   * Create or update a mock DEX offer.
+   * @param {Object} params
+   * @param {string} params.sourceSecret
+   * @param {string} params.sellingAsset
+   * @param {string} params.buyingAsset
+   * @param {string} params.amount
+   * @param {string} params.price
+   * @param {number} [params.offerId=0]
+   * @returns {Promise<{offerId: number, transactionId: string, ledger: number}>}
+   */
   async createOffer({ sourceSecret, sellingAsset, buyingAsset, amount, price, offerId = 0 }) {
     await this._simulateNetworkDelay();
     this._checkRateLimit();
@@ -1785,11 +1796,14 @@ class MockStellarService extends StellarServiceInterface {
       const existing = this.offers.get(offerId);
       if (!existing) throw new NotFoundError(`Offer ${offerId} not found`, ERROR_CODES.NOT_FOUND);
       if (existing.seller !== sourcePublic) throw new BusinessLogicError(ERROR_CODES.TRANSACTION_FAILED, 'Not the offer owner');
+      if (parseFloat(existing.amount) === 0) throw new BusinessLogicError(ERROR_CODES.TRANSACTION_FAILED, 'Offer already filled or cancelled');
       if (amountNum === 0) {
-        this.offers.delete(offerId);
+        existing.amount = '0.0000000';
+        existing.status = 'cancelled';
       } else {
         existing.amount = amountNum.toFixed(7);
         existing.price = priceNum.toFixed(7);
+        existing.status = 'active';
       }
       const txId = crypto.randomBytes(32).toString('hex');
       const ledger = Math.floor(Math.random() * 1000000) + 1000000;
@@ -1806,6 +1820,7 @@ class MockStellarService extends StellarServiceInterface {
       amount: amountNum.toFixed(7),
       price: priceNum.toFixed(7),
       createdAt: new Date().toISOString(),
+      status: 'active',
     });
 
     const txId = crypto.randomBytes(32).toString('hex');
@@ -1823,9 +1838,28 @@ class MockStellarService extends StellarServiceInterface {
    * @param {number} params.offerId      - ID of the offer to cancel
    * @returns {Promise<{transactionId: string, ledger: number}>}
    */
+  /**
+   * Cancel a mock DEX offer.
+   * @param {Object} params
+   * @param {string} params.sourceSecret
+   * @param {string} params.sellingAsset
+   * @param {string} params.buyingAsset
+   * @param {number} params.offerId
+   * @returns {Promise<{transactionId: string, ledger: number}>}
+   */
   async cancelOffer({ sourceSecret, sellingAsset, buyingAsset, offerId }) {
     const result = await this.createOffer({ sourceSecret, sellingAsset, buyingAsset, amount: '0', price: '1', offerId });
     return { transactionId: result.transactionId, ledger: result.ledger };
+  }
+
+  /**
+   * List all open offers for a wallet.
+   * @param {string} publicKey
+   * @returns {Promise<Array>}
+   */
+  async listOffers(publicKey) {
+    if (!this.offers) return [];
+    return Array.from(this.offers.values()).filter(o => o.seller === publicKey && o.status === 'active');
   }
 
   /**
@@ -3001,6 +3035,73 @@ class MockStellarService extends StellarServiceInterface {
   getThresholds(sourceSecret) {
     const account = sourceSecret.slice(0, 8);
     return (this._thresholds && this._thresholds[account]) || null;
+  }
+
+  /**
+   * Set a data entry on a mock account.
+   * @param {string} sourceSecret - Account secret key
+   * @param {string} key - Data entry key (max 64 bytes)
+   * @param {string|null} value - Data entry value (max 64 bytes), null to delete
+   * @returns {Promise<{hash: string, ledger: number}>}
+   */
+  async setDataEntry(sourceSecret, key, value) {
+    await this._simulateNetworkDelay();
+    this._validateSecretKey(sourceSecret);
+
+    if (Buffer.byteLength(key, 'utf8') > 64) {
+      throw new ValidationError('Data entry key exceeds maximum length of 64 bytes');
+    }
+    if (value !== null && value !== undefined && Buffer.byteLength(value, 'utf8') > 64) {
+      throw new ValidationError('Data entry value exceeds maximum length of 64 bytes');
+    }
+
+    const wallet = this._findWalletBySecret(sourceSecret);
+    if (!wallet) {
+      throw new ValidationError('Invalid source secret key. The provided secret key does not match any account.');
+    }
+
+    if (!wallet.dataEntries) wallet.dataEntries = {};
+
+    if (value === null || value === undefined) {
+      if (!Object.prototype.hasOwnProperty.call(wallet.dataEntries, key)) {
+        const { NotFoundError: NFE, ERROR_CODES: EC } = require('../utils/errors');
+        throw new NFE(`Data entry "${key}" not found`, EC.NOT_FOUND);
+      }
+      delete wallet.dataEntries[key];
+    } else {
+      wallet.dataEntries[key] = value;
+    }
+
+    const hash = `mock_data_${require('crypto').randomBytes(12).toString('hex')}`;
+    return { hash, ledger: Math.floor(Math.random() * 1000000) + 1000000 };
+  }
+
+  /**
+   * Delete a data entry from a mock account.
+   * @param {string} sourceSecret - Account secret key
+   * @param {string} key - Data entry key to delete
+   * @returns {Promise<{hash: string, ledger: number}>}
+   */
+  async deleteDataEntry(sourceSecret, key) {
+    return this.setDataEntry(sourceSecret, key, null);
+  }
+
+  /**
+   * Get all data entries for a mock account.
+   * @param {string} publicKey - Account public key
+   * @returns {Promise<Object>} Key-value map of data entries
+   */
+  async getDataEntries(publicKey) {
+    await this._simulateNetworkDelay();
+    this._validatePublicKey(publicKey);
+
+    const wallet = this.wallets.get(publicKey);
+    if (!wallet) {
+      const { NotFoundError: NFE, ERROR_CODES: EC } = require('../utils/errors');
+      throw new NFE(`Account not found: ${publicKey}`, EC.WALLET_NOT_FOUND);
+    }
+
+    return { ...(wallet.dataEntries || {}) };
   }
 }
 

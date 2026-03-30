@@ -414,7 +414,7 @@ class WalletService {
     }
 
     // Call Stellar service to set the data entry
-    const result = await this.stellarService.setAccountData(secretKey, key, value);
+    const result = await this.stellarService.setDataEntry(secretKey, key, value);
     return result;
   }
 
@@ -436,7 +436,7 @@ class WalletService {
     }
 
     // Call Stellar service to delete the data entry
-    const result = await this.stellarService.deleteAccountData(secretKey, key);
+    const result = await this.stellarService.deleteDataEntry(secretKey, key);
     return result;
   }
 
@@ -458,15 +458,9 @@ class WalletService {
       throw new NotFoundError('Wallet not found', ERROR_CODES.WALLET_NOT_FOUND);
     }
 
-    // For real Stellar service, we would query Horizon here
-    // For now, return simulated data for mock service
-    if (this.stellarService.getNetwork) {
-      // Pass the wallet address to get its data
-      // This would be implemented in StellarService if needed
-      return { entries: {} };
-    }
-
-    return { entries: {} };
+    const publicKey = wallet.address || wallet.publicKey;
+    const entries = await this.stellarService.getDataEntries(publicKey);
+    return { entries };
   }
 }
 

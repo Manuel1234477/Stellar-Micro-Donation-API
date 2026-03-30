@@ -2,6 +2,9 @@ const db = require('../utils/database');
 const crypto = require('crypto');
 const { API_KEY_STATUS } = require('../constants/index');
 
+let isInitialized = false;
+let initializationPromise = null;
+
 const CREATE_TABLE_SQL = `
   CREATE TABLE IF NOT EXISTS api_keys (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -21,10 +24,13 @@ const CREATE_TABLE_SQL = `
     rotated_to_id INTEGER,
     signing_required INTEGER NOT NULL DEFAULT 0,
     key_secret TEXT,
+    scopes TEXT,
     allowed_ips TEXT,
+    notification_email TEXT,
+    last_expiry_notification_sent_at INTEGER,
     monthly_quota INTEGER,
     quota_used INTEGER NOT NULL DEFAULT 0,
-    quota_reset_at INTEGER
+    quota_reset_at INTEGER,
     tenant_id TEXT NOT NULL DEFAULT 'default'
   )
 `;
@@ -34,41 +40,19 @@ const CREATE_TABLE_SQL = `
  * Safe to call multiple times (idempotent).
  */
 async function initializeApiKeysTable() {
-  await db.run(CREATE_TABLE_SQL);
+  if (isInitialized) return;
+  if (initializationPromise) return initializationPromise;
 
-  const optionalColumns = [
-    { name: 'allowed_ips', def: 'TEXT' },
-    { name: 'notification_email', def: 'TEXT' },
-    { name: 'last_expiry_notification_sent_at', def: 'INTEGER' },
-  ];
-
-  for (const col of optionalColumns) {
+  initializationPromise = (async () => {
     try {
-      await db.run(`ALTER TABLE api_keys ADD COLUMN ${col.name} ${col.def}`);
-    } catch (err) {
-      const detail = (err.details && err.details.originalError) || err.message || '';
-      if (!detail.includes('duplicate column')) throw err;
+      await db.run(CREATE_TABLE_SQL);
+      isInitialized = true;
+    } finally {
+      initializationPromise = null;
     }
-  }
-  // Add quota columns to existing tables
-  try {
-    await db.run(`ALTER TABLE api_keys ADD COLUMN monthly_quota INTEGER`);
-  } catch (err) {
-    const detail = (err.details && err.details.originalError) || err.message || '';
-    if (!detail.includes('duplicate column')) throw err;
-  }
-  try {
-    await db.run(`ALTER TABLE api_keys ADD COLUMN quota_used INTEGER NOT NULL DEFAULT 0`);
-  } catch (err) {
-    const detail = (err.details && err.details.originalError) || err.message || '';
-    if (!detail.includes('duplicate column')) throw err;
-  }
-  try {
-    await db.run(`ALTER TABLE api_keys ADD COLUMN quota_reset_at INTEGER`);
-  } catch (err) {
-    const detail = (err.details && err.details.originalError) || err.message || '';
-    if (!detail.includes('duplicate column')) throw err;
-  }
+  })();
+
+  return initializationPromise;
 }
 
 /**
@@ -96,6 +80,8 @@ async function createApiKey({
   signingRequired = false,
   allowedIps = null,
   notificationEmail = null,
+  monthlyQuota = null,
+  scopes = [],
 }) {
   await initializeApiKeysTable();
   const rawKey = crypto.randomBytes(32).toString('hex');
@@ -110,18 +96,17 @@ async function createApiKey({
   const quotaResetAt = monthlyQuota ? getNextMonthFirstDay() : null;
 
   const result = await db.run(
-    `INSERT INTO api_keys (key_hash, key_prefix, name, role, status, created_by, metadata, expires_at, created_at, grace_period_days, signing_required, key_secret, allowed_ips, monthly_quota, quota_used, quota_reset_at)
-     VALUES (?, ?, ?, ?, 'active', ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?)`,
-    [keyHash, keyPrefix, name, role, createdBy || null, JSON.stringify(metadata), expiresAt, now, gracePeriodDays, signingRequired ? 1 : 0, keySecret, allowedIpsJson, monthlyQuota, quotaResetAt]
-    `INSERT INTO api_keys
-       (key_hash, key_prefix, name, role, status, created_by, metadata, expires_at,
-        created_at, grace_period_days, signing_required, key_secret, allowed_ips, notification_email)
-     VALUES (?, ?, ?, ?, 'active', ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    `INSERT INTO api_keys (
+      key_hash, key_prefix, name, role, status, created_by, metadata, 
+      expires_at, created_at, grace_period_days, signing_required, 
+      key_secret, scopes, allowed_ips, monthly_quota, quota_used, quota_reset_at,
+      notification_email
+    ) VALUES (?, ?, ?, ?, 'active', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?)`,
     [
-      keyHash, keyPrefix, name, role,
-      createdBy || null, JSON.stringify(metadata), expiresAt,
-      now, gracePeriodDays, signingRequired ? 1 : 0, keySecret,
-      allowedIpsJson, notificationEmail || null,
+      keyHash, keyPrefix, name, role, createdBy || null, JSON.stringify(metadata), 
+      expiresAt, now, gracePeriodDays, signingRequired ? 1 : 0, 
+      keySecret, JSON.stringify(scopes || []), allowedIpsJson, monthlyQuota,
+      quotaResetAt, notificationEmail || null
     ]
   );
 
@@ -132,7 +117,7 @@ async function createApiKey({
     keyPrefix,
     name,
     role,
-    scopes,
+    scopes: scopes || [],
     status: API_KEY_STATUS.ACTIVE,
     createdAt: new Date(now).toISOString(),
     expiresAt: expiresAt ? new Date(expiresAt).toISOString() : null,
