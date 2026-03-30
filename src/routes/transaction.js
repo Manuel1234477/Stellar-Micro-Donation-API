@@ -519,5 +519,53 @@ router.post(
   }
 );
 
+/**
+ * GET /transactions/:id/envelope
+ * Retrieve the stored Stellar Transaction Envelope (XDR) for a transaction.
+ *
+ * Returns the Base64-encoded XDR string used to submit the transaction.
+ */
+router.get(
+  '/:id/envelope',
+  checkPermission(PERMISSIONS.TRANSACTIONS_READ),
+  async (req, res, next) => {
+    try {
+      const { id } = req.params;
+      const tx = Transaction.getById(id);
+
+      if (!tx) {
+        return res.status(404).json({
+          success: false,
+          error: {
+            code: 'TRANSACTION_NOT_FOUND',
+            message: `Transaction ${id} not found`
+          }
+        });
+      }
+
+      if (!tx.envelopeXdr) {
+        return res.status(404).json({
+          success: false,
+          error: {
+            code: 'ENVELOPE_NOT_FOUND',
+            message: `XDR envelope for transaction ${id} is not available`
+          }
+        });
+      }
+
+      return res.status(200).json({
+        success: true,
+        data: {
+          id: tx.id,
+          stellarTxId: tx.stellarTxId,
+          envelopeXdr: tx.envelopeXdr
+        }
+      });
+    } catch (error) {
+      next(error);
+    }
+  }
+);
+
 module.exports = router;
 

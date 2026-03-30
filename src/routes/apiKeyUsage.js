@@ -8,7 +8,7 @@
 
 const express = require('express');
 const ApiKeyUsageService = require('../services/ApiKeyUsageService');
-const { requireApiKey } = require('../middleware/apiKey');
+const requireApiKey = require('../middleware/apiKey');
 const { validateInteger } = require('../utils/validationHelpers');
 
 const router = express.Router();

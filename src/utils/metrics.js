@@ -19,7 +19,9 @@ const client = require('prom-client');
 const registry = new client.Registry();
 
 // Collect default Node.js / process metrics (memory, CPU, event loop lag, etc.)
-client.collectDefaultMetrics({ register: registry });
+if (process.env.NODE_ENV !== 'test' && process.env.NODE_ENV !== 'testing') {
+  client.collectDefaultMetrics({ register: registry });
+}
 
 /**
  * Histogram tracking HTTP request duration.

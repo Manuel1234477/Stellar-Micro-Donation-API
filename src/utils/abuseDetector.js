@@ -160,7 +160,7 @@ class AbuseDetector {
    */
   startCleanup() {
     // Only start if not in test environment
-    if (process.env.NODE_ENV !== 'test') {
+    if (process.env.NODE_ENV !== 'test' && process.env.NODE_ENV !== 'testing') {
       this.cleanupTimer = setInterval(() => {
         this.cleanup();
       }, this.config.cleanupInterval);
