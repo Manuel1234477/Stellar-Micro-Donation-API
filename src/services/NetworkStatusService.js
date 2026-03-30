@@ -1,442 +1,220 @@
 /**
- * Network Status Service - Stellar Network Health Monitoring
- *
- * RESPONSIBILITY: Monitor Stellar network health and adjust API behavior accordingly
- * OWNER: Backend Team
- * DEPENDENCIES: StellarService, Database
- *
- * Polls Horizon status every 30 seconds, tracks network health metrics,
- * queues transactions during outages, and adjusts fee estimates during congestion.
+ * NetworkStatusService
+ * Polls Horizon every 30 seconds for ledger close time and fee stats.
+ * Detects degradation and emits network.degraded webhook events.
  */
 
-const log = require('../utils/log');
-const Database = require('../utils/database');
+const EventEmitter = require('events');
+const https = require('https');
+const http = require('http');
 
-const POLL_INTERVAL_MS = 30000; // 30 seconds
-const NETWORK_OUTAGE_THRESHOLD = 3; // 3 consecutive failures = outage
-const HIGH_CONGESTION_FEE_MULTIPLIER = 1.5; // 50% fee increase during congestion
-const QUEUE_RETENTION_MS = 3600000; // 1 hour retention for queued transactions
+const POLL_INTERVAL_MS = 30_000;
+const HISTORY_WINDOW_MS = 24 * 60 * 60 * 1000; // 24 hours
 
-/**
- * Network status states
- */
-const NETWORK_STATUS = {
-  HEALTHY: 'healthy',
-  DEGRADED: 'degraded',
-  OUTAGE: 'outage',
+/** Degradation thresholds */
+const THRESHOLDS = {
+  ledgerCloseTimeS: 10,   // seconds
+  feeSurgeMultiplier: 5,  // x baseline
+  errorRatePercent: 5,    // %
 };
 
-/**
- * Transaction queue states
- */
-const QUEUE_STATUS = {
-  PENDING: 'pending',
-  SUBMITTED: 'submitted',
-  FAILED: 'failed',
-};
+/** Baseline fee in stroops (100 stroops = 0.00001 XLM) */
+const BASELINE_FEE_STROOPS = 100;
 
-class NetworkStatusService {
+class NetworkStatusService extends EventEmitter {
   /**
-   * Create a new NetworkStatusService instance
-   * @param {Object} stellarService - StellarService or MockStellarService instance
+   * @param {object} [options]
+   * @param {string} [options.horizonUrl] - Horizon base URL
+   * @param {number} [options.pollIntervalMs] - Poll interval in ms (default 30 000)
    */
-  constructor(stellarService) {
-    this.stellarService = stellarService;
-    this.status = NETWORK_STATUS.HEALTHY;
-    this.lastCheckTime = null;
-    this.consecutiveFailures = 0;
-    this.metrics = {
-      ledgerCloseTime: null,
-      operationFeeStats: null,
-      baseReserve: null,
-      lastUpdate: null,
-    };
-    this.pollingInterval = null;
-    this.isInitialized = false;
+  constructor(options = {}) {
+    super();
+    this.horizonUrl = options.horizonUrl || 'https://horizon-testnet.stellar.org';
+    this.pollIntervalMs = options.pollIntervalMs || POLL_INTERVAL_MS;
+
+    /** @type {object|null} */
+    this.currentStatus = null;
+    /** @type {object[]} */
+    this._history = [];
+    this._timer = null;
+    this._totalPolls = 0;
+    this._errorPolls = 0;
   }
 
-  /**
-   * Initialize the service and start polling
-   * @returns {Promise<void>}
-   */
-  async initialize() {
-    if (this.isInitialized) {
-      return;
-    }
+  // ---------------------------------------------------------------------------
+  // Public API
+  // ---------------------------------------------------------------------------
 
-    try {
-      // Create transaction queue table if it doesn't exist
-      await this._createQueueTable();
-      
-      // Perform initial health check
-      await this.checkNetworkHealth();
-      
-      // Start polling
-      this._startPolling();
-      
-      this.isInitialized = true;
-      log.info('NETWORK_STATUS', 'NetworkStatusService initialized', {
-        initialStatus: this.status,
-      });
-    } catch (err) {
-      log.error('NETWORK_STATUS', 'Failed to initialize NetworkStatusService', {
-        error: err.message,
-      });
-      throw err;
+  /** Start polling. Safe to call multiple times. */
+  start() {
+    if (this._timer) return;
+    this._poll(); // immediate first poll
+    this._timer = setInterval(() => this._poll(), this.pollIntervalMs);
+  }
+
+  /** Stop polling. */
+  stop() {
+    if (this._timer) {
+      clearInterval(this._timer);
+      this._timer = null;
     }
   }
 
   /**
-   * Shutdown the service and stop polling
-   * @returns {Promise<void>}
-   */
-  async shutdown() {
-    if (this.pollingInterval) {
-      clearInterval(this.pollingInterval);
-      this.pollingInterval = null;
-    }
-    this.isInitialized = false;
-    log.info('NETWORK_STATUS', 'NetworkStatusService shutdown');
-  }
-
-  /**
-   * Check Stellar network health by querying Horizon
-   * @returns {Promise<void>}
-   */
-  async checkNetworkHealth() {
-    try {
-      const startTime = Date.now();
-      
-      // Query Horizon for network metrics
-      const metrics = await this._fetchNetworkMetrics();
-      
-      // Update metrics
-      this.metrics = {
-        ledgerCloseTime: metrics.ledgerCloseTime,
-        operationFeeStats: metrics.operationFeeStats,
-        baseReserve: metrics.baseReserve,
-        lastUpdate: new Date().toISOString(),
-      };
-
-      // Determine network status based on metrics
-      const previousStatus = this.status;
-      this._updateNetworkStatus(metrics);
-      
-      // Reset consecutive failures on success
-      this.consecutiveFailures = 0;
-      this.lastCheckTime = new Date().toISOString();
-
-      // Log status changes
-      if (previousStatus !== this.status) {
-        log.warn('NETWORK_STATUS', 'Network status changed', {
-          from: previousStatus,
-          to: this.status,
-          metrics: this.metrics,
-        });
-      }
-
-      const responseTime = Date.now() - startTime;
-      log.debug('NETWORK_STATUS', 'Network health check completed', {
-        status: this.status,
-        responseTime,
-      });
-    } catch (err) {
-      this.consecutiveFailures++;
-      log.warn('NETWORK_STATUS', 'Network health check failed', {
-        error: err.message,
-        consecutiveFailures: this.consecutiveFailures,
-      });
-
-      // Transition to outage if threshold exceeded
-      if (this.consecutiveFailures >= NETWORK_OUTAGE_THRESHOLD) {
-        const previousStatus = this.status;
-        this.status = NETWORK_STATUS.OUTAGE;
-        
-        if (previousStatus !== this.status) {
-          log.error('NETWORK_STATUS', 'Network outage detected', {
-            consecutiveFailures: this.consecutiveFailures,
-          });
-        }
-      }
-    }
-  }
-
-  /**
-   * Fetch network metrics from Horizon
-   * @private
-   * @returns {Promise<Object>} Network metrics
-   */
-  async _fetchNetworkMetrics() {
-    // For real StellarService, query Horizon
-    if (this.stellarService.server && typeof this.stellarService.server.root === 'function') {
-      const root = await this.stellarService.server.root();
-      
-      return {
-        ledgerCloseTime: root.core_latest_ledger_close_time,
-        operationFeeStats: root.operation_fee_stats,
-        baseReserve: root.base_reserve_in_stroops,
-      };
-    }
-
-    // For MockStellarService, return simulated metrics
-    return {
-      ledgerCloseTime: Date.now(),
-      operationFeeStats: {
-        last_ledger: 1000,
-        last_ledger_base_fee: 100,
-        ledger_capacity_usage: 0.5,
-        max_fee: {
-          p99: 1000,
-          p95: 500,
-          p90: 300,
-          p75: 200,
-          p50: 100,
-          p25: 100,
-          p10: 100,
-          p1: 100,
-        },
-      },
-      baseReserve: 5000000, // 0.5 XLM in stroops
-    };
-  }
-
-  /**
-   * Update network status based on metrics
-   * @private
-   * @param {Object} metrics - Network metrics
-   */
-  _updateNetworkStatus(metrics) {
-    // Check for high congestion (p99 fee > 500 stroops)
-    const p99Fee = metrics.operationFeeStats?.max_fee?.p99 || 100;
-    const ledgerCapacityUsage = metrics.operationFeeStats?.ledger_capacity_usage || 0;
-
-    if (p99Fee > 500 || ledgerCapacityUsage > 0.8) {
-      this.status = NETWORK_STATUS.DEGRADED;
-    } else {
-      this.status = NETWORK_STATUS.HEALTHY;
-    }
-  }
-
-  /**
-   * Get current network status
-   * @returns {Object} Current network status and metrics
+   * Return current network status snapshot.
+   * @returns {object}
    */
   getStatus() {
+    return this.currentStatus || this._buildStatus({ connected: false, latencyMs: null, ledgerCloseTimeS: null, feeStroops: null, error: 'No data yet' });
+  }
+
+  /**
+   * Return status snapshots from the last 24 hours.
+   * @returns {object[]}
+   */
+  getHistory() {
+    const cutoff = Date.now() - HISTORY_WINDOW_MS;
+    return this._history.filter(s => new Date(s.timestamp).getTime() >= cutoff);
+  }
+
+  // ---------------------------------------------------------------------------
+  // Internal
+  // ---------------------------------------------------------------------------
+
+  async _poll() {
+    this._totalPolls++;
+    const start = Date.now();
+    try {
+      const data = await this._fetchHorizon();
+      const latencyMs = Date.now() - start;
+      const ledgerCloseTimeS = this._parseLedgerCloseTime(data);
+      const feeStroops = this._parseFee(data);
+
+      const status = this._buildStatus({ connected: true, latencyMs, ledgerCloseTimeS, feeStroops });
+      this._saveStatus(status);
+    } catch (err) {
+      this._errorPolls++;
+      const status = this._buildStatus({ connected: false, latencyMs: null, ledgerCloseTimeS: null, feeStroops: null, error: err.message });
+      this._saveStatus(status);
+    }
+  }
+
+  /**
+   * Fetch ledger and fee stats from Horizon.
+   * @returns {Promise<object>}
+   */
+  _fetchHorizon() {
+    return new Promise((resolve, reject) => {
+      const url = new URL('/fee_stats', this.horizonUrl);
+      const lib = url.protocol === 'https:' ? https : http;
+      const req = lib.get(url.toString(), { timeout: 8000 }, (res) => {
+        let body = '';
+        res.on('data', chunk => { body += chunk; });
+        res.on('end', () => {
+          if (res.statusCode !== 200) {
+            return reject(new Error(`Horizon returned HTTP ${res.statusCode}`));
+          }
+          try { resolve(JSON.parse(body)); }
+          catch (e) { reject(new Error('Invalid JSON from Horizon')); }
+        });
+      });
+      req.on('error', reject);
+      req.on('timeout', () => { req.destroy(); reject(new Error('Horizon request timed out')); });
+    });
+  }
+
+  /**
+   * Parse ledger close time from fee_stats response.
+   * Horizon fee_stats includes last_ledger_base_fee and ledger_capacity_usage.
+   * We derive close time from the ledger sequence delta if available, otherwise null.
+   * @param {object} data
+   * @returns {number|null}
+   */
+  _parseLedgerCloseTime(data) {
+    // Horizon fee_stats doesn't directly expose close time; we use a separate ledger call
+    // but since we only make one request, we store the last ledger and compute delta on next poll.
+    const seq = parseInt(data.last_ledger, 10);
+    if (!seq) return null;
+
+    const now = Date.now();
+    if (this._lastLedgerSeq && this._lastLedgerTime) {
+      const seqDelta = seq - this._lastLedgerSeq;
+      const timeDeltaS = (now - this._lastLedgerTime) / 1000;
+      if (seqDelta > 0) {
+        this._lastLedgerSeq = seq;
+        this._lastLedgerTime = now;
+        return parseFloat((timeDeltaS / seqDelta).toFixed(2));
+      }
+    }
+    this._lastLedgerSeq = seq;
+    this._lastLedgerTime = now;
+    return null;
+  }
+
+  /**
+   * Parse the mode fee from fee_stats.
+   * @param {object} data
+   * @returns {number|null}
+   */
+  _parseFee(data) {
+    const fee = parseInt(data.fee_charged?.mode, 10) || parseInt(data.min_accepted_fee, 10);
+    return isNaN(fee) ? null : fee;
+  }
+
+  /**
+   * Build a status snapshot with degradation flag.
+   * @param {object} params
+   * @returns {object}
+   */
+  _buildStatus({ connected, latencyMs, ledgerCloseTimeS, feeStroops, error }) {
+    const errorRate = this._totalPolls > 0
+      ? (this._errorPolls / this._totalPolls) * 100
+      : 0;
+
+    const feeSurge = feeStroops !== null
+      ? feeStroops / BASELINE_FEE_STROOPS
+      : 1;
+
+    const degraded =
+      !connected ||
+      (ledgerCloseTimeS !== null && ledgerCloseTimeS > THRESHOLDS.ledgerCloseTimeS) ||
+      feeSurge > THRESHOLDS.feeSurgeMultiplier ||
+      errorRate > THRESHOLDS.errorRatePercent;
+
+    const feeLevel = feeSurge <= 1 ? 'normal' : feeSurge <= 3 ? 'elevated' : 'surge';
+
     return {
-      status: this.status,
-      metrics: this.metrics,
-      lastCheckTime: this.lastCheckTime,
-      consecutiveFailures: this.consecutiveFailures,
-      isHealthy: this.status === NETWORK_STATUS.HEALTHY,
-      isDegraded: this.status === NETWORK_STATUS.DEGRADED,
-      isOutage: this.status === NETWORK_STATUS.OUTAGE,
+      timestamp: new Date().toISOString(),
+      connected,
+      latencyMs,
+      ledgerCloseTimeS,
+      feeStroops,
+      feeLevel,
+      feeSurgeMultiplier: parseFloat(feeSurge.toFixed(2)),
+      errorRatePercent: parseFloat(errorRate.toFixed(2)),
+      degraded,
+      ...(error ? { error } : {}),
     };
   }
 
   /**
-   * Get adjusted fee multiplier based on network status
-   * @returns {number} Fee multiplier (1.0 = normal, 1.5 = high congestion)
+   * Persist status, prune old history, emit event if degraded.
+   * @param {object} status
    */
-  getFeeMultiplier() {
-    if (this.status === NETWORK_STATUS.DEGRADED) {
-      return HIGH_CONGESTION_FEE_MULTIPLIER;
-    }
-    return 1.0;
-  }
+  _saveStatus(status) {
+    const wasDegraded = this.currentStatus?.degraded;
+    this.currentStatus = status;
 
-  /**
-   * Queue a transaction for later submission during network outage
-   * @param {Object} transaction - Transaction data to queue
-   * @returns {Promise<string>} Queue ID
-   */
-  async queueTransaction(transaction) {
-    if (this.status !== NETWORK_STATUS.OUTAGE) {
-      throw new Error('Transactions can only be queued during network outages');
-    }
+    // Append to history and prune
+    this._history.push(status);
+    const cutoff = Date.now() - HISTORY_WINDOW_MS;
+    this._history = this._history.filter(s => new Date(s.timestamp).getTime() >= cutoff);
 
-    const queueId = require('uuid').v4();
-    const enqueuedAt = new Date().toISOString();
-
-    try {
-      await Database.run(
-        `INSERT INTO network_transaction_queue 
-         (queue_id, transaction_data, status, enqueued_at, created_at)
-         VALUES (?, ?, ?, ?, ?)`,
-        [
-          queueId,
-          JSON.stringify(transaction),
-          QUEUE_STATUS.PENDING,
-          enqueuedAt,
-          enqueuedAt,
-        ]
-      );
-
-      log.info('NETWORK_STATUS', 'Transaction queued during outage', {
-        queueId,
-        transactionType: transaction.type,
-      });
-
-      return queueId;
-    } catch (err) {
-      log.error('NETWORK_STATUS', 'Failed to queue transaction', {
-        error: err.message,
-        queueId,
-      });
-      throw err;
-    }
-  }
-
-  /**
-   * Get queued transactions
-   * @param {string} [status] - Optional status filter
-   * @returns {Promise<Array>} Queued transactions
-   */
-  async getQueuedTransactions(status = null) {
-    try {
-      let query = 'SELECT * FROM network_transaction_queue WHERE 1=1';
-      const params = [];
-
-      if (status) {
-        query += ' AND status = ?';
-        params.push(status);
-      }
-
-      query += ' ORDER BY enqueued_at ASC';
-
-      const rows = await Database.all(query, params);
-      return rows.map(row => ({
-        ...row,
-        transaction_data: JSON.parse(row.transaction_data),
-      }));
-    } catch (err) {
-      log.error('NETWORK_STATUS', 'Failed to fetch queued transactions', {
-        error: err.message,
-      });
-      throw err;
-    }
-  }
-
-  /**
-   * Update queued transaction status
-   * @param {string} queueId - Queue ID
-   * @param {string} newStatus - New status
-   * @returns {Promise<void>}
-   */
-  async updateQueuedTransactionStatus(queueId, newStatus) {
-    try {
-      await Database.run(
-        'UPDATE network_transaction_queue SET status = ?, updated_at = ? WHERE queue_id = ?',
-        [newStatus, new Date().toISOString(), queueId]
-      );
-
-      log.debug('NETWORK_STATUS', 'Queued transaction status updated', {
-        queueId,
-        newStatus,
-      });
-    } catch (err) {
-      log.error('NETWORK_STATUS', 'Failed to update queued transaction status', {
-        error: err.message,
-        queueId,
-      });
-      throw err;
-    }
-  }
-
-  /**
-   * Clean up old queued transactions
-   * @returns {Promise<number>} Number of deleted transactions
-   */
-  async cleanupOldQueuedTransactions() {
-    try {
-      const cutoffTime = new Date(Date.now() - QUEUE_RETENTION_MS).toISOString();
-
-      const result = await Database.run(
-        'DELETE FROM network_transaction_queue WHERE enqueued_at < ?',
-        [cutoffTime]
-      );
-
-      const deletedCount = result.changes || 0;
-      if (deletedCount > 0) {
-        log.info('NETWORK_STATUS', 'Cleaned up old queued transactions', {
-          deletedCount,
-          cutoffTime,
-        });
-      }
-
-      return deletedCount;
-    } catch (err) {
-      log.error('NETWORK_STATUS', 'Failed to cleanup old queued transactions', {
-        error: err.message,
-      });
-      throw err;
-    }
-  }
-
-  /**
-   * Start polling for network health
-   * @private
-   */
-  _startPolling() {
-    this.pollingInterval = setInterval(async () => {
-      try {
-        await this.checkNetworkHealth();
-      } catch (err) {
-        log.error('NETWORK_STATUS', 'Error during polling', {
-          error: err.message,
-        });
-      }
-    }, POLL_INTERVAL_MS);
-
-    // Unref the interval so it doesn't keep the process alive
-    if (this.pollingInterval.unref) {
-      this.pollingInterval.unref();
-    }
-  }
-
-  /**
-   * Create the transaction queue table if it doesn't exist
-   * @private
-   * @returns {Promise<void>}
-   */
-  async _createQueueTable() {
-    try {
-      await Database.run(`
-        CREATE TABLE IF NOT EXISTS network_transaction_queue (
-          queue_id TEXT PRIMARY KEY,
-          transaction_data TEXT NOT NULL,
-          status TEXT NOT NULL DEFAULT 'pending',
-          enqueued_at TEXT NOT NULL,
-          updated_at TEXT,
-          created_at TEXT NOT NULL,
-          CONSTRAINT valid_status CHECK (status IN ('pending', 'submitted', 'failed'))
-        )
-      `);
-
-      // Create index for efficient querying
-      await Database.run(`
-        CREATE INDEX IF NOT EXISTS idx_network_queue_status 
-        ON network_transaction_queue(status)
-      `);
-
-      await Database.run(`
-        CREATE INDEX IF NOT EXISTS idx_network_queue_enqueued_at 
-        ON network_transaction_queue(enqueued_at)
-      `);
-
-      log.debug('NETWORK_STATUS', 'Transaction queue table initialized');
-    } catch (err) {
-      // Table might already exist, which is fine
-      if (!err.message.includes('already exists')) {
-        log.error('NETWORK_STATUS', 'Failed to create queue table', {
-          error: err.message,
-        });
-        throw err;
-      }
+    // Emit webhook event on new degradation
+    if (status.degraded && !wasDegraded) {
+      this.emit('network.degraded', status);
     }
   }
 }
 
 module.exports = NetworkStatusService;
-module.exports.NETWORK_STATUS = NETWORK_STATUS;
-module.exports.QUEUE_STATUS = QUEUE_STATUS;
-module.exports.POLL_INTERVAL_MS = POLL_INTERVAL_MS;
