@@ -14,24 +14,89 @@ const express = require('express');
 const { GeoBlockMiddleware } = require('../src/middleware/geoBlock');
 const geoBlockMiddleware = require('../src/middleware/geoBlock');
 const config = require('../src/config');
-const logger = require('../src/middleware/logger');
+const log = require('../src/utils/log');
 
 // Mock MaxMind database
 jest.mock('maxmind', () => ({
   open: jest.fn()
-}));
+}), { virtual: true });
 
 const maxmind = require('maxmind');
 
-// Mock logger
-jest.mock('../src/middleware/logger', () => ({
+// Mock structured logger
+jest.mock('../src/utils/log', () => ({
   warn: jest.fn(),
   info: jest.fn(),
-  error: jest.fn()
+  error: jest.fn(),
+  debug: jest.fn()
 }));
+
+// Mock geo rule service
+jest.mock('../src/services/GeoRuleService', () => ({
+  GEO_RULE_TYPES: {
+    ALLOW: 'allow',
+    BLOCK: 'block'
+  },
+  loadRules: jest.fn().mockResolvedValue([]),
+  getCachedRules: jest.fn(() => []),
+  listActiveRules: jest.fn().mockResolvedValue({
+    rules: [],
+    database: { rules: [], allowCountries: [], blockCountries: [] },
+    config: { allowCountries: [], blockCountries: [], allowedIPs: [] },
+    effective: { allowCountries: [], blockCountries: [] },
+    cache: { ttlMs: 60000, expiresAt: 0 }
+  }),
+  addRule: jest.fn(),
+  removeRule: jest.fn().mockResolvedValue(0),
+  normalizeCountryCode: jest.fn((value) => String(value || '').trim().toUpperCase()),
+  isValidCountryCode: jest.fn((value) => /^[A-Z]{2}$/.test(String(value || '').trim().toUpperCase())),
+  invalidateCache: jest.fn(),
+  ensureTable: jest.fn().mockResolvedValue(undefined)
+}));
+
+// Mock audit log service
+jest.mock('../src/services/AuditLogService', () => ({
+  log: jest.fn().mockResolvedValue(undefined),
+  CATEGORY: {
+    AUTHORIZATION: 'AUTHORIZATION',
+    CONFIGURATION: 'CONFIGURATION'
+  },
+  SEVERITY: {
+    LOW: 'LOW',
+    MEDIUM: 'MEDIUM',
+    HIGH: 'HIGH'
+  }
+}));
+
+// Mock TOTP service to avoid loading optional QR/deep auth dependencies in route tests
+jest.mock('../src/services/TOTPService', () => ({
+  isTotpEnabled: jest.fn().mockResolvedValue(false),
+  verify: jest.fn().mockResolvedValue(true),
+  verifyBackupCode: jest.fn().mockResolvedValue(false)
+}));
+
+const geoBlockingAdminRouter = require('../src/routes/admin/geoBlocking');
 
 // Mock config
 jest.mock('../src/config', () => ({
+  apiKeys: {
+    legacy: []
+  },
+  app: {
+    name: 'stellar-micro-donation-api',
+    version: '1.0.0'
+  },
+  server: {
+    env: 'test'
+  },
+  logging: {
+    debugMode: false,
+    level: 'info',
+    format: 'text',
+    toFile: false,
+    directory: '',
+    sampleRate: 1
+  },
   geoBlocking: {
     blockedCountries: ['RU', 'IR'],
     allowedCountries: ['US'],
@@ -46,6 +111,10 @@ describe('GeoBlockMiddleware', () => {
 
   beforeEach(() => {
     jest.clearAllMocks();
+
+    config.geoBlocking.blockedCountries = ['RU', 'IR'];
+    config.geoBlocking.allowedCountries = ['US'];
+    config.geoBlocking.allowedIPs = ['192.168.1.1', '10.0.0.0/8'];
 
     // Mock MaxMind lookup
     mockLookup = {
@@ -73,7 +142,8 @@ describe('GeoBlockMiddleware', () => {
       await middleware.initialize();
 
       expect(middleware.initialized).toBe(false);
-      expect(logger.warn).toHaveBeenCalledWith(
+      expect(log.warn).toHaveBeenCalledWith(
+        'GEO_BLOCK',
         expect.stringContaining('MaxMind database not found')
       );
     });
@@ -85,9 +155,10 @@ describe('GeoBlockMiddleware', () => {
       await middleware.initialize();
 
       expect(middleware.initialized).toBe(false);
-      expect(logger.error).toHaveBeenCalledWith(
-        'Failed to initialize MaxMind database:',
-        expect.any(Error)
+      expect(log.error).toHaveBeenCalledWith(
+        'GEO_BLOCK',
+        'Failed to initialize MaxMind database',
+        expect.objectContaining({ error: 'Database error' })
       );
     });
   });
@@ -132,9 +203,10 @@ describe('GeoBlockMiddleware', () => {
       const result = middleware.getCountryCode('8.8.8.8');
 
       expect(result).toBe(null);
-      expect(logger.warn).toHaveBeenCalledWith(
-        'Failed to lookup country for IP 8.8.8.8:',
-        expect.any(Error)
+      expect(log.warn).toHaveBeenCalledWith(
+        'GEO_BLOCK',
+        'Failed to lookup country for IP 8.8.8.8',
+        expect.objectContaining({ error: 'Lookup failed' })
       );
     });
   });
@@ -281,7 +353,8 @@ describe('GeoBlockMiddleware', () => {
           message: 'Access denied from your location'
         }
       });
-      expect(logger.warn).toHaveBeenCalledWith(
+      expect(log.warn).toHaveBeenCalledWith(
+        'GEO_BLOCK',
         'Request blocked by geo-blocking',
         expect.objectContaining({
           ip: '8.8.8.8',
@@ -327,12 +400,13 @@ describe('Geo-blocking Admin API', () => {
 
     // Mock middleware
     app.use((req, res, next) => {
-      req.apiKey = { id: 'test-admin-key' };
+      req.apiKey = { role: 'admin', isLegacy: true };
+      req.user = { id: 'test-admin-key', role: 'admin' };
       next();
     });
 
     // Add routes
-    app.use('/admin/geo-blocking', require('../src/routes/admin/geoBlocking'));
+    app.use('/admin/geo-blocking', geoBlockingAdminRouter);
 
     server = app.listen(0);
   });
@@ -473,15 +547,13 @@ describe('Integration Tests', () => {
   });
 
   it('should block requests from blocked countries', async () => {
-    // Mock the middleware to simulate blocking
-    const originalMiddleware = geoBlockMiddleware;
-    geoBlockMiddleware.mockImplementation((req, res, next) => {
-      res.set('X-Blocked-Reason', 'geo');
-      res.status(403).json({
-        success: false,
-        error: { code: 'GEO_BLOCKED', message: 'Access denied from your location' }
-      });
-    });
+    const originalShouldBlock = geoBlockMiddleware.geoBlockMiddleware.shouldBlock;
+    geoBlockMiddleware.geoBlockMiddleware.shouldBlock = jest.fn(() => ({
+      block: true,
+      reason: 'geo',
+      countryCode: 'RU',
+      matchedRule: { type: 'block', countryCode: 'RU', source: 'config' }
+    }));
 
     const response = await request(app).get('/test');
 
@@ -489,7 +561,6 @@ describe('Integration Tests', () => {
     expect(response.headers['x-blocked-reason']).toBe('geo');
     expect(response.body.error.code).toBe('GEO_BLOCKED');
 
-    // Restore original middleware
-    Object.assign(geoBlockMiddleware, originalMiddleware);
+    geoBlockMiddleware.geoBlockMiddleware.shouldBlock = originalShouldBlock;
   });
 });

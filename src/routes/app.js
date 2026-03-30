@@ -160,6 +160,35 @@ app.use('/donations/recurring', recurringDonationRoutes);
 app.use('/assets', assetRoutes);
 app.use('/stats', statsRoutes);
 app.use('/stream', streamRoutes);
+app.use('/transactions', transactionRoutes);
+app.use('/api-keys', apiKeyUsageRoutes);
+app.use('/api-keys', apiKeysRoutes);
+app.use('/channels', channelRoutes);
+app.use('/fees', feesRoutes);
+app.use('/admin/feature-flags', featureFlagsAdminRoutes);
+app.use('/admin/db', dbAdminRoutes);
+app.use('/admin/traces', adminTracesRoutes);
+app.use('/admin/retention', retentionAdminRoutes);
+app.use('/admin/encryption', encryptionAdminRoutes);
+app.use('/admin', backupAdminRoutes);
+app.use('/admin/matching-programs', matchingProgramsAdminRoutes);
+app.use('/admin/corporate-matching', corporateMatchingAdminRoutes);
+app.use('/corporate-matching', corporateMatchingRoutes);
+app.use('/admin/routing', routingAdminRoutes);
+app.use('/admin/impact-metrics', impactMetricsAdminRoutes);
+app.use('/impact', impactRoutes);
+app.use('/admin/analytics', adminAnalyticsRoutes);
+app.use('/admin/reconciliation', reconciliationAdminRoutes);
+app.use('/admin/geo', require('./admin/geoBlocking'));
+app.use('/admin/geo-blocking', require('./admin/geoBlocking'));
+app.use('/admin/cors', require('./admin/corsOrigins'));
+
+// Fee bump admin route — lazy access to serviceContainer
+app.use('/admin/transactions', (req, res, next) => {
+  const serviceContainer = require('../config/serviceContainer');
+  const feeBumpRouter = createFeeBumpRouter(serviceContainer.getFeeBumpService());
+  feeBumpRouter(req, res, next);
+});
 app.use('/network', networkRoutes);
 
 // Health check endpoint
