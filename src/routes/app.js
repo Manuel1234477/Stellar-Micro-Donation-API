@@ -20,72 +20,10 @@ const { thresholdsRouter } = require('./signers');
 const recoveryRoutes = require('./recovery');
 const statsRoutes = require('./stats');
 const streamRoutes = require('./stream');
-const transactionRoutes = require('./transaction');
-const apiKeysRoutes = require('./apiKeys');
-const apiKeyUsageRoutes = require('./apiKeyUsage');
-const recurringDonationRoutes = require('./recurringDonation');
-const channelRoutes = require('./channels');
-const assetRoutes = require('./assets');
-const feesRoutes = require('./fees');
-const featureFlagsAdminRoutes = require('./admin/featureFlags');
-const createFeeBumpRouter = require('./admin/feeBump');
-const dbAdminRoutes = require('./admin/db');
-const adminTracesRoutes = require('./admin/traces');
-const retentionAdminRoutes = require('./admin/retention');
-const backupAdminRoutes = require('./admin/backup');
-const encryptionAdminRoutes = require('./admin/encryption');
-const matchingProgramsAdminRoutes = require('./admin/matchingPrograms');
-const corporateMatchingAdminRoutes = require('./admin/corporateMatching');
-const corporateMatchingRoutes = require('./corporateMatching');
-const routingAdminRoutes = require('./admin/routing');
-const impactMetricsAdminRoutes = require('./admin/impactMetrics');
-const impactRoutes = require('./impact');
-const adminAnalyticsRoutes = require('./admin/analytics');
-const reconciliationAdminRoutes = require('./admin/reconciliation');
-const networkRoutes = require('./network');
-const webhooksRoutes = require('./webhooks');
-const campaignsRoutes = require('./campaigns');
-const tiersRoutes = require('./tiers');
-const offersRoutes = require('./offers');
-const tagsRoutes = require('./tags');
-const leaderboardRoutes = require('./leaderboard');
-const { router: federationLookupRoutes } = require('./federationLookup');
-const { errorHandler, notFoundHandler } = require('../middleware/errorHandler');
-const logger = require('../middleware/logger');
-const { attachUserRole } = require('../middleware/rbac');
-const abuseDetectionMiddleware = require('../middleware/abuseDetection');
-const replayDetectionMiddleware = require('../middleware/replayDetection');
-const Database = require('../utils/database');
-const HealthCheckService = require('../services/HealthCheckService');
-const { initializeApiKeysTable } = require('../models/apiKeys');
-const WebhookService = require('../services/WebhookService');
-const { validateRBAC } = require('../utils/rbacValidator');
-const log = require('../utils/log');
-const requestId = require('../middleware/requestId');
-const { attachLifecycleTracking } = require('../middleware/requestLifecycle');
-const serviceContainer = require('../config/serviceContainer');
-const { payloadSizeLimiter } = require('../middleware/payloadSizeLimiter');
-const { createCorsMiddleware } = require('../middleware/cors');
-const { createCspMiddleware, cspReportRouter } = require('../middleware/csp');
-const { responseFormatterMiddleware } = require('../utils/responseFormatter');
-const trackQuotaUsage = require('../middleware/quotaTracker');
-const { startQuotaResetJob } = require('../jobs/quotaResetJob');
-const { createDeduplicationMiddleware } = require('../middleware/deduplication');
-const { fieldFilterMiddleware } = require('../middleware/fieldFilter');
-const {
-  logStartupDiagnostics,
-  logShutdownDiagnostics,
-} = require("../utils/startupDiagnostics");
-const { parseCursorPaginationQuery } = require('../utils/pagination');
-const AuditLogService = require('../services/AuditLogService');
-const auditLogRetentionService = require('../services/AuditLogRetentionService');
-const { runCleanup } = require('../jobs/cleanupJob');
-const { requireAdmin } = require('../middleware/rbac');
-const requireApiKey = require('../middleware/apiKey');
-const encryptionRoutes = require('./encryption');
-const authRoutes = require('./auth');
-const { metricsMiddleware, registry } = require('../utils/metrics');
-const { attachSubscriptionServer } = require('../graphql');
+const recurringDonationScheduler = require('../services/RecurringDonationScheduler');
+const NetworkStatusService = require('../services/NetworkStatusService');
+const { router: networkRoutes, setService: setNetworkService } = require('./network');
+const docsRoutes = require('./docs');
 
 const app = express();
 
@@ -223,95 +161,8 @@ app.use('/donations/recurring', recurringDonationRoutes);
 app.use('/assets', assetRoutes);
 app.use('/stats', statsRoutes);
 app.use('/stream', streamRoutes);
-app.use('/transactions', transactionRoutes);
-app.use('/api-keys', apiKeyUsageRoutes);
-app.use('/api-keys', apiKeysRoutes);
-app.use('/channels', channelRoutes);
-app.use('/fees', feesRoutes);
-app.use('/admin/feature-flags', featureFlagsAdminRoutes);
-app.use('/admin/db', dbAdminRoutes);
-app.use('/admin/traces', adminTracesRoutes);
-app.use('/admin/retention', retentionAdminRoutes);
-app.use('/admin/encryption', encryptionAdminRoutes);
-app.use('/admin', backupAdminRoutes);
-app.use('/admin/matching-programs', matchingProgramsAdminRoutes);
-app.use('/admin/corporate-matching', corporateMatchingAdminRoutes);
-app.use('/corporate-matching', corporateMatchingRoutes);
-app.use('/admin/routing', routingAdminRoutes);
-app.use('/admin/impact-metrics', impactMetricsAdminRoutes);
-app.use('/impact', impactRoutes);
-app.use('/admin/analytics', adminAnalyticsRoutes);
-app.use('/admin/reconciliation', reconciliationAdminRoutes);
-app.use('/admin/geo-blocking', require('./admin/geoBlocking'));
-app.use('/admin/cors', require('./admin/corsOrigins'));
-
-// Fee bump admin route — lazy access to serviceContainer
-app.use('/admin/transactions', (req, res, next) => {
-  const serviceContainer = require('../config/serviceContainer');
-  const feeBumpRouter = createFeeBumpRouter(serviceContainer.getFeeBumpService());
-  feeBumpRouter(req, res, next);
-});
 app.use('/network', networkRoutes);
-app.use('/webhooks', webhooksRoutes);
-app.use('/campaigns', campaignsRoutes);
-app.use('/encryption', encryptionRoutes);
-app.use('/tiers', tiersRoutes);
-app.use('/offers', offersRoutes);
-app.use('/orderbook/:baseAsset/:counterAsset', require('./orderbook'));
-app.use('/tags', tagsRoutes);
-app.use('/leaderboard', leaderboardRoutes);
-app.use('/federation', federationLookupRoutes);
-app.use('/auth', authRoutes);
-
-// Exchange rates endpoint
-app.get('/exchange-rates', async (req, res) => {
-  try {
-    const priceOracle = require('../services/PriceOracleService');
-    const rates = await priceOracle.getRates();
-    res.json({
-      success: true,
-      data: {
-        base: 'XLM',
-        rates,
-        supportedCurrencies: ['XLM', ...priceOracle.SUPPORTED_CURRENCIES.map(c => c.toUpperCase())],
-        cachedAt: new Date().toISOString(),
-      },
-    });
-  } catch (err) {
-    log.error('APP', 'Failed to fetch exchange rates', { error: err.message });
-    res.status(503).json({
-      success: false,
-      error: { code: 'EXCHANGE_RATE_UNAVAILABLE', message: err.message },
-    });
-  }
-});
-
-// SEP-0010 Stellar TOML discovery endpoint
-app.get('/.well-known/stellar.toml', (req, res) => {
-  const host = req.get('host') || 'localhost';
-  const scheme = req.protocol || 'https';
-  const authServer = `${scheme}://${host}/auth`;
-  const signingKey = process.env.SERVICE_SIGNING_KEY || process.env.SERVICE_SECRET_KEY || process.env.STELLAR_SECRET || '';
-
-  // Minimal SEP-0010 fields
-  const tomlContents = [];
-  tomlContents.push('VERSION = "1.0.0"');
-  tomlContents.push(`AUTH_SERVER = "${authServer}"`);
-  if (signingKey) {
-    tomlContents.push(`SIGNING_KEY = "${StellarSdk.Keypair.fromSecret(signingKey).publicKey()}"`);
-  }
-
-  res.type('text/plain').send(tomlContents.join('\n'));
-});
-
-// ─── OpenAPI / Swagger UI (issue #634) ───────────────────────────────────────
-try {
-  const { spec, swaggerUiMiddleware, swaggerUiSetup } = require('../config/openapi');
-  app.use('/api/docs', swaggerUiMiddleware, swaggerUiSetup);
-  app.get('/api/openapi.json', (req, res) => res.json(spec));
-} catch (_err) {
-  // swagger-jsdoc / swagger-ui-express not installed — skip silently
-}
+app.use('/docs', docsRoutes);
 
 // Health check endpoint
 // Health check endpoints
@@ -393,181 +244,22 @@ app.get('/suspicious-patterns', require('../middleware/rbac').requireAdmin(), (r
   });
 });
 
-// Idempotency stats endpoint (admin only)
-app.get('/admin/idempotency/stats', require('../middleware/rbac').requireAdmin(), async (req, res) => {
-  try {
-    const IdempotencyService = require('../services/IdempotencyService');
-    const stats = await IdempotencyService.getStats();
-    const oldest = await require('../utils/database').get(
-      `SELECT MIN(createdAt) as oldest FROM idempotency_keys WHERE datetime(expiresAt) > datetime('now')`
-    );
-    return res.json({
-      success: true,
-      data: {
-        ...stats,
-        oldestActiveKeyAge: oldest && oldest.oldest
-          ? Math.floor((Date.now() - new Date(oldest.oldest).getTime()) / 1000)
-          : null,
-      },
-    });
-  } catch (err) {
-    return res.status(500).json({ success: false, error: { message: err.message } });
-  }
-});
+const PORT = config.port;
+app.listen(PORT, () => {
+  console.log(`Stellar Micro-Donation API running on port ${PORT}`);
+  console.log(`Network: ${config.network}`);
+  console.log(`Health check: http://localhost:${PORT}/health`);
+  
+  // Start the recurring donation scheduler
+  recurringDonationScheduler.start();
 
-// Replay detection stats endpoint (admin only)
-app.get('/admin/replay-stats', require('../middleware/rbac').requireAdmin(), (req, res) => {
-  try {
-    const replayDetectionMiddleware = require('../middleware/replayDetection');
-    const replayConfig = require('../config/replayDetection');
-    
-    // Get stats from tracking store with config for complete information
-    const stats = replayDetectionMiddleware.trackingStore.getStats({
-      windowSeconds: replayConfig.windowSeconds,
-      threshold: replayConfig.threshold
-    });
-    
-    res.json({
-      success: true,
-      data: stats,
-      timestamp: new Date().toISOString()
-    });
-  } catch (error) {
-    log.error('ADMIN', 'Failed to retrieve replay stats', {
-      error: error.message,
-      stack: error.stack
-    });
-    
-    res.status(500).json({
-      success: false,
-      error: {
-        code: 'REPLAY_STATS_ERROR',
-        message: 'Failed to retrieve replay statistics'
-      },
-      timestamp: new Date().toISOString()
-    });
-  }
-});
-
-// Audit logs endpoint (admin only)
-app.get('/admin/audit-logs', require('../middleware/rbac').requireAdmin(), async (req, res, next) => {
-  try {
-    const pagination = parseCursorPaginationQuery(req.query);
-    const filters = {
-      category: req.query.category,
-      action: req.query.action,
-      severity: req.query.severity,
-      userId: req.query.userId,
-      requestId: req.query.requestId,
-      startDate: req.query.startDate,
-      endDate: req.query.endDate,
-    };
-
-    const result = await AuditLogService.queryPaginated(filters, pagination);
-
-    res.setHeader('X-Total-Count', String(result.totalCount));
-    res.json({
-      success: true,
-      data: result.data,
-      count: result.data.length,
-      meta: result.meta
-    });
-  } catch (error) {
-    next(error);
-  }
-});
-
-// Manual reconciliation trigger (admin only)
-app.post('/reconcile', require('../middleware/rbac').requireAdmin(), async (req, res, next) => {
-  try {
-    if (reconciliationService.reconciliationInProgress) {
-      return res.status(409).json({
-        success: false,
-        error: 'Reconciliation already in progress'
-      });
-    }
-    // Trigger reconciliation and wait for result
-    const result = await reconciliationService.reconcile();
-    res.json({
-      success: true,
-      message: 'Reconciliation complete',
-      data: result,
-      timestamp: new Date().toISOString()
-    });
-  } catch (error) {
-    next(error);
-  }
-});
-
-// Admin reconcile endpoint (canonical path)
-app.post('/admin/reconcile', require('../middleware/rbac').requireAdmin(), async (req, res, next) => {
-  try {
-    if (reconciliationService.reconciliationInProgress) {
-      return res.status(409).json({
-        success: false,
-        error: 'Reconciliation already in progress'
-      });
-    }
-    const result = await reconciliationService.reconcile();
-    res.json({
-      success: true,
-      message: 'Reconciliation complete',
-      data: result,
-      timestamp: new Date().toISOString()
-    });
-  } catch (error) {
-    next(error);
-  }
-});
-
-// Admin sync endpoint — triggers immediate transaction sync for all wallets
-app.post('/admin/sync', require('../middleware/rbac').requireAdmin(), async (req, res, next) => {
-  try {
-    const result = await transactionSyncScheduler.syncAllWallets();
-    res.json({
-      success: true,
-      message: 'Transaction sync complete',
-      data: result,
-    });
-  } catch (error) {
-    next(error);
-  }
-});
-
-// Orphaned transactions stats (admin only)
-app.get('/admin/orphaned-transactions', require('../middleware/rbac').requireAdmin(), async (req, res, next) => {
-  try {
-    const rows = await Database.query(
-      'SELECT id, senderId, receiverId, amount, memo, timestamp, stellar_tx_id FROM transactions WHERE is_orphan = 1 ORDER BY timestamp DESC',
-      []
-    );
-    res.json({
-      success: true,
-      data: {
-        count: rows.length,
-        transactions: rows,
-        lifetimeDetected: reconciliationService.getOrphanedTransactionCount(),
-      },
-      timestamp: new Date().toISOString()
-    });
-  } catch (error) {
-    next(error);
-  }
-});
-
-// 404 handler (must be after all routes)
-app.use(notFoundHandler);
-
-// Global error handler
-app.use(errorHandler);
-
-// Handle unhandled promise rejections
-process.on('unhandledRejection', (reason, promise) => {
-  log.error('APP', 'Unhandled promise rejection', {
-    reason,
-    promise,
-    timestamp: new Date().toISOString()
+  // Start network status monitoring
+  const networkStatusService = new NetworkStatusService({ horizonUrl: config.horizonUrl });
+  networkStatusService.on('network.degraded', (status) => {
+    console.warn('[NetworkStatus] network.degraded event:', JSON.stringify(status));
   });
+  setNetworkService(networkStatusService);
+  networkStatusService.start();
 });
 
 const PORT = config.server.port;

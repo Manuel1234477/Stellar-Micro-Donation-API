@@ -10,17 +10,11 @@ jobs:
   test:
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
-
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
         with:
           node-version: '18'
           cache: 'npm'
-
-      - name: Install dependencies
-        run: npm ci
-
-      - name: Run Tests with Coverage
-        run: npm run test:coverage:ci
+      - run: npm ci
+      - run: npm run test:coverage:ci
+      - run: npm audit --audit-level=high
