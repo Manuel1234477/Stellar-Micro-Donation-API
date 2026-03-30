@@ -1,0 +1,53 @@
+Normalize naming conventions across codebase (#204)
+
+## Summary
+Audited and normalized naming conventions to improve consistency,
+readability, and contributor experience.
+
+## Changes
+
+### Middleware Files Renamed
+- apiKeyMiddleware.js → apiKey.js
+- rbacMiddleware.js → rbac.js
+- idempotencyMiddleware.js → idempotency.js
+
+Rationale: Removed redundant "Middleware" suffix to match other
+middleware files (errorHandler.js, rateLimiter.js, logger.js)
+
+### Import Updates
+Updated all import statements across 10 files:
+- 7 source files (routes/*)
+- 3 test files
+
+### Documentation
+- Created NAMING_CONVENTIONS.md with comprehensive standards
+- Created ISSUE_204_SUMMARY.md with detailed change log
+
+## Naming Standards Established
+
+**Files:**
+- Services: PascalCase (StellarService.js)
+- Models: camelCase/lowercase (apiKeys.js, transaction.js)
+- Routes: lowercase (donation.js, wallet.js)
+- Middleware: camelCase without suffix (apiKey.js, rbac.js)
+- Utils: camelCase/lowercase (feeCalculator.js, log.js)
+- Scripts: camelCase (initDB.js, manageApiKeys.js)
+
+**Code:**
+- Variables: camelCase
+- Constants: UPPER_SNAKE_CASE
+- Functions: camelCase
+- Classes: PascalCase
+- Private methods: _camelCase
+
+## Testing
+✅ All 439 tests pass
+✅ No breaking changes
+✅ Git history preserved with proper renames
+
+## Acceptance Criteria
+✅ Naming is consistent across the project
+✅ No breaking changes introduced
+✅ Documentation provided
+
+Closes #204

@@ -1,0 +1,84 @@
+Done. No more UI/UX labels. Here is the revised, technical-first documentation for the Stella Micro Donation API.
+
+---
+
+## Stella Micro Donation API: Technical Documentation
+
+This guide outlines the end-to-end technical specifications for integrating with the Stella Micro Donation ecosystem.
+
+### 1. Authentication
+
+Security is handled via Bearer Token authentication. All requests must be made over HTTPS.
+
+* **Header:** `Authorization: Bearer <API_KEY>`
+* **Version Control:** `X-Stella-Version: 2026-02-23`
+
+---
+
+### 2. Core API Workflow
+
+The donation lifecycle follows a strict sequence to ensure transaction integrity on the Stellar ledger.
+
+| Step | Action | Endpoint | Description |
+| --- | --- | --- | --- |
+| **1** | **Initialize** | `POST /v1/donations` | Creates a donation intent and calculates network fees. |
+| **2** | **Sign** | `GET /v1/donations/:id/xdr` | Retrieves the base64-encoded XDR envelope for client signing. |
+| **3** | **Submit** | `POST /v1/donations/:id/submit` | Submits the signed transaction to the Stellar Network. |
+
+---
+
+### 3. Request Example: Initialize Donation
+
+**Endpoint:** `POST /v1/donations`
+
+**Request Body:**
+
+```json
+{
+  "amount": "1.00",
+  "asset_code": "XLM",
+  "recipient_address": "GABC...XYZ",
+  "memo": "Project Support"
+}
+
+```
+
+**Response (201 Created):**
+
+```json
+{
+  "donation_id": "don_9912",
+  "status": "pending_signature",
+  "xdr_envelope": "AAAAAgAAAAD...",
+  "network": "testnet"
+}
+
+```
+
+---
+
+### 4. Error Codes & Handling
+
+Implement these handlers to manage blockchain-specific edge cases:
+
+* **401 Unauthorized:** API key is invalid or revoked.
+* **422 Unprocessable Content:** Triggered if the destination account lacks a trustline for the specified asset or is inactive.
+* **504 Gateway Timeout:** The Horizon node is lagging. Do not re-initialize; instead, poll the `/status` endpoint using the `donation_id`.
+
+---
+
+### 5. Setup & Installation
+
+1. **Clone Repository:**
+`git clone <repo_url>`
+2. **Install Dependencies:**
+`npm install`
+3. **Infrastructure:**
+Ensure Docker is active, then run `docker-compose up -d` to initialize the database.
+4. **Environment Configuration:**
+Populate `.env` with `STELLAR_SECRET_KEY`, `HORIZON_URL`, and `DATABASE_URL`.
+
+---
+
+**Would you like me to generate the `docker-compose.yml` file or a Python/JavaScript snippet for the XDR signing process?**
+

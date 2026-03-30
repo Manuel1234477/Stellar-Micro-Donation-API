@@ -13,7 +13,8 @@
     "test:coverage:ci": "jest --coverage --ci --maxWorkers=2"
   },
   "dependencies": {
-    "dotenv": "^16.0.3",
+    "csv-parse": "^6.2.1",
+    "dotenv": "^17.3.1",
     "express": "^4.18.2",
     "sqlite3": "^6.0.1",
     "stellar-sdk": "^11.0.0"

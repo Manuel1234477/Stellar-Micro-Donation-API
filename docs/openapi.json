@@ -1,0 +1,926 @@
+{
+  "openapi": "3.0.0",
+  "info": {
+    "title": "Stellar Micro-Donation API",
+    "version": "1.0.0",
+    "description": "API for managing micro-donations on the Stellar blockchain network."
+  },
+  "servers": [
+    {
+      "url": "/",
+      "description": "Current server"
+    }
+  ],
+  "components": {
+    "securitySchemes": {
+      "ApiKeyAuth": {
+        "type": "apiKey",
+        "in": "header",
+        "name": "x-api-key"
+      }
+    },
+    "schemas": {
+      "Error": {
+        "type": "object",
+        "properties": {
+          "success": {
+            "type": "boolean",
+            "example": false
+          },
+          "error": {
+            "type": "object",
+            "properties": {
+              "message": {
+                "type": "string"
+              },
+              "code": {
+                "type": "string"
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "security": [
+    {
+      "ApiKeyAuth": []
+    }
+  ],
+  "paths": {
+    "/donations": {
+      "post": {
+        "tags": [
+          "Donations"
+        ],
+        "summary": "Create a new donation",
+        "security": [
+          {
+            "ApiKeyAuth": []
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "senderSecret",
+                  "recipientPublicKey",
+                  "amount"
+                ],
+                "properties": {
+                  "senderSecret": {
+                    "type": "string",
+                    "description": "Stellar secret key of the sender"
+                  },
+                  "recipientPublicKey": {
+                    "type": "string",
+                    "description": "Stellar public key of the recipient"
+                  },
+                  "amount": {
+                    "type": "number",
+                    "description": "Amount in XLM"
+                  },
+                  "memo": {
+                    "type": "string",
+                    "description": "Optional transaction memo"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Donation created successfully"
+          },
+          "400": {
+            "description": "Validation error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized"
+          }
+        }
+      },
+      "get": {
+        "tags": [
+          "Donations"
+        ],
+        "summary": "List all donations",
+        "security": [
+          {
+            "ApiKeyAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "in": "query",
+            "name": "limit",
+            "schema": {
+              "type": "integer"
+            },
+            "description": "Maximum number of results"
+          },
+          {
+            "in": "query",
+            "name": "cursor",
+            "schema": {
+              "type": "string"
+            },
+            "description": "Pagination cursor"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "List of donations"
+          },
+          "401": {
+            "description": "Unauthorized"
+          }
+        }
+      }
+    },
+    "/donations/{id}": {
+      "get": {
+        "tags": [
+          "Donations"
+        ],
+        "summary": "Get a specific donation",
+        "security": [
+          {
+            "ApiKeyAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Donation details"
+          },
+          "404": {
+            "description": "Donation not found"
+          }
+        }
+      }
+    },
+    "/donations/{id}/status": {
+      "patch": {
+        "tags": [
+          "Donations"
+        ],
+        "summary": "Update donation status",
+        "security": [
+          {
+            "ApiKeyAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "integer"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "status"
+                ],
+                "properties": {
+                  "status": {
+                    "type": "string",
+                    "enum": [
+                      "pending",
+                      "completed",
+                      "failed"
+                    ]
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Status updated"
+          },
+          "404": {
+            "description": "Donation not found"
+          }
+        }
+      }
+    },
+    "/donations/verify": {
+      "post": {
+        "tags": [
+          "Donations"
+        ],
+        "summary": "Verify a transaction on the blockchain",
+        "security": [
+          {
+            "ApiKeyAuth": []
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "transactionHash"
+                ],
+                "properties": {
+                  "transactionHash": {
+                    "type": "string"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Verification result"
+          }
+        }
+      }
+    },
+    "/donations/limits": {
+      "get": {
+        "tags": [
+          "Donations"
+        ],
+        "summary": "Get donation amount limits",
+        "security": [
+          {
+            "ApiKeyAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Donation limits"
+          }
+        }
+      }
+    },
+    "/donations/recent": {
+      "get": {
+        "tags": [
+          "Donations"
+        ],
+        "summary": "Get recent donations",
+        "security": [
+          {
+            "ApiKeyAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "in": "query",
+            "name": "limit",
+            "schema": {
+              "type": "integer",
+              "default": 10
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Recent donations"
+          }
+        }
+      }
+    },
+    "/wallets": {
+      "post": {
+        "tags": [
+          "Wallets"
+        ],
+        "summary": "Create wallet metadata",
+        "security": [
+          {
+            "ApiKeyAuth": []
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "publicKey"
+                ],
+                "properties": {
+                  "publicKey": {
+                    "type": "string",
+                    "description": "Stellar public key"
+                  },
+                  "label": {
+                    "type": "string"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Wallet created"
+          },
+          "400": {
+            "description": "Validation error"
+          }
+        }
+      },
+      "get": {
+        "tags": [
+          "Wallets"
+        ],
+        "summary": "List all wallets",
+        "security": [
+          {
+            "ApiKeyAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "List of wallets"
+          }
+        }
+      }
+    },
+    "/wallets/{id}": {
+      "get": {
+        "tags": [
+          "Wallets"
+        ],
+        "summary": "Get a specific wallet",
+        "security": [
+          {
+            "ApiKeyAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Wallet details"
+          },
+          "404": {
+            "description": "Wallet not found"
+          }
+        }
+      },
+      "patch": {
+        "tags": [
+          "Wallets"
+        ],
+        "summary": "Update wallet metadata",
+        "security": [
+          {
+            "ApiKeyAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "integer"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "label": {
+                    "type": "string"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Wallet updated"
+          }
+        }
+      }
+    },
+    "/wallets/{publicKey}/transactions": {
+      "get": {
+        "tags": [
+          "Wallets"
+        ],
+        "summary": "Get all transactions for a wallet",
+        "security": [
+          {
+            "ApiKeyAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "in": "path",
+            "name": "publicKey",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Transaction list"
+          }
+        }
+      }
+    },
+    "/stream/create": {
+      "post": {
+        "tags": [
+          "Stream"
+        ],
+        "summary": "Create a recurring donation schedule",
+        "security": [
+          {
+            "ApiKeyAuth": []
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "donorPublicKey",
+                  "recipientPublicKey",
+                  "amount",
+                  "frequency"
+                ],
+                "properties": {
+                  "donorPublicKey": {
+                    "type": "string"
+                  },
+                  "recipientPublicKey": {
+                    "type": "string"
+                  },
+                  "amount": {
+                    "type": "number"
+                  },
+                  "frequency": {
+                    "type": "string",
+                    "enum": [
+                      "daily",
+                      "weekly",
+                      "monthly"
+                    ]
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Schedule created"
+          },
+          "400": {
+            "description": "Validation error"
+          }
+        }
+      }
+    },
+    "/stream/schedules": {
+      "get": {
+        "tags": [
+          "Stream"
+        ],
+        "summary": "List all recurring donation schedules",
+        "security": [
+          {
+            "ApiKeyAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "List of schedules"
+          }
+        }
+      }
+    },
+    "/stream/schedules/{id}": {
+      "get": {
+        "tags": [
+          "Stream"
+        ],
+        "summary": "Get a specific schedule",
+        "security": [
+          {
+            "ApiKeyAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Schedule details"
+          },
+          "404": {
+            "description": "Schedule not found"
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "Stream"
+        ],
+        "summary": "Cancel a recurring donation schedule",
+        "security": [
+          {
+            "ApiKeyAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Schedule cancelled"
+          },
+          "404": {
+            "description": "Schedule not found"
+          }
+        }
+      }
+    },
+    "/transactions": {
+      "get": {
+        "tags": [
+          "Transactions"
+        ],
+        "summary": "Get paginated transactions",
+        "security": [
+          {
+            "ApiKeyAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "in": "query",
+            "name": "limit",
+            "schema": {
+              "type": "integer",
+              "default": 20
+            }
+          },
+          {
+            "in": "query",
+            "name": "cursor",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Paginated transaction list"
+          }
+        }
+      }
+    },
+    "/transactions/sync": {
+      "post": {
+        "tags": [
+          "Transactions"
+        ],
+        "summary": "Sync wallet transactions from Stellar network",
+        "security": [
+          {
+            "ApiKeyAuth": []
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "publicKey"
+                ],
+                "properties": {
+                  "publicKey": {
+                    "type": "string"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Sync completed"
+          }
+        }
+      }
+    },
+    "/transactions/multisig": {
+      "post": {
+        "tags": [
+          "Transactions"
+        ],
+        "summary": "Create a pending multi-sig transaction",
+        "security": [
+          {
+            "ApiKeyAuth": []
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "transaction_xdr",
+                  "network_passphrase",
+                  "required_signers",
+                  "signer_keys"
+                ],
+                "properties": {
+                  "transaction_xdr": {
+                    "type": "string"
+                  },
+                  "network_passphrase": {
+                    "type": "string"
+                  },
+                  "required_signers": {
+                    "type": "integer",
+                    "minimum": 2
+                  },
+                  "signer_keys": {
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Multi-sig transaction created"
+          }
+        }
+      }
+    },
+    "/transactions/multisig/collect": {
+      "post": {
+        "tags": [
+          "Transactions"
+        ],
+        "summary": "Collect a signature for a pending multi-sig transaction",
+        "security": [
+          {
+            "ApiKeyAuth": []
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "id",
+                  "signer",
+                  "signed_xdr"
+                ],
+                "properties": {
+                  "id": {
+                    "type": "integer"
+                  },
+                  "signer": {
+                    "type": "string"
+                  },
+                  "signed_xdr": {
+                    "type": "string"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Signature collected; submitted if threshold met"
+          },
+          "400": {
+            "description": "Insufficient signatures",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "success": {
+                      "type": "boolean",
+                      "example": false
+                    },
+                    "error": {
+                      "type": "object",
+                      "properties": {
+                        "code": {
+                          "type": "string",
+                          "example": "INSUFFICIENT_SIGNATURES"
+                        },
+                        "required": {
+                          "type": "integer"
+                        },
+                        "collected": {
+                          "type": "integer"
+                        },
+                        "remaining": {
+                          "type": "integer"
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/stats/daily": {
+      "get": {
+        "tags": [
+          "Statistics"
+        ],
+        "summary": "Get daily donation statistics",
+        "security": [
+          {
+            "ApiKeyAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Daily stats"
+          }
+        }
+      }
+    },
+    "/stats/weekly": {
+      "get": {
+        "tags": [
+          "Statistics"
+        ],
+        "summary": "Get weekly donation statistics",
+        "security": [
+          {
+            "ApiKeyAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Weekly stats"
+          }
+        }
+      }
+    },
+    "/stats/summary": {
+      "get": {
+        "tags": [
+          "Statistics"
+        ],
+        "summary": "Get summary analytics",
+        "security": [
+          {
+            "ApiKeyAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Summary analytics"
+          }
+        }
+      }
+    },
+    "/stats/donors": {
+      "get": {
+        "tags": [
+          "Statistics"
+        ],
+        "summary": "Get donor statistics",
+        "security": [
+          {
+            "ApiKeyAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Donor stats"
+          }
+        }
+      }
+    },
+    "/stats/recipients": {
+      "get": {
+        "tags": [
+          "Statistics"
+        ],
+        "summary": "Get recipient statistics",
+        "security": [
+          {
+            "ApiKeyAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Recipient stats"
+          }
+        }
+      }
+    }
+  },
+  "tags": [
+    {
+      "name": "Donations",
+      "description": "Create and manage donations on the Stellar network"
+    },
+    {
+      "name": "Wallets",
+      "description": "Wallet metadata management"
+    },
+    {
+      "name": "Stream",
+      "description": "Recurring donation schedules"
+    },
+    {
+      "name": "Transactions",
+      "description": "Transaction history and synchronization"
+    },
+    {
+      "name": "Statistics",
+      "description": "Donation analytics and statistics"
+    }
+  ]
+}

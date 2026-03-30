@@ -1,0 +1,9 @@
+VERSION = "1.0.0"
+
+# Base URL for SEP-0010 auth challenge/response
+AUTH_SERVER = "https://localhost/auth"
+
+# Optional: key used to sign objective transactions (if server needs it)
+# In deployment, this is set via SERVICE_SECRET_KEY and should be kept secure.
+# SIGNING_KEY contains the public key corresponding to the server secret key.
+# When running locally this value is generated from SERVICE_SECRET_KEY.

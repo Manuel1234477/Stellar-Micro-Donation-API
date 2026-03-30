@@ -1,0 +1,58 @@
+# Artillery load test — Stats & Analytics Endpoints
+# Run: npx artillery run tests/load/artillery/stats.yml --target http://localhost:3000
+# Requires a running API server with MOCK_STELLAR=true
+
+config:
+  target: "http://localhost:3000"
+  phases:
+    - name: "Warm-up"
+      duration: 30
+      arrivalRate: 5
+    - name: "Ramp-up"
+      duration: 60
+      arrivalRate: 5
+      rampTo: 25
+    - name: "Sustained load"
+      duration: 120
+      arrivalRate: 25
+    - name: "Cool-down"
+      duration: 30
+      arrivalRate: 5
+  defaults:
+    headers:
+      X-API-Key: "test-load-key"
+  plugins:
+    expect: {}
+  ensure:
+    p95: 400
+    p99: 800
+    maxErrorRate: 2
+
+scenarios:
+  - name: "Daily stats"
+    weight: 40
+    flow:
+      - get:
+          url: "/stats/daily"
+          expect:
+            - statusCode:
+                - 200
+                - 401
+  - name: "Weekly stats"
+    weight: 30
+    flow:
+      - get:
+          url: "/stats/weekly"
+          expect:
+            - statusCode:
+                - 200
+                - 401
+  - name: "Stats summary"
+    weight: 30
+    flow:
+      - get:
+          url: "/stats/summary"
+          expect:
+            - statusCode:
+                - 200
+                - 401

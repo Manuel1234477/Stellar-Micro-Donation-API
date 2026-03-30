@@ -1,76 +1,37 @@
 /**
- * Stellar Configuration
- * Handles both real and mock Stellar service initialization
- * Supports easy network switching via STELLAR_NETWORK environment variable
+ * Stellar Configuration - Blockchain Configuration Layer
+ * 
+ * RESPONSIBILITY: Stellar network configuration and service initialization
+ * OWNER: Blockchain Team
+ * DEPENDENCIES: ServiceContainer, environment validation, logger
+ * 
+ * Configures Stellar network settings (testnet/mainnet), Horizon URLs, and initializes
+ * Stellar service instances. Uses ServiceContainer for dependency injection.
  */
 
-require('dotenv').config({ path: require('path').join(__dirname, '../.env') });
+require('dotenv').config({ path: require('path').join(__dirname, '../../.env') });
+const path = require('path');
+const log = require('../utils/log');
 
-const StellarService = require('../services/StellarService');
-const MockStellarService = require('../services/MockStellarService');
-
-// Network presets for easy switching
-const NETWORK_PRESETS = {
-  testnet: {
-    network: 'testnet',
-    horizonUrl: 'https://horizon-testnet.stellar.org',
-  },
-  mainnet: {
-    network: 'mainnet',
-    horizonUrl: 'https://horizon.stellar.org',
-  },
-  futurenet: {
-    network: 'futurenet',
-    horizonUrl: 'https://horizon-futurenet.stellar.org',
-  },
-};
-
-const useMockStellar = process.env.MOCK_STELLAR === 'true';
+const serviceContainer = require('./serviceContainer');
 
 /**
- * Get network configuration based on STELLAR_NETWORK env variable
- * Defaults to testnet if not specified or invalid
- */
-const getNetworkConfig = () => {
-  const networkName = (process.env.STELLAR_NETWORK || 'testnet').toLowerCase();
-  
-  // If custom HORIZON_URL is provided, use it with the specified network
-  if (process.env.HORIZON_URL) {
-    return {
-      network: networkName,
-      horizonUrl: process.env.HORIZON_URL,
-    };
-  }
-  
-  // Use preset or default to testnet
-  return NETWORK_PRESETS[networkName] || NETWORK_PRESETS.testnet;
-};
-
-/**
- * Get Stellar service instance
- * Returns mock service if MOCK_STELLAR=true, otherwise real service
+ * Get Stellar service instance from container
  */
 const getStellarService = () => {
-  if (useMockStellar) {
-    console.log('[Stellar Config] Using MOCK Stellar service');
-    return new MockStellarService();
-  }
-  
-  const networkConfig = getNetworkConfig();
-  console.log(`[Stellar Config] Using REAL Stellar service on ${networkConfig.network.toUpperCase()}`);
-  console.log(`[Stellar Config] Horizon URL: ${networkConfig.horizonUrl}`);
-  
-  return new StellarService({
-    network: networkConfig.network,
-    horizonUrl: networkConfig.horizonUrl,
-    serviceSecretKey: process.env.SERVICE_SECRET_KEY,
-  });
+  const service = serviceContainer.getStellarService();
+  const network = service.getNetwork ? service.getNetwork() : 'testnet';
+  log.info('STELLAR_CONFIG', 'Using Stellar service from container', { network });
+  return service;
 };
+
+const { getActiveEnvironment } = require('./stellarEnvironments');
+const activeEnv = getActiveEnvironment();
 
 module.exports = {
   getStellarService,
-  useMockStellar,
+  useMockStellar: process.env.USE_MOCK_STELLAR === 'true',
   port: process.env.PORT || 3000,
-  network: getNetworkConfig().network,
-  horizonUrl: getNetworkConfig().horizonUrl,
+  ...activeEnv,
+  dbPath: process.env.DB_JSON_PATH || path.join(__dirname, '../../data/donations.json'),
 };

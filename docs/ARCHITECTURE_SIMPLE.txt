@@ -1,0 +1,124 @@
+╔══════════════════════════════════════════════════════════════════════════════╗
+║              STELLAR MICRO-DONATION API - ARCHITECTURE OVERVIEW              ║
+╚══════════════════════════════════════════════════════════════════════════════╝
+
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                              CLIENT LAYER                                    │
+│                                                                              │
+│    ┌──────────────┐    ┌──────────────┐    ┌──────────────┐               │
+│    │  Web Client  │    │ Mobile App   │    │  API Client  │               │
+│    └──────┬───────┘    └──────┬───────┘    └──────┬───────┘               │
+└───────────┼────────────────────┼────────────────────┼──────────────────────┘
+            │                    │                    │
+            └────────────────────┼────────────────────┘
+                                 │ HTTP/HTTPS
+                                 ▼
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                           API LAYER (Express.js)                             │
+│                                                                              │
+│  ┌────────────────────────────────────────────────────────────────────┐    │
+│  │                         Express Router                              │    │
+│  └───┬────────────┬────────────┬────────────┬────────────────────────┘    │
+│      │            │            │            │                              │
+│  ┌───▼───┐   ┌───▼───┐   ┌───▼───┐   ┌───▼───┐                          │
+│  │/donations│ │/wallets│ │/stream │ │ /stats │                          │
+│  │         │ │        │ │        │ │        │                          │
+│  │ Create  │ │ Query  │ │Schedule│ │Analytics│                          │
+│  │ Verify  │ │ List   │ │ Manage │ │Summary │                          │
+│  └───┬─────┘ └───┬────┘ └───┬────┘ └───┬────┘                          │
+└──────┼───────────┼───────────┼───────────┼─────────────────────────────────┘
+       │           │           │           │
+       │           │           │           │
+       ▼           ▼           ▼           ▼
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                            SERVICE LAYER                                     │
+│                                                                              │
+│  ┌──────────────────┐  ┌──────────────────┐  ┌──────────────────────┐    │
+│  │ Stellar Service  │  │ Mock Stellar     │  │ Recurring Donation   │    │
+│  │                  │  │ Service          │  │ Scheduler            │    │
+│  │ - Submit TX      │  │                  │  │                      │    │
+│  │ - Verify TX      │  │ - Simulate TX    │  │ - Check schedules    │    │
+│  │ - Query Horizon  │  │ - In-memory      │  │ - Execute donations  │    │
+│  └────────┬─────────┘  └────────┬─────────┘  └──────────┬───────────┘    │
+└───────────┼─────────────────────┼─────────────────────────┼────────────────┘
+            │                     │                         │
+            │                     └─────────┬───────────────┘
+            │                               │
+            ▼                               ▼
+┌─────────────────────────────┐   ┌─────────────────────────────────────────┐
+│   STELLAR NETWORK           │   │        DATA LAYER (SQLite)              │
+│                             │   │                                         │
+│  ┌──────────────────────┐  │   │  ┌─────────────────────────────────┐  │
+│  │   Horizon API        │  │   │  │  stellar_donations.db           │  │
+│  │   (Gateway)          │  │   │  │                                 │  │
+│  └──────────┬───────────┘  │   │  │  Tables:                        │  │
+│             │               │   │  │  • users                        │  │
+│  ┌──────────▼───────────┐  │   │  │  • transactions                 │  │
+│  │  Stellar Blockchain  │  │   │  │  • recurring_donations          │  │
+│  │  (Testnet/Mainnet)   │  │   │  │                                 │  │
+│  └──────────────────────┘  │   │  └─────────────────────────────────┘  │
+└─────────────────────────────┘   └─────────────────────────────────────────┘
+
+
+═══════════════════════════════════════════════════════════════════════════════
+                              DATA FLOW EXAMPLES
+═══════════════════════════════════════════════════════════════════════════════
+
+ONE-TIME DONATION:
+──────────────────
+Client → POST /donations → Stellar Service → Horizon API → Stellar Network
+                              ↓
+                         Record in DB → Return Success
+
+
+RECURRING DONATION:
+──────────────────
+Client → POST /stream/create → Store Schedule in DB
+                                      ↓
+                         Scheduler (every 60s) checks DB
+                                      ↓
+                         Execute due donations → Record TX
+                                      ↓
+                         Update next execution date
+
+
+WALLET TRANSACTIONS:
+───────────────────
+Client → GET /wallets/:publicKey/transactions → Query DB → Return Results
+
+
+═══════════════════════════════════════════════════════════════════════════════
+                              KEY COMPONENTS
+═══════════════════════════════════════════════════════════════════════════════
+
+API ENDPOINTS:
+  • /donations      - One-time donation management
+  • /wallets        - Wallet and transaction queries
+  • /stream         - Recurring donation schedules
+  • /stats          - Analytics and statistics
+
+SERVICES:
+  • StellarService           - Real blockchain integration
+  • MockStellarService       - Development/testing simulation
+  • RecurringDonationScheduler - Automated donation execution
+
+DATABASE TABLES:
+  • users                - Stellar wallet addresses
+  • transactions         - All donation transactions
+  • recurring_donations  - Scheduled recurring donations
+
+EXTERNAL:
+  • Stellar Network      - Blockchain for transactions
+  • Horizon API          - Gateway to Stellar Network
+
+
+═══════════════════════════════════════════════════════════════════════════════
+                           TECHNOLOGY STACK
+═══════════════════════════════════════════════════════════════════════════════
+
+Runtime:     Node.js
+Framework:   Express.js
+Database:    SQLite3
+Blockchain:  Stellar Network (stellar-sdk)
+Testing:     Jest
+Tools:       Nodemon, ESLint

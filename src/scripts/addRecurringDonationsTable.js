@@ -24,6 +24,7 @@ function addRecurringDonationsTable() {
           lastExecutionDate DATETIME,
           executionCount INTEGER DEFAULT 0,
           createdAt DATETIME DEFAULT CURRENT_TIMESTAMP,
+          tenant_id TEXT NOT NULL DEFAULT 'default',
           FOREIGN KEY (donorId) REFERENCES users(id),
           FOREIGN KEY (recipientId) REFERENCES users(id)
         )
@@ -35,7 +36,7 @@ function addRecurringDonationsTable() {
           reject(err);
         } else {
           console.log('✓ Created recurring_donations table');
-          
+
           // Verify table creation
           db.all("SELECT name FROM sqlite_master WHERE type='table' AND name='recurring_donations'", (err, tables) => {
             db.close();
@@ -56,7 +57,7 @@ function addRecurringDonationsTable() {
 
 async function main() {
   console.log('Adding recurring_donations table to database...\n');
-  
+
   try {
     await addRecurringDonationsTable();
     console.log('\n✓ Migration complete!');

@@ -14,9 +14,14 @@ describe('Donation Amount Validation', () => {
   const testDbPath = path.join(__dirname, '../data/test-donations-limits.json');
 
   beforeEach(() => {
-    // Create validator with test limits
-    validator = new DonationValidator();
-    
+    // Create validator with test limits (using singleton)
+    validator = DonationValidator;
+
+    // Save original values
+    validator._originalMin = validator.minAmount;
+    validator._originalMax = validator.maxAmount;
+    validator._originalDaily = validator.maxDailyPerDonor;
+
     // Override with test values
     validator.minAmount = 0.01;
     validator.maxAmount = 10000;
@@ -24,7 +29,7 @@ describe('Donation Amount Validation', () => {
 
     // Use test database
     Transaction.getDbPath = () => testDbPath;
-    
+
     // Clean up test database
     if (fs.existsSync(testDbPath)) {
       fs.unlinkSync(testDbPath);
@@ -35,6 +40,13 @@ describe('Donation Amount Validation', () => {
     // Clean up test database
     if (fs.existsSync(testDbPath)) {
       fs.unlinkSync(testDbPath);
+    }
+
+    // Restore original values
+    if (validator._originalMin !== undefined) {
+      validator.minAmount = validator._originalMin;
+      validator.maxAmount = validator._originalMax;
+      validator.maxDailyPerDonor = validator._originalDaily;
     }
   });
 
@@ -312,10 +324,11 @@ describe('Donation Amount Validation', () => {
       expect(result.valid).toBe(true);
     });
 
-    test('should handle floating point precision', () => {
+    test('should reject floating point precision exceeding 7 decimals', () => {
       const result = validator.validateAmount(0.1 + 0.2); // 0.30000000000000004
 
-      expect(result.valid).toBe(true);
+      expect(result.valid).toBe(false);
+      expect(result.code).toBe('INVALID_AMOUNT_PRECISION');
     });
 
     test('should reject amount just below minimum', () => {

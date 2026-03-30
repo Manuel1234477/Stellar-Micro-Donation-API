@@ -1,37 +1,185 @@
+/**
+ * Stream Routes - API Endpoint Layer
+ * 
+ * RESPONSIBILITY: HTTP request handling for recurring donation schedules AND
+ *                 real-time SSE transaction feed.
+ * OWNER: Backend Team
+ * DEPENDENCIES: Database, middleware (auth, RBAC), SseManager, donationEvents
+ */
+
+/**
+ * @openapi
+ * tags:
+ *   - name: Stream
+ *     description: Recurring donation schedules
+ *
+ * /stream/create:
+ *   post:
+ *     tags: [Stream]
+ *     summary: Create a recurring donation schedule
+ *     security:
+ *       - ApiKeyAuth: []
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             required: [donorPublicKey, recipientPublicKey, amount, frequency]
+ *             properties:
+ *               donorPublicKey:
+ *                 type: string
+ *               recipientPublicKey:
+ *                 type: string
+ *               amount:
+ *                 type: number
+ *               frequency:
+ *                 type: string
+ *                 enum: [daily, weekly, monthly]
+ *     responses:
+ *       201:
+ *         description: Schedule created
+ *       400:
+ *         description: Validation error
+ *
+ * /stream/schedules:
+ *   get:
+ *     tags: [Stream]
+ *     summary: List all recurring donation schedules
+ *     security:
+ *       - ApiKeyAuth: []
+ *     responses:
+ *       200:
+ *         description: List of schedules
+ *
+ * /stream/schedules/{id}:
+ *   get:
+ *     tags: [Stream]
+ *     summary: Get a specific schedule
+ *     security:
+ *       - ApiKeyAuth: []
+ *     parameters:
+ *       - in: path
+ *         name: id
+ *         required: true
+ *         schema:
+ *           type: integer
+ *     responses:
+ *       200:
+ *         description: Schedule details
+ *       404:
+ *         description: Schedule not found
+ *   delete:
+ *     tags: [Stream]
+ *     summary: Cancel a recurring donation schedule
+ *     security:
+ *       - ApiKeyAuth: []
+ *     parameters:
+ *       - in: path
+ *         name: id
+ *         required: true
+ *         schema:
+ *           type: integer
+ *     responses:
+ *       200:
+ *         description: Schedule cancelled
+ *       404:
+ *         description: Schedule not found
+ */
+
 const express = require('express');
 const router = express.Router();
+const crypto = require('crypto');
 const Database = require('../utils/database');
+const { checkPermission } = require('../middleware/rbac');
+const { PERMISSIONS } = require('../utils/permissions');
+const { VALID_FREQUENCIES, SCHEDULE_STATUS } = require('../constants');
+const { validateRequiredFields, validateFloat, validateEnum } = require('../utils/validationHelpers');
+const log = require('../utils/log');
+const { validateSchema } = require('../middleware/schemaValidation');
+const SseManager = require('../services/SseManager');
+const donationEvents = require('../events/donationEvents');
+const { payloadSizeLimiter, ENDPOINT_LIMITS } = require('../middleware/payloadSizeLimiter');
+const { requestTimeout, TIMEOUTS } = require('../middleware/requestTimeout');
+
+const streamCreateSchema = validateSchema({
+  body: {
+    fields: {
+      donorPublicKey: {
+        type: 'string',
+        required: true,
+        trim: true,
+        minLength: 1,
+        maxLength: 255,
+      },
+      recipientPublicKey: {
+        type: 'string',
+        required: true,
+        trim: true,
+        minLength: 1,
+        maxLength: 255,
+      },
+      amount: { type: 'number', required: true, min: 0.0000001 },
+      frequency: {
+        type: 'string',
+        required: true,
+        validate: (value) => {
+          if (typeof value !== 'string') {
+            return 'frequency must be a string';
+          }
+          return VALID_FREQUENCIES.includes(value.toLowerCase())
+            ? true
+            : `frequency must be one of: ${VALID_FREQUENCIES.join(', ')}`;
+        },
+      },
+    },
+  },
+});
+
+const streamScheduleIdSchema = validateSchema({
+  params: {
+    fields: {
+      id: { type: 'integerString', required: true },
+    },
+  },
+});
 
 /**
  * POST /stream/create
  * Create a recurring donation schedule
  */
-router.post('/create', async (req, res) => {
+router.post('/create', payloadSizeLimiter(ENDPOINT_LIMITS.stream), requestTimeout(TIMEOUTS.stream), checkPermission(PERMISSIONS.STREAM_CREATE), streamCreateSchema, async (req, res, next) => {
   try {
     const { donorPublicKey, recipientPublicKey, amount, frequency } = req.body;
 
     // Validate required fields
-    if (!donorPublicKey || !recipientPublicKey || !amount || !frequency) {
+    const requiredValidation = validateRequiredFields(
+      { donorPublicKey, recipientPublicKey, amount, frequency },
+      ['donorPublicKey', 'recipientPublicKey', 'amount', 'frequency']
+    );
+
+    if (!requiredValidation.valid) {
       return res.status(400).json({
         success: false,
-        error: 'Missing required fields: donorPublicKey, recipientPublicKey, amount, frequency'
+        error: `Missing required fields: ${requiredValidation.missing.join(', ')}`
       });
     }
 
     // Validate amount
-    if (isNaN(parseFloat(amount)) || parseFloat(amount) <= 0) {
+    const amountValidation = validateFloat(amount);
+    if (!amountValidation.valid) {
       return res.status(400).json({
         success: false,
-        error: 'Amount must be a positive number'
+        error: `Invalid amount: ${amountValidation.error}`
       });
     }
 
     // Validate frequency
-    const validFrequencies = ['daily', 'weekly', 'monthly'];
-    if (!validFrequencies.includes(frequency.toLowerCase())) {
+    const frequencyValidation = validateEnum(frequency, VALID_FREQUENCIES, { caseInsensitive: true });
+    if (!frequencyValidation.valid) {
       return res.status(400).json({
         success: false,
-        error: 'Frequency must be one of: daily, weekly, monthly'
+        error: frequencyValidation.error
       });
     }
 
@@ -72,7 +220,7 @@ router.post('/create', async (req, res) => {
     // Calculate next execution date based on frequency
     const now = new Date();
     const nextExecutionDate = new Date(now);
-    
+
     switch (frequency.toLowerCase()) {
       case 'daily':
         nextExecutionDate.setDate(nextExecutionDate.getDate() + 1);
@@ -87,15 +235,15 @@ router.post('/create', async (req, res) => {
 
     // Insert recurring donation schedule
     const result = await Database.run(
-      `INSERT INTO recurring_donations 
-       (donorId, recipientId, amount, frequency, nextExecutionDate, status) 
+      `INSERT INTO recurring_donations
+       (donorId, recipientId, amount, frequency, nextExecutionDate, status)
        VALUES (?, ?, ?, ?, ?, ?)`,
-      [donor.id, recipient.id, parseFloat(amount), frequency.toLowerCase(), nextExecutionDate.toISOString(), 'active']
+      [donor.id, recipient.id, parseFloat(amount), frequency.toLowerCase(), nextExecutionDate.toISOString(), SCHEDULE_STATUS.ACTIVE]
     );
 
     // Fetch the created schedule
     const schedule = await Database.get(
-      `SELECT 
+      `SELECT
         rd.id,
         rd.amount,
         rd.frequency,
@@ -127,23 +275,20 @@ router.post('/create', async (req, res) => {
       }
     });
   } catch (error) {
-    console.error('Error creating recurring donation:', error);
-    res.status(500).json({
-      success: false,
-      error: 'Failed to create recurring donation schedule',
-      message: error.message
-    });
+    next(error);
   }
 });
 
 /**
  * GET /stream/schedules
- * Get all recurring donation schedules
+ * Get all recurring donation schedules.
+ * Supports optional ?status= filter (e.g. ?status=paused).
  */
-router.get('/schedules', async (req, res) => {
+router.get('/schedules', checkPermission(PERMISSIONS.STREAM_READ), async (req, res, next) => {
   try {
-    const schedules = await Database.query(
-      `SELECT 
+    const { status } = req.query;
+
+    let query = `SELECT
         rd.id,
         rd.amount,
         rd.frequency,
@@ -152,13 +297,22 @@ router.get('/schedules', async (req, res) => {
         rd.lastExecutionDate,
         rd.status,
         rd.executionCount,
+        rd.pausedAt,
+        rd.resumedAt,
         donor.publicKey as donorPublicKey,
         recipient.publicKey as recipientPublicKey
        FROM recurring_donations rd
        JOIN users donor ON rd.donorId = donor.id
-       JOIN users recipient ON rd.recipientId = recipient.id
-       ORDER BY rd.createdAt DESC`
-    );
+       JOIN users recipient ON rd.recipientId = recipient.id`;
+
+    const params = [];
+    if (status) {
+      query += ' WHERE rd.status = ?';
+      params.push(status);
+    }
+    query += ' ORDER BY rd.createdAt DESC';
+
+    const schedules = await Database.query(query, params);
 
     res.json({
       success: true,
@@ -166,12 +320,104 @@ router.get('/schedules', async (req, res) => {
       count: schedules.length
     });
   } catch (error) {
-    console.error('Error fetching schedules:', error);
-    res.status(500).json({
-      success: false,
-      error: 'Failed to fetch recurring donation schedules',
-      message: error.message
+    next(error);
+  }
+});
+
+/**
+ * POST /stream/schedules/:id/pause
+ * Pause an active recurring donation schedule.
+ * Returns 409 if the schedule is already paused.
+ */
+router.post('/schedules/:id/pause', checkPermission(PERMISSIONS.STREAM_UPDATE), streamScheduleIdSchema, async (req, res, next) => {
+  try {
+    const schedule = await Database.get(
+      'SELECT id, status FROM recurring_donations WHERE id = ?',
+      [req.params.id]
+    );
+
+    if (!schedule) {
+      return res.status(404).json({ success: false, error: 'Schedule not found' });
+    }
+
+    if (schedule.status === SCHEDULE_STATUS.PAUSED) {
+      return res.status(409).json({ success: false, error: 'Schedule is already paused' });
+    }
+
+    if (schedule.status !== SCHEDULE_STATUS.ACTIVE) {
+      return res.status(400).json({
+        success: false,
+        error: `Cannot pause a schedule with status: ${schedule.status}`
+      });
+    }
+
+    const now = new Date().toISOString();
+    await Database.run(
+      'UPDATE recurring_donations SET status = ?, pausedAt = ? WHERE id = ?',
+      [SCHEDULE_STATUS.PAUSED, now, req.params.id]
+    );
+
+    res.json({
+      success: true,
+      message: 'Recurring donation schedule paused successfully',
+      data: { id: schedule.id, status: SCHEDULE_STATUS.PAUSED, pausedAt: now }
     });
+  } catch (error) {
+    next(error);
+  }
+});
+
+/**
+ * POST /stream/schedules/:id/resume
+ * Resume a paused recurring donation schedule.
+ * Recalculates nextExecutionDate from now based on frequency.
+ */
+router.post('/schedules/:id/resume', checkPermission(PERMISSIONS.STREAM_UPDATE), streamScheduleIdSchema, async (req, res, next) => {
+  try {
+    const schedule = await Database.get(
+      'SELECT id, status, frequency FROM recurring_donations WHERE id = ?',
+      [req.params.id]
+    );
+
+    if (!schedule) {
+      return res.status(404).json({ success: false, error: 'Schedule not found' });
+    }
+
+    if (schedule.status !== SCHEDULE_STATUS.PAUSED) {
+      return res.status(400).json({
+        success: false,
+        error: `Cannot resume a schedule with status: ${schedule.status}`
+      });
+    }
+
+    // Recalculate next execution date from now
+    const now = new Date();
+    const nextExecutionDate = new Date(now);
+    switch (schedule.frequency) {
+      case 'daily':  nextExecutionDate.setDate(nextExecutionDate.getDate() + 1); break;
+      case 'weekly': nextExecutionDate.setDate(nextExecutionDate.getDate() + 7); break;
+      case 'monthly': nextExecutionDate.setMonth(nextExecutionDate.getMonth() + 1); break;
+      default: nextExecutionDate.setDate(nextExecutionDate.getDate() + 1);
+    }
+
+    const resumedAt = now.toISOString();
+    await Database.run(
+      'UPDATE recurring_donations SET status = ?, resumedAt = ?, nextExecutionDate = ? WHERE id = ?',
+      [SCHEDULE_STATUS.ACTIVE, resumedAt, nextExecutionDate.toISOString(), req.params.id]
+    );
+
+    res.json({
+      success: true,
+      message: 'Recurring donation schedule resumed successfully',
+      data: {
+        id: schedule.id,
+        status: SCHEDULE_STATUS.ACTIVE,
+        resumedAt,
+        nextExecutionDate: nextExecutionDate.toISOString()
+      }
+    });
+  } catch (error) {
+    next(error);
   }
 });
 
@@ -179,10 +425,10 @@ router.get('/schedules', async (req, res) => {
  * GET /stream/schedules/:id
  * Get a specific recurring donation schedule
  */
-router.get('/schedules/:id', async (req, res) => {
+router.get('/schedules/:id', checkPermission(PERMISSIONS.STREAM_READ), streamScheduleIdSchema, async (req, res) => {
   try {
     const schedule = await Database.get(
-      `SELECT 
+      `SELECT
         rd.id,
         rd.amount,
         rd.frequency,
@@ -191,6 +437,8 @@ router.get('/schedules/:id', async (req, res) => {
         rd.lastExecutionDate,
         rd.status,
         rd.executionCount,
+        rd.pausedAt,
+        rd.resumedAt,
         donor.publicKey as donorPublicKey,
         recipient.publicKey as recipientPublicKey
        FROM recurring_donations rd
@@ -212,7 +460,7 @@ router.get('/schedules/:id', async (req, res) => {
       data: schedule
     });
   } catch (error) {
-    console.error('Error fetching schedule:', error);
+    log.error('STREAM_ROUTE', 'Failed to fetch recurring donation schedule', { error: error.message });
     res.status(500).json({
       success: false,
       error: 'Failed to fetch schedule',
@@ -225,7 +473,7 @@ router.get('/schedules/:id', async (req, res) => {
  * DELETE /stream/schedules/:id
  * Cancel a recurring donation schedule
  */
-router.delete('/schedules/:id', async (req, res) => {
+router.delete('/schedules/:id', checkPermission(PERMISSIONS.STREAM_DELETE), streamScheduleIdSchema, async (req, res) => {
   try {
     const schedule = await Database.get(
       'SELECT id, status FROM recurring_donations WHERE id = ?',
@@ -249,13 +497,102 @@ router.delete('/schedules/:id', async (req, res) => {
       message: 'Recurring donation schedule cancelled successfully'
     });
   } catch (error) {
-    console.error('Error cancelling schedule:', error);
+    log.error('STREAM_ROUTE', 'Failed to cancel recurring donation schedule', { error: error.message });
     res.status(500).json({
       success: false,
       error: 'Failed to cancel schedule',
       message: error.message
     });
   }
+});
+
+// ─── SSE Transaction Feed ────────────────────────────────────────────────────
+
+// Wire donation lifecycle events → SSE broadcast
+donationEvents.on(donationEvents.constructor.EVENTS?.CREATED  || 'donation.created',  tx => SseManager.broadcast('transaction.created',   tx));
+donationEvents.on(donationEvents.constructor.EVENTS?.CONFIRMED || 'donation.confirmed', tx => SseManager.broadcast('transaction.confirmed', tx));
+donationEvents.on(donationEvents.constructor.EVENTS?.FAILED    || 'donation.failed',    tx => SseManager.broadcast('transaction.failed',    tx));
+
+/**
+ * GET /stream/feed
+ * Subscribe to a real-time SSE transaction feed.
+ *
+ * Query params:
+ *   walletAddress {string}  - Filter by donor or recipient address.
+ *   status        {string}  - Filter by transaction status.
+ *   minAmount     {number}  - Minimum amount (inclusive).
+ *   maxAmount     {number}  - Maximum amount (inclusive).
+ *
+ * Headers:
+ *   Last-Event-ID - Resume from a previous event ID (reconnection support).
+ */
+router.get('/feed', checkPermission(PERMISSIONS.STREAM_READ), (req, res) => {
+  const keyId = req.apiKey?.id != null ? String(req.apiKey.id) : (req.apiKey?.role || 'legacy');
+
+  if (SseManager.connectionCount(keyId) >= SseManager.MAX_CONNECTIONS_PER_KEY) {
+    return res.status(429).json({
+      success: false,
+      error: { code: 'TOO_MANY_CONNECTIONS', message: `Maximum ${SseManager.MAX_CONNECTIONS_PER_KEY} concurrent streams per API key` },
+    });
+  }
+
+  // Parse filters
+  const filter = {};
+  if (req.query.walletAddress) filter.walletAddress = req.query.walletAddress;
+  if (req.query.status)        filter.status        = req.query.status;
+  if (req.query.minAmount !== undefined) {
+    const v = Number(req.query.minAmount);
+    if (!Number.isFinite(v)) return res.status(400).json({ success: false, error: { code: 'INVALID_FILTER', message: 'minAmount must be a number' } });
+    filter.minAmount = v;
+  }
+  if (req.query.maxAmount !== undefined) {
+    const v = Number(req.query.maxAmount);
+    if (!Number.isFinite(v)) return res.status(400).json({ success: false, error: { code: 'INVALID_FILTER', message: 'maxAmount must be a number' } });
+    filter.maxAmount = v;
+  }
+
+  // SSE headers
+  res.setHeader('Content-Type', 'text/event-stream');
+  res.setHeader('Cache-Control', 'no-cache');
+  res.setHeader('Connection', 'keep-alive');
+  res.setHeader('X-Accel-Buffering', 'no');
+  res.flushHeaders();
+
+  const clientId = crypto.randomUUID ? crypto.randomUUID() : crypto.randomBytes(16).toString('hex');
+  const client = SseManager.addClient(clientId, keyId, filter, res);
+
+  // Replay missed events for reconnecting clients
+  const lastEventId = req.headers['last-event-id'];
+  if (lastEventId) {
+    const missed = SseManager.getMissedEvents(lastEventId);
+    for (const e of missed) {
+      if (SseManager.matchesFilter(e.data, filter)) {
+        client.send(e.id, e.event, e.data);
+      }
+    }
+  }
+
+  // Send initial connected event
+  SseManager.writeSseEvent(res, '0', 'connected', { clientId, message: 'Stream connected' });
+
+  // Heartbeat
+  const heartbeat = setInterval(() => {
+    res.write(': ping\n\n');
+  }, SseManager.HEARTBEAT_INTERVAL_MS);
+
+  req.on('close', () => {
+    clearInterval(heartbeat);
+    SseManager.removeClient(clientId);
+    log.info('SSE', 'Client disconnected', { clientId, keyId });
+  });
+});
+
+/**
+ * GET /stream/stats
+ * Return active SSE connection counts (admin only).
+ */
+router.get('/stats', checkPermission(PERMISSIONS.STREAM_READ), (req, res) => {
+  res.json({ success: true, data: SseManager.getStats() });
 });
 
 module.exports = router;
