@@ -3010,108 +3010,70 @@ class MockStellarService extends StellarServiceInterface {
   }
 
   /**
-   * Invoke a Soroban smart contract method (mock implementation using EscrowContract).
-   * Supports 'deposit' and 'release' methods; all others return success with no events.
-   * @param {string} contractId
-   * @param {string} method
-   * @param {Array} args
-   * @returns {Promise<{ status: string, returnValue: *, transactionHash: string, ledger: number, events: Array }>}
+   * Set a data entry on a mock account.
+   * @param {string} sourceSecret - Account secret key
+   * @param {string} key - Data entry key (max 64 bytes)
+   * @param {string|null} value - Data entry value (max 64 bytes), null to delete
+   * @returns {Promise<{hash: string, ledger: number}>}
    */
-  async invokeContract(contractId, method, args) {
-    if (!contractId) throw new Error('contractId is required');
-    if (!method) throw new Error('method is required');
-    if (!Array.isArray(args)) throw new Error('args must be an array');
+  async setDataEntry(sourceSecret, key, value) {
+    await this._simulateNetworkDelay();
+    this._validateSecretKey(sourceSecret);
 
-    if (!this._contracts) this._contracts = {};
-    if (!this._contractEvents) this._contractEvents = {};
-
-    // Lazily create an EscrowContract per contractId (goal defaults to 100)
-    if (!this._contracts[contractId]) {
-      const EscrowContract = require('../contracts/EscrowContract');
-      this._contracts[contractId] = new EscrowContract(args[1] || 100);
+    if (Buffer.byteLength(key, 'utf8') > 64) {
+      throw new ValidationError('Data entry key exceeds maximum length of 64 bytes');
+    }
+    if (value !== null && value !== undefined && Buffer.byteLength(value, 'utf8') > 64) {
+      throw new ValidationError('Data entry value exceeds maximum length of 64 bytes');
     }
 
-    const contract = this._contracts[contractId];
-    if (!this._contractEvents[contractId]) this._contractEvents[contractId] = [];
+    const wallet = this._findWalletBySecret(sourceSecret);
+    if (!wallet) {
+      throw new ValidationError('Invalid source secret key. The provided secret key does not match any account.');
+    }
 
-    let returnValue = null;
-    let events = [];
+    if (!wallet.dataEntries) wallet.dataEntries = {};
 
-    try {
-      if (method === 'deposit') {
-        const [donorId, amount] = args;
-        const result = contract.deposit(donorId, amount);
-        returnValue = result;
-        events = [{
-          contractId,
-          type: 'deposit',
-          topics: ['deposit', donorId],
-          data: { donorId, amount },
-          timestamp: new Date().toISOString(),
-          ledger: Date.now(),
-        }];
-      } else if (method === 'release') {
-        const [recipientId, goal] = args;
-        if (goal !== undefined) this._contracts[contractId]._goalAmount = goal;
-        const result = contract.release(recipientId);
-        returnValue = result;
-        events = result.events;
+    if (value === null || value === undefined) {
+      if (!Object.prototype.hasOwnProperty.call(wallet.dataEntries, key)) {
+        const { NotFoundError: NFE, ERROR_CODES: EC } = require('../utils/errors');
+        throw new NFE(`Data entry "${key}" not found`, EC.NOT_FOUND);
       }
-      // Unknown methods: success, no events
-    } catch (err) {
-      return { status: 'error', returnValue: err.message, transactionHash: null, ledger: null, events: [] };
+      delete wallet.dataEntries[key];
+    } else {
+      wallet.dataEntries[key] = value;
     }
 
-    const txHash = `mock-contract-tx-${contractId}-${method}-${Date.now()}`;
-    const ledger = Date.now();
-    this._contractEvents[contractId].push(...events);
-
-    return { status: 'success', returnValue, transactionHash: txHash, ledger, events };
+    const hash = `mock_data_${require('crypto').randomBytes(12).toString('hex')}`;
+    return { hash, ledger: Math.floor(Math.random() * 1000000) + 1000000 };
   }
 
   /**
-   * Simulate a Soroban contract invocation without submitting (dry-run).
-   * @param {string} contractId
-   * @param {string} method
-   * @param {Array} args
-   * @returns {Promise<{ status: string, returnValue: *, cost: Object, footprint: Object }>}
+   * Delete a data entry from a mock account.
+   * @param {string} sourceSecret - Account secret key
+   * @param {string} key - Data entry key to delete
+   * @returns {Promise<{hash: string, ledger: number}>}
    */
-  async simulateContractInvocation(contractId, method, args) {
-    if (!contractId) throw new Error('contractId is required');
-    if (!method) throw new Error('method is required');
-    if (!Array.isArray(args)) throw new Error('args must be an array');
-
-    return {
-      status: 'success',
-      returnValue: null,
-      cost: { cpuInsns: '1000', memBytes: '512' },
-      footprint: { readOnly: [], readWrite: [`contract:${contractId}`] },
-    };
+  async deleteDataEntry(sourceSecret, key) {
+    return this.setDataEntry(sourceSecret, key, null);
   }
 
   /**
-   * Read contract data entries (state) for a given contract.
-   * @param {string} contractId
-   * @returns {Promise<Array<{ key: string, value: * }>>}
+   * Get all data entries for a mock account.
+   * @param {string} publicKey - Account public key
+   * @returns {Promise<Object>} Key-value map of data entries
    */
-  async getContractState(contractId) {
-    if (!contractId) throw new Error('contractId is required');
-    if (!this._contracts || !this._contracts[contractId]) return [];
-    const state = this._contracts[contractId].getState();
-    return Object.entries(state).map(([key, value]) => ({ key, value }));
-  }
+  async getDataEntries(publicKey) {
+    await this._simulateNetworkDelay();
+    this._validatePublicKey(publicKey);
 
-  /**
-   * Retrieve stored contract events for a given contract ID.
-   * @param {string} contractId
-   * @param {number} [limit]
-   * @returns {Promise<Array>}
-   */
-  async getContractEvents(contractId, limit) {
-    if (!contractId) throw new Error('contractId is required');
-    const events = (this._contractEvents && this._contractEvents[contractId]) || [];
-    const sorted = [...events].sort((a, b) => b.ledger - a.ledger);
-    return limit !== undefined ? sorted.slice(0, limit) : sorted;
+    const wallet = this.wallets.get(publicKey);
+    if (!wallet) {
+      const { NotFoundError: NFE, ERROR_CODES: EC } = require('../utils/errors');
+      throw new NFE(`Account not found: ${publicKey}`, EC.WALLET_NOT_FOUND);
+    }
+
+    return { ...(wallet.dataEntries || {}) };
   }
 }
 

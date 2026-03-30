@@ -1,0 +1,23 @@
+# Artillery load test — Health Check
+# Run: npx artillery run tests/load/artillery/health-check.yml --target http://localhost:3000
+
+config:
+  target: "http://localhost:3000"
+  phases:
+    - name: "Warm-up"
+      duration: 30
+      arrivalRate: 5
+    - name: "Sustained load"
+      duration: 60
+      arrivalRate: 20
+  ensure:
+    p95: 150
+    maxErrorRate: 1
+
+scenarios:
+  - name: "Health check"
+    flow:
+      - get:
+          url: "/health"
+          expect:
+            - statusCode: 200

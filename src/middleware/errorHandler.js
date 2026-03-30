@@ -147,6 +147,10 @@ function errorHandler(err, req, res, next) {
     if (!isProduction) {
       errorBody.error.debug = { name: err.name };
     }
+    // Set X-Limit-Reset header for velocity limit errors
+    if (err.statusCode === 429 && err.resetAt) {
+      res.set('X-Limit-Reset', err.resetAt);
+    }
     return res.status(err.statusCode).json(errorBody);
   }
 

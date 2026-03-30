@@ -2410,56 +2410,66 @@ class StellarService extends StellarServiceInterface {
   }
 
   /**
-   * Invoke a Soroban smart contract method on-chain.
-   * @param {string} contractId - The contract's Stellar address
-   * @param {string} method - The contract function name to call
-   * @param {Array} args - Arguments to pass to the contract function
-   * @param {string} [sourceSecret] - Secret key of the invoking account
-   * @returns {Promise<{ status: string, returnValue: *, transactionHash: string, ledger: number, events: Array }>}
+   * Set a data entry on a Stellar account via manageData operation.
+   * @param {string} sourceSecret - Account secret key
+   * @param {string} key - Data entry key (max 64 bytes)
+   * @param {string} value - Data entry value (max 64 bytes)
+   * @returns {Promise<{hash: string, ledger: number}>}
    */
-  async invokeContract(contractId, method, args) {
-    if (!contractId) throw new Error('contractId is required');
-    if (!method) throw new Error('method is required');
-    if (!Array.isArray(args)) throw new Error('args must be an array');
-    // Real Soroban invocation would use StellarSdk.SorobanRpc here.
-    // Stub: throws to indicate live network is required.
-    throw new Error('Soroban contract invocation requires a live Soroban RPC connection');
+  async setDataEntry(sourceSecret, key, value) {
+    return StellarErrorHandler.wrap(async () => {
+      const keypair = StellarSdk.Keypair.fromSecret(sourceSecret);
+      const account = await this._executeWithRetry(
+        () => this.server.loadAccount(keypair.publicKey()),
+        'loadAccountForDataEntry'
+      );
+
+      const tx = new StellarSdk.TransactionBuilder(account, {
+        fee: this.baseFee,
+        networkPassphrase: this._getNetworkPassphrase(),
+      })
+        .addOperation(StellarSdk.Operation.manageData({ name: key, value }))
+        .setTimeout(30)
+        .build();
+
+      tx.sign(keypair);
+      const result = await this._executeWithRetry(
+        () => this.server.submitTransaction(tx),
+        'submitDataEntry'
+      );
+
+      return { hash: result.hash, ledger: result.ledger };
+    }, 'setDataEntry');
   }
 
   /**
-   * Simulate a Soroban contract invocation without submitting to the network.
-   * @param {string} contractId - The contract's Stellar address
-   * @param {string} method - The contract function name to simulate
-   * @param {Array} args - Arguments to pass to the contract function
-   * @returns {Promise<{ status: string, returnValue: *, cost: Object, footprint: Object }>}
+   * Delete a data entry from a Stellar account.
+   * @param {string} sourceSecret - Account secret key
+   * @param {string} key - Data entry key to delete
+   * @returns {Promise<{hash: string, ledger: number}>}
    */
-  async simulateContractInvocation(contractId, method, args) {
-    if (!contractId) throw new Error('contractId is required');
-    if (!method) throw new Error('method is required');
-    if (!Array.isArray(args)) throw new Error('args must be an array');
-    throw new Error('Soroban contract simulation requires a live Soroban RPC connection');
+  async deleteDataEntry(sourceSecret, key) {
+    return this.setDataEntry(sourceSecret, key, null);
   }
 
   /**
-   * Read contract data entries (state) for a given contract.
-   * @param {string} contractId - The contract's Stellar address
-   * @returns {Promise<Array<{ key: string, value: * }>>}
+   * Get all data entries for a Stellar account.
+   * @param {string} publicKey - Account public key
+   * @returns {Promise<Object>} Key-value map of data entries (values decoded from base64)
    */
-  async getContractState(contractId) {
-    if (!contractId) throw new Error('contractId is required');
-    throw new Error('Soroban contract state requires a live Soroban RPC connection');
-  }
+  async getDataEntries(publicKey) {
+    return StellarErrorHandler.wrap(async () => {
+      const account = await this._executeWithRetry(
+        () => this.server.loadAccount(publicKey),
+        'loadAccountForDataEntries'
+      );
 
-  /**
-   * Retrieve stored contract events for a given contract ID.
-   * @param {string} contractId - The contract's Stellar address
-   * @param {number} [limit] - Maximum number of events to return
-   * @returns {Promise<Array>}
-   */
-  async getContractEvents(contractId, limit) {
-    if (!contractId) throw new Error('contractId is required');
-    // Real implementation would query Horizon /effects or Soroban RPC.
-    return [];
+      const entries = {};
+      for (const [k, v] of Object.entries(account.data_attr || {})) {
+        entries[k] = Buffer.from(v, 'base64').toString('utf8');
+      }
+      return entries;
+    }, 'getDataEntries');
   }
 
 }

@@ -101,6 +101,41 @@ class RecurringDonationScheduler {
     });
   }
 
+  /**
+   * Gracefully stop the scheduler, waiting for any running job to complete.
+   * @param {number} [timeoutMs=10000] - Max wait time for running job
+   * @returns {Promise<void>}
+   */
+  async stopGracefully(timeoutMs = 10000) {
+    if (!this.isRunning) return;
+
+    clearInterval(this.intervalId);
+    this.intervalId = null;
+    this.isRunning = false;
+
+    const { correlationId, traceId } = getCorrelationSummary();
+
+    if (this.executingSchedules.size > 0) {
+      log.info('RECURRING_SCHEDULER', 'Waiting for running jobs to complete', {
+        running: this.executingSchedules.size,
+        correlationId,
+        traceId,
+      });
+
+      const deadline = Date.now() + timeoutMs;
+      await new Promise((resolve) => {
+        const check = setInterval(() => {
+          if (this.executingSchedules.size === 0 || Date.now() >= deadline) {
+            clearInterval(check);
+            resolve();
+          }
+        }, 100);
+      });
+    }
+
+    log.info('RECURRING_SCHEDULER', 'Scheduler stopped gracefully', { correlationId, traceId });
+  }
+
   // ─────────────────────────────────────────────────────────────────────────
   // Core processing
   // ─────────────────────────────────────────────────────────────────────────

@@ -443,6 +443,35 @@ class WebhookService {
       req.end();
     });
   }
+  /**
+   * Flush all pending webhook deliveries from the retry queue.
+   * Attempts immediate delivery for any webhooks with pending retries.
+   * @returns {Promise<void>}
+   */
+  async flushPending() {
+    let pending;
+    try {
+      const Database = require('../utils/database');
+      pending = await Database.all(
+        `SELECT * FROM webhooks WHERE is_active = 1 AND consecutive_failures > 0`,
+        []
+      );
+    } catch {
+      return;
+    }
+
+    if (!pending || pending.length === 0) return;
+
+    log.info('WEBHOOK_SERVICE', 'Flushing pending webhook deliveries', { count: pending.length });
+
+    await Promise.allSettled(
+      pending.map((webhook) =>
+        WebhookService._deliverWithRetry(webhook, 'flush', { flushed: true }, 0).catch(() => {})
+      )
+    );
+
+    log.info('WEBHOOK_SERVICE', 'Webhook flush complete');
+  }
 }
 
 module.exports = new WebhookService();

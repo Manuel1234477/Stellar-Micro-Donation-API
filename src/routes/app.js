@@ -596,54 +596,85 @@ async function startServer() {
 
       clearInterval(cleanupInterval); // Stop the timer so the process can exit
 
-      const timeoutMs = parseInt(process.env.SHUTDOWN_TIMEOUT || '30000', 10);
+      const timeoutMs = parseInt(process.env.SHUTDOWN_TIMEOUT_MS || process.env.SHUTDOWN_TIMEOUT || '30000', 10);
+      let forcedExit = false;
       const forceExit = setTimeout(() => {
-        log.error("SHUTDOWN", `Forced shutdown after ${timeoutMs}ms timeout`);
+        forcedExit = true;
+        log.error("SHUTDOWN", `Forced shutdown after ${timeoutMs}ms timeout`, {
+          abandonedRequests: inFlightRequests
+        });
         process.exit(1);
       }, timeoutMs);
 
       server.close(async () => {
         log.info("SHUTDOWN", "HTTP server closed to new connections");
 
-        const waitInterval = setInterval(async () => {
-          if (inFlightRequests > 0) {
-            log.info("SHUTDOWN", `Waiting for ${inFlightRequests} in-flight requests to complete...`);
-            return;
-          }
-          
-          clearInterval(waitInterval);
-          clearTimeout(forceExit);
-          log.info("SHUTDOWN", "All in-flight requests completed.");
+        // Wait for in-flight requests to drain
+        await new Promise((resolve) => {
+          const waitInterval = setInterval(() => {
+            if (forcedExit) { clearInterval(waitInterval); return resolve(); }
+            if (inFlightRequests > 0) {
+              log.info("SHUTDOWN", `Waiting for ${inFlightRequests} in-flight requests to complete...`);
+              return;
+            }
+            clearInterval(waitInterval);
+            log.info("SHUTDOWN", "All in-flight requests completed.");
+            resolve();
+          }, 500);
+        });
 
-          recurringDonationScheduler.stop();
-          reconciliationService.stop();
-          auditLogRetentionService.stop();
-          transactionSyncScheduler.stop();
-          require('../workers/expiryWorker').stop();
-          
-          // Stop quota reset job
-          if (server.stopQuotaResetJob) {
-            server.stopQuotaResetJob();
-            log.info("SHUTDOWN", "Quota reset job stopped");
-          }
-          
-          try {
-            await networkStatusService.shutdown();
-          } catch (err) {
-            log.error("SHUTDOWN", "Error shutting down NetworkStatusService", { error: err.message });
-          }
+        if (forcedExit) return;
 
-          if (replayCleanupTimer) {
-            clearInterval(replayCleanupTimer);
-            log.info("SHUTDOWN", "Replay detection cleanup timer stopped");
+        // Flush pending webhook deliveries
+        try {
+          const WebhookService = require('../services/WebhookService');
+          if (typeof WebhookService.flushPending === 'function') {
+            await WebhookService.flushPending();
           }
+          log.info("SHUTDOWN", "Webhooks flushed");
+        } catch (err) {
+          log.error("SHUTDOWN", "Error flushing webhooks", { error: err.message });
+        }
 
-          await Database.close();
-          log.info("SHUTDOWN", "Database pool closed");
+        // Stop recurring donation scheduler and wait for running job
+        try {
+          await recurringDonationScheduler.stopGracefully
+            ? recurringDonationScheduler.stopGracefully()
+            : recurringDonationScheduler.stop();
+          log.info("SHUTDOWN", "Scheduler stopped");
+        } catch (err) {
+          log.error("SHUTDOWN", "Error stopping scheduler", { error: err.message });
+        }
 
-          log.info("SHUTDOWN", "Graceful shutdown complete.");
-          process.exit(0);
-        }, 500);
+        clearTimeout(forceExit);
+
+        reconciliationService.stop();
+        auditLogRetentionService.stop();
+        transactionSyncScheduler.stop();
+        require('../workers/expiryWorker').stop();
+        
+        // Stop quota reset job
+        if (server.stopQuotaResetJob) {
+          server.stopQuotaResetJob();
+          log.info("SHUTDOWN", "Quota reset job stopped");
+        }
+        
+        try {
+          await networkStatusService.shutdown();
+        } catch (err) {
+          log.error("SHUTDOWN", "Error shutting down NetworkStatusService", { error: err.message });
+        }
+
+        if (replayCleanupTimer) {
+          clearInterval(replayCleanupTimer);
+          log.info("SHUTDOWN", "Replay detection cleanup timer stopped");
+        }
+
+        await Database.close();
+        log.info("SHUTDOWN", "Database pool closed");
+
+        log.info("SHUTDOWN", "Graceful shutdown complete.");
+        process.exit(0);
       });
     };
 
