@@ -24,3 +24,6 @@ jobs:
 
       - name: Run Tests with Coverage
         run: npm run test:coverage:ci
+
+      - name: Security audit
+        run: npm audit --audit-level=high
