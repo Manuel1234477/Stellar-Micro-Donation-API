@@ -1,202 +1,125 @@
 /**
- * SSE Transaction Feed
- *
- * Manages Server-Sent Events connections for real-time transaction streaming.
- * Supports filtering, reconnection via Last-Event-ID, heartbeats, and per-key
- * connection limits.
+ * SseManager
+ * Manages SSE connections for the transactions channel.
+ * Supports filtering by walletAddress / campaignId, heartbeats, and per-key connection limits.
  */
 
-'use strict';
-
-/** Maximum concurrent SSE connections per API key. */
 const MAX_CONNECTIONS_PER_KEY = 5;
-
-/** Heartbeat interval in milliseconds. */
 const HEARTBEAT_INTERVAL_MS = 30_000;
 
-/** How many recent events to buffer for Last-Event-ID reconnection. */
-const EVENT_BUFFER_SIZE = 500;
-
-/**
- * @typedef {object} SseFilter
- * @property {string} [walletAddress] - Match donor or recipient address.
- * @property {string} [status]        - Match transaction status.
- * @property {number} [minAmount]     - Minimum amount (inclusive).
- * @property {number} [maxAmount]     - Maximum amount (inclusive).
- */
-
-/**
- * @typedef {object} SseClient
- * @property {string}   id        - Unique client ID.
- * @property {string}   keyId     - API key identifier.
- * @property {SseFilter} filter   - Active event filter.
- * @property {Function} send      - Send an SSE event to this client.
- * @property {Function} close     - Close this client's connection.
- */
-
-/** @type {Map<string, SseClient>} clientId → client */
-const clients = new Map();
-
-/** @type {Map<string, Set<string>>} keyId → Set of clientIds */
-const keyConnections = new Map();
-
-/**
- * Circular event buffer for Last-Event-ID reconnection support.
- * @type {Array<{id: string, event: string, data: object}>}
- */
-const eventBuffer = [];
-let eventCounter = 0;
-
-/**
- * Generate a monotonically increasing event ID.
- * @returns {string}
- */
-function nextEventId() {
-  return String(++eventCounter);
-}
-
-/**
- * Append an event to the circular buffer.
- * @param {{id: string, event: string, data: object}} entry
- */
-function bufferEvent(entry) {
-  if (eventBuffer.length >= EVENT_BUFFER_SIZE) {
-    eventBuffer.shift();
+class SseManager {
+  constructor() {
+    /** @type {Map<string, Set<object>>} apiKey -> Set of client objects */
+    this._clients = new Map();
+    /** @type {NodeJS.Timeout|null} */
+    this._heartbeatTimer = null;
   }
-  eventBuffer.push(entry);
-}
 
-/**
- * Retrieve buffered events with id > lastEventId.
- * @param {string} lastEventId
- * @returns {Array<{id: string, event: string, data: object}>}
- */
-function getMissedEvents(lastEventId) {
-  const threshold = Number(lastEventId);
-  if (!Number.isFinite(threshold)) return [];
-  return eventBuffer.filter(e => Number(e.id) > threshold);
-}
-
-/**
- * Check whether a transaction matches the given filter.
- * @param {object} tx
- * @param {SseFilter} filter
- * @returns {boolean}
- */
-function matchesFilter(tx, filter) {
-  if (filter.walletAddress) {
-    if (tx.donor !== filter.walletAddress && tx.recipient !== filter.walletAddress) return false;
+  /**
+   * Start the periodic heartbeat.
+   * Safe to call multiple times.
+   */
+  start() {
+    if (this._heartbeatTimer) return;
+    this._heartbeatTimer = setInterval(() => this._sendHeartbeat(), HEARTBEAT_INTERVAL_MS);
+    if (this._heartbeatTimer.unref) this._heartbeatTimer.unref();
   }
-  if (filter.status && tx.status !== filter.status) return false;
-  const amount = Number(tx.amount);
-  if (filter.minAmount !== undefined && amount < filter.minAmount) return false;
-  if (filter.maxAmount !== undefined && amount > filter.maxAmount) return false;
-  return true;
-}
 
-/**
- * Format and write a single SSE message to a response stream.
- * @param {import('http').ServerResponse} res
- * @param {string} id
- * @param {string} event
- * @param {object} data
- */
-function writeSseEvent(res, id, event, data) {
-  res.write(`id: ${id}\nevent: ${event}\ndata: ${JSON.stringify(data)}\n\n`);
-}
-
-/**
- * Register a new SSE client.
- * @param {string} clientId
- * @param {string} keyId
- * @param {SseFilter} filter
- * @param {import('http').ServerResponse} res
- * @returns {SseClient}
- */
-function addClient(clientId, keyId, filter, res) {
-  const send = (id, event, data) => writeSseEvent(res, id, event, data);
-  const close = () => removeClient(clientId);
-
-  const client = { id: clientId, keyId, filter, send, close };
-  clients.set(clientId, client);
-
-  if (!keyConnections.has(keyId)) keyConnections.set(keyId, new Set());
-  keyConnections.get(keyId).add(clientId);
-
-  return client;
-}
-
-/**
- * Remove a client and clean up its key-connection slot.
- * @param {string} clientId
- */
-function removeClient(clientId) {
-  const client = clients.get(clientId);
-  if (!client) return;
-  clients.delete(clientId);
-  const set = keyConnections.get(client.keyId);
-  if (set) {
-    set.delete(clientId);
-    if (set.size === 0) keyConnections.delete(client.keyId);
-  }
-}
-
-/**
- * Count active connections for a given API key.
- * @param {string} keyId
- * @returns {number}
- */
-function connectionCount(keyId) {
-  return keyConnections.get(keyId)?.size ?? 0;
-}
-
-/**
- * Broadcast a transaction event to all matching clients.
- * @param {string} event - SSE event name.
- * @param {object} tx    - Transaction payload.
- */
-function broadcast(event, tx) {
-  const id = nextEventId();
-  const entry = { id, event, data: tx };
-  bufferEvent(entry);
-
-  for (const client of clients.values()) {
-    if (matchesFilter(tx, client.filter)) {
-      client.send(id, event, tx);
+  /** Stop the heartbeat timer. */
+  stop() {
+    if (this._heartbeatTimer) {
+      clearInterval(this._heartbeatTimer);
+      this._heartbeatTimer = null;
     }
   }
-}
 
-/**
- * Return a snapshot of current connection stats.
- * @returns {{ totalConnections: number, connectionsByKey: Record<string, number> }}
- */
-function getStats() {
-  const connectionsByKey = {};
-  for (const [keyId, set] of keyConnections.entries()) {
-    connectionsByKey[keyId] = set.size;
+  /**
+   * Add a new SSE client.
+   * @param {string} apiKey
+   * @param {object} res - Express response object
+   * @param {{walletAddress?: string, campaignId?: string}} filters
+   * @returns {{ added: boolean, limitExceeded: boolean }}
+   */
+  addClient(apiKey, res, filters = {}) {
+    const existing = this._clients.get(apiKey) || new Set();
+    if (existing.size >= MAX_CONNECTIONS_PER_KEY) {
+      return { added: false, limitExceeded: true };
+    }
+
+    const client = { res, filters };
+    existing.add(client);
+    this._clients.set(apiKey, existing);
+
+    res.on('close', () => this.removeClient(apiKey, client));
+
+    return { added: true, limitExceeded: false };
   }
-  return { totalConnections: clients.size, connectionsByKey };
+
+  /**
+   * Remove a specific client.
+   * @param {string} apiKey
+   * @param {object} client
+   */
+  removeClient(apiKey, client) {
+    const set = this._clients.get(apiKey);
+    if (!set) return;
+    set.delete(client);
+    if (set.size === 0) this._clients.delete(apiKey);
+  }
+
+  /**
+   * Broadcast a confirmed transaction to all matching clients.
+   * @param {object} transaction
+   */
+  broadcastTransaction(transaction) {
+    const event = `data: ${JSON.stringify({ type: 'transaction.confirmed', data: transaction })}\n\n`;
+    for (const clients of this._clients.values()) {
+      for (const client of clients) {
+        if (this._matches(client.filters, transaction)) {
+          try { client.res.write(event); } catch (_) { /* client gone */ }
+        }
+      }
+    }
+  }
+
+  /**
+   * Return total number of connected clients (all keys).
+   */
+  get connectionCount() {
+    let n = 0;
+    for (const s of this._clients.values()) n += s.size;
+    return n;
+  }
+
+  /**
+   * Return connection count for a specific API key.
+   * @param {string} apiKey
+   */
+  connectionCountForKey(apiKey) {
+    return (this._clients.get(apiKey) || new Set()).size;
+  }
+
+  // ---------------------------------------------------------------------------
+
+  _sendHeartbeat() {
+    for (const clients of this._clients.values()) {
+      for (const client of clients) {
+        try { client.res.write(': ping\n\n'); } catch (_) { /* client gone */ }
+      }
+    }
+  }
+
+  _matches(filters, transaction) {
+    if (filters.walletAddress &&
+        transaction.donor !== filters.walletAddress &&
+        transaction.recipient !== filters.walletAddress) {
+      return false;
+    }
+    if (filters.campaignId && transaction.campaignId !== filters.campaignId) {
+      return false;
+    }
+    return true;
+  }
 }
 
-module.exports = {
-  addClient,
-  removeClient,
-  connectionCount,
-  broadcast,
-  getStats,
-  matchesFilter,
-  getMissedEvents,
-  writeSseEvent,
-  MAX_CONNECTIONS_PER_KEY,
-  HEARTBEAT_INTERVAL_MS,
-  // exposed for testing
-  _clients: clients,
-  _eventBuffer: eventBuffer,
-  _reset() {
-    clients.clear();
-    keyConnections.clear();
-    eventBuffer.length = 0;
-    eventCounter = 0;
-  },
-};
+module.exports = new SseManager();

@@ -1,73 +1,97 @@
 /**
- * Corporate Matching Routes - API Endpoint Layer
- *
- * RESPONSIBILITY: HTTP mapping for corporate matching program enrollment
- * OWNER: Backend Team
- * DEPENDENCIES: CorporateMatchingService, middleware (auth, validation)
+ * Corporate Matching Routes
+ * Endpoints for employer allowlist management and the match claim workflow.
  */
 
 const express = require('express');
 const router = express.Router();
 const CorporateMatchingService = require('../services/CorporateMatchingService');
-const requireApiKey = require('../middleware/apiKey');
-const { validateSchema } = require('../middleware/schemaValidation');
-const log = require('../utils/log');
+const MockStellarService = require('../services/MockStellarService');
 
-const enrollEmployeeSchema = validateSchema({
-  body: {
-    fields: {
-      employee_wallet_id: { type: 'integer', required: true, min: 1 }
-    }
+// Shared service instance (can be replaced in tests)
+const stellarService = new MockStellarService();
+const matchingService = new CorporateMatchingService(stellarService);
+
+// ─── Admin: Employer Allowlist ────────────────────────────────────────────────
+
+/**
+ * POST /admin/corporate-matching/employers
+ * Add an employer to the allowlist with match ratio and annual cap.
+ */
+router.post('/admin/corporate-matching/employers', (req, res) => {
+  try {
+    const { employerId, name, matchRatio, annualCap } = req.body;
+    const employer = matchingService.addEmployer(employerId, name, Number(matchRatio), Number(annualCap));
+    res.status(201).json({ success: true, data: employer });
+  } catch (err) {
+    res.status(400).json({ success: false, error: err.message });
   }
 });
 
 /**
- * POST /corporate-matching/:id/enroll
- * Enroll an employee in a corporate matching program.
+ * GET /admin/corporate-matching/employers
+ * List all employers in the allowlist.
  */
-router.post('/:id/enroll', requireApiKey, enrollEmployeeSchema, async (req, res, next) => {
+router.get('/admin/corporate-matching/employers', (req, res) => {
+  res.json({ success: true, data: matchingService.listEmployers() });
+});
+
+// ─── Donor: Submit Claim ──────────────────────────────────────────────────────
+
+/**
+ * POST /corporate-matching/claim
+ * Donor submits a match request referencing their employer.
+ */
+router.post('/corporate-matching/claim', (req, res) => {
   try {
-    const { id } = req.params;
-    const { employee_wallet_id } = req.body;
+    const { donorId, employerId, donationAmount } = req.body;
+    const claim = matchingService.submitClaim(donorId, employerId, Number(donationAmount));
+    res.status(201).json({ success: true, data: claim });
+  } catch (err) {
+    res.status(400).json({ success: false, error: err.message });
+  }
+});
 
-    const enrollment = await CorporateMatchingService.enrollEmployee(parseInt(id), employee_wallet_id);
+// ─── Admin: Claims Management ─────────────────────────────────────────────────
 
-    res.status(201).json({
-      success: true,
-      data: enrollment
-    });
-  } catch (error) {
-    log.error('CORPORATE_MATCHING', 'Failed to enroll employee', { error: error.message });
-    next(error);
+/**
+ * GET /admin/corporate-matching/claims
+ * List pending (or all) claims.
+ */
+router.get('/admin/corporate-matching/claims', (req, res) => {
+  const { status } = req.query;
+  res.json({ success: true, data: matchingService.listClaims(status) });
+});
+
+/**
+ * POST /admin/corporate-matching/claims/:id/approve
+ * Approve a claim and trigger the on-chain matching donation.
+ * Body: { sourcePublicKey, donorPublicKey }
+ */
+router.post('/admin/corporate-matching/claims/:id/approve', async (req, res) => {
+  try {
+    const { sourcePublicKey, donorPublicKey } = req.body;
+    const claim = await matchingService.approveClaim(req.params.id, sourcePublicKey, donorPublicKey);
+    res.json({ success: true, data: claim });
+  } catch (err) {
+    const status = err.message.includes('not found') ? 404 : 400;
+    res.status(status).json({ success: false, error: err.message });
   }
 });
 
 /**
- * GET /corporate-matching/:id
- * Get details of a corporate matching program (public info).
+ * POST /admin/corporate-matching/claims/:id/reject
+ * Reject a claim.
+ * Body: { reason? }
  */
-router.get('/:id', requireApiKey, async (req, res, next) => {
+router.post('/admin/corporate-matching/claims/:id/reject', (req, res) => {
   try {
-    const { id } = req.params;
-    const program = await CorporateMatchingService.getById(parseInt(id));
-
-    // Return public information only
-    const publicProgram = {
-      id: program.id,
-      match_ratio: program.match_ratio,
-      per_employee_limit: program.per_employee_limit,
-      status: program.status,
-      created_at: program.created_at
-    };
-
-    res.json({
-      success: true,
-      data: publicProgram
-    });
-  } catch (error) {
-    log.error('CORPORATE_MATCHING', 'Failed to get corporate matching program', { error: error.message });
-    next(error);
+    const claim = matchingService.rejectClaim(req.params.id, req.body.reason);
+    res.json({ success: true, data: claim });
+  } catch (err) {
+    const status = err.message.includes('not found') ? 404 : 400;
+    res.status(status).json({ success: false, error: err.message });
   }
 });
 
-module.exports = router;
+module.exports = { router, matchingService };
