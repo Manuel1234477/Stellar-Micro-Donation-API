@@ -41,6 +41,7 @@ const routingAdminRoutes = require('./admin/routing');
 const impactMetricsAdminRoutes = require('./admin/impactMetrics');
 const impactRoutes = require('./impact');
 const adminAnalyticsRoutes = require('./admin/analytics');
+const adminInspectRoutes = require('./admin/inspect');
 const reconciliationAdminRoutes = require('./admin/reconciliation');
 const networkRoutes = require('./network');
 const webhooksRoutes = require('./webhooks');
@@ -84,6 +85,7 @@ const { requireAdmin } = require('../middleware/rbac');
 const requireApiKey = require('../middleware/apiKey');
 const encryptionRoutes = require('./encryption');
 const authRoutes = require('./auth');
+const toolsRoutes = require('./tools');
 const { metricsMiddleware, registry } = require('../utils/metrics');
 const { attachSubscriptionServer } = require('../graphql');
 
@@ -261,6 +263,7 @@ app.use('/orderbook/:baseAsset/:counterAsset', require('./orderbook'));
 app.use('/tags', tagsRoutes);
 app.use('/leaderboard', leaderboardRoutes);
 app.use('/federation', federationLookupRoutes);
+app.use('/tools', toolsRoutes);
 app.use('/auth', authRoutes);
 
 // Exchange rates endpoint
@@ -449,6 +452,9 @@ app.get('/admin/replay-stats', require('../middleware/rbac').requireAdmin(), (re
   }
 });
 
+// Transaction inspection (admin only)
+app.use('/admin/inspect/xdr', require('../middleware/rbac').requireAdmin(), adminInspectRoutes);
+
 // Audit logs endpoint (admin only)
 app.get('/admin/audit-logs', require('../middleware/rbac').requireAdmin(), async (req, res, next) => {
   try {
@@ -597,20 +603,22 @@ async function startServer() {
       // Attach real-time balance streaming WebSocket
       require('../services/websocketService').attach(server);
 
-      // Start pledge expiry worker
-      require('../workers/expiryWorker').start();
+      // Only start background workers and jobs if not in test environment
+      if (process.env.NODE_ENV !== 'test') {
+        const stopQuotaResetJob = startQuotaResetJob();
+        server.stopQuotaResetJob = stopQuotaResetJob;
 
-      recurringDonationScheduler.start();
-      reconciliationService.start();
-      auditLogRetentionService.start();
-      transactionSyncScheduler.start();
-      
-      // Start quota reset job
-      const stopQuotaResetJob = startQuotaResetJob();
-      server.stopQuotaResetJob = stopQuotaResetJob;
+        // Start pledge expiry worker
+        require('../workers/expiryWorker').start();
 
-      runCleanup(); // Run once on startup
-      cleanupInterval = setInterval(runCleanup, 24 * 60 * 60 * 1000);
+        recurringDonationScheduler.start();
+        reconciliationService.start();
+        auditLogRetentionService.start();
+        transactionSyncScheduler.start();
+        
+        runCleanup(); // Run once on startup
+        cleanupInterval = setInterval(runCleanup, 24 * 60 * 60 * 1000);
+      }
       
       // Initialize and start network status monitoring
       try {

@@ -172,7 +172,9 @@ class AbuseDetectionService {
   }
 
   startCleanup() {
-    this.cleanupTimer = setInterval(() => this.cleanup(), this.config.cleanupInterval);
+    if (process.env.NODE_ENV !== 'test' && process.env.NODE_ENV !== 'testing') {
+      this.cleanupTimer = setInterval(() => this.cleanup(), this.config.cleanupInterval);
+    }
   }
 
   stop() {

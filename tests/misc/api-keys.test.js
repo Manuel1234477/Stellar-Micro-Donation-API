@@ -31,6 +31,7 @@ describe('API Key Rotation', () => {
   afterAll(async () => {
     // Clean up test keys
     await db.run('DELETE FROM api_keys WHERE created_by = ?', ['test-suite']);
+    await db.close();
   });
 
   describe('Key Creation', () => {
@@ -79,7 +80,7 @@ describe('API Key Rotation', () => {
   });
 
   describe('Key Validation', () => {
-    it('should validate active key', async () => {
+    it('should validate key when key is active', async () => {
       const keyInfo = await apiKeysModel.validateApiKey(testKey);
       
       expect(keyInfo).not.toBeNull();
@@ -87,12 +88,12 @@ describe('API Key Rotation', () => {
       expect(keyInfo.status).toBe('active');
     });
 
-    it('should reject invalid key', async () => {
+    it('should return null when key is invalid', async () => {
       const keyInfo = await apiKeysModel.validateApiKey('invalid-key-123');
       expect(keyInfo).toBeNull();
     });
 
-    it('should reject revoked key', async () => {
+    it('should return null when key is revoked', async () => {
       // Create and revoke a key
       const keyInfo = await apiKeysModel.createApiKey({
         name: 'To Be Revoked',
@@ -106,7 +107,7 @@ describe('API Key Rotation', () => {
       expect(validationResult).toBeNull();
     });
 
-    it('should reject expired key', async () => {
+    it('should return null when key is expired', async () => {
       // Create a key that expires immediately
       const keyInfo = await apiKeysModel.createApiKey({
         name: 'Expired Key',
@@ -119,7 +120,7 @@ describe('API Key Rotation', () => {
       expect(validationResult).toBeNull();
     });
 
-    it('should warn when using deprecated key', async () => {
+    it('should flag as deprecated when key status is deprecated', async () => {
       // Create and deprecate a key
       const keyInfo = await apiKeysModel.createApiKey({
         name: 'To Be Deprecated',
@@ -136,7 +137,7 @@ describe('API Key Rotation', () => {
   });
 
   describe('Key Listing', () => {
-    it('should list all keys when admin authentication', async () => {
+    it('should return all keys when authenticated as admin', async () => {
       const response = await request(app)
         .get('/api/v1/api-keys')
         .set('x-api-key', adminKey);
@@ -187,7 +188,7 @@ describe('API Key Rotation', () => {
       expect(deprecatedKey.status).toBe('deprecated');
     });
 
-    it('should return warning headers when using deprecated key', async () => {
+    it('should return warning headers when request uses deprecated key', async () => {
       const keyInfo = await apiKeysModel.createApiKey({
         name: 'Deprecated Test',
         role: 'user',
@@ -226,7 +227,7 @@ describe('API Key Rotation', () => {
       expect(validationResult).toBeNull();
     });
 
-    it('should reject requests when revoked key', async () => {
+    it('should reject requests when API key is revoked', async () => {
       const keyInfo = await apiKeysModel.createApiKey({
         name: 'Revoked Test',
         role: 'user',
@@ -272,7 +273,7 @@ describe('API Key Rotation', () => {
   });
 
   describe('Authentication Middleware', () => {
-    it('should authenticate when valid database key', async () => {
+    it('should authenticate request when API key is valid', async () => {
       const response = await request(app)
         .get('/health')
         .set('x-api-key', testKey);
@@ -287,7 +288,7 @@ describe('API Key Rotation', () => {
       expect(response.status).toBe(401);
     });
 
-    it('should update last_used_at when key usage', async () => {
+    it('should update last_used_at when API key is used', async () => {
       const keyInfo = await apiKeysModel.createApiKey({
         name: 'Usage Tracking Test',
         role: 'user',
@@ -308,7 +309,7 @@ describe('API Key Rotation', () => {
   });
 
   describe('Role-Based Access', () => {
-    it('should attach correct role from database key', async () => {
+    it('should attach correct role when request uses valid key', async () => {
       const adminKeyInfo = await apiKeysModel.createApiKey({
         name: 'Role Test Admin',
         role: 'admin',

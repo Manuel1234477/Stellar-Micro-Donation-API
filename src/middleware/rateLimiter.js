@@ -42,6 +42,7 @@ const donationRateLimiter = rateLimit({
   },
   standardHeaders: true,
   legacyHeaders: false,
+  validate: false,
   handler: (req, res) => {
     // Audit log: Rate limit exceeded
     AuditLogService.log({
@@ -102,6 +103,7 @@ const verificationRateLimiter = rateLimit({
   },
   standardHeaders: true,
   legacyHeaders: false,
+  validate: false,
   handler: (req, res) => {
     // Audit log: Verification rate limit exceeded
     AuditLogService.log({
@@ -142,6 +144,7 @@ const batchRateLimiter = rateLimit({
   max: 10,
   standardHeaders: true,
   legacyHeaders: false,
+  validate: false,
   handler: (req, res) => {
     AuditLogService.log({
       category: AuditLogService.CATEGORY.RATE_LIMITING,
@@ -182,6 +185,7 @@ const bulkImportRateLimiter = rateLimit({
   keyGenerator: (req) => req.apiKey?.id || req.ip,
   standardHeaders: true,
   legacyHeaders: false,
+  validate: false,
   handler: (req, res) => {
     const retryAfter = req.rateLimit?.resetTime
       ? Math.ceil((new Date(req.rateLimit.resetTime) - Date.now()) / 1000)
@@ -211,6 +215,7 @@ function createRateLimiter(options = {}) {
     max: limit,
     standardHeaders: false, // Disable standard headers for tests
     legacyHeaders: true, // Use X-RateLimit-* headers for tests
+    validate: false,
     handler: (req, res) => {
       res.status(429).json({
         success: false,

@@ -157,6 +157,34 @@ class Logger {
   }
 
   /**
+   * Log info level message
+   */
+  info(scope, message, meta) {
+    log.info(scope, message, meta);
+  }
+
+  /**
+   * Log warning level message
+   */
+  warn(scope, message, meta) {
+    log.warn(scope, message, meta);
+  }
+
+  /**
+   * Log error level message
+   */
+  error(scope, message, meta) {
+    log.error(scope, message, meta);
+  }
+
+  /**
+   * Log debug level message
+   */
+  debug(scope, message, meta) {
+    log.debug(scope, message, meta);
+  }
+
+  /**
    * Main Middleware Function
    * Intent: Intercept the Express request/response cycle to capture performance and payload data.
    * * Flow:

@@ -23,7 +23,11 @@ class GeoBlockMiddleware {
   constructor() {
     this.lookup = null;
     this.initialized = false;
-    this.initPromise = this.initialize();
+    if (process.env.NODE_ENV !== 'test') {
+      this.initPromise = this.initialize();
+    } else {
+      this.initPromise = Promise.resolve();
+    }
   }
 
   /**

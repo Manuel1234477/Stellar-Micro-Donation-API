@@ -874,6 +874,8 @@ class Database {
    */
   static _startHealthCheck() {
     if (this._healthCheckTimer) return;
+    if (process.env.NODE_ENV === 'test') return;
+    
     this._healthCheckTimer = setInterval(() => {
       this._runHealthCheck().catch(() => {});
     }, HEALTH_CHECK_INTERVAL_MS);

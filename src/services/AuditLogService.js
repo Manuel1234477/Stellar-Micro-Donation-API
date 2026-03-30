@@ -105,6 +105,9 @@ const AUDIT_ACTION = {
   RECEIPT_GENERATED: 'RECEIPT_GENERATED',
 };
 
+let tableInitialized = false;
+let tableInitPromise = null;
+
 class AuditLogService {
   /**
    * Log a non-fatal audit write failure without polluting test output.
@@ -234,7 +237,41 @@ class AuditLogService {
    * @returns {Promise<Object>} Created audit log entry
    */
   static async log(params) {
+    if (!tableInitialized) {
+      if (tableInitPromise) {
+        await tableInitPromise;
+      } else {
+        tableInitPromise = AuditLogService.initializeTable();
+        await tableInitPromise;
+      }
+    }
     return AuditLogService._log(params);
+  }
+
+  static async initializeTable() {
+    if (tableInitialized) return;
+    try {
+      await db.run(`
+        CREATE TABLE IF NOT EXISTS audit_logs (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          timestamp TEXT NOT NULL,
+          category TEXT NOT NULL,
+          action TEXT NOT NULL,
+          severity TEXT NOT NULL,
+          result TEXT NOT NULL,
+          userId TEXT,
+          requestId TEXT,
+          ipAddress TEXT,
+          resource TEXT,
+          reason TEXT,
+          details TEXT,
+          integrityHash TEXT NOT NULL
+        )
+      `);
+      tableInitialized = true;
+    } finally {
+      tableInitPromise = null;
+    }
   }
 
   static async _log({
@@ -277,25 +314,7 @@ class AuditLogService {
       const hash = this.generateHash(auditEntry);
       auditEntry.integrityHash = hash;
 
-      // Ensure audit_logs table exists
-      await db.run(`
-        CREATE TABLE IF NOT EXISTS audit_logs (
-          id INTEGER PRIMARY KEY AUTOINCREMENT,
-          timestamp TEXT NOT NULL,
-          category TEXT NOT NULL,
-          action TEXT NOT NULL,
-          severity TEXT NOT NULL,
-          result TEXT NOT NULL,
-          userId TEXT,
-          requestId TEXT,
-          ipAddress TEXT,
-          resource TEXT,
-          reason TEXT,
-          details TEXT,
-          integrityHash TEXT NOT NULL
-        )
-      `);
-
+      // Integrity hash is already checked, proceed to insert
       // Insert into database (immutable)
       const dbResult = await db.run(
         `INSERT INTO audit_logs (
