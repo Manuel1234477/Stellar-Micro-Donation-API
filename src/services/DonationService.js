@@ -558,13 +558,22 @@ class DonationService {
     // Currency conversion
     const normalizedCurrency = currency.toUpperCase();
     let xlmAmount = amount;
+    let conversionRateFromOracle = null;
     if (normalizedCurrency !== 'XLM') {
       try {
-        xlmAmount = await priceOracle.convertToXLM(amount, normalizedCurrency);
+        const result = await priceOracle.convertToXLM(amount, normalizedCurrency);
+        // Support both new { xlmAmount, rate } shape and legacy plain-number shape
+        if (result !== null && typeof result === 'object' && 'xlmAmount' in result) {
+          xlmAmount = result.xlmAmount;
+          conversionRateFromOracle = result.rate;
+        } else {
+          xlmAmount = result;
+        }
         log.info('DONATION_SERVICE', 'Currency converted', {
           originalAmount: amount,
           originalCurrency: normalizedCurrency,
-          xlmAmount
+          xlmAmount,
+          rate: conversionRateFromOracle,
         });
       } catch (err) {
         throw new ValidationError(`Currency conversion failed: ${err.message}`);
@@ -679,6 +688,7 @@ class DonationService {
       amount: xlmAmount,
       originalAmount: normalizedCurrency !== 'XLM' ? amount : undefined,
       originalCurrency: normalizedCurrency !== 'XLM' ? normalizedCurrency : undefined,
+      conversionRate: conversionRateFromOracle != null ? conversionRateFromOracle : (conversionRate || undefined),
       donor: sanitizedDonor,
       recipient: sanitizedRecipient,
       memo: memoResult.sanitized,
@@ -702,7 +712,6 @@ class DonationService {
       paymentMethod,
       fallbackUsed,
       path: selectedPath,
-      conversionRate,
       // Overpayment fields (null when no overpayment)
       overpaymentFlagged: overpayment ? true : false,
       overpaymentDetails: overpayment || null,

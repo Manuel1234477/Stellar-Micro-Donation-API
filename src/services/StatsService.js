@@ -729,7 +729,7 @@ StatsService.getDashboardData = function getDashboardData({ period = '30d', gran
  * @param {Date} endDate - End date for aggregation
  * @returns {object} Breakdown with anonymous and identified totals
  */
-static getAnonymousBreakdown(startDate, endDate) {
+StatsService.getAnonymousBreakdown = function getAnonymousBreakdown(startDate, endDate) {
   const transactions = Transaction.getByDateRange(startDate, endDate);
   let anonymousCount = 0;
   let anonymousAmount = 0;
@@ -761,7 +761,7 @@ static getAnonymousBreakdown(startDate, endDate) {
       totalAmount: +(anonymousAmount + identifiedAmount).toFixed(7),
     },
   };
-}
+};
 
 // Invalidate dashboard cache whenever a new donation is created
 const donationEvents = require('../events/donationEvents');
@@ -769,5 +769,26 @@ donationEvents.on('donation.created', () => {
   const Cache = require('../utils/cache');
   Cache.clearPrefix('dashboard:');
 });
+
+StatsService.getCurrencyBreakdown = function () {
+  const transactions = Transaction.getAll();
+  const breakdown = {};
+
+  transactions.forEach((tx) => {
+    const currency = tx.originalCurrency || 'XLM';
+    if (!breakdown[currency]) {
+      breakdown[currency] = { currency, count: 0, totalOriginalAmount: 0, totalXlmAmount: 0 };
+    }
+    breakdown[currency].count += 1;
+    breakdown[currency].totalOriginalAmount += parseFloat(tx.originalAmount || tx.amount) || 0;
+    breakdown[currency].totalXlmAmount += parseFloat(tx.amount) || 0;
+  });
+
+  return Object.values(breakdown).map((entry) => ({
+    ...entry,
+    totalOriginalAmount: +entry.totalOriginalAmount.toFixed(7),
+    totalXlmAmount: +entry.totalXlmAmount.toFixed(7),
+  }));
+};
 
 module.exports = StatsService;

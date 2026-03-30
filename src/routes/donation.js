@@ -193,6 +193,178 @@ const Transaction = require('./models/transaction');
 const donationValidator = require('../utils/donationValidator');
 const { buildErrorResponse } = require('../utils/validationErrorFormatter');
 
+const stellarService = getStellarService();
+const donationService = new DonationService(stellarService);
+
+const SUPPORTED_CURRENCIES = ['XLM', 'USD', 'EUR', 'BTC'];
+
+const createDonationSchema = validateSchema({
+  body: {
+    fields: {
+      amount: { type: 'numberString', required: true, min: 0.0000001 },
+      currency: { type: 'string', required: false, nullable: true },
+      recipient: { type: 'string', required: true },
+      donor: { type: 'string', required: false, nullable: true },
+      memo: { type: 'string', required: false, nullable: true, maxLength: 255 },
+      notes: { type: 'string', required: false, nullable: true },
+      tags: { type: 'array', required: false, nullable: true },
+      anonymous: { type: 'boolean', required: false, nullable: true },
+      campaign_id: { type: 'number', required: false, nullable: true },
+    },
+  },
+});
+
+const donationIdParamSchema = validateSchema({
+  params: { fields: { id: { type: 'string', required: true } } },
+});
+
+const updateDonationStatusSchema = validateSchema({
+  params: { fields: { id: { type: 'string', required: true } } },
+  body: {
+    fields: {
+      status: { type: 'string', required: true },
+      stellarTxId: { type: 'string', required: false, nullable: true },
+      ledger: { type: 'number', required: false, nullable: true },
+      notes: { type: 'string', required: false, nullable: true },
+      tags: { type: 'array', required: false, nullable: true },
+    },
+  },
+});
+
+const LIFECYCLE_STAGES = { PROCESSED: 'processed' };
+
+function applyNotePrivacy(req, transaction) {
+  return transaction;
+}
+
+/**
+ * POST /donations
+ * Create a new donation. Accepts optional `currency` field (default: XLM).
+ * Non-XLM amounts are converted to XLM via PriceOracleService at submission time.
+ */
+router.post(
+  '/',
+  payloadSizeLimiter(ENDPOINT_LIMITS.singleDonation),
+  donationRateLimiter,
+  requireApiKey,
+  requireIdempotency,
+  createDonationSchema,
+  async (req, res, next) => {
+    try {
+      const {
+        amount,
+        currency = 'XLM',
+        recipient,
+        donor,
+        memo,
+        notes,
+        tags,
+        anonymous,
+        campaign_id,
+      } = req.body;
+
+      const normalizedCurrency = (currency || 'XLM').toUpperCase();
+      if (!SUPPORTED_CURRENCIES.includes(normalizedCurrency)) {
+        return res.status(400).json({
+          success: false,
+          error: {
+            code: 'UNSUPPORTED_CURRENCY',
+            message: `Unsupported currency: ${currency}. Supported: ${SUPPORTED_CURRENCIES.join(', ')}`,
+          },
+        });
+      }
+
+      const parsedAmount = parseFloat(amount);
+      if (isNaN(parsedAmount) || parsedAmount <= 0) {
+        return res.status(400).json(
+          buildErrorResponse([{ code: 'INVALID_AMOUNT', receivedValue: amount }])
+        );
+      }
+
+      const transaction = await donationService.createDonationRecord({
+        amount: parsedAmount,
+        currency: normalizedCurrency,
+        donor: donor || null,
+        recipient,
+        memo,
+        notes,
+        tags,
+        anonymous: anonymous === true,
+        campaign_id: campaign_id || null,
+        apiKeyId: req.apiKeyId || null,
+        apiKeyRole: req.apiKeyRole || 'user',
+        idempotencyKey: req.idempotencyKey,
+        requestId: req.id,
+      });
+
+      if (req.markLifecycleStage) req.markLifecycleStage(LIFECYCLE_STAGES.PROCESSED);
+
+      return res.status(201).json({ success: true, data: transaction });
+    } catch (error) {
+      next(error);
+    }
+  }
+);
+
+/**
+ * GET /donations
+ * List all donations
+ */
+router.get('/', checkPermission(PERMISSIONS.DONATIONS_READ), (req, res, next) => {
+  try {
+    const transactions = donationService.getAllDonations();
+    res.json({ success: true, data: transactions });
+  } catch (error) {
+    next(error);
+  }
+});
+
+/**
+ * GET /donations/recent
+ * Get recent donations
+ */
+router.get('/recent', checkPermission(PERMISSIONS.DONATIONS_READ), (req, res, next) => {
+  try {
+    const limit = parseInt(req.query.limit, 10) || 10;
+    const transactions = donationService.getRecentDonations(limit);
+    res.json({ success: true, data: transactions });
+  } catch (error) {
+    next(error);
+  }
+});
+
+/**
+ * GET /donations/limits
+ * Get donation amount limits
+ */
+router.get('/limits', checkPermission(PERMISSIONS.DONATIONS_READ), (req, res, next) => {
+  try {
+    const limits = donationValidator.getLimits ? donationValidator.getLimits() : {};
+    res.json({ success: true, data: limits });
+  } catch (error) {
+    next(error);
+  }
+});
+
+/**
+ * POST /donations/verify
+ * Verify a transaction on the blockchain
+ */
+router.post('/verify', verificationRateLimiter, requireApiKey, async (req, res, next) => {
+  try {
+    const { transactionHash } = req.body;
+    if (!transactionHash) {
+      return res.status(400).json(
+        buildErrorResponse([{ code: 'MISSING_TRANSACTION_HASH', receivedValue: transactionHash }])
+      );
+    }
+    const result = await donationService.verifyTransaction(transactionHash);
+    res.json({ success: true, data: result });
+  } catch (error) {
+    next(error);
+  }
+});
+
 /**
  * GET /donations/cost-breakdown
  * Return an itemized cost breakdown for a proposed donation.

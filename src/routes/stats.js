@@ -591,4 +591,21 @@ router.get('/anonymous-breakdown', checkPermission(PERMISSIONS.STATS_READ), (req
   }
 });
 
+/**
+ * GET /stats/currency-breakdown
+ * Returns donation totals grouped by original currency.
+ */
+router.get('/currency-breakdown', checkPermission(PERMISSIONS.STATS_READ), (req, res, next) => {
+  try {
+    const data = StatsService.getCurrencyBreakdown();
+    res.json({
+      success: true,
+      data,
+      metadata: { generatedAt: new Date().toISOString() },
+    });
+  } catch (error) {
+    next(error);
+  }
+});
+
 module.exports = router;

@@ -12,11 +12,10 @@
 const https = require('https');
 const log = require('../utils/log');
 
-const SUPPORTED_CURRENCIES = ['usd', 'eur', 'gbp'];
-const CACHE_TTL_MS = 5 * 60 * 1000; // 5 minutes
+const SUPPORTED_CURRENCIES = ['usd', 'eur', 'btc'];
+const CACHE_TTL_MS = 60 * 1000; // 60 seconds
 const COINGECKO_URL =
-  'https://api.coingecko.com/api/v3/simple/price?ids=stellar&vs_currencies=' +
-  SUPPORTED_CURRENCIES.join(',');
+  'https://api.coingecko.com/api/v3/simple/price?ids=stellar,bitcoin&vs_currencies=usd,eur';
 
 let cache = {
   rates: null,   // { usd: 0.12, eur: 0.11, gbp: 0.09 }
@@ -25,7 +24,9 @@ let cache = {
 
 /**
  * Fetch rates from CoinGecko (raw HTTP, no extra deps).
- * @returns {Promise<Object>} rates map e.g. { usd: 0.12, eur: 0.11, gbp: 0.09 }
+ * Returns a normalised map: { usd: <XLM per USD>, eur: <XLM per EUR>, btc: <XLM per BTC> }
+ * where each value is "how many XLM you get for 1 unit of that currency".
+ * @returns {Promise<Object>}
  */
 function fetchFromCoinGecko() {
   return new Promise((resolve, reject) => {
@@ -39,7 +40,19 @@ function fetchFromCoinGecko() {
             if (!json.stellar) {
               return reject(new Error('Unexpected CoinGecko response shape'));
             }
-            resolve(json.stellar); // { usd: ..., eur: ..., gbp: ... }
+            // XLM price in USD and EUR
+            const xlmUsd = json.stellar.usd;
+            const xlmEur = json.stellar.eur;
+            // BTC price in USD; derive XLM/BTC rate
+            const btcUsd = json.bitcoin && json.bitcoin.usd;
+
+            const rates = { usd: xlmUsd, eur: xlmEur };
+            if (btcUsd && xlmUsd) {
+              // rates[key] = "price of 1 XLM in that currency"
+              // For BTC: 1 XLM = (xlmUsd / btcUsd) BTC
+              rates.btc = xlmUsd / btcUsd;
+            }
+            resolve(rates);
           } catch (e) {
             reject(e);
           }
@@ -78,26 +91,29 @@ async function getRates() {
 }
 
 /**
- * Convert an amount in the given fiat currency to XLM.
+ * Convert an amount in the given currency to XLM.
  * @param {number} amount
- * @param {string} currency  e.g. "USD"
- * @returns {Promise<number>} XLM amount (7 decimal places)
+ * @param {string} currency  e.g. "USD", "EUR", "BTC"
+ * @returns {Promise<{ xlmAmount: number, rate: number }>}
  */
 async function convertToXLM(amount, currency) {
   const key = currency.toLowerCase();
-  if (key === 'xlm') return amount;
+  if (key === 'xlm') return { xlmAmount: amount, rate: 1 };
 
   if (!SUPPORTED_CURRENCIES.includes(key)) {
     throw new Error(`Unsupported currency: ${currency}. Supported: XLM, ${SUPPORTED_CURRENCIES.map(c => c.toUpperCase()).join(', ')}`);
   }
 
   const rates = await getRates();
-  const xlmPerUnit = rates[key]; // e.g. 0.12 USD per 1 XLM  →  1 USD = 1/0.12 XLM
+  const xlmPerUnit = rates[key]; // e.g. for USD: 1 USD = (1/xlmUsd) XLM
   if (!xlmPerUnit || xlmPerUnit <= 0) {
     throw new Error(`Invalid rate for ${currency}`);
   }
 
-  return parseFloat((amount / xlmPerUnit).toFixed(7));
+  // rates[key] is the XLM price in that currency (e.g. 0.10 USD per XLM)
+  // So 1 unit of currency = 1/rate XLM
+  const xlmAmount = parseFloat((amount / xlmPerUnit).toFixed(7));
+  return { xlmAmount, rate: xlmPerUnit };
 }
 
 /**
