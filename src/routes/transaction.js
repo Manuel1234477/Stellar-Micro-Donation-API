@@ -133,15 +133,10 @@
 
 const express = require('express');
 const router = express.Router();
-const Transaction = require('./models/transaction');
-const TransactionSyncService = require('../services/TransactionSyncService');
-const MultiSigService = require('../services/MultiSigService');
-const { checkPermission } = require('../middleware/rbac');
-const { PERMISSIONS } = require('../utils/permissions');
-const { validatePagination } = require('../utils/validationHelpers');
-const { validateSchema } = require('../middleware/schemaValidation');
-const serviceContainer = require('../config/serviceContainer');
-const { payloadSizeLimiter, ENDPOINT_LIMITS } = require('../middleware/payloadSizeLimiter');
+const Transaction = require('../models/transaction');
+const TransactionSyncService = require('../../services/TransactionSyncService');
+const { buildErrorResponse } = require('../../utils/validationErrorFormatter');
+const sseManager = require('../../services/SseManager');
 
 const multiSigService = new MultiSigService(serviceContainer.getStellarService());
 
@@ -188,16 +183,17 @@ router.get('/', checkPermission(PERMISSIONS.TRANSACTIONS_READ), transactionListQ
   try {
     const { limit = 10, offset = 0 } = req.query;
 
-    const paginationValidation = validatePagination(limit, offset);
+    
+    if (isNaN(limit) || limit <= 0) {
+      return res.status(400).json(
+        buildErrorResponse([{ code: 'INVALID_LIMIT', receivedValue: req.query.limit }])
+      );
+    }
 
-    if (!paginationValidation.valid) {
-      return res.status(400).json({
-        success: false,
-        error: {
-          code: 'INVALID_PAGINATION',
-          message: paginationValidation.error
-        }
-      });
+    if (isNaN(offset) || offset < 0) {
+      return res.status(400).json(
+        buildErrorResponse([{ code: 'INVALID_OFFSET', receivedValue: req.query.offset }])
+      );
     }
 
     const result = Transaction.getPaginated({
@@ -225,25 +221,10 @@ router.post(
     try {
       const { publicKey } = req.body;
 
-      if (!publicKey) {
-        return res.status(400).json({
-          success: false,
-          error: {
-            code: "MISSING_PUBLIC_KEY",
-            message: "publicKey is required",
-          },
-        });
-      }
-
-      const syncService = new TransactionSyncService();
-      const result = await syncService.syncWalletTransactions(publicKey);
-
-      return res.status(200).json({
-        success: true,
-        data: result,
-      });
-    } catch (error) {
-      next(error);
+    if (!publicKey) {
+      return res.status(400).json(
+        buildErrorResponse([{ code: 'MISSING_PUBLIC_KEY', receivedValue: publicKey }])
+      );
     }
   },
 );
@@ -521,3 +502,40 @@ router.post(
 
 module.exports = router;
 
+/**
+ * GET /transactions/stream
+ * SSE endpoint for real-time confirmed transaction events.
+ * Query params: ?walletAddress=  ?campaignId=
+ * Header: x-api-key (used as connection key; defaults to 'anonymous')
+ */
+router.get('/stream', (req, res) => {
+  const apiKey = req.headers['x-api-key'] || 'anonymous';
+  const filters = {
+    walletAddress: req.query.walletAddress || null,
+    campaignId: req.query.campaignId || null,
+  };
+
+  const { added, limitExceeded } = sseManager.addClient(apiKey, res, filters);
+
+  if (limitExceeded) {
+    return res.status(429).json({
+      success: false,
+      error: { code: 'CONNECTION_LIMIT_EXCEEDED', message: 'Max 5 concurrent SSE connections per API key' },
+    });
+  }
+
+  if (!added) {
+    return res.status(500).json({ success: false, error: { code: 'SSE_ERROR', message: 'Failed to add SSE client' } });
+  }
+
+  res.setHeader('Content-Type', 'text/event-stream');
+  res.setHeader('Cache-Control', 'no-cache');
+  res.setHeader('Connection', 'keep-alive');
+  res.flushHeaders();
+
+  // Send initial connection event
+  res.write(`data: ${JSON.stringify({ type: 'connected' })}\n\n`);
+});
+
+module.exports = router;
+module.exports.sseManager = sseManager;

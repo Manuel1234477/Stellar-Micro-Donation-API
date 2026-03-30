@@ -112,80 +112,7 @@ const { checkPermission, requireAdmin } = require('../middleware/rbac');
 const { PERMISSIONS } = require('../utils/permissions');
 const LimitService = require('../services/LimitService');
 const Database = require('../utils/database');
-const { ValidationError, NotFoundError, ERROR_CODES } = require('../utils/errors');
-const WalletService = require('../services/WalletService');
-const Wallet = require('../routes/models/wallet');
-const { getStellarService } = require('../config/stellar');
-const log = require('../utils/log');
-const { cacheMiddleware } = require('../middleware/caching');
-const { validateSchema } = require('../middleware/schemaValidation');
-const { parseCursorPaginationQuery } = require('../utils/pagination');
-const { validateDataEntry } = require('../middleware/validateDataEntry');
-// eslint-disable-next-line no-unused-vars
-const { sanitizeLabel, sanitizeName } = require('../utils/sanitizer');
-const { payloadSizeLimiter, ENDPOINT_LIMITS } = require('../middleware/payloadSizeLimiter');
-
-const walletService = new WalletService(require('../config/serviceContainer').getStellarService());
-const AuditLogService = require('../services/AuditLogService');
-const walletCreateSchema = validateSchema({
-  body: {
-    fields: {
-      address: {
-        type: 'string',
-        required: true,
-        trim: true,
-        minLength: 1,
-        maxLength: 255,
-      },
-      label: { type: 'string', required: false, maxLength: 255, nullable: true },
-      ownerName: { type: 'string', required: false, maxLength: 255, nullable: true },
-      sponsored: { type: 'boolean', required: false, nullable: true },
-    },
-  },
-});
-
-const walletIdSchema = validateSchema({
-  params: {
-    fields: {
-      id: { type: 'integerString', required: true },
-    },
-  },
-});
-
-const walletUpdateSchema = validateSchema({
-  params: {
-    fields: {
-      id: { type: 'integerString', required: true },
-    },
-  },
-  body: {
-    fields: {
-      label: { type: 'string', required: false, maxLength: 255, nullable: true },
-      ownerName: { type: 'string', required: false, maxLength: 255, nullable: true },
-    },
-    validate: (body) => {
-      const hasLabel = Object.prototype.hasOwnProperty.call(body, 'label');
-      const hasOwnerName = Object.prototype.hasOwnProperty.call(body, 'ownerName');
-      return hasLabel || hasOwnerName
-        ? null
-        : 'At least one field (label or ownerName) is required';
-    },
-  },
-});
-
-const walletPublicKeySchema = validateSchema({
-  params: {
-    fields: {
-      publicKey: {
-        type: 'string',
-        required: true,
-        trim: true,
-        minLength: 1,
-        maxLength: 255,
-      },
-    },
-  },
-});
+const { buildErrorResponse } = require('../utils/validationErrorFormatter');
 
 /**
  * POST /wallets
@@ -196,7 +123,11 @@ router.post('/', payloadSizeLimiter(ENDPOINT_LIMITS.wallet), checkPermission(PER
   try {
     const { address, label, ownerName, sponsored } = req.body;
 
-    const wallet = await walletService.createWallet({ address, label, ownerName, sponsored: !!sponsored });
+    if (!address) {
+      return res.status(400).json(
+        buildErrorResponse([{ code: 'MISSING_ADDRESS', receivedValue: address }])
+      );
+    }
 
     await AuditLogService.log({
       category: AuditLogService.CATEGORY.WALLET_OPERATION,
@@ -294,9 +225,9 @@ router.patch('/:id', checkPermission(PERMISSIONS.WALLETS_UPDATE), walletUpdateSc
     const { label, ownerName } = req.body;
 
     if (!label && !ownerName) {
-      return res.status(400).json({
-        error: 'At least one field (label or ownerName) is required'
-      });
+      return res.status(400).json(
+        buildErrorResponse([{ code: 'MISSING_WALLET_FIELD', receivedValue: undefined }])
+      );
     }
 
     const wallet = await walletService.updateWallet(req.params.id, { label, ownerName });
