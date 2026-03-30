@@ -47,6 +47,17 @@ class RoutingDecisionRepository {
   }
 
   /**
+   * Find all routing decisions, ordered by most recent first.
+   * @returns {Promise<Object[]>}
+   */
+  async findAll() {
+    const rows = await Database.all(
+      `SELECT * FROM routing_decisions ORDER BY createdAt DESC`
+    );
+    return rows.map(this._deserialize);
+  }
+
+  /**
    * Find all decisions for a given donation ID.
    * @param {string} donationId
    * @returns {Promise<Object[]>}

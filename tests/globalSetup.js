@@ -213,6 +213,45 @@ module.exports = async () => {
     try {
       await Database.run(`ALTER TABLE recurring_donations ADD COLUMN resumedAt DATETIME`);
     } catch (_) {}
+
+    // Smart donation routing tables (migration 005 + 006)
+    await Database.run(`CREATE TABLE IF NOT EXISTS recipient_pools (
+      id        INTEGER PRIMARY KEY AUTOINCREMENT,
+      name      TEXT    NOT NULL UNIQUE,
+      createdAt DATETIME DEFAULT CURRENT_TIMESTAMP
+    )`);
+    await Database.run(`CREATE TABLE IF NOT EXISTS recipient_pool_members (
+      pool_name         TEXT NOT NULL REFERENCES recipient_pools(name) ON DELETE CASCADE,
+      recipient_id      TEXT NOT NULL,
+      latitude          REAL,
+      longitude         REAL,
+      campaign_deadline DATETIME,
+      display_name      TEXT,
+      weight            REAL DEFAULT 1,
+      priority          REAL DEFAULT 0,
+      PRIMARY KEY (pool_name, recipient_id)
+    )`);
+    await Database.run(`CREATE TABLE IF NOT EXISTS round_robin_state (
+      pool_name  TEXT PRIMARY KEY,
+      next_index INTEGER NOT NULL DEFAULT 0,
+      updatedAt  DATETIME DEFAULT CURRENT_TIMESTAMP
+    )`);
+    await Database.run(`CREATE TABLE IF NOT EXISTS routing_decisions (
+      id          TEXT PRIMARY KEY,
+      donation_id TEXT NOT NULL,
+      pool_name   TEXT NOT NULL,
+      strategy    TEXT NOT NULL,
+      selected_id TEXT NOT NULL,
+      candidates  TEXT NOT NULL,
+      excluded    TEXT NOT NULL,
+      decided_at  DATETIME NOT NULL,
+      createdAt   DATETIME DEFAULT CURRENT_TIMESTAMP
+    )`);
+    await Database.run(`CREATE TABLE IF NOT EXISTS routing_config (
+      pool_name TEXT PRIMARY KEY,
+      strategy  TEXT NOT NULL,
+      updatedAt DATETIME DEFAULT CURRENT_TIMESTAMP
+    )`);
   } catch (e) {
     // Ignore errors - tables may already exist
   }

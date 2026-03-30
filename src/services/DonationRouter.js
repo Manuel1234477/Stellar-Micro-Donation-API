@@ -13,8 +13,10 @@ const HighestNeedStrategy = require('./routing/HighestNeedStrategy');
 const GeographicStrategy = require('./routing/GeographicStrategy');
 const CampaignUrgencyStrategy = require('./routing/CampaignUrgencyStrategy');
 const RoundRobinStrategy = require('./routing/RoundRobinStrategy');
+const WeightedStrategy = require('./routing/WeightedStrategy');
+const PriorityStrategy = require('./routing/PriorityStrategy');
 
-const VALID_STRATEGIES = ['highest-need', 'geographic', 'campaign-urgency', 'round-robin'];
+const VALID_STRATEGIES = ['highest-need', 'geographic', 'campaign-urgency', 'round-robin', 'weighted', 'priority'];
 
 // Default lookback window: 30 days
 const DEFAULT_LOOKBACK_MS = 30 * 24 * 60 * 60 * 1000;
@@ -38,6 +40,8 @@ class DonationRouter {
       'geographic': new GeographicStrategy(),
       'campaign-urgency': new CampaignUrgencyStrategy(),
       'round-robin': new RoundRobinStrategy(),
+      'weighted': new WeightedStrategy(),
+      'priority': new PriorityStrategy(),
     };
   }
 
@@ -97,6 +101,10 @@ class DonationRouter {
     } else if (routingStrategy === 'round-robin') {
       currentIndex = await this.roundRobinStateRepo.incrementAndWrap(poolName, pool.length);
       result = this._strategies['round-robin'].select(pool, { currentIndex });
+    } else if (routingStrategy === 'weighted') {
+      result = this._strategies['weighted'].select(pool, {});
+    } else if (routingStrategy === 'priority') {
+      result = this._strategies['priority'].select(pool, {});
     }
 
     const { selectedId, excludedIds } = result;

@@ -24,6 +24,7 @@ const RoundRobinStateRepository = require('../services/RoundRobinStateRepository
 const RoutingDecisionRepository = require('../services/RoutingDecisionRepository');
 const DonationTotalsRepository = require('../services/DonationTotalsRepository');
 const DonationRouter = require('../services/DonationRouter');
+const RoutingConfigRepository = require('../services/RoutingConfigRepository');
 
 class ServiceContainer {
   constructor(config = {}) {
@@ -70,6 +71,7 @@ class ServiceContainer {
     this.roundRobinStateRepo = new RoundRobinStateRepository();
     this.routingDecisionRepo = new RoutingDecisionRepository();
     this.donationTotalsRepo = new DonationTotalsRepository();
+    this.routingConfigRepo = new RoutingConfigRepository();
     this.donationRouter = new DonationRouter({
       recipientPoolRepo: this.recipientPoolRepo,
       routingDecisionRepo: this.routingDecisionRepo,
@@ -124,6 +126,10 @@ class ServiceContainer {
 
   getDonationTotalsRepo() {
     return this.donationTotalsRepo;
+  }
+
+  getRoutingConfigRepo() {
+    return this.routingConfigRepo;
   }
 
   getDonationRouter() {

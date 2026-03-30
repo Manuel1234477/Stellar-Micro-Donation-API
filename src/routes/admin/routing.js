@@ -100,13 +100,69 @@ router.delete('/pools/:name', requireApiKey, requireAdmin(), async (req, res, ne
 });
 
 /**
+ * POST /admin/routing/strategies
+ * Set the active routing strategy for a pool.
+ * Body: { poolName: string, strategy: string }
+ */
+router.post('/strategies', requireApiKey, requireAdmin(), async (req, res, next) => {
+  try {
+    const { poolName, strategy } = req.body;
+    if (!poolName || !strategy) {
+      return res.status(400).json({
+        success: false,
+        error: { code: 'VALIDATION_ERROR', message: 'poolName and strategy are required' },
+      });
+    }
+    const VALID_STRATEGIES = ['round-robin', 'weighted', 'priority', 'highest-need', 'geographic', 'campaign-urgency'];
+    if (!VALID_STRATEGIES.includes(strategy)) {
+      return res.status(400).json({
+        success: false,
+        error: { code: 'VALIDATION_ERROR', message: `strategy must be one of: ${VALID_STRATEGIES.join(', ')}` },
+      });
+    }
+    const configRepo = serviceContainer.getRoutingConfigRepo();
+    await configRepo.setStrategy(poolName, strategy);
+    res.json({ success: true, data: { poolName, strategy } });
+  } catch (error) {
+    next(error);
+  }
+});
+
+/**
+ * GET /admin/routing/strategies
+ * Retrieve current routing strategy configuration.
+ * Query params: poolName (optional — if omitted, returns all)
+ */
+router.get('/strategies', requireApiKey, requireAdmin(), async (req, res, next) => {
+  try {
+    const configRepo = serviceContainer.getRoutingConfigRepo();
+    if (req.query.poolName) {
+      const config = await configRepo.getStrategy(req.query.poolName);
+      if (!config) {
+        return res.status(404).json({
+          success: false,
+          error: { code: 'NOT_FOUND', message: `No strategy configured for pool '${req.query.poolName}'` },
+        });
+      }
+      return res.json({ success: true, data: config });
+    }
+    const configs = await configRepo.listAll();
+    res.json({ success: true, count: configs.length, data: configs });
+  } catch (error) {
+    next(error);
+  }
+});
+
+/**
  * GET /admin/routing/decisions
- * Query routing decisions.
- * Query params: donationId, poolName, strategy
+ * Query routing decisions with optional filters and pagination.
+ * Query params: donationId, poolName, strategy, page (default 1), limit (default 20)
  */
 router.get('/decisions', requireApiKey, requireAdmin(), async (req, res, next) => {
   try {
     const { donationId, poolName, strategy } = req.query;
+    const page = Math.max(1, parseInt(req.query.page, 10) || 1);
+    const limit = Math.min(100, Math.max(1, parseInt(req.query.limit, 10) || 20));
     const repo = serviceContainer.getRoutingDecisionRepo();
 
     let decisions;
@@ -117,13 +173,21 @@ router.get('/decisions', requireApiKey, requireAdmin(), async (req, res, next) =
     } else if (strategy) {
       decisions = await repo.findByStrategy(strategy);
     } else {
-      return res.status(400).json({
-        success: false,
-        error: { code: 'VALIDATION_ERROR', message: 'At least one filter (donationId, poolName, strategy) is required' },
-      });
+      decisions = await repo.findAll();
     }
 
-    res.json({ success: true, count: decisions.length, data: decisions });
+    const total = decisions.length;
+    const offset = (page - 1) * limit;
+    const paged = decisions.slice(offset, offset + limit);
+
+    res.json({
+      success: true,
+      count: paged.length,
+      total,
+      page,
+      limit,
+      data: paged,
+    });
   } catch (error) {
     next(error);
   }

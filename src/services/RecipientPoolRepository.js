@@ -111,7 +111,7 @@ class RecipientPoolRepository {
   async listMembers(name) {
     await this.getByName(name); // throws if not found
     const rows = await Database.all(
-      `SELECT recipient_id, display_name, latitude, longitude, campaign_deadline
+      `SELECT recipient_id, display_name, latitude, longitude, campaign_deadline, weight, priority
        FROM recipient_pool_members WHERE pool_name = ?`,
       [name]
     );
@@ -121,6 +121,8 @@ class RecipientPoolRepository {
       latitude: r.latitude !== undefined ? r.latitude : null,
       longitude: r.longitude !== undefined ? r.longitude : null,
       campaignDeadline: r.campaign_deadline || null,
+      weight: r.weight !== undefined && r.weight !== null ? r.weight : 1,
+      priority: r.priority !== undefined && r.priority !== null ? r.priority : 0,
     }));
   }
 
@@ -130,8 +132,8 @@ class RecipientPoolRepository {
     for (const r of recipients) {
       await Database.run(
         `INSERT OR REPLACE INTO recipient_pool_members
-           (pool_name, recipient_id, display_name, latitude, longitude, campaign_deadline)
-         VALUES (?, ?, ?, ?, ?, ?)`,
+           (pool_name, recipient_id, display_name, latitude, longitude, campaign_deadline, weight, priority)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
         [
           poolName,
           r.id,
@@ -139,6 +141,8 @@ class RecipientPoolRepository {
           r.latitude !== undefined ? r.latitude : null,
           r.longitude !== undefined ? r.longitude : null,
           r.campaignDeadline || null,
+          typeof r.weight === 'number' ? r.weight : 1,
+          typeof r.priority === 'number' ? r.priority : 0,
         ]
       );
     }
