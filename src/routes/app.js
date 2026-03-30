@@ -27,6 +27,7 @@ const docsRoutes = require('./docs');
 const transactionRoutes = require('./transaction');
 const sseManager = require('../services/SseManager');
 const { router: corporateMatchingRoutes } = require('./corporateMatching');
+const claimableBalancesRoutes = require('./claimableBalances');
 
 const app = express();
 
@@ -168,6 +169,7 @@ app.use('/network', networkRoutes);
 app.use('/docs', docsRoutes);
 app.use('/transactions', transactionRoutes);
 app.use('/', corporateMatchingRoutes);
+app.use('/claimable-balances', claimableBalancesRoutes);
 
 // Health check endpoint
 // Health check endpoints

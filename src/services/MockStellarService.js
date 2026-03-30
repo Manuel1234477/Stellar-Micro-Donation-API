@@ -28,6 +28,102 @@ const { getAssetKey, isSameAsset, serializeAsset } = require('../utils/stellarAs
 const NATIVE_ASSET = { type: 'native', code: 'XLM', issuer: null };
 
 class MockStellarService extends StellarServiceInterface {
+        /**
+         * Given a secret key, return the corresponding public key from the mock wallet map.
+         * @param {string} secretKey
+         * @returns {string|null}
+         */
+        _secretToPublic(secretKey) {
+          for (const [pub, wallet] of this.wallets.entries()) {
+            if (wallet.secretKey === secretKey) return pub;
+          }
+          return null;
+        }
+      /**
+       * List mock claimable balances claimable by the given public key.
+       * @param {string} publicKey - Stellar public key
+       * @returns {Promise<Array>} List of claimable balances
+       */
+      async listClaimableBalances(publicKey) {
+        await this._simulateNetworkDelay();
+        this._checkRateLimit();
+        if (!this.claimableBalances) return [];
+        return Array.from(this.claimableBalances.values()).filter(cb =>
+          !cb.claimed && cb.claimants.some(c => c.destination === publicKey)
+        );
+      }
+    /**
+     * Create a mock claimable balance.
+     * @param {string} sourceSecret - Secret key of the source account
+     * @param {object} asset - Asset object (native or custom)
+     * @param {string} amount - Amount to lock in the claimable balance
+     * @param {Array<object>} claimants - Array of claimant objects
+     * @returns {Promise<{balanceId: string, transactionId: string, ledger: number}>}
+     */
+    async createClaimableBalance(sourceSecret, asset, amount, claimants) {
+      await this._simulateNetworkDelay();
+      this._checkRateLimit();
+      this._simulateFailure();
+      this._validateSecretKey(sourceSecret);
+      this._validateAmount(amount);
+      const sourceWallet = this._findWalletBySecret(sourceSecret);
+      if (!sourceWallet) throw new NotFoundError('Source wallet not found', ERROR_CODES.WALLET_NOT_FOUND);
+      const assetKey = getAssetKey(asset || NATIVE_ASSET);
+      const sourceBalance = parseFloat(sourceWallet.assetBalances[assetKey] || '0');
+      const amountNum = parseFloat(amount);
+      if (sourceBalance < amountNum) throw new BusinessLogicError(ERROR_CODES.INSUFFICIENT_BALANCE, 'Insufficient balance for claimable balance creation');
+      // Deduct from source
+      this._setWalletAssetBalance(sourceWallet, asset || NATIVE_ASSET, sourceBalance - amountNum);
+      // Create claimable balance object
+      if (!this._claimableBalances) this._claimableBalances = new Map();
+      const balanceId = `mock_cb_${crypto.randomBytes(12).toString('hex')}`;
+      const cb = {
+        balanceId,
+        asset: asset || NATIVE_ASSET,
+        amount: amountNum.toFixed(7),
+        claimants: claimants.map(c => ({ destination: c.destination, predicate: c.predicate })),
+        claimed: false,
+        claimedBy: null,
+        createdBy: sourceWallet.publicKey,
+        createdAt: new Date().toISOString(),
+      };
+      this._claimableBalances.set(balanceId, cb);
+      // Simulate transaction
+      const transactionId = `mock_tx_${crypto.randomBytes(8).toString('hex')}`;
+      return { balanceId, transactionId, ledger: Math.floor(Math.random() * 1000000) + 1 };
+    }
+
+    /**
+     * Claim a mock claimable balance.
+     * @param {string} claimantSecret - Secret key of the claimant
+     * @param {string} balanceId - Claimable balance ID
+     * @returns {Promise<{transactionId: string, ledger: number}>}
+     */
+    async claimBalance(claimantSecret, balanceId) {
+      await this._simulateNetworkDelay();
+      this._checkRateLimit();
+      this._simulateFailure();
+      this._validateSecretKey(claimantSecret);
+      if (!this._claimableBalances) throw new NotFoundError('No claimable balances exist');
+      const cb = this._claimableBalances.get(balanceId);
+      if (!cb) throw new NotFoundError('Claimable balance not found');
+      if (cb.claimed) throw new BusinessLogicError(ERROR_CODES.TRANSACTION_FAILED, 'Claimable balance already claimed');
+      const claimantWallet = this._findWalletBySecret(claimantSecret);
+      if (!claimantWallet) throw new NotFoundError('Claimant wallet not found', ERROR_CODES.WALLET_NOT_FOUND);
+      // Check if claimant is authorized
+      const isClaimant = cb.claimants.some(c => c.destination === claimantWallet.publicKey);
+      if (!isClaimant) throw new BusinessLogicError(ERROR_CODES.PERMISSION_DENIED, 'Not an authorized claimant');
+      // Credit to claimant
+      const assetKey = getAssetKey(cb.asset);
+      const prev = parseFloat(claimantWallet.assetBalances[assetKey] || '0');
+      this._setWalletAssetBalance(claimantWallet, cb.asset, prev + parseFloat(cb.amount));
+      cb.claimed = true;
+      cb.claimedBy = claimantWallet.publicKey;
+      cb.claimedAt = new Date().toISOString();
+      // Simulate transaction
+      const transactionId = `mock_tx_${crypto.randomBytes(8).toString('hex')}`;
+      return { transactionId, ledger: Math.floor(Math.random() * 1000000) + 1 };
+    }
   constructor(config = {}) {
     super();
     this.wallets = new Map();
@@ -381,12 +477,14 @@ class MockStellarService extends StellarServiceInterface {
   }
 
   _findWalletBySecret(secretKey) {
+    if (typeof secretKey === 'object' && secretKey.secretKey) {
+      secretKey = secretKey.secretKey;
+    }
     for (const wallet of this.wallets.values()) {
       if (wallet.secretKey === secretKey) {
         return wallet;
       }
     }
-
     return null;
   }
 

@@ -28,6 +28,106 @@ const {
 } = require('../utils/stellarAsset');
 
 class StellarService extends StellarServiceInterface {
+      /**
+       * List claimable balances claimable by the given public key.
+       * @param {string} publicKey - Stellar public key
+       * @returns {Promise<Array>} List of claimable balances
+       */
+      async listClaimableBalances(publicKey) {
+        return StellarErrorHandler.wrap(async () => {
+          const records = [];
+          let cursor = undefined;
+          do {
+            const resp = await this.server.claimableBalances()
+              .claimant(publicKey)
+              .cursor(cursor)
+              .limit(200)
+              .call();
+            records.push(...resp.records);
+            cursor = resp.records.length === 200 ? resp.records[199].paging_token : undefined;
+          } while (cursor);
+          return records;
+        }, 'listClaimableBalances');
+      }
+    /**
+     * Create a Stellar claimable balance.
+     * @param {string} sourceSecret - Secret key of the source account
+     * @param {object} asset - Asset object (native or custom)
+     * @param {string} amount - Amount to lock in the claimable balance
+     * @param {Array<object>} claimants - Array of claimant objects (see StellarSdk.Claimant)
+     * @returns {Promise<{balanceId: string, transactionId: string, ledger: number}>}
+     */
+    async createClaimableBalance(sourceSecret, asset, amount, claimants) {
+      return StellarErrorHandler.wrap(async () => {
+        const sourceKeypair = StellarSdk.Keypair.fromSecret(sourceSecret);
+        const sourceAccount = await this._executeWithRetry(
+          () => this.server.loadAccount(sourceKeypair.publicKey()),
+          'loadAccountForClaimableBalance'
+        );
+        const sdkAsset = asset ? toStellarSdkAsset(asset) : StellarSdk.Asset.native();
+        const sdkClaimants = claimants.map(c => new StellarSdk.Claimant(c.destination, c.predicate));
+
+        const transaction = new StellarSdk.TransactionBuilder(sourceAccount, {
+          fee: this.baseFee,
+          networkPassphrase: this.networkPassphrase,
+        })
+          .addOperation(StellarSdk.Operation.createClaimableBalance({
+            asset: sdkAsset,
+            amount: amount.toString(),
+            claimants: sdkClaimants,
+          }))
+          .setTimeout(30)
+          .build();
+
+        transaction.sign(sourceKeypair);
+        const result = await this._submitTransactionWithNetworkSafety(transaction);
+
+        // Fetch the balanceId from the transaction result
+        const txResult = await this.server.transactions().transaction(result.hash).call();
+        const effects = await this.server.effects().forTransaction(result.hash).call();
+        const cbEffect = effects.records.find(e => e.type === 'claimable_balance_created');
+        if (!cbEffect) throw new Error('Claimable balance creation effect not found');
+
+        return {
+          balanceId: cbEffect.balance_id,
+          transactionId: result.hash,
+          ledger: result.ledger,
+        };
+      }, 'createClaimableBalance');
+    }
+
+    /**
+     * Claim a Stellar claimable balance.
+     * @param {string} claimantSecret - Secret key of the claimant
+     * @param {string} balanceId - Claimable balance ID
+     * @returns {Promise<{transactionId: string, ledger: number}>}
+     */
+    async claimBalance(claimantSecret, balanceId) {
+      return StellarErrorHandler.wrap(async () => {
+        const claimantKeypair = StellarSdk.Keypair.fromSecret(claimantSecret);
+        const claimantAccount = await this._executeWithRetry(
+          () => this.server.loadAccount(claimantKeypair.publicKey()),
+          'loadAccountForClaimBalance'
+        );
+
+        const transaction = new StellarSdk.TransactionBuilder(claimantAccount, {
+          fee: this.baseFee,
+          networkPassphrase: this.networkPassphrase,
+        })
+          .addOperation(StellarSdk.Operation.claimClaimableBalance({
+            balanceId,
+          }))
+          .setTimeout(30)
+          .build();
+
+        transaction.sign(claimantKeypair);
+        const result = await this._submitTransactionWithNetworkSafety(transaction);
+        return {
+          transactionId: result.hash,
+          ledger: result.ledger,
+        };
+      }, 'claimBalance');
+    }
   /**
    * Create a new StellarService instance
    * @param {Object} [config={}] - Configuration options
