@@ -51,7 +51,7 @@ jobs:
       # the team gets visibility without needing to watch the Actions tab manually.
       - name: Notify on failure
         if: failure()
-        uses: actions/github-script@v8
+        uses: actions/github-script@v9
         with:
           github-token: ${{ secrets.GITHUB_TOKEN }}
           script: |

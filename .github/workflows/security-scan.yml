@@ -44,7 +44,7 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Post PR Comment with Scan Results
-        uses: actions/github-script@v8
+        uses: actions/github-script@v9
         if: github.event_name == 'pull_request' && failure() && github.event.pull_request.head.repo.full_name == github.repository
         continue-on-error: true
         with:
