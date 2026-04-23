@@ -211,7 +211,7 @@ const updateDonationStatusSchema = validateSchema({
   },
   body: {
     fields: {
-      status: { type: 'string', required: true, enum: ['pending', 'confirmed', 'failed', 'cancelled'] }
+      status: { type: 'string', required: true, enum: ['pending', 'submitted', 'confirmed', 'failed'] }
     }
   }
 });

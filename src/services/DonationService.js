@@ -1407,17 +1407,25 @@ class DonationService {
    * @returns {Object} Updated transaction
    */
   updateDonationStatus(id, status, stellarData = {}) {
-    const validStatuses = Object.values(TRANSACTION_STATES);
-    if (!validStatuses.includes(status)) {
-      throw new ValidationError(`Invalid status. Must be one of: ${validStatuses.join(', ')}`);
-    }
+    const { assertValidState, assertValidTransition, normalizeState } = require('../utils/transactionStateMachine');
+    
+    // Normalize and validate the new status
+    const normalizedStatus = normalizeState(status);
+    assertValidState(normalizedStatus, 'status');
+
+    // Get current donation to check state transition
+    const currentDonation = this.getDonationById(id);
+    const currentStatus = normalizeState(currentDonation.status);
+
+    // Validate state transition
+    assertValidTransition(currentStatus, normalizedStatus);
 
     const updateData = { ...stellarData };
-    if (status === 'confirmed') {
+    if (normalizedStatus === 'confirmed') {
       updateData.confirmedAt = new Date().toISOString();
     }
 
-    return Transaction.updateStatus(id, status, updateData);
+    return Transaction.updateStatus(id, normalizedStatus, updateData);
   }
 
   /**
