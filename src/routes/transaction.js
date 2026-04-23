@@ -182,6 +182,19 @@ const transactionSyncBodySchema = validateSchema({
         minLength: 1,
         maxLength: 255,
       },
+      cursor: {
+        type: 'string',
+        required: false,
+        trim: true,
+      },
+      maxPages: {
+        type: 'integer',
+        required: false,
+        validate: (value) => {
+          const n = Number(value);
+          return n >= 1 && n <= 500 ? true : 'maxPages must be between 1 and 500';
+        },
+      },
     },
   },
 });
@@ -226,7 +239,7 @@ router.post(
   transactionSyncBodySchema,
   asyncHandler(async (req, res, next) => {
     try {
-      const { publicKey } = req.body;
+      const { publicKey, cursor, maxPages } = req.body;
 
       if (!publicKey) {
         return res.status(400).json(
@@ -235,7 +248,10 @@ router.post(
       }
 
       const syncService = new TransactionSyncService(serviceContainer.getStellarService());
-      const result = await syncService.syncWalletTransactions(publicKey);
+      const result = await syncService.syncWalletTransactions(publicKey, {
+        ...(cursor !== undefined && { cursor }),
+        ...(maxPages !== undefined && { maxPages: Number(maxPages) }),
+      });
 
       return res.status(200).json({
         success: true,

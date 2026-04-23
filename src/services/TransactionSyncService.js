@@ -37,15 +37,24 @@ class TransactionSyncService {
    * Fetches only transactions AFTER the wallet's last_cursor (incremental sync).
    * On success, updates wallet's last_cursor and last_synced_at.
    * @param {string} publicKey - Stellar public key to sync
-   * @param {number} maxTransactions - Limit for unbounded fetching
-   * @returns {Promise<{synced: number, transactions: Array}>} Sync results
+   * @param {Object|number} [options] - Options object or legacy maxTransactions number
+   * @param {number} [options.maxTransactions=500] - Max total transactions to fetch
+   * @param {number} [options.maxPages=50] - Max Horizon pages to follow
+   * @param {string} [options.cursor] - Override cursor (resume from specific point)
+   * @returns {Promise<{synced: number, transactions: Array, lastCursor: string|null}>}
    */
-  async syncWalletTransactions(publicKey, maxTransactions = 500) {
+  async syncWalletTransactions(publicKey, options = {}) {
+    // Support legacy numeric argument
+    if (typeof options === 'number') options = { maxTransactions: options };
+    const { maxTransactions = 500, maxPages = 50, cursor: cursorOverride } = options;
+
     const startTime = Date.now();
     const wallet = Wallet.getByAddress(publicKey);
-    const lastCursor = wallet ? (wallet.last_cursor || wallet.last_synced_cursor) : undefined;
+    const lastCursor = cursorOverride !== undefined
+      ? cursorOverride
+      : (wallet ? (wallet.last_cursor || wallet.last_synced_cursor) : undefined);
 
-    const horizonTxs = await this._fetchHorizonTransactions(publicKey, maxTransactions, lastCursor);
+    const horizonTxs = await this._fetchHorizonTransactions(publicKey, maxTransactions, lastCursor, maxPages);
     const syncedTxs = [];
 
     // Horizon returns asc when fetching forward from cursor
@@ -63,16 +72,16 @@ class TransactionSyncService {
       }
     }
 
+    const newLastCursor = horizonTxs.length > 0
+      ? horizonTxs[horizonTxs.length - 1].paging_token
+      : null;
+
     if (wallet && horizonTxs.length > 0) {
-      // Update the cursor using the latest transaction fetched
-      // Txs are in asc order, so the last one is the newest
-      const latestTx = horizonTxs[horizonTxs.length - 1];
       Wallet.update(wallet.id, {
-        last_cursor: latestTx.paging_token,
+        last_cursor: newLastCursor,
         last_synced_at: new Date().toISOString(),
       });
     } else if (wallet) {
-      // Even if no new txs, update last_synced_at to record the sync attempt
       Wallet.update(wallet.id, { last_synced_at: new Date().toISOString() });
     }
 
@@ -81,35 +90,39 @@ class TransactionSyncService {
       walletAddress: publicKey,
       syncedCount: syncedTxs.length,
       fetchedCount: horizonTxs.length,
-      durationMs: duration
+      durationMs: duration,
+      lastCursor: newLastCursor,
     });
 
-    return { synced: syncedTxs.length, transactions: syncedTxs };
+    return { synced: syncedTxs.length, transactions: syncedTxs, lastCursor: newLastCursor };
   }
 
   /**
-   * Fetch paginated transactions from Horizon
+   * Fetch paginated transactions from Horizon, following next-page cursors.
+   * @param {string} publicKey
+   * @param {number} maxTransactions
+   * @param {string|undefined} cursor - Starting cursor for incremental sync
+   * @param {number} maxPages - Maximum number of pages to fetch
    */
-  async _fetchHorizonTransactions(publicKey, maxTransactions = 500, cursor = undefined) {
+  async _fetchHorizonTransactions(publicKey, maxTransactions = 500, cursor = undefined, maxPages = 50) {
     try {
       let transactions = [];
-      let limit = Math.min(200, maxTransactions); // Max limit allowed by Horizon is 200
+      const pageSize = Math.min(200, maxTransactions);
+      let pagesFetched = 0;
 
       let callBuilder = this.server.transactions()
         .forAccount(publicKey)
-        .limit(limit);
+        .limit(pageSize);
 
       if (cursor) {
-        // Incremental sync logic fetching NEWER transactions since last cursor
         callBuilder = callBuilder.cursor(cursor).order('asc');
       } else {
-        // In full sync, we probably want desc, but we fetch up to maxTransactions.
         callBuilder = callBuilder.order('desc');
       }
 
       let response = await callBuilder.call();
 
-      while (response.records && response.records.length > 0 && transactions.length < maxTransactions) {
+      while (response.records && response.records.length > 0 && transactions.length < maxTransactions && pagesFetched < maxPages) {
         for (const record of response.records) {
           if (transactions.length < maxTransactions) {
             transactions.push(record);
@@ -118,19 +131,22 @@ class TransactionSyncService {
           }
         }
 
-        if (transactions.length >= maxTransactions) {
+        pagesFetched++;
+        log.info('TX_SYNC', `Fetched page ${pagesFetched}`, {
+          publicKey,
+          pageRecords: response.records.length,
+          totalFetched: transactions.length,
+        });
+
+        if (transactions.length >= maxTransactions || pagesFetched >= maxPages) {
           break;
         }
 
-        // Standard way to fetch next page with stellar-sdk
         response = await response.next();
       }
 
-      // If we fetched descending initially, we might want to reverse to get ascending order for processing?
-      // Not strictly necessary since we're just syncing and grabbing the maximum cursor if we flip the logic.
-      // But if we fetched 'desc', the first element is the newest!
       if (!cursor) {
-        transactions.reverse(); // Ensure processing runs from oldest to newest to preserve cursor logic easily
+        transactions.reverse();
       }
 
       return transactions;
