@@ -16,6 +16,7 @@
 const express = require('express');
 const router = express.Router();
 const log = require('../utils/log');
+const asyncHandler = require('../utils/asyncHandler');
 
 /** Regex for a valid federation address */
 const FEDERATION_ADDRESS_RE = /^[^*\s]+\*[^*\s]+\.[^*\s]+$/;
@@ -64,7 +65,7 @@ async function resolveFederationAddress(address, _resolverFn) {
  * Resolve a federation address to a Stellar public key.
  * No authentication required.
  */
-router.get('/resolve', async (req, res) => {
+router.get('/resolve', asyncHandler(async (req, res) => {
   const { address } = req.query;
 
   if (!address) {
@@ -109,14 +110,14 @@ router.get('/resolve', async (req, res) => {
       error: { code: 'FEDERATION_ERROR', message: msg }
     });
   }
-});
+}));
 
 /**
  * GET /federation/reverse?publicKey=G...
  * Reverse federation lookup: resolve a public key to a federation address.
  * No authentication required.
  */
-router.get('/reverse', async (req, res) => {
+router.get('/reverse', asyncHandler(async (req, res) => {
   const { publicKey } = req.query;
 
   if (!publicKey) {
@@ -180,7 +181,7 @@ router.get('/reverse', async (req, res) => {
       error: { code: 'FEDERATION_ERROR', message: msg }
     });
   }
-});
+}));
 
 /** Clear caches (for testing) */
 function clearCaches() {

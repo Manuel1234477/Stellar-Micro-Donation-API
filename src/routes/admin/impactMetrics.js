@@ -29,7 +29,7 @@ const createImpactMetricSchema = validateSchema({
  * POST /admin/impact-metrics
  * Create a new impact metric for a campaign.
  */
-router.post('/', requireApiKey, requireAdmin(), createImpactMetricSchema, async (req, res, next) => {
+router.post('/', requireApiKey, requireAdmin(), createImpactMetricSchema, asyncHandler(async (req, res, next) => {
   try {
     const { campaign_id, unit, amount_per_unit, description } = req.body;
 
@@ -45,13 +45,13 @@ router.post('/', requireApiKey, requireAdmin(), createImpactMetricSchema, async 
   } catch (error) {
     next(error);
   }
-});
+}));
 
 /**
  * GET /admin/impact-metrics
  * List impact metrics, optionally filtered by campaign_id.
  */
-router.get('/', requireApiKey, requireAdmin(), async (req, res, next) => {
+router.get('/', requireApiKey, requireAdmin(), asyncHandler(async (req, res, next) => {
   try {
     const { campaign_id } = req.query;
 
@@ -60,6 +60,7 @@ router.get('/', requireApiKey, requireAdmin(), async (req, res, next) => {
       metrics = await ImpactMetricService.getByCampaign(parseInt(campaign_id, 10));
     } else {
       const Database = require('../../utils/database');
+const asyncHandler = require('../../utils/asyncHandler');
       metrics = await Database.query('SELECT * FROM impact_metrics ORDER BY campaign_id, amount_per_unit ASC');
     }
 
@@ -67,19 +68,19 @@ router.get('/', requireApiKey, requireAdmin(), async (req, res, next) => {
   } catch (error) {
     next(error);
   }
-});
+}));
 
 /**
  * GET /admin/impact-metrics/:id
  * Get a specific impact metric by ID.
  */
-router.get('/:id', requireApiKey, requireAdmin(), async (req, res, next) => {
+router.get('/:id', requireApiKey, requireAdmin(), asyncHandler(async (req, res, next) => {
   try {
     const metric = await ImpactMetricService.getById(parseInt(req.params.id, 10));
     res.json({ success: true, data: metric });
   } catch (error) {
     next(error);
   }
-});
+}));
 
 module.exports = router;

@@ -4,6 +4,7 @@ const requireApiKey = require('../middleware/apiKey');
 const { validateSchema } = require('../middleware/schemaValidation');
 const { requireTier } = require('../middleware/rbac');
 const ExportService = require('../services/ExportService');
+const asyncHandler = require('../utils/asyncHandler');
 const { ValidationError, NotFoundError } = require('../utils/errors');
 
 const createExportSchema = validateSchema({
@@ -36,7 +37,7 @@ const exportIdSchema = validateSchema({
  * Initiate asynchronous export generation.
  * Requires 'pro' tier or higher.
  */
-router.post('/', requireApiKey, requireTier('pro'), createExportSchema, async (req, res, next) => {
+router.post('/', requireApiKey, requireTier('pro'), createExportSchema, asyncHandler(async (req, res, next) => {
   try {
     const { type, format, startDate, endDate } = req.body;
     const exportId = await ExportService.initiateExport({
@@ -53,13 +54,13 @@ router.post('/', requireApiKey, requireTier('pro'), createExportSchema, async (r
   } catch (error) {
     next(error);
   }
-});
+}));
 
 /**
  * GET /exports/:id
  * Retrieve export status.
  */
-router.get('/:id', requireApiKey, exportIdSchema, async (req, res, next) => {
+router.get('/:id', requireApiKey, exportIdSchema, asyncHandler(async (req, res, next) => {
   try {
     const result = await ExportService.getExportStatus(req.params.id);
     res.json({ success: true, data: result });
@@ -72,13 +73,13 @@ router.get('/:id', requireApiKey, exportIdSchema, async (req, res, next) => {
     }
     return next(error);
   }
-});
+}));
 
 /**
  * GET /exports/:id/download
  * Return a signed download URL for completed exports.
  */
-router.get('/:id/download', requireApiKey, exportIdSchema, async (req, res, next) => {
+router.get('/:id/download', requireApiKey, exportIdSchema, asyncHandler(async (req, res, next) => {
   try {
     const url = await ExportService.getSignedDownloadUrl(req.params.id);
     res.json({ success: true, data: { downloadUrl: url } });
@@ -97,6 +98,6 @@ router.get('/:id/download', requireApiKey, exportIdSchema, async (req, res, next
     }
     return next(error);
   }
-});
+}));
 
 module.exports = router;

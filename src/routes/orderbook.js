@@ -24,6 +24,7 @@ const { PERMISSIONS } = require('../utils/permissions');
 const { ValidationError } = require('../utils/errors');
 const { getStellarService } = require('../config/stellar');
 const log = require('../utils/log');
+const asyncHandler = require('../utils/asyncHandler');
 
 /**
  * Parse and normalise an asset path parameter.
@@ -51,7 +52,7 @@ function parseAsset(raw) {
  * @param {string} counterAsset - Buying/counter asset ('XLM' or 'CODE:ISSUER', URL-encoded)
  * @query  {number} [limit=20]  - Max entries per side (1-200)
  */
-router.get('/snapshot', requireApiKey, checkPermission(PERMISSIONS.DONATIONS_READ), async (req, res, next) => {
+router.get('/snapshot', requireApiKey, checkPermission(PERMISSIONS.DONATIONS_READ), asyncHandler(async (req, res, next) => {
   try {
     const base = parseAsset(req.params.baseAsset);
     const counter = parseAsset(req.params.counterAsset);
@@ -64,7 +65,7 @@ router.get('/snapshot', requireApiKey, checkPermission(PERMISSIONS.DONATIONS_REA
   } catch (err) {
     next(err);
   }
-});
+}));
 
 /**
  * GET /orderbook/:baseAsset/:counterAsset/stream

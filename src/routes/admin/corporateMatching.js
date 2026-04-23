@@ -13,6 +13,7 @@ const requireApiKey = require('../../middleware/apiKey');
 const { requireAdmin } = require('../../middleware/rbac');
 const { validateSchema } = require('../../middleware/schemaValidation');
 const log = require('../../utils/log');
+const asyncHandler = require('../../utils/asyncHandler');
 
 const createCorporateMatchingSchema = validateSchema({
   body: {
@@ -37,7 +38,7 @@ const updateStatusSchema = validateSchema({
  * POST /admin/corporate-matching
  * Create a new corporate matching program.
  */
-router.post('/', requireApiKey, requireAdmin(), createCorporateMatchingSchema, async (req, res, next) => {
+router.post('/', requireApiKey, requireAdmin(), createCorporateMatchingSchema, asyncHandler(async (req, res, next) => {
   try {
     const { sponsor_id, match_ratio, per_employee_limit, total_limit } = req.body;
 
@@ -56,13 +57,13 @@ router.post('/', requireApiKey, requireAdmin(), createCorporateMatchingSchema, a
     log.error('CORPORATE_MATCHING_ADMIN', 'Failed to create corporate matching program', { error: error.message });
     next(error);
   }
-});
+}));
 
 /**
  * GET /admin/corporate-matching
  * Get all corporate matching programs.
  */
-router.get('/', requireApiKey, requireAdmin(), async (req, res, next) => {
+router.get('/', requireApiKey, requireAdmin(), asyncHandler(async (req, res, next) => {
   try {
     const { status, sponsor_id } = req.query;
     const filters = {};
@@ -79,13 +80,13 @@ router.get('/', requireApiKey, requireAdmin(), async (req, res, next) => {
     log.error('CORPORATE_MATCHING_ADMIN', 'Failed to get corporate matching programs', { error: error.message });
     next(error);
   }
-});
+}));
 
 /**
  * GET /admin/corporate-matching/:id
  * Get a specific corporate matching program.
  */
-router.get('/:id', requireApiKey, requireAdmin(), async (req, res, next) => {
+router.get('/:id', requireApiKey, requireAdmin(), asyncHandler(async (req, res, next) => {
   try {
     const { id } = req.params;
     const program = await CorporateMatchingService.getById(parseInt(id));
@@ -98,13 +99,13 @@ router.get('/:id', requireApiKey, requireAdmin(), async (req, res, next) => {
     log.error('CORPORATE_MATCHING_ADMIN', 'Failed to get corporate matching program', { error: error.message });
     next(error);
   }
-});
+}));
 
 /**
  * PATCH /admin/corporate-matching/:id/status
  * Update the status of a corporate matching program.
  */
-router.patch('/:id/status', requireApiKey, requireAdmin(), updateStatusSchema, async (req, res, next) => {
+router.patch('/:id/status', requireApiKey, requireAdmin(), updateStatusSchema, asyncHandler(async (req, res, next) => {
   try {
     const { id } = req.params;
     const { status } = req.body;
@@ -119,13 +120,13 @@ router.patch('/:id/status', requireApiKey, requireAdmin(), updateStatusSchema, a
     log.error('CORPORATE_MATCHING_ADMIN', 'Failed to update corporate matching program status', { error: error.message });
     next(error);
   }
-});
+}));
 
 /**
  * GET /admin/corporate-matching/:id/employees
  * Get enrolled employees for a corporate matching program.
  */
-router.get('/:id/employees', requireApiKey, requireAdmin(), async (req, res, next) => {
+router.get('/:id/employees', requireApiKey, requireAdmin(), asyncHandler(async (req, res, next) => {
   try {
     const { id } = req.params;
     const employees = await CorporateMatchingService.getEnrolledEmployees(parseInt(id));
@@ -138,6 +139,6 @@ router.get('/:id/employees', requireApiKey, requireAdmin(), async (req, res, nex
     log.error('CORPORATE_MATCHING_ADMIN', 'Failed to get enrolled employees', { error: error.message });
     next(error);
   }
-});
+}));
 
 module.exports = router;

@@ -72,6 +72,7 @@ const { createCorsMiddleware } = require('../middleware/cors');
 const { createCspMiddleware, cspReportRouter } = require('../middleware/csp');
 const { responseFormatterMiddleware } = require('../utils/responseFormatter');
 const trackQuotaUsage = require('../middleware/quotaTracker');
+const asyncHandler = require('../utils/asyncHandler');
 const { startQuotaResetJob } = require('../jobs/quotaResetJob');
 const { createDeduplicationMiddleware } = require('../middleware/deduplication');
 const { fieldFilterMiddleware } = require('../middleware/fieldFilter');
@@ -212,7 +213,7 @@ app.use(trackQuotaUsage);
 app.use(metricsMiddleware);
 
 // GET /metrics — Prometheus scrape endpoint (admin only)
-app.get('/metrics', requireApiKey, requireAdmin(), async (req, res) => {
+app.get('/metrics', requireApiKey, requireAdmin(), asyncHandler(async (req, res) => {
   try {
     res.set('Content-Type', registry.contentType);
     res.end(await registry.metrics());
@@ -223,7 +224,7 @@ app.get('/metrics', requireApiKey, requireAdmin(), async (req, res) => {
       error: { code: 'METRICS_ERROR', message: 'Failed to generate metrics' }
     });
   }
-});
+}));
 // Content-based request deduplication (for requests without idempotency keys)
 app.use(createDeduplicationMiddleware());
 
@@ -259,7 +260,7 @@ app.use('/claimable-balances', claimableBalancesRoutes);
 app.use('/liquidity-pools', require('./liquidity-pools'));
 
 // Exchange rates endpoint
-app.get('/exchange-rates', async (req, res) => {
+app.get('/exchange-rates', asyncHandler(async (req, res) => {
   try {
     const priceOracle = require('../services/PriceOracleService');
     const rates = await priceOracle.getRates();
@@ -279,7 +280,7 @@ app.get('/exchange-rates', async (req, res) => {
       error: { code: 'EXCHANGE_RATE_UNAVAILABLE', message: err.message },
     });
   }
-});
+}));
 
 // SEP-0010 Stellar TOML discovery endpoint
 app.get('/.well-known/stellar.toml', (req, res) => {
@@ -310,7 +311,7 @@ try {
 
 // Health check endpoint
 // Health check endpoints
-app.get('/health', async (req, res) => {
+app.get('/health', asyncHandler(async (req, res) => {
   try {
     const health = await HealthCheckService.getFullHealth(stellarService, networkStatusService);
     const stellarConfig = require('../config/stellar');
@@ -331,7 +332,7 @@ app.get('/health', async (req, res) => {
       error: { code: 'HEALTH_CHECK_ERROR', message: 'Health check failed' }
     });
   }
-});
+}));
 
 // Liveness probe — returns 200 as long as the process is running
 app.get('/health/live', (req, res) => {
@@ -339,7 +340,7 @@ app.get('/health/live', (req, res) => {
 });
 
 // Readiness probe — returns 200 only when all dependencies are healthy
-app.get('/health/ready', async (req, res) => {
+app.get('/health/ready', asyncHandler(async (req, res) => {
   try {
     const readiness = await HealthCheckService.getReadiness(stellarService, networkStatusService);
     const httpStatus = readiness.ready ? 200 : 503;
@@ -352,7 +353,7 @@ app.get('/health/ready', async (req, res) => {
       error: { code: 'READINESS_CHECK_ERROR', message: 'Readiness check failed' }
     });
   }
-});
+}));
 
 // Abuse detection stats endpoint (admin only)
 app.get('/abuse-signals', require('../middleware/rbac').requireAdmin(), (req, res) => {
@@ -413,7 +414,7 @@ app.use('/admin/inspect/xdr', require('../middleware/rbac').requireAdmin(), admi
 app.use('/admin/audit-logs/export', require('./admin/auditLogExport'));
 
 // Audit logs endpoint (admin only)
-app.get('/admin/audit-logs', require('../middleware/rbac').requireAdmin(), async (req, res, next) => {
+app.get('/admin/audit-logs', require('../middleware/rbac').requireAdmin(), asyncHandler(async (req, res, next) => {
   try {
     const pagination = parseCursorPaginationQuery(req.query);
     const filters = {
@@ -438,10 +439,10 @@ app.get('/admin/audit-logs', require('../middleware/rbac').requireAdmin(), async
   } catch (error) {
     next(error);
   }
-});
+}));
 
 // Manual reconciliation trigger (admin only)
-app.post('/reconcile', require('../middleware/rbac').requireAdmin(), async (req, res, next) => {
+app.post('/reconcile', require('../middleware/rbac').requireAdmin(), asyncHandler(async (req, res, next) => {
   try {
     if (reconciliationService.reconciliationInProgress) {
       return res.status(409).json({
@@ -460,10 +461,10 @@ app.post('/reconcile', require('../middleware/rbac').requireAdmin(), async (req,
   } catch (error) {
     next(error);
   }
-});
+}));
 
 // Admin reconcile endpoint (canonical path)
-app.post('/admin/reconcile', require('../middleware/rbac').requireAdmin(), async (req, res, next) => {
+app.post('/admin/reconcile', require('../middleware/rbac').requireAdmin(), asyncHandler(async (req, res, next) => {
   try {
     if (reconciliationService.reconciliationInProgress) {
       return res.status(409).json({
@@ -481,10 +482,10 @@ app.post('/admin/reconcile', require('../middleware/rbac').requireAdmin(), async
   } catch (error) {
     next(error);
   }
-});
+}));
 
 // Admin sync endpoint — triggers immediate transaction sync for all wallets
-app.post('/admin/sync', require('../middleware/rbac').requireAdmin(), async (req, res, next) => {
+app.post('/admin/sync', require('../middleware/rbac').requireAdmin(), asyncHandler(async (req, res, next) => {
   try {
     const result = await transactionSyncScheduler.syncAllWallets();
     res.json({
@@ -495,10 +496,10 @@ app.post('/admin/sync', require('../middleware/rbac').requireAdmin(), async (req
   } catch (error) {
     next(error);
   }
-});
+}));
 
 // Orphaned transactions stats (admin only)
-app.get('/admin/orphaned-transactions', require('../middleware/rbac').requireAdmin(), async (req, res, next) => {
+app.get('/admin/orphaned-transactions', require('../middleware/rbac').requireAdmin(), asyncHandler(async (req, res, next) => {
   try {
     const rows = await Database.query(
       'SELECT id, senderId, receiverId, amount, memo, timestamp, stellar_tx_id FROM transactions WHERE is_orphan = 1 ORDER BY timestamp DESC',
@@ -516,7 +517,7 @@ app.get('/admin/orphaned-transactions', require('../middleware/rbac').requireAdm
   } catch (error) {
     next(error);
   }
-});
+}));
 
 // 404 handler (must be after all routes)
 app.use(notFoundHandler);

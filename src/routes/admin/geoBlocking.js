@@ -25,6 +25,7 @@ const { requireAdmin } = require('../../middleware/rbac');
 const AuditLogService = require('../../services/AuditLogService');
 const GeoRuleService = require('../../services/GeoRuleService');
 const log = require('../../utils/log');
+const asyncHandler = require('../../utils/asyncHandler');
 const { reloadGeoIpDatabase } = require('../../middleware/geoBlock');
 
 const router = express.Router();
@@ -259,14 +260,14 @@ function deleteRuleHandler(ruleType) {
  * GET /rules
  * List active config-backed and database-backed geo rules.
  */
-router.get('/rules', requireApiKey, hydrateUserFromApiKey, requireAdmin(), async (req, res, next) => {
+router.get('/rules', requireApiKey, hydrateUserFromApiKey, requireAdmin(), asyncHandler(async (req, res, next) => {
   try {
     const rules = await GeoRuleService.listActiveRules();
     return respondSuccess(res, rules);
   } catch (error) {
     next(error);
   }
-});
+}));
 
 /**
  * POST /block
@@ -320,7 +321,7 @@ router.delete(
  * GET /
  * Legacy endpoint for returning geo-blocking configuration.
  */
-router.get('/', requireApiKey, hydrateUserFromApiKey, requireAdmin(), async (req, res, next) => {
+router.get('/', requireApiKey, hydrateUserFromApiKey, requireAdmin(), asyncHandler(async (req, res, next) => {
   try {
     const rules = await GeoRuleService.listActiveRules();
     return respondSuccess(res, {
@@ -335,13 +336,13 @@ router.get('/', requireApiKey, hydrateUserFromApiKey, requireAdmin(), async (req
   } catch (error) {
     next(error);
   }
-});
+}));
 
 /**
  * PUT /
  * Legacy endpoint for updating static in-memory config values.
  */
-router.put('/', requireApiKey, hydrateUserFromApiKey, requireAdmin(), async (req, res, next) => {
+router.put('/', requireApiKey, hydrateUserFromApiKey, requireAdmin(), asyncHandler(async (req, res, next) => {
   try {
     const blockedCountries = Array.isArray(req.body?.blockedCountries)
       ? req.body.blockedCountries.map(GeoRuleService.normalizeCountryCode)
@@ -400,13 +401,13 @@ router.put('/', requireApiKey, hydrateUserFromApiKey, requireAdmin(), async (req
   } catch (error) {
     next(error);
   }
-});
+}));
 
 /**
  * POST /reload-db
  * Reload the MaxMind database without restarting the API.
  */
-router.post('/reload-db', requireApiKey, hydrateUserFromApiKey, requireAdmin(), async (req, res, next) => {
+router.post('/reload-db', requireApiKey, hydrateUserFromApiKey, requireAdmin(), asyncHandler(async (req, res, next) => {
   try {
     await reloadGeoIpDatabase();
 
@@ -431,6 +432,6 @@ router.post('/reload-db', requireApiKey, hydrateUserFromApiKey, requireAdmin(), 
   } catch (error) {
     next(error);
   }
-});
+}));
 
 module.exports = router;

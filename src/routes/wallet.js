@@ -15,6 +15,7 @@ const { checkPermission, requireAdmin } = require('../middleware/rbac');
 const { PERMISSIONS } = require('../utils/permissions');
 const LimitService = require('../services/LimitService');
 const Database = require('../utils/database');
+const asyncHandler = require('../utils/asyncHandler');
 const { buildErrorResponse } = require('../utils/validationErrorFormatter');
 
 // Inflation destination schema for PATCH
@@ -33,7 +34,7 @@ router.patch(
   requireAuth,
   requirePermission('wallets:write'),
   validateSchema(inflationDestinationSchema),
-  async (req, res, next) => {
+  asyncHandler(async (req, res, next) => {
     try {
       const { id } = req.params;
       const { destination, sourceSecret } = req.body;
@@ -45,7 +46,7 @@ router.patch(
     } catch (err) {
       next(err);
     }
-  }
+  })
 );
 
 // GET /wallets/:id/inflation-destination
@@ -53,7 +54,7 @@ router.get(
   '/:id/inflation-destination',
   requireAuth,
   requirePermission('wallets:read'),
-  async (req, res, next) => {
+  asyncHandler(async (req, res, next) => {
     try {
       const { id } = req.params;
       const wallet = await WalletService.getWalletById(id);
@@ -63,7 +64,7 @@ router.get(
     } catch (err) {
       next(err);
     }
-  }
+  })
 );
 /**
  * PUT /wallets/:id/inflation-destination
@@ -71,7 +72,7 @@ router.get(
  * Body: { destinationPublicKey: string, sourceSecret: string }
  * Requires wallets:write permission.
  */
-router.put('/:id/inflation-destination', checkPermission(PERMISSIONS.WALLETS_UPDATE), walletIdSchema, async (req, res, next) => {
+router.put('/:id/inflation-destination', checkPermission(PERMISSIONS.WALLETS_UPDATE), walletIdSchema, asyncHandler(async (req, res, next) => {
   try {
     const { destinationPublicKey, sourceSecret } = req.body;
     if (!destinationPublicKey || !sourceSecret) {
@@ -112,13 +113,13 @@ router.put('/:id/inflation-destination', checkPermission(PERMISSIONS.WALLETS_UPD
   } catch (error) {
     next(error);
   }
-});
+}));
 
 /**
  * GET /wallets/:id/inflation-destination
  * Returns the current inflation destination set on the wallet's Stellar account.
  */
-router.get('/:id/inflation-destination', checkPermission(PERMISSIONS.WALLETS_READ), walletIdSchema, async (req, res, next) => {
+router.get('/:id/inflation-destination', checkPermission(PERMISSIONS.WALLETS_READ), walletIdSchema, asyncHandler(async (req, res, next) => {
   try {
     const wallet = await walletService.getWalletById(req.params.id);
     if (!wallet) {
@@ -130,7 +131,7 @@ router.get('/:id/inflation-destination', checkPermission(PERMISSIONS.WALLETS_REA
   } catch (error) {
     next(error);
   }
-});
+}));
 
 /**
  * @openapi
@@ -233,7 +234,7 @@ router.get('/:id/inflation-destination', checkPermission(PERMISSIONS.WALLETS_REA
  * POST /wallets
  * Create a new wallet with metadata. Auto-funds via Friendbot on testnet.
  */
-router.post('/', payloadSizeLimiter(ENDPOINT_LIMITS.wallet), checkPermission(PERMISSIONS.WALLETS_CREATE), walletCreateSchema, async (req, res, next) => {
+router.post('/', payloadSizeLimiter(ENDPOINT_LIMITS.wallet), checkPermission(PERMISSIONS.WALLETS_CREATE), walletCreateSchema, asyncHandler(async (req, res, next) => {
   try {
     const { address, label, ownerName, sponsored } = req.body;
 
@@ -270,7 +271,7 @@ router.post('/', payloadSizeLimiter(ENDPOINT_LIMITS.wallet), checkPermission(PER
   } catch (error) {
     next(error);
   }
-});
+}));
 
 /**
  * GET /wallets
@@ -298,7 +299,7 @@ router.get('/', checkPermission(PERMISSIONS.WALLETS_READ), cacheMiddleware('wall
  * GET /wallets/:id/balance
  * Get wallet balance natively bypassing horizon load via TTL
  */
-router.get('/:id/balance', checkPermission(PERMISSIONS.WALLETS_READ), walletIdSchema, async (req, res, next) => {
+router.get('/:id/balance', checkPermission(PERMISSIONS.WALLETS_READ), walletIdSchema, asyncHandler(async (req, res, next) => {
   try {
     const forceRefresh = req.query.refresh === 'true';
     const result = await walletService.getBalance(req.params.id, forceRefresh);
@@ -315,13 +316,13 @@ router.get('/:id/balance', checkPermission(PERMISSIONS.WALLETS_READ), walletIdSc
   } catch (error) {
     next(error);
   }
-});
+}));
 
 /**
  * GET /wallets/:id
  * Get a specific wallet
  */
-router.get('/:id', checkPermission(PERMISSIONS.WALLETS_READ), walletIdSchema, cacheMiddleware('wallet', 'private'), async (req, res, next) => {
+router.get('/:id', checkPermission(PERMISSIONS.WALLETS_READ), walletIdSchema, cacheMiddleware('wallet', 'private'), asyncHandler(async (req, res, next) => {
   try {
     const wallet = await Database.get(
       'SELECT id, publicKey, label, ownerName, createdAt FROM users WHERE id = ?',
@@ -336,13 +337,13 @@ router.get('/:id', checkPermission(PERMISSIONS.WALLETS_READ), walletIdSchema, ca
   } catch (error) {
     next(error);
   }
-});
+}));
 
 /**
  * PATCH /wallets/:id
  * Update wallet metadata
  */
-router.patch('/:id', checkPermission(PERMISSIONS.WALLETS_UPDATE), walletUpdateSchema, async (req, res, next) => {
+router.patch('/:id', checkPermission(PERMISSIONS.WALLETS_UPDATE), walletUpdateSchema, asyncHandler(async (req, res, next) => {
   try {
     const { label, ownerName } = req.body;
 
@@ -370,14 +371,14 @@ router.patch('/:id', checkPermission(PERMISSIONS.WALLETS_UPDATE), walletUpdateSc
   } catch (error) {
     next(error);
   }
-});
+}));
 
 /**
  * PATCH /wallets/:id/home-domain
  * Set the home domain on a wallet's Stellar account.
  * Body: { domain: string, sourceSecret: string }
  */
-router.patch('/:id/home-domain', checkPermission(PERMISSIONS.WALLETS_UPDATE), walletIdSchema, async (req, res, next) => {
+router.patch('/:id/home-domain', checkPermission(PERMISSIONS.WALLETS_UPDATE), walletIdSchema, asyncHandler(async (req, res, next) => {
   try {
     const { domain, sourceSecret } = req.body;
 
@@ -426,14 +427,14 @@ router.patch('/:id/home-domain', checkPermission(PERMISSIONS.WALLETS_UPDATE), wa
   } catch (error) {
     next(error);
   }
-});
+}));
 
 /**
  * PUT /wallets/:id/home-domain
  * Idiomatic alias for PATCH — sets the home domain on a wallet's Stellar account.
  * Body: { domain: string, sourceSecret: string }
  */
-router.put('/:id/home-domain', checkPermission(PERMISSIONS.WALLETS_UPDATE), walletIdSchema, async (req, res, next) => {
+router.put('/:id/home-domain', checkPermission(PERMISSIONS.WALLETS_UPDATE), walletIdSchema, asyncHandler(async (req, res, next) => {
   try {
     const { domain, sourceSecret } = req.body;
 
@@ -468,13 +469,13 @@ router.put('/:id/home-domain', checkPermission(PERMISSIONS.WALLETS_UPDATE), wall
   } catch (error) {
     next(error);
   }
-});
+}));
 
 /**
  * GET /wallets/:id/home-domain
  * Returns the current home_domain set on the wallet's Stellar account.
  */
-router.get('/:id/home-domain', checkPermission(PERMISSIONS.WALLETS_READ), walletIdSchema, async (req, res, next) => {
+router.get('/:id/home-domain', checkPermission(PERMISSIONS.WALLETS_READ), walletIdSchema, asyncHandler(async (req, res, next) => {
   try {
     const wallet = walletService.getWalletById(req.params.id);
 
@@ -485,14 +486,14 @@ router.get('/:id/home-domain', checkPermission(PERMISSIONS.WALLETS_READ), wallet
   } catch (error) {
     next(error);
   }
-});
+}));
 
 /**
  * POST /wallets/:id/home-domain/verify
  * Fetches https://{domain}/.well-known/stellar.toml and confirms the wallet's
  * public key is listed under ACCOUNTS.
  */
-router.post('/:id/home-domain/verify', checkPermission(PERMISSIONS.WALLETS_READ), walletIdSchema, async (req, res, next) => {
+router.post('/:id/home-domain/verify', checkPermission(PERMISSIONS.WALLETS_READ), walletIdSchema, asyncHandler(async (req, res, next) => {
   try {
     const wallet = walletService.getWalletById(req.params.id);
 
@@ -545,13 +546,13 @@ router.post('/:id/home-domain/verify', checkPermission(PERMISSIONS.WALLETS_READ)
   } catch (error) {
     next(error);
   }
-});
+}));
 
 /**
  * GET /wallets/:publicKey/transactions
  * Get all transactions (sent and received) for a wallet
  */
-router.get('/:publicKey/transactions', checkPermission(PERMISSIONS.WALLETS_READ), walletPublicKeySchema, async (req, res, next) => {
+router.get('/:publicKey/transactions', checkPermission(PERMISSIONS.WALLETS_READ), walletPublicKeySchema, asyncHandler(async (req, res, next) => {
   try {
     const { publicKey } = req.params;
 
@@ -612,14 +613,14 @@ router.get('/:publicKey/transactions', checkPermission(PERMISSIONS.WALLETS_READ)
   } catch (error) {
     next(error);
   }
-});
+}));
 
 /**
  * PATCH /wallets/:id/limits
  * Set per-wallet donation limits (admin only)
  * Body: { daily_limit, monthly_limit, per_transaction_limit } — all optional, positive number or null
  */
-router.patch('/:id/limits', requireAdmin(), async (req, res, next) => {
+router.patch('/:id/limits', requireAdmin(), asyncHandler(async (req, res, next) => {
   try {
     const userId = parseInt(req.params.id, 10);
     if (isNaN(userId) || userId < 1) {
@@ -677,14 +678,14 @@ router.patch('/:id/limits', requireAdmin(), async (req, res, next) => {
   } catch (error) {
     next(error);
   }
-});
+}));
 
 /**
  * PATCH /wallets/:id/leaderboard-visibility
  * Opt a wallet in or out of public leaderboard ranking.
  * Body: { visible: boolean }
  */
-router.patch('/:id/leaderboard-visibility', checkPermission(PERMISSIONS.WALLETS_UPDATE), walletIdSchema, async (req, res, next) => {
+router.patch('/:id/leaderboard-visibility', checkPermission(PERMISSIONS.WALLETS_UPDATE), walletIdSchema, asyncHandler(async (req, res, next) => {
   try {
     const { visible } = req.body || {};
     if (typeof visible !== 'boolean') {
@@ -699,26 +700,26 @@ router.patch('/:id/leaderboard-visibility', checkPermission(PERMISSIONS.WALLETS_
   } catch (err) {
     next(err);
   }
-});
+}));
 
 /**
  * POST /wallets/:id/sponsor
  * Sponsor a new account's base reserve using the platform SPONSOR_SECRET.
  */
-router.post('/:id/sponsor', checkPermission(PERMISSIONS.WALLETS_UPDATE), walletIdSchema, async (req, res, next) => {
+router.post('/:id/sponsor', checkPermission(PERMISSIONS.WALLETS_UPDATE), walletIdSchema, asyncHandler(async (req, res, next) => {
   try {
     const result = await walletService.sponsorAccount(req.params.id);
     res.json({ success: true, data: result });
   } catch (error) {
     next(error);
   }
-});
+}));
 
 /**
  * DELETE /wallets/:id/sponsor
  * Revoke sponsorship for a wallet. Returns 400 if the account cannot cover its own reserve.
  */
-router.delete('/:id/sponsor', checkPermission(PERMISSIONS.WALLETS_UPDATE), walletIdSchema, async (req, res, next) => {
+router.delete('/:id/sponsor', checkPermission(PERMISSIONS.WALLETS_UPDATE), walletIdSchema, asyncHandler(async (req, res, next) => {
   try {
     const { entryType } = req.query;
     const result = await walletService.revokeSponsorship(req.params.id, entryType);
@@ -726,27 +727,27 @@ router.delete('/:id/sponsor', checkPermission(PERMISSIONS.WALLETS_UPDATE), walle
   } catch (error) {
     next(error);
   }
-});
+}));
 
 /**
  * GET /wallets/:id/sponsor
  * Return the current sponsorship status for a wallet.
  */
-router.get('/:id/sponsor', checkPermission(PERMISSIONS.WALLETS_READ), walletIdSchema, async (req, res, next) => {
+router.get('/:id/sponsor', checkPermission(PERMISSIONS.WALLETS_READ), walletIdSchema, asyncHandler(async (req, res, next) => {
   try {
     const status = await walletService.getSponsorshipStatus(req.params.id);
     res.json({ success: true, data: status });
   } catch (error) {
     next(error);
   }
-});
+}));
 
 /**
  * POST /wallets/:id/revoke-sponsorship
  * Revoke platform sponsorship for a wallet.
  * Requires SPONSOR_SECRET to be configured in environment.
  */
-router.post('/:id/revoke-sponsorship', checkPermission(PERMISSIONS.WALLETS_UPDATE), walletIdSchema, async (req, res, next) => {
+router.post('/:id/revoke-sponsorship', checkPermission(PERMISSIONS.WALLETS_UPDATE), walletIdSchema, asyncHandler(async (req, res, next) => {
   try {
     const result = await walletService.revokeSponsoredAccount(req.params.id);
 
@@ -766,13 +767,13 @@ router.post('/:id/revoke-sponsorship', checkPermission(PERMISSIONS.WALLETS_UPDAT
   } catch (error) {
     next(error);
   }
-});
+}));
 
 /**
  * DELETE /wallets/:id
  * Soft delete a wallet by setting deleted_at timestamp
  */
-router.delete('/:id', checkPermission(PERMISSIONS.WALLETS_DELETE), walletIdSchema, async (req, res, next) => {
+router.delete('/:id', checkPermission(PERMISSIONS.WALLETS_DELETE), walletIdSchema, asyncHandler(async (req, res, next) => {
   try {
     const { id } = req.params;
 
@@ -804,13 +805,13 @@ router.delete('/:id', checkPermission(PERMISSIONS.WALLETS_DELETE), walletIdSchem
   } catch (error) {
     next(error);
   }
-});
+}));
 
 /**
  * GET /admin/deleted
  * Admin only: View all soft-deleted wallets and transactions
  */
-router.get('/admin/deleted', requireAdmin(), async (req, res, next) => {
+router.get('/admin/deleted', requireAdmin(), asyncHandler(async (req, res, next) => {
   try {
     const deletedWallets = await Database.query('SELECT * FROM users WHERE deleted_at IS NULL');
     const deletedTransactions = await Database.query('SELECT * FROM transactions WHERE deleted_at IS NOT NULL');
@@ -825,13 +826,13 @@ router.get('/admin/deleted', requireAdmin(), async (req, res, next) => {
   } catch (error) {
     next(error);
   }
-});
+}));
 
 /**
  * UPDATED: GET /wallets/:publicKey/transactions
  * Now filters out soft-deleted transactions
  */
-router.get('/:publicKey/transactions', checkPermission(PERMISSIONS.WALLETS_READ), walletPublicKeySchema, async (req, res, next) => {
+router.get('/:publicKey/transactions', checkPermission(PERMISSIONS.WALLETS_READ), walletPublicKeySchema, asyncHandler(async (req, res, next) => {
   try {
     const { publicKey } = req.params;
 
@@ -863,7 +864,7 @@ router.get('/:publicKey/transactions', checkPermission(PERMISSIONS.WALLETS_READ)
   } catch (error) {
     next(error);
   }
-});
+}));
 
 /**
  * POST /wallets/:id/data
@@ -877,7 +878,7 @@ router.post('/:id/data',
   checkPermission(PERMISSIONS.WALLETS_UPDATE), 
   walletIdSchema,
   validateDataEntry,
-  async (req, res, next) => {
+  asyncHandler(async (req, res, next) => {
     try {
       const { id } = req.params;
       const { secretKey, key, value } = req.body;
@@ -914,7 +915,7 @@ router.post('/:id/data',
     } catch (error) {
       next(error);
     }
-  }
+  })
 );
 
 /**
@@ -924,7 +925,7 @@ router.post('/:id/data',
 router.get('/:id/data',
   checkPermission(PERMISSIONS.WALLETS_READ),
   walletIdSchema,
-  async (req, res, next) => {
+  asyncHandler(async (req, res, next) => {
     try {
       const { id } = req.params;
 
@@ -938,7 +939,7 @@ router.get('/:id/data',
     } catch (error) {
       next(error);
     }
-  }
+  })
 );
 
 /**
@@ -950,7 +951,7 @@ router.get('/:id/data',
  */
 router.delete('/:id/data/:key',
   checkPermission(PERMISSIONS.WALLETS_UPDATE),
-  async (req, res, next) => {
+  asyncHandler(async (req, res, next) => {
     try {
       const { id, key } = req.params;
       const { secretKey } = req.body;
@@ -1001,7 +1002,7 @@ router.delete('/:id/data/:key',
     } catch (error) {
       next(error);
     }
-  }
+  })
 );
 
 /**
@@ -1009,7 +1010,7 @@ router.delete('/:id/data/:key',
  * Check whether a wallet account is eligible for merging.
  * Returns all blocking conditions (open offers, non-zero trustlines, data entries).
  */
-router.get('/:id/merge/eligibility', checkPermission(PERMISSIONS.WALLETS_READ), walletIdSchema, async (req, res, next) => {
+router.get('/:id/merge/eligibility', checkPermission(PERMISSIONS.WALLETS_READ), walletIdSchema, asyncHandler(async (req, res, next) => {
   try {
     const wallet = await Database.get(
       'SELECT id, publicKey, mergedAt FROM users WHERE id = ?',
@@ -1043,7 +1044,7 @@ router.get('/:id/merge/eligibility', checkPermission(PERMISSIONS.WALLETS_READ), 
   } catch (error) {
     next(error);
   }
-});
+}));
 
 /**
  * POST /wallets/:id/merge
@@ -1057,7 +1058,7 @@ router.get('/:id/merge/eligibility', checkPermission(PERMISSIONS.WALLETS_READ), 
  * @body {string}  sourceSecret         - Secret key of the wallet being merged
  * @body {boolean} confirm              - Must be exactly `true` to proceed
  */
-router.post('/:id/merge', checkPermission(PERMISSIONS.WALLETS_DELETE), async (req, res, next) => {
+router.post('/:id/merge', checkPermission(PERMISSIONS.WALLETS_DELETE), asyncHandler(async (req, res, next) => {
   try {
     const { destinationPublicKey, sourceSecret, confirm } = req.body;
 
@@ -1164,7 +1165,7 @@ router.post('/:id/merge', checkPermission(PERMISSIONS.WALLETS_DELETE), async (re
   } catch (error) {
     next(error);
   }
-});
+}));
 
 // ─── Trustline Endpoints ──────────────────────────────────────────────────────
 
@@ -1224,7 +1225,7 @@ const trustlineUpdateSchema = validateSchema({
  * @body {string|null} [limit]      - Optional trust limit (positive numeric string,
  *   max "922337203685.4775807"). Omit for unlimited.
  */
-router.post('/:id/trustlines', checkPermission(PERMISSIONS.WALLETS_UPDATE), trustlineCreateSchema, async (req, res, next) => {
+router.post('/:id/trustlines', checkPermission(PERMISSIONS.WALLETS_UPDATE), trustlineCreateSchema, asyncHandler(async (req, res, next) => {
   try {
     const { secretKey, assetCode, issuerPublic, limit } = req.body;
 
@@ -1252,7 +1253,7 @@ router.post('/:id/trustlines', checkPermission(PERMISSIONS.WALLETS_UPDATE), trus
   } catch (error) {
     next(error);
   }
-});
+}));
 
 /**
  * PATCH /wallets/:id/trustlines/:asset
@@ -1264,7 +1265,7 @@ router.post('/:id/trustlines', checkPermission(PERMISSIONS.WALLETS_UPDATE), trus
  * @body {string} limit          - New trust limit (positive numeric string,
  *   max "922337203685.4775807")
  */
-router.patch('/:id/trustlines/:asset', checkPermission(PERMISSIONS.WALLETS_UPDATE), trustlineUpdateSchema, async (req, res, next) => {
+router.patch('/:id/trustlines/:asset', checkPermission(PERMISSIONS.WALLETS_UPDATE), trustlineUpdateSchema, asyncHandler(async (req, res, next) => {
   try {
     const { asset } = req.params;
     const { secretKey, issuerPublic, limit } = req.body;
@@ -1291,7 +1292,7 @@ router.patch('/:id/trustlines/:asset', checkPermission(PERMISSIONS.WALLETS_UPDAT
   } catch (error) {
     next(error);
   }
-});
+}));
 
 // ─── Account Set Options ──────────────────────────────────────────────────────
 
@@ -1318,7 +1319,7 @@ const walletOptionsSchema = validateSchema({
  * Validates that AUTH_IMMUTABLE cannot be cleared.
  * Logs changes to the audit trail.
  */
-router.patch('/:id/options', checkPermission(PERMISSIONS.WALLETS_UPDATE), walletOptionsSchema, async (req, res, next) => {
+router.patch('/:id/options', checkPermission(PERMISSIONS.WALLETS_UPDATE), walletOptionsSchema, asyncHandler(async (req, res, next) => {
   try {
     const walletId = parseInt(req.params.id, 10);
     const { secret, ...options } = req.body;
@@ -1344,7 +1345,7 @@ router.patch('/:id/options', checkPermission(PERMISSIONS.WALLETS_UPDATE), wallet
   } catch (error) {
     next(error);
   }
-});
+}));
 
 // ─── Trustline Management ───────────────────────────────────────────────────────
 
@@ -1380,7 +1381,7 @@ const trustlineListSchema = validateSchema({
  * @body {string} secretKey    - Secret key of the wallet account
  * @body {string} issuerPublic - Public key of the asset issuer
  */
-router.delete('/:id/trustlines/:asset', checkPermission(PERMISSIONS.WALLETS_UPDATE), trustlineDeleteSchema, async (req, res, next) => {
+router.delete('/:id/trustlines/:asset', checkPermission(PERMISSIONS.WALLETS_UPDATE), trustlineDeleteSchema, asyncHandler(async (req, res, next) => {
   try {
     const { asset } = req.params;
     const { secretKey, issuerPublic } = req.body;
@@ -1404,7 +1405,7 @@ router.delete('/:id/trustlines/:asset', checkPermission(PERMISSIONS.WALLETS_UPDA
   } catch (error) {
     next(error);
   }
-});
+}));
 
 /**
  * GET /wallets/:id/trustlines
@@ -1412,7 +1413,7 @@ router.delete('/:id/trustlines/:asset', checkPermission(PERMISSIONS.WALLETS_UPDA
  *
  * Returns an array of trustlines containing asset details, current balance, and limits.
  */
-router.get('/:id/trustlines', checkPermission(PERMISSIONS.WALLETS_READ), trustlineListSchema, async (req, res, next) => {
+router.get('/:id/trustlines', checkPermission(PERMISSIONS.WALLETS_READ), trustlineListSchema, asyncHandler(async (req, res, next) => {
   try {
     const walletId = parseInt(req.params.id, 10);
 
@@ -1438,7 +1439,7 @@ router.get('/:id/trustlines', checkPermission(PERMISSIONS.WALLETS_READ), trustli
   } catch (error) {
     next(error);
   }
-});
+}));
 
 // ─────────────────────────────────────────────────────────────────────────────
 // POST /wallets/bulk-import
@@ -1457,7 +1458,7 @@ router.post(
   '/bulk-import',
   checkPermission(PERMISSIONS.WALLETS_CREATE),
   upload.single('file'),
-  async (req, res, next) => {
+  asyncHandler(async (req, res, next) => {
     try {
       if (!req.file) {
         return res.status(400).json({
@@ -1502,7 +1503,7 @@ router.post(
     } catch (error) {
       next(error);
     }
-  }
+  })
 );
 
 module.exports = router;

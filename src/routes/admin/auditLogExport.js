@@ -102,7 +102,7 @@ const { ValidationError, NotFoundError, ERROR_CODES } = require('../../utils/err
  * POST /admin/audit-logs/export
  * Queue an async audit log export job with date range and event type filters.
  */
-router.post('/', requireAdmin(), async (req, res, next) => {
+router.post('/', requireAdmin(), asyncHandler(async (req, res, next) => {
   try {
     const { startDate, endDate, eventType, format = 'json' } = req.body;
 
@@ -135,13 +135,13 @@ router.post('/', requireAdmin(), async (req, res, next) => {
   } catch (error) {
     next(error);
   }
-});
+}));
 
 /**
  * GET /admin/audit-logs/export/:jobId/status
  * Poll the status of an async export job.
  */
-router.get('/:jobId/status', requireAdmin(), async (req, res, next) => {
+router.get('/:jobId/status', requireAdmin(), asyncHandler(async (req, res, next) => {
   try {
     const { jobId } = req.params;
     const status = await AuditLogExportService.getJobStatus(jobId);
@@ -149,14 +149,14 @@ router.get('/:jobId/status', requireAdmin(), async (req, res, next) => {
   } catch (error) {
     next(error);
   }
-});
+}));
 
 /**
  * GET /admin/audit-logs/export/:jobId/download
  * Return a signed URL for downloading a completed export.
  * Returns 202 if the job is not yet complete.
  */
-router.get('/:jobId/download', requireAdmin(), async (req, res, next) => {
+router.get('/:jobId/download', requireAdmin(), asyncHandler(async (req, res, next) => {
   try {
     const { jobId } = req.params;
     const { format } = req.query;
@@ -174,6 +174,6 @@ router.get('/:jobId/download', requireAdmin(), async (req, res, next) => {
   } catch (error) {
     next(error);
   }
-});
+}));
 
 module.exports = router;

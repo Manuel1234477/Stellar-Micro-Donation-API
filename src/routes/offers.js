@@ -12,6 +12,7 @@
 const express = require('express');
 const router = express.Router();
 const requireApiKey = require('../middleware/apiKey');
+const asyncHandler = require('../utils/asyncHandler');
 const { checkPermission } = require('../middleware/rbac');
 const { PERMISSIONS } = require('../utils/permissions');
 const { ValidationError } = require('../utils/errors');
@@ -50,7 +51,7 @@ function normaliseAsset(asset) {
  *   amount        {string} - Amount of selling asset
  *   price         {string} - Price ratio ('n/d') or decimal
  */
-router.post('/', requireApiKey, checkPermission(PERMISSIONS.DONATIONS_CREATE), async (req, res) => {
+router.post('/', requireApiKey, checkPermission(PERMISSIONS.DONATIONS_CREATE), asyncHandler(async (req, res) => {
   try {
     const { sourceSecret, sellingAsset, buyingAsset, amount, price } = req.body;
 
@@ -88,7 +89,7 @@ router.post('/', requireApiKey, checkPermission(PERMISSIONS.DONATIONS_CREATE), a
     const status = err.statusCode || err.status || 400;
     return res.status(status).json({ success: false, error: { code: err.errorCode || 'OFFER_CREATE_FAILED', message: err.message } });
   }
-});
+}));
 
 /**
  * GET /offers
@@ -108,7 +109,7 @@ router.get('/', requireApiKey, checkPermission(PERMISSIONS.DONATIONS_READ), (req
  *   sellingAsset  {string} - Asset being sold in the offer
  *   buyingAsset   {string} - Asset being bought in the offer
  */
-router.delete('/:id', requireApiKey, checkPermission(PERMISSIONS.DONATIONS_CREATE), async (req, res) => {
+router.delete('/:id', requireApiKey, checkPermission(PERMISSIONS.DONATIONS_CREATE), asyncHandler(async (req, res) => {
   try {
     const offerId = parseInt(req.params.id, 10);
     if (isNaN(offerId)) return res.status(400).json({ success: false, error: { code: 'VALIDATION_ERROR', message: 'Offer ID must be an integer' } });
@@ -129,7 +130,7 @@ router.delete('/:id', requireApiKey, checkPermission(PERMISSIONS.DONATIONS_CREAT
     const status = err.statusCode || err.status || 400;
     return res.status(status).json({ success: false, error: { code: err.errorCode || 'OFFER_CANCEL_FAILED', message: err.message } });
   }
-});
+}));
 
 /**
  * GET /orderbook/:baseAsset/:counterAsset
@@ -142,7 +143,7 @@ router.delete('/:id', requireApiKey, checkPermission(PERMISSIONS.DONATIONS_CREAT
  * Query:
  *   limit {number} - Max bids/asks to return (default 20, max 200)
  */
-router.get('/orderbook/:baseAsset/:counterAsset', requireApiKey, checkPermission(PERMISSIONS.DONATIONS_READ), async (req, res) => {
+router.get('/orderbook/:baseAsset/:counterAsset', requireApiKey, checkPermission(PERMISSIONS.DONATIONS_READ), asyncHandler(async (req, res) => {
   try {
     const normBase = normaliseAsset(decodeURIComponent(req.params.baseAsset));
     const normCounter = normaliseAsset(decodeURIComponent(req.params.counterAsset));
@@ -155,7 +156,7 @@ router.get('/orderbook/:baseAsset/:counterAsset', requireApiKey, checkPermission
     const status = err.statusCode || err.status || 400;
     return res.status(status).json({ success: false, error: { code: err.errorCode || 'ORDERBOOK_FAILED', message: err.message } });
   }
-});
+}));
 
 // Expose store for testing
 router._offerStore = offerStore;

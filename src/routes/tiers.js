@@ -22,6 +22,7 @@ const { PERMISSIONS } = require('../utils/permissions');
 const SubscriptionTierService = require('../services/SubscriptionTierService');
 const serviceContainer = require('../config/serviceContainer');
 const AuditLogService = require('../services/AuditLogService');
+const asyncHandler = require('../utils/asyncHandler');
 
 /** Lazy singleton — avoids circular-require issues at module load time */
 function getTierService() {
@@ -42,7 +43,7 @@ function getTierService() {
  * @body {string} [interval]        - daily | weekly | monthly (default: monthly)
  * @body {string|Object} [benefits] - Free-form benefits description
  */
-router.post('/', checkPermission(PERMISSIONS.ADMIN_ALL), async (req, res, next) => {
+router.post('/', checkPermission(PERMISSIONS.ADMIN_ALL), asyncHandler(async (req, res, next) => {
   try {
     const { name, amount, interval, benefits } = req.body;
     const tier = await getTierService().createTier({ name, amount, interval, benefits });
@@ -63,7 +64,7 @@ router.post('/', checkPermission(PERMISSIONS.ADMIN_ALL), async (req, res, next) 
   } catch (err) {
     next(err);
   }
-});
+}));
 
 // ─────────────────────────────────────────────────────────────────────────────
 // GET /tiers
@@ -74,14 +75,14 @@ router.post('/', checkPermission(PERMISSIONS.ADMIN_ALL), async (req, res, next) 
  * @desc    List all subscription tiers
  * @access  donations:read
  */
-router.get('/', checkPermission(PERMISSIONS.DONATIONS_READ), async (req, res, next) => {
+router.get('/', checkPermission(PERMISSIONS.DONATIONS_READ), asyncHandler(async (req, res, next) => {
   try {
     const tiers = await getTierService().listTiers();
     res.json({ success: true, data: tiers, count: tiers.length });
   } catch (err) {
     next(err);
   }
-});
+}));
 
 // ─────────────────────────────────────────────────────────────────────────────
 // GET /tiers/analytics
@@ -92,7 +93,7 @@ router.get('/', checkPermission(PERMISSIONS.DONATIONS_READ), async (req, res, ne
  * @desc    Tier analytics: subscriber counts and revenue per tier
  * @access  stats:admin
  */
-router.get('/analytics', checkPermission(PERMISSIONS.STATS_ADMIN), async (req, res, next) => {
+router.get('/analytics', checkPermission(PERMISSIONS.STATS_ADMIN), asyncHandler(async (req, res, next) => {
   try {
     const analytics = await getTierService().getTierAnalytics();
 
@@ -112,7 +113,7 @@ router.get('/analytics', checkPermission(PERMISSIONS.STATS_ADMIN), async (req, r
   } catch (err) {
     next(err);
   }
-});
+}));
 
 // ─────────────────────────────────────────────────────────────────────────────
 // POST /tiers/:id/subscribe
@@ -128,7 +129,7 @@ router.get('/analytics', checkPermission(PERMISSIONS.STATS_ADMIN), async (req, r
  * @body  {string} recipientPublicKey    - Recipient's Stellar public key
  * @body  {string} [startDate]           - ISO date for first execution
  */
-router.post('/:id/subscribe', checkPermission(PERMISSIONS.STREAM_CREATE), async (req, res, next) => {
+router.post('/:id/subscribe', checkPermission(PERMISSIONS.STREAM_CREATE), asyncHandler(async (req, res, next) => {
   try {
     const tierId = parseInt(req.params.id, 10);
     if (!Number.isInteger(tierId) || tierId < 1) {
@@ -171,7 +172,7 @@ router.post('/:id/subscribe', checkPermission(PERMISSIONS.STREAM_CREATE), async 
   } catch (err) {
     next(err);
   }
-});
+}));
 
 // ─────────────────────────────────────────────────────────────────────────────
 // DELETE /tiers/subscriptions/:subId
@@ -182,7 +183,7 @@ router.post('/:id/subscribe', checkPermission(PERMISSIONS.STREAM_CREATE), async 
  * @desc    Cancel a donor subscription (also cancels the recurring donation)
  * @access  stream:delete
  */
-router.delete('/subscriptions/:subId', checkPermission(PERMISSIONS.STREAM_DELETE), async (req, res, next) => {
+router.delete('/subscriptions/:subId', checkPermission(PERMISSIONS.STREAM_DELETE), asyncHandler(async (req, res, next) => {
   try {
     const subId = parseInt(req.params.subId, 10);
     if (!Number.isInteger(subId) || subId < 1) {
@@ -207,7 +208,7 @@ router.delete('/subscriptions/:subId', checkPermission(PERMISSIONS.STREAM_DELETE
   } catch (err) {
     next(err);
   }
-});
+}));
 
 module.exports = router;
 

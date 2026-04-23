@@ -186,7 +186,7 @@ const transactionSyncBodySchema = validateSchema({
   },
 });
 
-router.get('/', checkPermission(PERMISSIONS.TRANSACTIONS_READ), transactionListQuerySchema, async (req, res, next) => {
+router.get('/', checkPermission(PERMISSIONS.TRANSACTIONS_READ), transactionListQuerySchema, asyncHandler(async (req, res, next) => {
   try {
     const { limit = 10, offset = 0 } = req.query;
 
@@ -217,14 +217,14 @@ router.get('/', checkPermission(PERMISSIONS.TRANSACTIONS_READ), transactionListQ
   } catch (error) {
     next(error);
   }
-});
+}));
 
 router.post(
   "/sync",
   payloadSizeLimiter(ENDPOINT_LIMITS.transaction),
   checkPermission(PERMISSIONS.TRANSACTIONS_SYNC),
   transactionSyncBodySchema,
-  async (req, res, next) => {
+  asyncHandler(async (req, res, next) => {
     try {
       const { publicKey } = req.body;
 
@@ -257,7 +257,7 @@ router.post(
 router.post(
   '/multisig',
   checkPermission(PERMISSIONS.TRANSACTIONS_SYNC),
-  async (req, res, next) => {
+  asyncHandler(async (req, res, next) => {
     try {
       const { transaction_xdr, network_passphrase, required_signers, signer_keys, metadata } = req.body;
       const tx = await multiSigService.createMultiSigTransaction({
@@ -271,7 +271,7 @@ router.post(
     } catch (err) {
       next(err);
     }
-  }
+  })
 );
 
 /**
@@ -283,7 +283,7 @@ router.post(
 router.post(
   '/multisig/collect',
   checkPermission(PERMISSIONS.TRANSACTIONS_SYNC),
-  async (req, res, next) => {
+  asyncHandler(async (req, res, next) => {
     try {
       const { id, signer, signed_xdr } = req.body;
 
@@ -321,7 +321,7 @@ router.post(
     } catch (err) {
       next(err);
     }
-  }
+  })
 );
 
 /**
@@ -332,7 +332,7 @@ router.post(
 router.post(
   '/:id/sign',
   checkPermission(PERMISSIONS.TRANSACTIONS_SYNC),
-  async (req, res, next) => {
+  asyncHandler(async (req, res, next) => {
     try {
       const id = parseInt(req.params.id, 10);
       if (isNaN(id)) {
@@ -344,7 +344,7 @@ router.post(
     } catch (err) {
       next(err);
     }
-  }
+  })
 );
 
 /**
@@ -354,7 +354,7 @@ router.post(
 router.get(
   '/:id/signatures',
   checkPermission(PERMISSIONS.TRANSACTIONS_READ),
-  async (req, res, next) => {
+  asyncHandler(async (req, res, next) => {
     try {
       const id = parseInt(req.params.id, 10);
       if (isNaN(id)) {
@@ -365,7 +365,7 @@ router.get(
     } catch (err) {
       next(err);
     }
-  }
+  })
 );
 
 // ─── Transaction Simulation Endpoint ─────────────────────────────────────────
@@ -382,7 +382,7 @@ router.post(
   '/simulate',
   payloadSizeLimiter(ENDPOINT_LIMITS.transaction),
   checkPermission(PERMISSIONS.TRANSACTIONS_SIMULATE),
-  async (req, res, next) => {
+  asyncHandler(async (req, res, next) => {
     try {
       const { tx_envelope } = req.body;
 
@@ -421,7 +421,7 @@ router.post(
       }
       next(err);
     }
-  }
+  })
 );
 
 // ─── Memo Decryption Endpoint ────────────────────────────────────────────────
@@ -458,7 +458,7 @@ router.post(
       },
     },
   }),
-  async (req, res, next) => {
+  asyncHandler(async (req, res, next) => {
     try {
       const { id } = req.params;
       const { recipientSecret } = req.body;
@@ -515,7 +515,7 @@ router.post(
     } catch (error) {
       next(error);
     }
-  }
+  })
 );
 
 /**
@@ -527,7 +527,7 @@ router.post(
 router.get(
   '/:id/envelope',
   checkPermission(PERMISSIONS.TRANSACTIONS_READ),
-  async (req, res, next) => {
+  asyncHandler(async (req, res, next) => {
     try {
       const { id } = req.params;
       const tx = Transaction.getById(id);
@@ -563,7 +563,7 @@ router.get(
     } catch (error) {
       next(error);
     }
-  }
+  })
 );
 
 /**
@@ -599,7 +599,7 @@ router.get('/stream', (req, res) => {
 
   // Send initial connection event
   res.write(`data: ${JSON.stringify({ type: 'connected' })}\n\n`);
-});
+}));
 
 module.exports = router;
 module.exports.sseManager = sseManager;
