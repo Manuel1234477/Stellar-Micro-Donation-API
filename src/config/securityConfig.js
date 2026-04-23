@@ -136,13 +136,6 @@ const SECURITY_CONFIGS = {
 };
 
 /**
- * Generate a secure development encryption key
- */
-function generateDevEncryptionKey() {
-  return crypto.randomBytes(32).toString('hex');
-}
-
-/**
  * Load and validate security configuration with safe defaults
  */
 function loadSecurityConfig() {
@@ -201,20 +194,10 @@ function loadSecurityConfig() {
       }
     }
 
-    // Special handling for encryption key
-    if (key === 'ENCRYPTION_KEY' && !finalValue && !isProduction) {
-      finalValue = generateDevEncryptionKey();
-      misconfigurations.push({
-        config: key,
-        issue: 'Generated development encryption key',
-        severity: 'INFO',
-        usedDefault: true,
-        isGenerated: true
-      });
-      log.info('SECURITY_CONFIG', 'Generated development encryption key', {
-        config: key,
-        keyLength: finalValue.length
-      });
+    // ENCRYPTION_KEY must always be explicitly set — never auto-generate
+    if (key === 'ENCRYPTION_KEY' && !finalValue) {
+      log.error('SECURITY_CONFIG', 'ENCRYPTION_KEY is not set. Run `npm run generate-key` to create one, then add it to your .env file.');
+      process.exit(1);
     }
 
     config[key] = finalValue;

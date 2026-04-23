@@ -37,12 +37,8 @@ function fail(name, detail) {
 function checkEncryptionKey() {
   const key = process.env.ENCRYPTION_KEY;
   if (!key || !key.trim()) {
-    if (process.env.NODE_ENV === 'production') {
-      fail('ENCRYPTION_KEY', 'not set — required in production');
-      return false;
-    }
-    warn('ENCRYPTION_KEY', 'not set — using auto-generated key (not safe for production)');
-    return true;
+    fail('ENCRYPTION_KEY', 'not set — run `npm run generate-key` and add it to your .env file');
+    return false;
   }
   if (key.length < 32) {
     fail('ENCRYPTION_KEY', `too short (${key.length} chars, minimum 32)`);

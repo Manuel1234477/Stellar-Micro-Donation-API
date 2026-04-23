@@ -22,6 +22,7 @@
     "keys:create": "node src/scripts/manageApiKeys.js create",
     "keys:list": "node src/scripts/manageApiKeys.js list",
     "keys:help": "node src/scripts/manageApiKeys.js help",
+    "generate-key": "node src/scripts/generateKey.js",
     "validate:rbac": "node scripts/validate-rbac.js",
     "openapi:generate": "node scripts/generate-openapi.js",
     "openapi:check": "node scripts/check-openapi-sync.js",

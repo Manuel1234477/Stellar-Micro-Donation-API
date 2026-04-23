@@ -11,7 +11,7 @@ Wallet `label` and `notes` fields are encrypted with AES-256-GCM before being wr
 | `ENCRYPTION_KEY_N` | Key for version N (e.g. `ENCRYPTION_KEY_2`) |
 | `ENCRYPTION_KEY_VERSION` | Active key version for new writes (default: `1`) |
 
-When neither `ENCRYPTION_KEY` nor `ENCRYPTION_KEY_1` is set, fields are stored as plaintext (development mode).
+When neither `ENCRYPTION_KEY` nor `ENCRYPTION_KEY_1` is set, the server will **refuse to start**. Run `npm run generate-key` to create a stable key and add it to your `.env` file.
 
 ## Ciphertext Format
 

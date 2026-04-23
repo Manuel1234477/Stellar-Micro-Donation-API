@@ -2,6 +2,7 @@
 process.env.MOCK_STELLAR = 'true';
 process.env.API_KEYS = 'test-key-1,test-key-2,test-key,admin-test-key';
 process.env.NODE_ENV = 'test';
+process.env.ENCRYPTION_KEY = process.env.ENCRYPTION_KEY || 'test_encryption_key_fixed_32bytes_hex_value_here_00';
 
 module.exports = async () => {
   // Delete stale DB file so tables are always created fresh with correct schema

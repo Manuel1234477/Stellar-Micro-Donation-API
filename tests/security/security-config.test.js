@@ -15,6 +15,8 @@ describe('Security Configuration', () => {
     securityVars.forEach(varName => {
       delete process.env[varName];
     });
+    // Always set a fixed test key so loadSecurityConfig() doesn't exit
+    process.env.ENCRYPTION_KEY = 'test_encryption_key_fixed_32bytes_hex_value_here_00';
   });
 
   afterEach(() => {
@@ -30,19 +32,18 @@ describe('Security Configuration', () => {
       expect(config.STELLAR_NETWORK).toBe('testnet');
       expect(config.MOCK_STELLAR).toBe('true');
       expect(config.RATE_LIMIT).toBe('100');
-      expect(config.ENCRYPTION_KEY).toBeTruthy(); // Should generate dev key
+      expect(config.ENCRYPTION_KEY).toBe(process.env.ENCRYPTION_KEY); // Must be explicitly set
       expect(config.HORIZON_URL).toBeNull();
       expect(config.SERVICE_SECRET_KEY).toBeNull();
       expect(config.STELLAR_SECRET).toBeNull();
     });
 
-    test('should generate development encryption key when not provided', () => {
-      delete process.env.ENCRYPTION_KEY;
+    test('should use the provided ENCRYPTION_KEY without modification', () => {
       const config = loadSecurityConfig();
       
       expect(config.ENCRYPTION_KEY).toBeTruthy();
       expect(typeof config.ENCRYPTION_KEY).toBe('string');
-      expect(config.ENCRYPTION_KEY.length).toBe(64); // 32 bytes as hex
+      expect(config.ENCRYPTION_KEY.length).toBeGreaterThanOrEqual(32);
     });
 
     test('should use testnet as safe default when Stellar network', () => {
@@ -170,12 +171,14 @@ describe('Security Configuration', () => {
       process.env.NODE_ENV = 'production';
     });
 
-    test('should require encryption key in production', () => {
+    test('should exit when ENCRYPTION_KEY is not set', () => {
+      const mockExit = jest.spyOn(process, 'exit').mockImplementation(() => {});
       delete process.env.ENCRYPTION_KEY;
       
-      expect(() => {
-        loadSecurityConfig();
-      }).not.toThrow(); // Should not throw, but will log error
+      loadSecurityConfig();
+      
+      expect(mockExit).toHaveBeenCalledWith(1);
+      mockExit.mockRestore();
     });
 
     test('should accept valid encryption key in production', () => {
@@ -202,26 +205,16 @@ describe('Security Configuration', () => {
       expect(summary.STELLAR_NETWORK).toBe('testnet');
     });
 
-    test('should show CONFIGURED when encryption key and NOT SET when missing secrets', () => {
-      // This test verifies the summary function behavior
-      // Since encryption key is auto-generated, it will show as CONFIGURED
-      // Empty API_KEYS should show as NOT SET, but due to caching might show differently
-      
+    test('should show CONFIGURED when encryption key is set and NOT SET when missing secrets', () => {
       // Clear API keys and secrets to test NOT SET behavior
       process.env.API_KEYS = '';
       delete process.env.SERVICE_SECRET_KEY;
       delete process.env.STELLAR_SECRET;
+      // ENCRYPTION_KEY is set in beforeEach
       
-      // Clear the module cache to force reload
-      delete require.cache[require.resolve('../src/config/securityConfig')];
-      
-      // Get a fresh summary
-      const { getSecuritySummary } = require('../../src/config/securityConfig');
       const summary = getSecuritySummary();
       
-      // ENCRYPTION_KEY is always generated, so shows as CONFIGURED
       expect(summary.ENCRYPTION_KEY).toBe('[CONFIGURED]');
-      // SERVICE_SECRET_KEY should be NOT SET when not provided
       expect(summary.SERVICE_SECRET_KEY).toBe('[NOT SET]');
       expect(summary.STELLAR_SECRET).toBe('[NOT SET]');
     });
@@ -255,12 +248,12 @@ describe('Security Configuration', () => {
   describe('Edge Cases', () => {
     test('should handle null and undefined values gracefully', () => {
       process.env.API_KEYS = null;
-      process.env.ENCRYPTION_KEY = undefined;
+      // ENCRYPTION_KEY is set in beforeEach; keep it so the server doesn't exit
       
       const config = loadSecurityConfig();
       
       expect(config.API_KEYS).toEqual([]);
-      expect(config.ENCRYPTION_KEY).toBeTruthy(); // Generated
+      expect(config.ENCRYPTION_KEY).toBeTruthy();
     });
 
     test('should handle whitespace-only values', () => {
@@ -275,12 +268,12 @@ describe('Security Configuration', () => {
 
     test('should handle empty string values', () => {
       process.env.API_KEYS = '';
-      process.env.ENCRYPTION_KEY = '';
+      // ENCRYPTION_KEY is set in beforeEach; keep it so the server doesn't exit
       
       const config = loadSecurityConfig();
       
       expect(config.API_KEYS).toEqual([]);
-      expect(config.ENCRYPTION_KEY).toBeTruthy(); // Generated
+      expect(config.ENCRYPTION_KEY).toBeTruthy();
     });
   });
 });
