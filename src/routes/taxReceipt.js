@@ -18,6 +18,7 @@ const { validateSchema } = require('../middleware/schemaValidation');
 const AuditLogService = require('../services/AuditLogService');
 const TaxReceiptService = require('../services/TaxReceiptService');
 const log = require('../utils/log');
+const asyncHandler = require('../utils/asyncHandler');
 
 /**
  * Schema for tax receipt request
@@ -71,7 +72,7 @@ const eligibleDonationsSchema = validateSchema({
  * GET /donations/:id/tax-receipt
  * Generate IRS-compliant tax receipt for a donation
  */
-router.get('/:id/tax-receipt', checkPermission(PERMISSIONS.DONATIONS_READ), taxReceiptSchema, async (req, res, next) => {
+router.get('/:id/tax-receipt', checkPermission(PERMISSIONS.DONATIONS_READ), taxReceiptSchema, asyncHandler(async (req, res, next) => {
   try {
     const donationId = parseInt(req.params.id, 10);
     const format = req.query.format || 'json';
@@ -141,13 +142,13 @@ router.get('/:id/tax-receipt', checkPermission(PERMISSIONS.DONATIONS_READ), taxR
   } catch (error) {
     next(error);
   }
-});
+}));
 
 /**
  * GET /donations/tax-receipts/eligible
  * Get all donations eligible for tax receipts
  */
-router.get('/tax-receipts/eligible', checkPermission(PERMISSIONS.DONATIONS_READ), eligibleDonationsSchema, async (req, res, next) => {
+router.get('/tax-receipts/eligible', checkPermission(PERMISSIONS.DONATIONS_READ), eligibleDonationsSchema, asyncHandler(async (req, res, next) => {
   try {
     const { startDate, endDate, limit } = req.query;
 
@@ -188,13 +189,13 @@ router.get('/tax-receipts/eligible', checkPermission(PERMISSIONS.DONATIONS_READ)
   } catch (error) {
     next(error);
   }
-});
+}));
 
 /**
  * GET /donations/tax-receipts/config
  * Get tax receipt configuration status
  */
-router.get('/tax-receipts/config', requireAdmin(), async (req, res, next) => {
+router.get('/tax-receipts/config', requireAdmin(), asyncHandler(async (req, res, next) => {
   try {
     const isConfigured = TaxReceiptService.isConfigured();
     const config = isConfigured ? TaxReceiptService.getOrganizationConfig() : null;
@@ -224,6 +225,6 @@ router.get('/tax-receipts/config', requireAdmin(), async (req, res, next) => {
   } catch (error) {
     next(error);
   }
-});
+}));
 
 module.exports = router;

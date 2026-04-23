@@ -277,7 +277,7 @@ router.get('/cost-breakdown', checkPermission(PERMISSIONS.DONATIONS_READ), (req,
  * GET /donations/:id/receipt
  * Generate and return a PDF receipt for a confirmed donation.
  */
-router.get('/:id/receipt', checkPermission(PERMISSIONS.DONATIONS_READ), donationIdParamSchema, async (req, res, next) => {
+router.get('/:id/receipt', checkPermission(PERMISSIONS.DONATIONS_READ), donationIdParamSchema, asyncHandler(async (req, res, next) => {
   try {
     const ReceiptService = require('../services/ReceiptService');
     const transaction = donationService.getDonationById(req.params.id);
@@ -293,14 +293,14 @@ router.get('/:id/receipt', checkPermission(PERMISSIONS.DONATIONS_READ), donation
   } catch (error) {
     next(error);
   }
-});
+}));
 
 /**
  * POST /donations/:id/receipt/email
  * Send a PDF receipt to the provided email address.
  * Body: { email: string }
  */
-router.post('/:id/receipt/email', requireApiKey, donationIdParamSchema, async (req, res, next) => {
+router.post('/:id/receipt/email', requireApiKey, donationIdParamSchema, asyncHandler(async (req, res, next) => {
   try {
     const ReceiptService = require('../services/ReceiptService');
     const { email } = req.body;
@@ -324,7 +324,7 @@ router.post('/:id/receipt/email', requireApiKey, donationIdParamSchema, async (r
   } catch (error) {
     next(error);
   }
-});
+}));
 
 /**
  * GET /donations/:id/memo/decrypt
@@ -340,7 +340,7 @@ router.post('/:id/receipt/email', requireApiKey, donationIdParamSchema, async (r
  * so that private keys never leave the user's device. This endpoint is provided
  * for server-side integrations and testing only.
  */
-router.get('/:id/memo/decrypt', requireApiKey, donationIdParamSchema, async (req, res, next) => {
+router.get('/:id/memo/decrypt', requireApiKey, donationIdParamSchema, asyncHandler(async (req, res, next) => {
   try {
     const { id } = req.params;
     const { recipientSecret } = req.query;
@@ -363,7 +363,7 @@ router.get('/:id/memo/decrypt', requireApiKey, donationIdParamSchema, async (req
   } catch (error) {
     next(error);
   }
-});
+}));
 
 /**
  * GET /donations/:id/certificate
@@ -412,7 +412,7 @@ router.get('/:id/certificate', checkPermission(PERMISSIONS.DONATIONS_READ), dona
  * Query params:
  *   - limit {integer} max results to return (default 10, max 100)
  */
-router.get('/recent', checkPermission(PERMISSIONS.DONATIONS_READ), async (req, res, next) => {
+router.get('/recent', checkPermission(PERMISSIONS.DONATIONS_READ), asyncHandler(async (req, res, next) => {
   try {
     const limit = Math.min(parseInt(req.query.limit, 10) || 10, 100);
     const Database = require('../utils/database');
@@ -424,7 +424,7 @@ router.get('/recent', checkPermission(PERMISSIONS.DONATIONS_READ), async (req, r
   } catch (error) {
     next(error);
   }
-});
+}));
 
 /**
  * GET /donations/:id
@@ -456,7 +456,7 @@ router.get('/:id', checkPermission(PERMISSIONS.DONATIONS_READ), donationIdParamS
  * PATCH /donations/:id/status
  * Update donation transaction status
  */
-router.patch('/:id/status', checkPermission(PERMISSIONS.DONATIONS_UPDATE), updateDonationStatusSchema, async (req, res, next) => {
+router.patch('/:id/status', checkPermission(PERMISSIONS.DONATIONS_UPDATE), updateDonationStatusSchema, asyncHandler(async (req, res, next) => {
   try {
     const { id } = req.params;
     const { status, stellarTxId, ledger, notes, tags } = req.body;
@@ -485,14 +485,14 @@ router.patch('/:id/status', checkPermission(PERMISSIONS.DONATIONS_UPDATE), updat
   } catch (error) {
     next(error);
   }
-});
+}));
 
 /**
  * POST /donations/:id/refund
  * Initiate a refund for a confirmed donation
  * Requires admin or refund permission
  */
-router.post('/:id/refund', requireApiKey, checkPermission(PERMISSIONS.DONATIONS_UPDATE), donationIdParamSchema, async (req, res, next) => {
+router.post('/:id/refund', requireApiKey, checkPermission(PERMISSIONS.DONATIONS_UPDATE), donationIdParamSchema, asyncHandler(async (req, res, next) => {
   try {
     const { id } = req.params;
     const { reason } = req.body;
@@ -538,7 +538,7 @@ router.post('/:id/refund', requireApiKey, checkPermission(PERMISSIONS.DONATIONS_
 
     next(error);
   }
-});
+}));
 
 // ─── Claimable Balance Endpoints ─────────────────────────────────────────────
 
@@ -564,7 +564,7 @@ router.post(
   donationRateLimiter,
   checkPermission(PERMISSIONS.DONATIONS_CREATE),
   createClaimableSchema,
-  async (req, res, next) => {
+  asyncHandler(async (req, res, next) => {
     try {
       const { signedXDR, amount, claimants, predicate } = req.body;
 
@@ -595,7 +595,7 @@ router.post(
     } catch (error) {
       next(error);
     }
-  }
+  })
 );
 
 /**
@@ -608,7 +608,7 @@ router.post(
   requireApiKey,
   donationRateLimiter,
   checkPermission(PERMISSIONS.DONATIONS_CREATE),
-  async (req, res, next) => {
+  asyncHandler(async (req, res, next) => {
     try {
       const { id } = req.params;
       const { signedXDR } = req.body;
@@ -628,7 +628,7 @@ router.post(
     } catch (error) {
       next(error);
     }
-  }
+  })
 );
 
 /**
@@ -638,7 +638,7 @@ router.post(
  * Returns an array of impact breakdowns per metric (e.g. "5 meals delivered").
  * Returns an empty impact array if the donation has no campaign_id or no metrics are defined.
  */
-router.get('/:id/impact', checkPermission(PERMISSIONS.DONATIONS_READ), donationIdParamSchema, async (req, res, next) => {
+router.get('/:id/impact', checkPermission(PERMISSIONS.DONATIONS_READ), donationIdParamSchema, asyncHandler(async (req, res, next) => {
   try {
     const ImpactMetricService = require('../services/ImpactMetricService');
     const transaction = donationService.getDonationById(req.params.id);
@@ -673,7 +673,7 @@ router.get('/:id/impact', checkPermission(PERMISSIONS.DONATIONS_READ), donationI
   } catch (error) {
     next(error);
   }
-});
+}));
 
 // ─── Cross-Asset Donations ────────────────────────────────────────────────────
 
@@ -732,7 +732,7 @@ const crossAssetPathsSchema = validateSchema({
  *   - slippageTolerance {number} optional, 0–1, default 0.01 (1%)
  *   - memo {string} optional
  */
-router.post('/cross-asset', payloadSizeLimiter(ENDPOINT_LIMITS.singleDonation), donationRateLimiter, requireApiKey, requireIdempotency, crossAssetSchema, async (req, res, next) => {
+router.post('/cross-asset', payloadSizeLimiter(ENDPOINT_LIMITS.singleDonation), donationRateLimiter, requireApiKey, requireIdempotency, crossAssetSchema, asyncHandler(async (req, res, next) => {
   try {
     const {
       signedXDR,
@@ -753,7 +753,7 @@ router.post('/cross-asset', payloadSizeLimiter(ENDPOINT_LIMITS.singleDonation), 
   } catch (error) {
     next(error);
   }
-});
+}));
 
 /**
  * GET /donations/cross-asset/paths
@@ -765,7 +765,7 @@ router.post('/cross-asset', payloadSizeLimiter(ENDPOINT_LIMITS.singleDonation), 
  *   - destAsset {string} required — "native" or JSON {code, issuer}
  *   - destAmount {string} required
  */
-router.get('/cross-asset/paths', requireApiKey, crossAssetPathsSchema, async (req, res, next) => {
+router.get('/cross-asset/paths', requireApiKey, crossAssetPathsSchema, asyncHandler(async (req, res, next) => {
   try {
     const { sourcePublicKey, destPublicKey, destAsset: rawDestAsset, destAmount } = req.query;
 
@@ -783,7 +783,7 @@ router.get('/cross-asset/paths', requireApiKey, crossAssetPathsSchema, async (re
   } catch (error) {
     next(error);
   }
-});
+}));
 
 // ─── IPFS Certificate ─────────────────────────────────────────────────────────
 
@@ -795,7 +795,7 @@ const Database = require('../utils/database');
  * Returns the IPFS gateway URL for a donation's impact certificate.
  * If no CID is stored yet, pins the certificate on demand.
  */
-router.get('/:id/certificate/ipfs', checkPermission(PERMISSIONS.DONATIONS_READ), donationIdParamSchema, async (req, res, next) => {
+router.get('/:id/certificate/ipfs', checkPermission(PERMISSIONS.DONATIONS_READ), donationIdParamSchema, asyncHandler(async (req, res, next) => {
   try {
     const donationId = parseInt(req.params.id, 10);
     const tx = await Database.get('SELECT * FROM transactions WHERE id = ?', [donationId]);
@@ -829,6 +829,6 @@ router.get('/:id/certificate/ipfs', checkPermission(PERMISSIONS.DONATIONS_READ),
   } catch (error) {
     next(error);
   }
-});
+}));
 
 module.exports = router;

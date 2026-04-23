@@ -70,13 +70,14 @@ const exportStatusSchema = validateSchema({
  * GET /api-keys/:id/audit-log
  * Export audit logs for a specific API key
  */
-router.get('/:id/audit-log', requireAdmin(), auditLogExportSchema, async (req, res, next) => {
+router.get('/:id/audit-log', requireAdmin(), auditLogExportSchema, asyncHandler(async (req, res, next) => {
   try {
     const apiKeyId = req.params.id;
     const { startDate, endDate, action, format = 'json' } = req.query;
 
     // Validate API key exists
     const apiKeysModel = require('../models/apiKeys');
+const asyncHandler = require('../utils/asyncHandler');
     const apiKey = await apiKeysModel.getApiKeyById(apiKeyId);
     if (!apiKey) {
       throw new NotFoundError('API key not found', ERROR_CODES.API_KEY_NOT_FOUND);
@@ -126,13 +127,13 @@ router.get('/:id/audit-log', requireAdmin(), auditLogExportSchema, async (req, r
   } catch (error) {
     next(error);
   }
-});
+}));
 
 /**
  * GET /api-keys/:id/audit-log/export/:exportId
  * Get status of an async export
  */
-router.get('/:id/audit-log/export/:exportId', requireAdmin(), exportStatusSchema, async (req, res, next) => {
+router.get('/:id/audit-log/export/:exportId', requireAdmin(), exportStatusSchema, asyncHandler(async (req, res, next) => {
   try {
     const apiKeyId = req.params.id;
     const exportId = req.params.exportId;
@@ -147,13 +148,13 @@ router.get('/:id/audit-log/export/:exportId', requireAdmin(), exportStatusSchema
   } catch (error) {
     next(error);
   }
-});
+}));
 
 /**
  * GET /api-keys/:id/audit-log/export/:exportId/download
  * Download completed export
  */
-router.get('/:id/audit-log/export/:exportId/download', requireAdmin(), exportStatusSchema, async (req, res, next) => {
+router.get('/:id/audit-log/export/:exportId/download', requireAdmin(), exportStatusSchema, asyncHandler(async (req, res, next) => {
   try {
     const apiKeyId = req.params.id;
     const exportId = req.params.exportId;
@@ -194,13 +195,13 @@ router.get('/:id/audit-log/export/:exportId/download', requireAdmin(), exportSta
   } catch (error) {
     next(error);
   }
-});
+}));
 
 /**
  * GET /api-keys/:id/audit-log/exports
  * List all exports for an API key
  */
-router.get('/:id/audit-log/exports', requireAdmin(), async (req, res, next) => {
+router.get('/:id/audit-log/exports', requireAdmin(), asyncHandler(async (req, res, next) => {
   try {
     const apiKeyId = req.params.id;
     const { limit = 50, offset = 0 } = req.query;
@@ -229,13 +230,13 @@ router.get('/:id/audit-log/exports', requireAdmin(), async (req, res, next) => {
   } catch (error) {
     next(error);
   }
-});
+}));
 
 /**
  * GET /api-keys/:id/audit-log/stats
  * Get audit log statistics for an API key
  */
-router.get('/:id/audit-log/stats', requireAdmin(), async (req, res, next) => {
+router.get('/:id/audit-log/stats', requireAdmin(), asyncHandler(async (req, res, next) => {
   try {
     const apiKeyId = req.params.id;
     const { startDate, endDate } = req.query;
@@ -275,6 +276,6 @@ router.get('/:id/audit-log/stats', requireAdmin(), async (req, res, next) => {
   } catch (error) {
     next(error);
   }
-});
+}));
 
 module.exports = router;

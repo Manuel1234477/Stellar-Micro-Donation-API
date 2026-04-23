@@ -20,6 +20,7 @@ const { PERMISSIONS } = require('../../utils/permissions');
 const { ValidationError, NotFoundError } = require('../../utils/errors');
 const { validateSchema } = require('../../middleware/schemaValidation');
 const AuditLogService = require('../../services/AuditLogService');
+const asyncHandler = require('../../utils/asyncHandler');
 
 /**
  * GET /admin/feature-flags
@@ -31,7 +32,7 @@ const AuditLogService = require('../../services/AuditLogService');
  * - name: Filter by flag name (partial match)
  * - enabled: Filter by enabled status (true/false)
  */
-router.get('/', checkPermission(PERMISSIONS.ADMIN_ALL), async (req, res, next) => {
+router.get('/', checkPermission(PERMISSIONS.ADMIN_ALL), asyncHandler(async (req, res, next) => {
   try {
     const { scope, scope_value, name, enabled } = req.query;
 
@@ -93,7 +94,7 @@ router.get('/', checkPermission(PERMISSIONS.ADMIN_ALL), async (req, res, next) =
   } catch (error) {
     next(error);
   }
-});
+}));
 
 /**
  * GET /admin/feature-flags/:name
@@ -101,7 +102,7 @@ router.get('/', checkPermission(PERMISSIONS.ADMIN_ALL), async (req, res, next) =
  * 
  * Returns all scopes for the given flag name
  */
-router.get('/:name', checkPermission(PERMISSIONS.ADMIN_ALL), async (req, res, next) => {
+router.get('/:name', checkPermission(PERMISSIONS.ADMIN_ALL), asyncHandler(async (req, res, next) => {
   try {
     const { name } = req.params;
 
@@ -149,7 +150,7 @@ router.get('/:name', checkPermission(PERMISSIONS.ADMIN_ALL), async (req, res, ne
   } catch (error) {
     next(error);
   }
-});
+}));
 
 /**
  * POST /admin/feature-flags
@@ -176,7 +177,7 @@ const createFlagSchema = validateSchema({
   }
 });
 
-router.post('/', checkPermission(PERMISSIONS.ADMIN_ALL), createFlagSchema, async (req, res, next) => {
+router.post('/', checkPermission(PERMISSIONS.ADMIN_ALL), createFlagSchema, asyncHandler(async (req, res, next) => {
   try {
     const { name, enabled, scope, scope_value, description } = req.body;
 
@@ -238,7 +239,7 @@ router.post('/', checkPermission(PERMISSIONS.ADMIN_ALL), createFlagSchema, async
   } catch (error) {
     next(error);
   }
-});
+}));
 
 /**
  * PATCH /admin/feature-flags/:name
@@ -263,7 +264,7 @@ const updateFlagSchema = validateSchema({
   }
 });
 
-router.patch('/:name', checkPermission(PERMISSIONS.ADMIN_ALL), updateFlagSchema, async (req, res, next) => {
+router.patch('/:name', checkPermission(PERMISSIONS.ADMIN_ALL), updateFlagSchema, asyncHandler(async (req, res, next) => {
   try {
     const { name } = req.params;
     const { scope, scope_value } = req.query;
@@ -329,7 +330,7 @@ router.patch('/:name', checkPermission(PERMISSIONS.ADMIN_ALL), updateFlagSchema,
   } catch (error) {
     next(error);
   }
-});
+}));
 
 /**
  * DELETE /admin/feature-flags/:name
@@ -339,7 +340,7 @@ router.patch('/:name', checkPermission(PERMISSIONS.ADMIN_ALL), updateFlagSchema,
  * - scope: Scope of the flag to delete (required)
  * - scope_value: Scope value (required for non-global scopes)
  */
-router.delete('/:name', checkPermission(PERMISSIONS.ADMIN_ALL), async (req, res, next) => {
+router.delete('/:name', checkPermission(PERMISSIONS.ADMIN_ALL), asyncHandler(async (req, res, next) => {
   try {
     const { name } = req.params;
     const { scope, scope_value } = req.query;
@@ -385,7 +386,7 @@ router.delete('/:name', checkPermission(PERMISSIONS.ADMIN_ALL), async (req, res,
   } catch (error) {
     next(error);
   }
-});
+}));
 
 /**
  * POST /admin/feature-flags/:flag/enable
@@ -393,7 +394,7 @@ router.delete('/:name', checkPermission(PERMISSIONS.ADMIN_ALL), async (req, res,
  * 
  * Creates flag if it doesn't exist, sets enabled=true
  */
-router.post('/:flag/enable', checkPermission(PERMISSIONS.ADMIN_ALL), async (req, res, next) => {
+router.post('/:flag/enable', checkPermission(PERMISSIONS.ADMIN_ALL), asyncHandler(async (req, res, next) => {
   try {
     const { flag } = req.params;
     const { description } = req.body || {};
@@ -447,7 +448,7 @@ router.post('/:flag/enable', checkPermission(PERMISSIONS.ADMIN_ALL), async (req,
   } catch (error) {
     next(error);
   }
-});
+}));
 
 /**
  * POST /admin/feature-flags/:flag/disable
@@ -455,7 +456,7 @@ router.post('/:flag/enable', checkPermission(PERMISSIONS.ADMIN_ALL), async (req,
  * 
  * Creates flag if it doesn't exist, sets enabled=false
  */
-router.post('/:flag/disable', checkPermission(PERMISSIONS.ADMIN_ALL), async (req, res, next) => {
+router.post('/:flag/disable', checkPermission(PERMISSIONS.ADMIN_ALL), asyncHandler(async (req, res, next) => {
   try {
     const { flag } = req.params;
     const { description } = req.body || {};
@@ -509,7 +510,7 @@ router.post('/:flag/disable', checkPermission(PERMISSIONS.ADMIN_ALL), async (req
   } catch (error) {
     next(error);
   }
-});
+}));
 
 /**
  * POST /admin/feature-flags/:flag/override
@@ -535,7 +536,7 @@ const overrideFlagSchema = validateSchema({
 router.post('/:flag/override', 
   checkPermission(PERMISSIONS.ADMIN_ALL), 
   overrideFlagSchema, 
-  async (req, res, next) => {
+  asyncHandler(async (req, res, next) => {
     try {
       const { flag } = req.params;
       const { api_key_id, enabled, description } = req.body;
@@ -588,7 +589,7 @@ router.post('/:flag/override',
     } catch (error) {
       next(error);
     }
-  }
+  })
 );
 
 module.exports = router;

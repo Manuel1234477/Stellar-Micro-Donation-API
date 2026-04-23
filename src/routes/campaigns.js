@@ -8,6 +8,7 @@ const express = require('express');
 const router = express.Router();
 const Database = require('../utils/database');
 const requireApiKey = require('../middleware/apiKey');
+const asyncHandler = require('../utils/asyncHandler');
 const { checkPermission } = require('../middleware/rbac');
 const { PERMISSIONS } = require('../utils/permissions');
 const { validateSchema } = require('../middleware/schemaValidation');
@@ -43,7 +44,7 @@ const updateCampaignSchema = validateSchema({
  * POST /campaigns
  * Creates a new donation campaign natively tracking goals.
  */
-router.post('/', requireApiKey, checkPermission(PERMISSIONS.ADMIN), createCampaignSchema, async (req, res, next) => {
+router.post('/', requireApiKey, checkPermission(PERMISSIONS.ADMIN), createCampaignSchema, asyncHandler(async (req, res, next) => {
   try {
     const { name, description, goal_amount, start_date, end_date, funding_model } = req.body;
     
@@ -74,13 +75,13 @@ router.post('/', requireApiKey, checkPermission(PERMISSIONS.ADMIN), createCampai
   } catch (error) {
     next(error);
   }
-});
+}));
 
 /**
  * GET /campaigns
  * Retrieves active/all campaigns dynamically.
  */
-router.get('/', cacheMiddleware('campaign', 'public'), async (req, res, next) => {
+router.get('/', cacheMiddleware('campaign', 'public'), asyncHandler(async (req, res, next) => {
   try {
     let query = 'SELECT * FROM campaigns';
     let params = [];
@@ -108,13 +109,13 @@ router.get('/', cacheMiddleware('campaign', 'public'), async (req, res, next) =>
   } catch (error) {
     next(error);
   }
-});
+}));
 
 /**
  * GET /campaigns/:id
  * Retrieve a specific campaign securely.
  */
-router.get('/:id', cacheMiddleware('campaign', 'public'), async (req, res, next) => {
+router.get('/:id', cacheMiddleware('campaign', 'public'), asyncHandler(async (req, res, next) => {
   try {
     const campaign = await Database.get('SELECT * FROM campaigns WHERE id = ? AND deleted_at IS NULL', [req.params.id]);
     if (!campaign) {
@@ -125,13 +126,13 @@ router.get('/:id', cacheMiddleware('campaign', 'public'), async (req, res, next)
   } catch (error) {
     next(error);
   }
-});
+}));
 
 /**
  * PATCH /campaigns/:id
  * Update metrics or pause/complete campaigns inherently.
  */
-router.patch('/:id', requireApiKey, checkPermission(PERMISSIONS.ADMIN), updateCampaignSchema, async (req, res, next) => {
+router.patch('/:id', requireApiKey, checkPermission(PERMISSIONS.ADMIN), updateCampaignSchema, asyncHandler(async (req, res, next) => {
   try {
     const id = req.params.id;
     const updates = req.body;
@@ -166,13 +167,13 @@ router.patch('/:id', requireApiKey, checkPermission(PERMISSIONS.ADMIN), updateCa
   } catch (error) {
     next(error);
   }
-});
+}));
 
 /**
  * GET /campaigns/:id/donations
  * Retrieves all donations mapped to a specific campaign securely.
  */
-router.get('/:id/donations', async (req, res, next) => {
+router.get('/:id/donations', asyncHandler(async (req, res, next) => {
   try {
     const { id } = req.params;
     
@@ -186,14 +187,14 @@ router.get('/:id/donations', async (req, res, next) => {
   } catch (error) {
     next(error);
   }
-});
+}));
 
 /**
  * GET /campaigns/:id/impact
  * Returns the aggregate impact summary for a campaign based on its total donations
  * and defined impact metrics.
  */
-router.get('/:id/impact', async (req, res, next) => {
+router.get('/:id/impact', asyncHandler(async (req, res, next) => {
   try {
     const ImpactMetricService = require('../services/ImpactMetricService');
     const summary = await ImpactMetricService.calculateCampaignImpact(parseInt(req.params.id, 10));
@@ -201,7 +202,7 @@ router.get('/:id/impact', async (req, res, next) => {
   } catch (error) {
     next(error);
   }
-});
+}));
 
 /**
  * GET /campaigns/:id/progress/stream
@@ -221,7 +222,7 @@ router.get('/:id/impact', async (req, res, next) => {
  *   - milestone_reached: Sent when a milestone (25%, 50%, 75%, 100%) is reached
  *   - goal_reached: Sent when the campaign goal is fully reached
  */
-router.get('/:id/progress/stream', requireApiKey, async (req, res, next) => {
+router.get('/:id/progress/stream', requireApiKey, asyncHandler(async (req, res, next) => {
   const log = require('../utils/log');
   const { v4: uuidv4 } = require('uuid');
   const SseManager = require('../services/SseManager');
@@ -354,7 +355,7 @@ router.get('/:id/progress/stream', requireApiKey, async (req, res, next) => {
   // Add client to SSE manager
   const filter = { campaignId };
   SseManager.addClient(clientId, keyId, filter, res);
-});
+}));
 
 // ─── All-or-Nothing Crowdfunding Routes ──────────────────────────────────────
 
@@ -365,7 +366,7 @@ const CrowdfundingService = require('../services/CrowdfundingService');
  * Pledge a donation to an all-or-nothing campaign (held in escrow).
  * Body: { donor_id: number, amount: number }
  */
-router.post('/:id/pledge', requireApiKey, async (req, res, next) => {
+router.post('/:id/pledge', requireApiKey, asyncHandler(async (req, res, next) => {
   try {
     const campaignId = parseInt(req.params.id, 10);
     const { donor_id, amount } = req.body;
@@ -384,14 +385,14 @@ router.post('/:id/pledge', requireApiKey, async (req, res, next) => {
     if (error.status) return res.status(error.status).json({ success: false, error: error.message });
     next(error);
   }
-});
+}));
 
 /**
  * POST /campaigns/:id/settle
  * Settle a campaign: release funds if goal met, refund all donors otherwise.
  * Idempotent — safe to call multiple times.
  */
-router.post('/:id/settle', requireApiKey, checkPermission(PERMISSIONS.ADMIN), async (req, res, next) => {
+router.post('/:id/settle', requireApiKey, checkPermission(PERMISSIONS.ADMIN), asyncHandler(async (req, res, next) => {
   try {
     const campaignId = parseInt(req.params.id, 10);
     const result = await CrowdfundingService.settle(campaignId);
@@ -400,13 +401,13 @@ router.post('/:id/settle', requireApiKey, checkPermission(PERMISSIONS.ADMIN), as
     if (error.status) return res.status(error.status).json({ success: false, error: error.message });
     next(error);
   }
-});
+}));
 
 /**
  * GET /campaigns/:id/escrow
  * Get escrow state: all pledges, total held, goal met status.
  */
-router.get('/:id/escrow', requireApiKey, async (req, res, next) => {
+router.get('/:id/escrow', requireApiKey, asyncHandler(async (req, res, next) => {
   try {
     const campaignId = parseInt(req.params.id, 10);
     const state = await CrowdfundingService.getEscrowState(campaignId);
@@ -415,7 +416,7 @@ router.get('/:id/escrow', requireApiKey, async (req, res, next) => {
     if (error.status) return res.status(error.status).json({ success: false, error: error.message });
     next(error);
   }
-});
+}));
 
 module.exports = router;
 
@@ -426,7 +427,7 @@ module.exports = router;
  * Create a milestone for a campaign.
  * Body: { title, description, target_amount }
  */
-router.post('/:id/milestones', requireApiKey, checkPermission(PERMISSIONS.ADMIN), async (req, res, next) => {
+router.post('/:id/milestones', requireApiKey, checkPermission(PERMISSIONS.ADMIN), asyncHandler(async (req, res, next) => {
   try {
     const campaignId = parseInt(req.params.id, 10);
     const { title, description, target_amount } = req.body;
@@ -456,13 +457,13 @@ router.post('/:id/milestones', requireApiKey, checkPermission(PERMISSIONS.ADMIN)
   } catch (error) {
     next(error);
   }
-});
+}));
 
 /**
  * GET /campaigns/:id/milestones
  * List all milestones for a campaign with completion status.
  */
-router.get('/:id/milestones', requireApiKey, async (req, res, next) => {
+router.get('/:id/milestones', requireApiKey, asyncHandler(async (req, res, next) => {
   try {
     const campaignId = parseInt(req.params.id, 10);
 
@@ -480,13 +481,13 @@ router.get('/:id/milestones', requireApiKey, async (req, res, next) => {
   } catch (error) {
     next(error);
   }
-});
+}));
 
 /**
  * POST /admin/campaigns/:id/milestones/:milestoneId/verify
  * Admin verifies a milestone, triggering fund release.
  */
-router.post('/admin/:id/milestones/:milestoneId/verify', requireApiKey, checkPermission(PERMISSIONS.ADMIN), async (req, res, next) => {
+router.post('/admin/:id/milestones/:milestoneId/verify', requireApiKey, checkPermission(PERMISSIONS.ADMIN), asyncHandler(async (req, res, next) => {
   try {
     const campaignId = parseInt(req.params.id, 10);
     const milestoneId = parseInt(req.params.milestoneId, 10);
@@ -536,13 +537,13 @@ router.post('/admin/:id/milestones/:milestoneId/verify', requireApiKey, checkPer
   } catch (error) {
     next(error);
   }
-});
+}));
 
 /**
  * GET /campaigns/:id/progress
  * Returns total raised, milestone completion, and remaining amount.
  */
-router.get('/:id/progress', requireApiKey, async (req, res, next) => {
+router.get('/:id/progress', requireApiKey, asyncHandler(async (req, res, next) => {
   try {
     const campaignId = parseInt(req.params.id, 10);
 
@@ -588,6 +589,6 @@ router.get('/:id/progress', requireApiKey, async (req, res, next) => {
   } catch (error) {
     next(error);
   }
-});
+}));
 
 module.exports = router;

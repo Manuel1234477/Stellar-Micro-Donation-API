@@ -18,6 +18,7 @@ const { validateSchema } = require('../middleware/schemaValidation');
 const AuditLogService = require('../services/AuditLogService');
 const { getStellarService } = require('../config/stellar');
 const log = require('../utils/log');
+const asyncHandler = require('../utils/asyncHandler');
 
 const stellarService = getStellarService();
 
@@ -107,7 +108,7 @@ const updateSignerWeightSchema = validateSchema({
  * GET /wallets/:id/signers
  * Get all signers for a wallet
  */
-router.get('/:id/signers', checkPermission(PERMISSIONS.WALLETS_READ), async (req, res, next) => {
+router.get('/:id/signers', checkPermission(PERMISSIONS.WALLETS_READ), asyncHandler(async (req, res, next) => {
   try {
     const walletId = parseInt(req.params.id, 10);
     if (isNaN(walletId) || walletId < 1) {
@@ -147,13 +148,13 @@ router.get('/:id/signers', checkPermission(PERMISSIONS.WALLETS_READ), async (req
   } catch (error) {
     next(error);
   }
-});
+}));
 
 /**
  * POST /wallets/:id/signers
  * Add a signer to a wallet
  */
-router.post('/:id/signers', checkPermission(PERMISSIONS.WALLETS_UPDATE), addSignerSchema, async (req, res, next) => {
+router.post('/:id/signers', checkPermission(PERMISSIONS.WALLETS_UPDATE), addSignerSchema, asyncHandler(async (req, res, next) => {
   try {
     const walletId = parseInt(req.params.id, 10);
     const { signerPublic, weight = 1, masterSecret } = req.body;
@@ -206,13 +207,13 @@ router.post('/:id/signers', checkPermission(PERMISSIONS.WALLETS_UPDATE), addSign
   } catch (error) {
     next(error);
   }
-});
+}));
 
 /**
  * DELETE /wallets/:id/signers/:key
  * Remove a signer from a wallet
  */
-router.delete('/:id/signers/:key', checkPermission(PERMISSIONS.WALLETS_UPDATE), removeSignerSchema, async (req, res, next) => {
+router.delete('/:id/signers/:key', checkPermission(PERMISSIONS.WALLETS_UPDATE), removeSignerSchema, asyncHandler(async (req, res, next) => {
   try {
     const walletId = parseInt(req.params.id, 10);
     const signerPublic = req.params.key;
@@ -264,13 +265,13 @@ router.delete('/:id/signers/:key', checkPermission(PERMISSIONS.WALLETS_UPDATE), 
   } catch (error) {
     next(error);
   }
-});
+}));
 
 /**
  * PATCH /wallets/:id/signers/:key
  * Update the weight of an existing signer
  */
-router.patch('/:id/signers/:key', checkPermission(PERMISSIONS.WALLETS_UPDATE), updateSignerWeightSchema, async (req, res, next) => {
+router.patch('/:id/signers/:key', checkPermission(PERMISSIONS.WALLETS_UPDATE), updateSignerWeightSchema, asyncHandler(async (req, res, next) => {
   try {
     const walletId = parseInt(req.params.id, 10);
     const signerPublic = req.params.key;
@@ -324,7 +325,7 @@ router.patch('/:id/signers/:key', checkPermission(PERMISSIONS.WALLETS_UPDATE), u
   } catch (error) {
     next(error);
   }
-});
+}));
 
 module.exports = router;
 
@@ -336,7 +337,7 @@ const thresholdsRouter = express.Router();
  * POST /wallets/:id/thresholds
  * Set low/medium/high signing thresholds for a wallet account.
  */
-thresholdsRouter.post('/:id/thresholds', checkPermission(PERMISSIONS.WALLETS_UPDATE), async (req, res, next) => {
+thresholdsRouter.post('/:id/thresholds', checkPermission(PERMISSIONS.WALLETS_UPDATE), asyncHandler(async (req, res, next) => {
   try {
     const walletId = parseInt(req.params.id, 10);
     if (isNaN(walletId) || walletId < 1) {
@@ -369,6 +370,6 @@ thresholdsRouter.post('/:id/thresholds', checkPermission(PERMISSIONS.WALLETS_UPD
   } catch (error) {
     next(error);
   }
-});
+}));
 
 module.exports.thresholdsRouter = thresholdsRouter;

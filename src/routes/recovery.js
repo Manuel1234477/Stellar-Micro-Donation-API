@@ -14,6 +14,7 @@ const requireApiKey = require('../middleware/apiKey');
 const { checkPermission } = require('../middleware/rbac');
 const { PERMISSIONS } = require('../utils/permissions');
 const SocialRecoveryService = require('../services/SocialRecoveryService');
+const asyncHandler = require('../utils/asyncHandler');
 const { getStellarService } = require('../config/stellar');
 const { ValidationError, NotFoundError } = require('../utils/errors');
 
@@ -27,7 +28,7 @@ router.post(
   '/wallets/:id/recovery/guardians',
   requireApiKey,
   checkPermission(PERMISSIONS.WALLETS_WRITE),
-  async (req, res, next) => {
+  asyncHandler(async (req, res, next) => {
     try {
       const walletId = parseInt(req.params.id, 10);
       const { guardianPublicKeys, threshold } = req.body;
@@ -44,7 +45,7 @@ router.post(
     } catch (err) {
       next(err);
     }
-  }
+  })
 );
 
 /**
@@ -55,7 +56,7 @@ router.get(
   '/wallets/:id/recovery/guardians',
   requireApiKey,
   checkPermission(PERMISSIONS.WALLETS_READ),
-  async (req, res, next) => {
+  asyncHandler(async (req, res, next) => {
     try {
       const walletId = parseInt(req.params.id, 10);
       const guardians = await recoveryService.getGuardians(walletId);
@@ -63,7 +64,7 @@ router.get(
     } catch (err) {
       next(err);
     }
-  }
+  })
 );
 
 /**
@@ -74,7 +75,7 @@ router.post(
   '/wallets/:id/recovery/initiate',
   requireApiKey,
   checkPermission(PERMISSIONS.WALLETS_WRITE),
-  async (req, res, next) => {
+  asyncHandler(async (req, res, next) => {
     try {
       const walletId = parseInt(req.params.id, 10);
       const { newPublicKey } = req.body;
@@ -91,7 +92,7 @@ router.post(
     } catch (err) {
       next(err);
     }
-  }
+  })
 );
 
 /**
@@ -103,7 +104,7 @@ router.post(
   '/wallets/:id/recovery/approve',
   requireApiKey,
   checkPermission(PERMISSIONS.WALLETS_WRITE),
-  async (req, res, next) => {
+  asyncHandler(async (req, res, next) => {
     try {
       const walletId = parseInt(req.params.id, 10);
       const { recoveryRequestId, guardianPublicKey } = req.body;
@@ -120,7 +121,7 @@ router.post(
     } catch (err) {
       next(err);
     }
-  }
+  })
 );
 
 /**
@@ -131,7 +132,7 @@ router.get(
   '/wallets/:id/recovery/:requestId',
   requireApiKey,
   checkPermission(PERMISSIONS.WALLETS_READ),
-  async (req, res, next) => {
+  asyncHandler(async (req, res, next) => {
     try {
       const walletId = parseInt(req.params.id, 10);
       const recoveryRequestId = parseInt(req.params.requestId, 10);
@@ -140,7 +141,7 @@ router.get(
     } catch (err) {
       next(err);
     }
-  }
+  })
 );
 
 module.exports = router;

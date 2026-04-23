@@ -15,6 +15,7 @@ const { TRANSACTION_STATES } = require('../utils/transactionStateMachine');
 const AuditLogService = require('../services/AuditLogService');
 const ReceiptService = require('../services/ReceiptService');
 const Transaction = require('./models/transaction');
+const asyncHandler = require('../utils/asyncHandler');
 
 // In-memory receipt generation log (keyed by donation ID)
 // Stores { generatedAt: ISO string, emailedTo: string|null }
@@ -25,7 +26,7 @@ const receiptLog = new Map();
  * Returns a PDF receipt for a confirmed donation.
  * Optionally emails it when `email` is provided in the request body.
  */
-router.post('/:id/receipt', requireApiKey, checkPermission(PERMISSIONS.DONATIONS_READ), async (req, res, next) => {
+router.post('/:id/receipt', requireApiKey, checkPermission(PERMISSIONS.DONATIONS_READ), asyncHandler(async (req, res, next) => {
   try {
     const { id } = req.params;
     const { email } = req.body || {};
@@ -87,7 +88,7 @@ router.post('/:id/receipt', requireApiKey, checkPermission(PERMISSIONS.DONATIONS
   } catch (err) {
     next(err);
   }
-});
+}));
 
 /**
  * GET /donations/:id/receipt/status

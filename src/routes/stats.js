@@ -74,6 +74,7 @@ const { checkPermission, requireTier } = require('../middleware/rbac');
 const { PERMISSIONS } = require('../utils/permissions');
 const { validateSchema } = require('../middleware/schemaValidation');
 const AuditLogService = require('../services/AuditLogService');
+const asyncHandler = require('../utils/asyncHandler');
 const { cacheMiddleware } = require('../middleware/caching');
 
 /** Fire-and-forget audit log for stats data access */
@@ -416,7 +417,7 @@ router.get('/wallet/:walletAddress/analytics', checkPermission(PERMISSIONS.STATS
   }
 });
 
-router.get('/wallet/:walletAddress/analytics', checkPermission(PERMISSIONS.STATS_READ), walletAnalyticsSchema, async (req, res, next) => {
+router.get('/wallet/:walletAddress/analytics', checkPermission(PERMISSIONS.STATS_READ), walletAnalyticsSchema, asyncHandler(async (req, res, next) => {
   try {
     const { walletAddress } = req.params;
 
@@ -436,7 +437,7 @@ router.get('/wallet/:walletAddress/analytics', checkPermission(PERMISSIONS.STATS
   } catch (error) {
     next(error);
   }
-});
+}));
 
 /**
  * GET /stats/memo-collisions
@@ -516,7 +517,7 @@ router.get('/overpayments', checkPermission(PERMISSIONS.STATS_READ), (req, res, 
  * GET /stats/orphaned-transactions
  * Get count and total amount of orphaned transactions detected by reconciliation
  */
-router.get('/orphaned-transactions', checkPermission(PERMISSIONS.STATS_READ), async (req, res, next) => {
+router.get('/orphaned-transactions', checkPermission(PERMISSIONS.STATS_READ), asyncHandler(async (req, res, next) => {
   try {
     const stats = await StatsService.getOrphanStats();
     res.json({
@@ -529,7 +530,7 @@ router.get('/orphaned-transactions', checkPermission(PERMISSIONS.STATS_READ), as
   } catch (error) {
     next(error);
   }
-});
+}));
 
 /**
  * GET /stats/dashboard

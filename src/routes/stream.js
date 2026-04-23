@@ -148,7 +148,7 @@ const streamScheduleIdSchema = validateSchema({
  * POST /stream/create
  * Create a recurring donation schedule
  */
-router.post('/create', payloadSizeLimiter(ENDPOINT_LIMITS.stream), requestTimeout(TIMEOUTS.stream), checkPermission(PERMISSIONS.STREAM_CREATE), streamCreateSchema, async (req, res, next) => {
+router.post('/create', payloadSizeLimiter(ENDPOINT_LIMITS.stream), requestTimeout(TIMEOUTS.stream), checkPermission(PERMISSIONS.STREAM_CREATE), streamCreateSchema, asyncHandler(async (req, res, next) => {
   try {
     const { donorPublicKey, recipientPublicKey, amount, frequency } = req.body;
 
@@ -277,14 +277,14 @@ router.post('/create', payloadSizeLimiter(ENDPOINT_LIMITS.stream), requestTimeou
   } catch (error) {
     next(error);
   }
-});
+}));
 
 /**
  * GET /stream/schedules
  * Get all recurring donation schedules.
  * Supports optional ?status= filter (e.g. ?status=paused).
  */
-router.get('/schedules', checkPermission(PERMISSIONS.STREAM_READ), async (req, res, next) => {
+router.get('/schedules', checkPermission(PERMISSIONS.STREAM_READ), asyncHandler(async (req, res, next) => {
   try {
     const { status } = req.query;
 
@@ -322,14 +322,14 @@ router.get('/schedules', checkPermission(PERMISSIONS.STREAM_READ), async (req, r
   } catch (error) {
     next(error);
   }
-});
+}));
 
 /**
  * POST /stream/schedules/:id/pause
  * Pause an active recurring donation schedule.
  * Returns 409 if the schedule is already paused.
  */
-router.post('/schedules/:id/pause', checkPermission(PERMISSIONS.STREAM_UPDATE), streamScheduleIdSchema, async (req, res, next) => {
+router.post('/schedules/:id/pause', checkPermission(PERMISSIONS.STREAM_UPDATE), streamScheduleIdSchema, asyncHandler(async (req, res, next) => {
   try {
     const schedule = await Database.get(
       'SELECT id, status FROM recurring_donations WHERE id = ?',
@@ -365,14 +365,14 @@ router.post('/schedules/:id/pause', checkPermission(PERMISSIONS.STREAM_UPDATE), 
   } catch (error) {
     next(error);
   }
-});
+}));
 
 /**
  * POST /stream/schedules/:id/resume
  * Resume a paused recurring donation schedule.
  * Recalculates nextExecutionDate from now based on frequency.
  */
-router.post('/schedules/:id/resume', checkPermission(PERMISSIONS.STREAM_UPDATE), streamScheduleIdSchema, async (req, res, next) => {
+router.post('/schedules/:id/resume', checkPermission(PERMISSIONS.STREAM_UPDATE), streamScheduleIdSchema, asyncHandler(async (req, res, next) => {
   try {
     const schedule = await Database.get(
       'SELECT id, status, frequency FROM recurring_donations WHERE id = ?',
@@ -419,13 +419,13 @@ router.post('/schedules/:id/resume', checkPermission(PERMISSIONS.STREAM_UPDATE),
   } catch (error) {
     next(error);
   }
-});
+}));
 
 /**
  * GET /stream/schedules/:id
  * Get a specific recurring donation schedule
  */
-router.get('/schedules/:id', checkPermission(PERMISSIONS.STREAM_READ), streamScheduleIdSchema, async (req, res) => {
+router.get('/schedules/:id', checkPermission(PERMISSIONS.STREAM_READ), streamScheduleIdSchema, asyncHandler(async (req, res) => {
   try {
     const schedule = await Database.get(
       `SELECT
@@ -467,13 +467,13 @@ router.get('/schedules/:id', checkPermission(PERMISSIONS.STREAM_READ), streamSch
       message: error.message
     });
   }
-});
+}));
 
 /**
  * DELETE /stream/schedules/:id
  * Cancel a recurring donation schedule
  */
-router.delete('/schedules/:id', checkPermission(PERMISSIONS.STREAM_DELETE), streamScheduleIdSchema, async (req, res) => {
+router.delete('/schedules/:id', checkPermission(PERMISSIONS.STREAM_DELETE), streamScheduleIdSchema, asyncHandler(async (req, res) => {
   try {
     const schedule = await Database.get(
       'SELECT id, status FROM recurring_donations WHERE id = ?',
@@ -504,7 +504,7 @@ router.delete('/schedules/:id', checkPermission(PERMISSIONS.STREAM_DELETE), stre
       message: error.message
     });
   }
-});
+}));
 
 // ─── SSE Transaction Feed ────────────────────────────────────────────────────
 

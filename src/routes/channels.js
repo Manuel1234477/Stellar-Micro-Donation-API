@@ -25,6 +25,7 @@ const { PERMISSIONS } = require('../utils/permissions');
 const { getStellarService } = require('../config/stellar');
 const { PaymentChannelService } = require('../services/PaymentChannelService');
 const log = require('../utils/log');
+const asyncHandler = require('../utils/asyncHandler');
 
 const channelService = new PaymentChannelService(getStellarService());
 
@@ -39,7 +40,7 @@ channelService.initTable().catch((err) =>
  * Open a new payment channel.
  * Body: { senderKey, receiverKey, capacity, fundingTxId?, metadata? }
  */
-router.post('/open', requireApiKey, checkPermission(PERMISSIONS.DONATIONS_CREATE), async (req, res, next) => {
+router.post('/open', requireApiKey, checkPermission(PERMISSIONS.DONATIONS_CREATE), asyncHandler(async (req, res, next) => {
   try {
     const { senderKey, receiverKey, capacity, fundingTxId, metadata } = req.body;
     const channel = await channelService.openChannel({ senderKey, receiverKey, capacity: Number(capacity), fundingTxId, metadata });
@@ -47,14 +48,14 @@ router.post('/open', requireApiKey, checkPermission(PERMISSIONS.DONATIONS_CREATE
   } catch (err) {
     next(err);
   }
-});
+}));
 
 // ─── GET /channels ────────────────────────────────────────────────────────────
 
 /**
  * List all channels, optionally filtered by ?status=open|settled|disputed|closed
  */
-router.get('/', requireApiKey, checkPermission(PERMISSIONS.DONATIONS_READ), async (req, res, next) => {
+router.get('/', requireApiKey, checkPermission(PERMISSIONS.DONATIONS_READ), asyncHandler(async (req, res, next) => {
   try {
     const status = req.query.status || 'open';
     const channels = await channelService.listChannels(status);
@@ -62,21 +63,21 @@ router.get('/', requireApiKey, checkPermission(PERMISSIONS.DONATIONS_READ), asyn
   } catch (err) {
     next(err);
   }
-});
+}));
 
 // ─── GET /channels/:id ────────────────────────────────────────────────────────
 
 /**
  * Get a single channel by ID.
  */
-router.get('/:id', requireApiKey, checkPermission(PERMISSIONS.DONATIONS_READ), async (req, res, next) => {
+router.get('/:id', requireApiKey, checkPermission(PERMISSIONS.DONATIONS_READ), asyncHandler(async (req, res, next) => {
   try {
     const channel = await channelService.getChannel(req.params.id);
     return res.json({ success: true, data: channel });
   } catch (err) {
     next(err);
   }
-});
+}));
 
 // ─── POST /channels/:id/update ────────────────────────────────────────────────
 
@@ -84,7 +85,7 @@ router.get('/:id', requireApiKey, checkPermission(PERMISSIONS.DONATIONS_READ), a
  * Apply a signed off-chain state update.
  * Body: { amount, senderSecret, receiverSecret, senderSig, receiverSig }
  */
-router.post('/:id/update', requireApiKey, checkPermission(PERMISSIONS.DONATIONS_CREATE), async (req, res, next) => {
+router.post('/:id/update', requireApiKey, checkPermission(PERMISSIONS.DONATIONS_CREATE), asyncHandler(async (req, res, next) => {
   try {
     const { amount, senderSecret, receiverSecret, senderSig, receiverSig } = req.body;
     const channel = await channelService.updateChannel({
@@ -99,7 +100,7 @@ router.post('/:id/update', requireApiKey, checkPermission(PERMISSIONS.DONATIONS_
   } catch (err) {
     next(err);
   }
-});
+}));
 
 // ─── POST /channels/:id/close ────────────────────────────────────────────────
 
@@ -107,7 +108,7 @@ router.post('/:id/update', requireApiKey, checkPermission(PERMISSIONS.DONATIONS_
  * Settle the channel on-chain.
  * Body: { senderSecret }
  */
-router.post('/:id/close', requireApiKey, checkPermission(PERMISSIONS.DONATIONS_CREATE), async (req, res, next) => {
+router.post('/:id/close', requireApiKey, checkPermission(PERMISSIONS.DONATIONS_CREATE), asyncHandler(async (req, res, next) => {
   try {
     const channel = await channelService.closeChannel({
       channelId: req.params.id,
@@ -117,7 +118,7 @@ router.post('/:id/close', requireApiKey, checkPermission(PERMISSIONS.DONATIONS_C
   } catch (err) {
     next(err);
   }
-});
+}));
 
 // ─── POST /channels/:id/dispute ───────────────────────────────────────────────
 
@@ -125,7 +126,7 @@ router.post('/:id/close', requireApiKey, checkPermission(PERMISSIONS.DONATIONS_C
  * Raise a dispute with a higher-sequence signed state.
  * Body: { sequence, balance, senderSig, receiverSig, senderSecret, receiverSecret }
  */
-router.post('/:id/dispute', requireApiKey, checkPermission(PERMISSIONS.DONATIONS_CREATE), async (req, res, next) => {
+router.post('/:id/dispute', requireApiKey, checkPermission(PERMISSIONS.DONATIONS_CREATE), asyncHandler(async (req, res, next) => {
   try {
     const { sequence, balance, senderSig, receiverSig, senderSecret, receiverSecret } = req.body;
     const channel = await channelService.disputeChannel({
@@ -141,7 +142,7 @@ router.post('/:id/dispute', requireApiKey, checkPermission(PERMISSIONS.DONATIONS
   } catch (err) {
     next(err);
   }
-});
+}));
 
 // ─── DELETE /channels/:id ─────────────────────────────────────────────────────
 
@@ -149,7 +150,7 @@ router.post('/:id/dispute', requireApiKey, checkPermission(PERMISSIONS.DONATIONS
  * Force-close a timed-out channel.
  * Body: { senderSecret }
  */
-router.delete('/:id', requireApiKey, checkPermission(PERMISSIONS.DONATIONS_CREATE), async (req, res, next) => {
+router.delete('/:id', requireApiKey, checkPermission(PERMISSIONS.DONATIONS_CREATE), asyncHandler(async (req, res, next) => {
   try {
     const channel = await channelService.closeChannel({
       channelId: req.params.id,
@@ -159,6 +160,6 @@ router.delete('/:id', requireApiKey, checkPermission(PERMISSIONS.DONATIONS_CREAT
   } catch (err) {
     next(err);
   }
-});
+}));
 
 module.exports = router;

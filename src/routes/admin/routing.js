@@ -11,13 +11,14 @@ const router = express.Router();
 const requireApiKey = require('../../middleware/apiKey');
 const { requireAdmin } = require('../../middleware/rbac');
 const serviceContainer = require('../../config/serviceContainer');
+const asyncHandler = require('../../utils/asyncHandler');
 
 /**
  * POST /admin/routing/pools
  * Create a new recipient pool.
  * Body: { name: string, recipients?: Array<{id, displayName?, latitude?, longitude?, campaignDeadline?}> }
  */
-router.post('/pools', requireApiKey, requireAdmin(), async (req, res, next) => {
+router.post('/pools', requireApiKey, requireAdmin(), asyncHandler(async (req, res, next) => {
   try {
     const { name, recipients = [] } = req.body;
     if (!name) {
@@ -29,13 +30,13 @@ router.post('/pools', requireApiKey, requireAdmin(), async (req, res, next) => {
   } catch (error) {
     next(error);
   }
-});
+}));
 
 /**
  * GET /admin/routing/pools/:name
  * Get members of a named pool.
  */
-router.get('/pools/:name', requireApiKey, requireAdmin(), async (req, res, next) => {
+router.get('/pools/:name', requireApiKey, requireAdmin(), asyncHandler(async (req, res, next) => {
   try {
     const repo = serviceContainer.getRecipientPoolRepo();
     const members = await repo.listMembers(req.params.name);
@@ -43,14 +44,14 @@ router.get('/pools/:name', requireApiKey, requireAdmin(), async (req, res, next)
   } catch (error) {
     next(error);
   }
-});
+}));
 
 /**
  * POST /admin/routing/pools/:name/members
  * Add members to an existing pool.
  * Body: { recipients: Array<{id, displayName?, latitude?, longitude?, campaignDeadline?}> }
  */
-router.post('/pools/:name/members', requireApiKey, requireAdmin(), async (req, res, next) => {
+router.post('/pools/:name/members', requireApiKey, requireAdmin(), asyncHandler(async (req, res, next) => {
   try {
     const { recipients } = req.body;
     if (!Array.isArray(recipients) || recipients.length === 0) {
@@ -63,14 +64,14 @@ router.post('/pools/:name/members', requireApiKey, requireAdmin(), async (req, r
   } catch (error) {
     next(error);
   }
-});
+}));
 
 /**
  * DELETE /admin/routing/pools/:name/members
  * Remove members from a pool.
  * Body: { recipientIds: string[] }
  */
-router.delete('/pools/:name/members', requireApiKey, requireAdmin(), async (req, res, next) => {
+router.delete('/pools/:name/members', requireApiKey, requireAdmin(), asyncHandler(async (req, res, next) => {
   try {
     const { recipientIds } = req.body;
     if (!Array.isArray(recipientIds) || recipientIds.length === 0) {
@@ -83,13 +84,13 @@ router.delete('/pools/:name/members', requireApiKey, requireAdmin(), async (req,
   } catch (error) {
     next(error);
   }
-});
+}));
 
 /**
  * DELETE /admin/routing/pools/:name
  * Delete a pool and all its members.
  */
-router.delete('/pools/:name', requireApiKey, requireAdmin(), async (req, res, next) => {
+router.delete('/pools/:name', requireApiKey, requireAdmin(), asyncHandler(async (req, res, next) => {
   try {
     const repo = serviceContainer.getRecipientPoolRepo();
     await repo.delete(req.params.name);
@@ -97,14 +98,14 @@ router.delete('/pools/:name', requireApiKey, requireAdmin(), async (req, res, ne
   } catch (error) {
     next(error);
   }
-});
+}));
 
 /**
  * POST /admin/routing/strategies
  * Set the active routing strategy for a pool.
  * Body: { poolName: string, strategy: string }
  */
-router.post('/strategies', requireApiKey, requireAdmin(), async (req, res, next) => {
+router.post('/strategies', requireApiKey, requireAdmin(), asyncHandler(async (req, res, next) => {
   try {
     const { poolName, strategy } = req.body;
     if (!poolName || !strategy) {
@@ -126,14 +127,14 @@ router.post('/strategies', requireApiKey, requireAdmin(), async (req, res, next)
   } catch (error) {
     next(error);
   }
-});
+}));
 
 /**
  * GET /admin/routing/strategies
  * Retrieve current routing strategy configuration.
  * Query params: poolName (optional — if omitted, returns all)
  */
-router.get('/strategies', requireApiKey, requireAdmin(), async (req, res, next) => {
+router.get('/strategies', requireApiKey, requireAdmin(), asyncHandler(async (req, res, next) => {
   try {
     const configRepo = serviceContainer.getRoutingConfigRepo();
     if (req.query.poolName) {
@@ -151,14 +152,14 @@ router.get('/strategies', requireApiKey, requireAdmin(), async (req, res, next) 
   } catch (error) {
     next(error);
   }
-});
+}));
 
 /**
  * GET /admin/routing/decisions
  * Query routing decisions with optional filters and pagination.
  * Query params: donationId, poolName, strategy, page (default 1), limit (default 20)
  */
-router.get('/decisions', requireApiKey, requireAdmin(), async (req, res, next) => {
+router.get('/decisions', requireApiKey, requireAdmin(), asyncHandler(async (req, res, next) => {
   try {
     const { donationId, poolName, strategy } = req.query;
     const page = Math.max(1, parseInt(req.query.page, 10) || 1);
@@ -191,6 +192,6 @@ router.get('/decisions', requireApiKey, requireAdmin(), async (req, res, next) =
   } catch (error) {
     next(error);
   }
-});
+}));
 
 module.exports = router;

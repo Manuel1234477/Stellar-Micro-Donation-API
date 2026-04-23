@@ -16,6 +16,7 @@ const router = express.Router();
 const featureFlagsUtil = require('../utils/featureFlags');
 const requireApiKey = require('../middleware/apiKey');
 const log = require('../utils/log');
+const asyncHandler = require('../utils/asyncHandler');
 
 /**
  * GET /feature-flags
@@ -30,7 +31,7 @@ const log = require('../utils/log');
  * Query parameters:
  * - environment: Optional environment name for evaluation
  */
-router.get('/', requireApiKey, async (req, res, next) => {
+router.get('/', requireApiKey, asyncHandler(async (req, res, next) => {
   try {
     // Get the current API key ID from middleware
     const apiKeyId = req.apiKey?.id;
@@ -92,7 +93,7 @@ router.get('/', requireApiKey, async (req, res, next) => {
     });
     next(error);
   }
-});
+}));
 
 /**
  * GET /feature-flags/:flag
@@ -112,7 +113,7 @@ router.get('/', requireApiKey, async (req, res, next) => {
  *   }
  * }
  */
-router.get('/:flag', requireApiKey, async (req, res, next) => {
+router.get('/:flag', requireApiKey, asyncHandler(async (req, res, next) => {
   try {
     const { flag } = req.params;
     const apiKeyId = req.apiKey?.id;
@@ -174,6 +175,6 @@ router.get('/:flag', requireApiKey, async (req, res, next) => {
     });
     next(error);
   }
-});
+}));
 
 module.exports = router;
