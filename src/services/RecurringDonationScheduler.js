@@ -71,10 +71,6 @@ class RecurringDonationScheduler {
     this.processSchedules();
     this.intervalId = setInterval(() => this.processSchedules(), this.checkInterval);
 
-    this.intervalId = setInterval(() => {
-      this.processSchedules();
-    }, this.checkInterval);
-
     const correlation = getCorrelationSummary();
     log.info("RECURRING_SCHEDULER", "Scheduler started", {
       checkIntervalSeconds: this.checkInterval / 1000,
