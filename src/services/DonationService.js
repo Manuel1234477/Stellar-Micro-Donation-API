@@ -37,6 +37,7 @@ const {
   isSameAsset,
   serializeAsset,
 } = require('../utils/stellarAsset');
+const donationEvents = require('../events/donationEvents');
 
 const DEFAULT_DESTINATION_ASSET = {
   type: 'native',
@@ -164,6 +165,18 @@ class DonationService {
       'INSERT INTO transactions (senderId, receiverId, amount, memo, notes, tags, timestamp, idempotencyKey, stellar_tx_id) VALUES (?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, ?, ?)',
       [senderId, receiverId, amount, sanitizedMemo, notes || null, JSON.stringify(tags || []), idempotencyKey, stellarResult.transactionId]
     );
+
+    // Emit donation.created to trigger cache invalidation and other listeners (non-blocking)
+    try {
+      donationEvents.emit(donationEvents.constructor.EVENTS?.CREATED || 'donation.created', {
+        id: dbResult.id,
+        senderId,
+        receiverId,
+        amount,
+      });
+    } catch (err) {
+      log.error('DONATION_SERVICE', 'Failed to emit donation.created event', { error: err.message });
+    }
 
     if (campaign_id) {
       await this.processCampaignContribution(campaign_id, amount).catch(err => {

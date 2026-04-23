@@ -762,11 +762,12 @@ class StatsService {
 
 // ─── Dashboard analytics (appended) ──────────────────────────────────────────
 
-// Invalidate dashboard cache whenever a new donation is created
+// Invalidate dashboard AND stats cache whenever a new donation is created
 const donationEvents = require('../events/donationEvents');
 donationEvents.on('donation.created', () => {
   const Cache = require('../utils/cache');
   Cache.clearPrefix('dashboard:');
+  Cache.clearPrefix('stats:');
 });
 
 module.exports = StatsService;
