@@ -231,10 +231,114 @@ function createRateLimiter(options = {}) {
   });
 }
 
+/**
+ * Auth Token Limiter
+ * Intent: Prevent brute force attacks on POST /auth/token endpoint
+ * Scope: POST /auth/token
+ * 
+ * Flow & Configuration:
+ * 1. Window: 60-second sliding window
+ * 2. Threshold: Max 10 requests per IP
+ * 3. Headers: X-RateLimit-Limit, X-RateLimit-Remaining, X-RateLimit-Reset
+ * 4. Exhaustion: Responds with HTTP 429 and Retry-After header
+ */
+const authTokenRateLimiter = rateLimit({
+  windowMs: 60 * 1000,
+  max: parseInt(process.env.AUTH_TOKEN_RATE_LIMIT || '10'),
+  keyGenerator: (req) => req.ip,
+  standardHeaders: true,
+  legacyHeaders: false,
+  validate: false,
+  handler: (req, res) => {
+    const retryAfter = req.rateLimit?.resetTime
+      ? Math.ceil((new Date(req.rateLimit.resetTime) - Date.now()) / 1000)
+      : 60;
+
+    AuditLogService.log({
+      category: AuditLogService.CATEGORY.RATE_LIMITING,
+      action: AuditLogService.ACTION.RATE_LIMIT_EXCEEDED,
+      severity: AuditLogService.SEVERITY.HIGH,
+      result: 'FAILURE',
+      requestId: req.id,
+      ipAddress: req.ip,
+      resource: req.path,
+      reason: 'Auth token rate limit exceeded',
+      details: {
+        limit: parseInt(process.env.AUTH_TOKEN_RATE_LIMIT || '10'),
+        window: '60s',
+        resetTime: req.rateLimit.resetTime
+      }
+    }).catch(err => console.error('Audit log failed:', err));
+
+    res.set('Retry-After', String(retryAfter));
+    res.status(429).json({
+      success: false,
+      error: {
+        code: 'RATE_LIMIT_EXCEEDED',
+        message: 'Too many authentication requests from this IP. Please try again later.',
+        retryAfter
+      }
+    });
+  }
+});
+
+/**
+ * Auth Refresh Limiter
+ * Intent: Prevent refresh token exhaustion attacks on POST /auth/refresh
+ * Scope: POST /auth/refresh
+ * 
+ * Flow & Configuration:
+ * 1. Window: 60-second sliding window
+ * 2. Threshold: Max 20 requests per IP (higher than token endpoint)
+ * 3. Headers: X-RateLimit-Limit, X-RateLimit-Remaining, X-RateLimit-Reset
+ * 4. Exhaustion: Responds with HTTP 429 and Retry-After header
+ */
+const authRefreshRateLimiter = rateLimit({
+  windowMs: 60 * 1000,
+  max: parseInt(process.env.AUTH_REFRESH_RATE_LIMIT || '20'),
+  keyGenerator: (req) => req.ip,
+  standardHeaders: true,
+  legacyHeaders: false,
+  validate: false,
+  handler: (req, res) => {
+    const retryAfter = req.rateLimit?.resetTime
+      ? Math.ceil((new Date(req.rateLimit.resetTime) - Date.now()) / 1000)
+      : 60;
+
+    AuditLogService.log({
+      category: AuditLogService.CATEGORY.RATE_LIMITING,
+      action: AuditLogService.ACTION.RATE_LIMIT_EXCEEDED,
+      severity: AuditLogService.SEVERITY.HIGH,
+      result: 'FAILURE',
+      requestId: req.id,
+      ipAddress: req.ip,
+      resource: req.path,
+      reason: 'Auth refresh rate limit exceeded',
+      details: {
+        limit: parseInt(process.env.AUTH_REFRESH_RATE_LIMIT || '20'),
+        window: '60s',
+        resetTime: req.rateLimit.resetTime
+      }
+    }).catch(err => console.error('Audit log failed:', err));
+
+    res.set('Retry-After', String(retryAfter));
+    res.status(429).json({
+      success: false,
+      error: {
+        code: 'RATE_LIMIT_EXCEEDED',
+        message: 'Too many refresh requests from this IP. Please try again later.',
+        retryAfter
+      }
+    });
+  }
+});
+
 module.exports = {
   donationRateLimiter,
   verificationRateLimiter,
   batchRateLimiter,
   bulkImportRateLimiter,
+  authTokenRateLimiter,
+  authRefreshRateLimiter,
   createRateLimiter,
 };
