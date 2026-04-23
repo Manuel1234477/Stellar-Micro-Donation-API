@@ -68,6 +68,7 @@ const requestId = require('../middleware/requestId');
 const { attachLifecycleTracking } = require('../middleware/requestLifecycle');
 const serviceContainer = require('../config/serviceContainer');
 const { payloadSizeLimiter } = require('../middleware/payloadSizeLimiter');
+const { requestTimeout, TIMEOUTS } = require('../middleware/requestTimeout');
 const { createCorsMiddleware } = require('../middleware/cors');
 const { createCspMiddleware, cspReportRouter } = require('../middleware/csp');
 const { responseFormatterMiddleware } = require('../utils/responseFormatter');
@@ -229,6 +230,15 @@ app.use(createDeduplicationMiddleware());
 
 // Response field filtering (?fields=id,amount,status)
 app.use(fieldFilterMiddleware());
+
+// Global request timeout — exempt SSE, WebSocket, and stream endpoints
+// Configurable via REQUEST_TIMEOUT_MS env var (default 30 s).
+const GLOBAL_TIMEOUT_MS = parseInt(process.env.REQUEST_TIMEOUT_MS, 10) || TIMEOUTS.donation;
+const STREAMING_PATH_RE = /\/(stream|sse|events|ws|websocket|subscribe)(\/|$)/i;
+app.use((req, res, next) => {
+  if (STREAMING_PATH_RE.test(req.path)) return next();
+  return requestTimeout(GLOBAL_TIMEOUT_MS)(req, res, next);
+});
 
 // Routes
 app.use('/wallets', walletRoutes);
