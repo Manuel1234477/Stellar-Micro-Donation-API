@@ -18,3 +18,19 @@ jobs:
       - run: npm ci
       - run: npm run test:coverage:ci
       - run: npm audit --audit-level=high
+
+  smoke:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '18'
+          cache: 'npm'
+      - run: npm ci
+      - run: npm run test:smoke
+        env:
+          NODE_ENV: test
+          MOCK_STELLAR: 'true'
+          API_KEYS: smoke-test-key
+          ENCRYPTION_KEY: test_encryption_key_fixed_32bytes_hex_value_here_00
