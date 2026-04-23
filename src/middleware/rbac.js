@@ -16,6 +16,8 @@ const { validateApiKey } = require('../models/apiKeys');
 const config = require('../config');
 const AuditLogService = require('../services/AuditLogService');
 const perKeyRateLimit = require('./perKeyRateLimit');
+const { checkRateLimit, buildRateLimitHeaders, DEFAULT_RATE_LIMIT, DEFAULT_WINDOW_SECONDS } = require('./perKeyRateLimit');
+const crypto = require('crypto');
 const { tierMeetsMinimum } = require('../config/permissionMatrix');
 
 /**
@@ -396,13 +398,52 @@ exports.attachUserRole = () => {
           }
           // Priority 3: Legacy Environment variable support
           else if (legacyKeys.includes(apiKey)) {
+            // Derive a stable, non-reversible ID for rate-limiting without storing the raw key
+            const legacyKeyId = 'legacy-' + crypto.createHash('sha256').update(apiKey).digest('hex').slice(0, 16);
+
+            // Apply the same default rate limit as DB-backed keys
+            const rlResult = checkRateLimit(legacyKeyId, DEFAULT_RATE_LIMIT, DEFAULT_WINDOW_SECONDS);
+            const rlHeaders = buildRateLimitHeaders(rlResult.limit, rlResult.remaining, rlResult.resetAt);
+            res.set(rlHeaders);
+            res.set('X-API-Key-Legacy', 'true');
+            res.set('Warning', '299 - "Legacy API key in use. Migrate to database-backed keys before 2026-12-31. See docs/MIGRATION_LEGACY_API_KEYS.md"');
+
+            if (!rlResult.allowed) {
+              res.set('Retry-After', String(Math.ceil((rlResult.resetAt - Date.now()) / 1000)));
+              return res.status(429).json({
+                success: false,
+                error: {
+                  code: 'RATE_LIMIT_EXCEEDED',
+                  message: 'Rate limit exceeded. Please retry after the reset time.',
+                  retryAfter: Math.ceil((rlResult.resetAt - Date.now()) / 1000),
+                },
+              });
+            }
+
             req.user = {
-              id: `apikey-${apiKey}`,
+              id: legacyKeyId,
               role: apiKey.startsWith('admin-') ? 'admin' : 'user',
               name: 'Legacy API Key User',
               scopes: [],
               isLegacy: true
             };
+
+            // Audit every legacy key usage
+            AuditLogService.log({
+              category: AuditLogService.CATEGORY.AUTHENTICATION,
+              action: AuditLogService.ACTION.LEGACY_KEY_USED,
+              severity: AuditLogService.SEVERITY.HIGH,
+              result: 'SUCCESS',
+              userId: legacyKeyId,
+              requestId: req.id,
+              ipAddress: req.ip,
+              resource: req.path,
+              details: {
+                method: req.method,
+                keyIdHash: legacyKeyId,
+                sunsetDate: '2026-12-31',
+              },
+            }).catch(() => {});
           }
           // Default: Unauthenticated Guest access
           else {

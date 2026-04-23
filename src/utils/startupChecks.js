@@ -60,7 +60,17 @@ function checkApiKeys() {
     fail('API_KEYS', 'set but contains no valid keys');
     return false;
   }
-  pass('API_KEYS', `${keys.length} key(s) configured`);
+  if (process.env.NODE_ENV === 'production') {
+    warn(
+      'API_KEYS (legacy)',
+      `${keys.length} legacy key(s) detected in production. ` +
+      'Legacy keys bypass quota tracking and cannot be revoked without a restart. ' +
+      'Migrate to database-backed keys before 2026-12-31. ' +
+      'See docs/MIGRATION_LEGACY_API_KEYS.md'
+    );
+  } else {
+    pass('API_KEYS', `${keys.length} legacy key(s) configured (non-production)`);
+  }
   return true;
 }
 
