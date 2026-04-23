@@ -174,20 +174,24 @@ function createCorsMiddleware(options = {}) {
    * @param {import('express').Response} res
    * @param {import('express').NextFunction} next
    */
-  return async function corsMiddleware(req, res, next) {
+  return function corsMiddleware(req, res, next) {
     const origin = req.headers.origin;
 
     if (!origin) {
       return next();
     }
 
-    // Merge static origins with DB origins
+    // Use cached origins synchronously to avoid blocking
     let allowedOrigins = staticOrigins;
-    if (!skipDbLookup) {
-      const dbOrigins = await loadDbOrigins();
-      if (dbOrigins.length > 0) {
-        allowedOrigins = [...new Set([...staticOrigins, ...dbOrigins])];
-      }
+    if (!skipDbLookup && _cache.origins !== null) {
+      allowedOrigins = [...new Set([...staticOrigins, ..._cache.origins])];
+    }
+
+    // Load DB origins asynchronously in the background without blocking the request
+    if (!skipDbLookup && (Date.now() >= _cache.expiresAt)) {
+      loadDbOrigins().catch((err) => {
+        log.warn('CORS', 'Failed to refresh DB origins cache', { error: err.message });
+      });
     }
 
     if (!isOriginAllowed(origin, allowedOrigins)) {
