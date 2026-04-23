@@ -144,6 +144,7 @@ const { PERMISSIONS } = require('../utils/permissions');
 const { payloadSizeLimiter } = require('../middleware/payloadSizeLimiter');
 const { ENDPOINT_LIMITS } = require('../constants');
 const { validateSchema } = require('../middleware/schemaValidation');
+const asyncHandler = require('../utils/asyncHandler');
 
 const multiSigService = new MultiSigService(serviceContainer.getStellarService());
 
@@ -166,6 +167,19 @@ const transactionListQuerySchema = validateSchema({
         validate: (value) => {
           const parsed = Number(value);
           return parsed >= 0 ? true : 'offset must be a non-negative integer';
+        },
+      },
+      cursor: {
+        type: 'string',
+        required: false,
+        validate: (value) => {
+          // Cursor format: timestamp_id
+          if (!value.includes('_')) {
+            return 'cursor must be in format: timestamp_id';
+          }
+          const [timestamp] = value.split('_');
+          const parsed = parseInt(timestamp);
+          return !isNaN(parsed) ? true : 'cursor timestamp must be a valid integer';
         },
       },
     },
@@ -201,30 +215,71 @@ const transactionSyncBodySchema = validateSchema({
 
 router.get('/', checkPermission(PERMISSIONS.TRANSACTIONS_READ), transactionListQuerySchema, asyncHandler(async (req, res, next) => {
   try {
-    const { limit = 10, offset = 0 } = req.query;
+    const { limit = 20, offset, cursor } = req.query;
 
-    
-    if (isNaN(limit) || limit <= 0) {
-      return res.status(400).json(
-        buildErrorResponse([{ code: 'INVALID_LIMIT', receivedValue: req.query.limit }])
-      );
+    // Cursor-based pagination (preferred)
+    if (cursor !== undefined) {
+      const result = Transaction.getCursorPaginated({
+        limit: parseInt(limit),
+        cursor: cursor || null
+      });
+
+      return res.status(200).json({
+        success: true,
+        data: result.data,
+        pagination: {
+          limit: parseInt(limit),
+          nextCursor: result.nextCursor,
+          hasMore: result.hasMore
+        }
+      });
     }
 
-    if (isNaN(offset) || offset < 0) {
-      return res.status(400).json(
-        buildErrorResponse([{ code: 'INVALID_OFFSET', receivedValue: req.query.offset }])
-      );
+    // Offset-based pagination (deprecated)
+    if (offset !== undefined) {
+      const offsetNum = parseInt(offset);
+      const limitNum = parseInt(limit);
+
+      if (isNaN(limitNum) || limitNum <= 0) {
+        return res.status(400).json(
+          buildErrorResponse([{ code: 'INVALID_LIMIT', receivedValue: req.query.limit }])
+        );
+      }
+
+      if (isNaN(offsetNum) || offsetNum < 0) {
+        return res.status(400).json(
+          buildErrorResponse([{ code: 'INVALID_OFFSET', receivedValue: req.query.offset }])
+        );
+      }
+
+      const result = Transaction.getPaginated({
+        limit: limitNum,
+        offset: offsetNum
+      });
+
+      // Add deprecation warning header
+      res.setHeader('X-Pagination-Deprecated', 'Offset-based pagination is deprecated. Use cursor-based pagination with ?cursor= parameter.');
+
+      return res.status(200).json({
+        success: true,
+        data: result.data,
+        pagination: result.pagination
+      });
     }
 
-    const result = Transaction.getPaginated({
-      limit: paginationValidation.limit,
-      offset: paginationValidation.offset
+    // Default: cursor-based pagination without cursor
+    const result = Transaction.getCursorPaginated({
+      limit: parseInt(limit)
     });
 
     return res.status(200).json({
       success: true,
       data: result.data,
-      pagination: result.pagination
+      pagination: {
+        limit: parseInt(limit),
+        nextCursor: result.nextCursor,
+        hasMore: result.hasMore
+      }
     });
 
   } catch (error) {

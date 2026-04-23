@@ -118,6 +118,68 @@ class Transaction {
     };
   }
 
+  /**
+   * Get paginated transactions using cursor-based pagination
+   * @param {Object} options - Pagination options
+   * @param {number} options.limit - Number of items per page (default: 20, max: 100)
+   * @param {string} options.cursor - Cursor for pagination (format: timestamp_id)
+   * @returns {Object} Paginated results with nextCursor and hasMore
+   */
+  static getCursorPaginated({ limit = 20, cursor = null } = {}) {
+    const transactions = this.loadTransactions();
+    
+    // Sort by timestamp DESC, then by id DESC for consistent ordering
+    const sorted = transactions.sort((a, b) => {
+      const timeA = new Date(a.timestamp).getTime();
+      const timeB = new Date(b.timestamp).getTime();
+      if (timeB !== timeA) return timeB - timeA;
+      return b.id.localeCompare(a.id);
+    });
+
+    let startIndex = 0;
+    
+    // If cursor provided, find the starting position
+    if (cursor) {
+      const [cursorTimestamp, cursorId] = cursor.split('_');
+      const cursorTime = parseInt(cursorTimestamp);
+      
+      startIndex = sorted.findIndex(t => {
+        const txTime = new Date(t.timestamp).getTime();
+        return txTime < cursorTime || (txTime === cursorTime && t.id.localeCompare(cursorId) < 0);
+      });
+      
+      // If cursor not found, return empty results
+      if (startIndex === -1) {
+        return {
+          data: [],
+          nextCursor: null,
+          hasMore: false
+        };
+      }
+    }
+
+    // Get the page of results
+    const pageLimit = Math.min(parseInt(limit), 100);
+    const paginatedData = sorted.slice(startIndex, startIndex + pageLimit);
+    
+    // Check if there are more results
+    const hasMore = startIndex + pageLimit < sorted.length;
+    
+    // Generate next cursor from the last item
+    let nextCursor = null;
+    if (hasMore && paginatedData.length > 0) {
+      const lastItem = paginatedData[paginatedData.length - 1];
+      const lastTimestamp = new Date(lastItem.timestamp).getTime();
+      nextCursor = `${lastTimestamp}_${lastItem.id}`;
+    }
+
+    return {
+      data: paginatedData,
+      nextCursor,
+      hasMore
+    };
+  }
+
   static getById(id) {
     const transactions = this.loadTransactions();
     return transactions.find(t => t.id === id);
