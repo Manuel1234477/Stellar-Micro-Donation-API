@@ -16,6 +16,30 @@ jest.mock('../../src/utils/correlation', () => ({
   }),
 }));
 
+jest.mock('../../src/utils/tracing', () => ({
+  withSpanInContext: (_name, _ctx, _attrs, fn) => fn(),
+  extractTraceContext: () => ({}),
+  injectTraceHeaders: (h) => h,
+  getCurrentTraceparent: () => null,
+}));
+
+jest.mock('../../src/utils/database', () => ({
+  query: jest.fn().mockResolvedValue([]),
+  run: jest.fn().mockResolvedValue({}),
+}));
+
+jest.mock('../../src/services/WebhookService', () => ({
+  notifyWebhook: jest.fn().mockResolvedValue({}),
+}));
+
+jest.mock('../../src/services/ApiKeyExpirationNotifier', () => ({
+  run: jest.fn().mockResolvedValue({}),
+}));
+
+jest.mock('../../src/models/apiKeys', () => ({
+  revokeExpiredDeprecatedKeys: jest.fn().mockResolvedValue(0),
+}));
+
 describe('RecurringDonationScheduler - Time Based Behavior', () => {
   let scheduler;
   const sampleSchedule = {

@@ -24,11 +24,26 @@ jest.mock('../../src/utils/correlation', () => ({
   getCorrelationSummary: () => ({ correlationId: 'test-corr', traceId: 'test-trace' }),
 }));
 
+jest.mock('../../src/utils/tracing', () => ({
+  withSpanInContext: (_name, _ctx, _attrs, fn) => fn(),
+  extractTraceContext: () => ({}),
+  injectTraceHeaders: (h) => h,
+  getCurrentTraceparent: () => null,
+}));
+
 jest.mock('../../src/utils/database');
 const Database = require('../../src/utils/database');
 
 jest.mock('../../src/services/WebhookService', () => ({
   sendFailureNotification: jest.fn().mockResolvedValue({ delivered: true, statusCode: 200 }),
+}));
+
+jest.mock('../../src/services/ApiKeyExpirationNotifier', () => ({
+  run: jest.fn().mockResolvedValue({}),
+}));
+
+jest.mock('../../src/models/apiKeys', () => ({
+  revokeExpiredDeprecatedKeys: jest.fn().mockResolvedValue(0),
 }));
 
 // Require these AFTER mocks are set up
