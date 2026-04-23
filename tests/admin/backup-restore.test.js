@@ -319,3 +319,157 @@ describe('RecurringDonationScheduler backup scheduling', () => {
     expect(backupSpy).not.toHaveBeenCalled();
   });
 });
+
+// ── Backup verification tests ─────────────────────────────────────────────────
+
+describe('BackupService.verifyBackup()', () => {
+  let BackupService;
+  let tmpDir;
+  let fakeDb;
+
+  beforeEach(() => {
+    setEncryptionKey();
+    tmpDir = makeTmpDir();
+    fakeDb = path.join(tmpDir, 'test.db');
+
+    // Write a minimal valid SQLite database (empty, but structurally valid)
+    // SQLite magic header: first 16 bytes are "SQLite format 3\000"
+    const sqlite3 = require('sqlite3').verbose();
+    jest.resetModules();
+    BackupService = require('../../src/services/BackupService');
+
+    // Create a real SQLite DB so integrity_check works
+    return new Promise((resolve, reject) => {
+      const db = new sqlite3.Database(fakeDb, err => {
+        if (err) return reject(err);
+        db.run('CREATE TABLE users (id INTEGER PRIMARY KEY)', err2 => {
+          if (err2) return reject(err2);
+          db.run('CREATE TABLE transactions (id INTEGER PRIMARY KEY)', err3 => {
+            if (err3) return reject(err3);
+            db.run('CREATE TABLE recurring_donations (id INTEGER PRIMARY KEY)', err4 => {
+              db.close();
+              if (err4) return reject(err4);
+              resolve();
+            });
+          });
+        });
+      });
+    });
+  });
+
+  afterEach(() => {
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+    jest.restoreAllMocks();
+  });
+
+  it('verifyBackup() passes for a valid backup', async () => {
+    const svc = new BackupService({ dbPath: fakeDb, backupDir: tmpDir });
+    const { backupId } = await svc.backup();
+
+    // backup() already calls verifyBackup internally; call it explicitly too
+    const result = await svc.verifyBackup(backupId);
+
+    expect(result.backupId).toBe(backupId);
+    expect(result.passed).toBe(true);
+    expect(result.checkedAt).toBeTruthy();
+    expect(result.details.integrityOk).toBe(true);
+    expect(result.details.rowCountMismatches).toEqual([]);
+  });
+
+  it('verifyBackup() stores result in lastVerification', async () => {
+    const svc = new BackupService({ dbPath: fakeDb, backupDir: tmpDir });
+    const { backupId } = await svc.backup();
+
+    expect(svc.lastVerification).not.toBeNull();
+    expect(svc.lastVerification.backupId).toBe(backupId);
+    expect(typeof svc.lastVerification.passed).toBe('boolean');
+  });
+
+  it('verifyBackup() throws when backup file does not exist', async () => {
+    const svc = new BackupService({ dbPath: fakeDb, backupDir: tmpDir });
+    await expect(svc.verifyBackup('backup_nonexistent_0000')).rejects.toThrow('Backup not found');
+  });
+
+  it('verifyBackup() fails and logs error when backup is corrupted', async () => {
+    const svc = new BackupService({ dbPath: fakeDb, backupDir: tmpDir });
+    const { backupId, filePath } = await svc.backup();
+
+    // Corrupt the ciphertext so decryption fails
+    const buf = fs.readFileSync(filePath);
+    buf[buf.length - 1] ^= 0xff;
+    fs.writeFileSync(filePath, buf);
+
+    await expect(svc.verifyBackup(backupId)).rejects.toThrow();
+  });
+
+  it('backup() automatically calls verifyBackup() and populates lastVerification', async () => {
+    const svc = new BackupService({ dbPath: fakeDb, backupDir: tmpDir });
+    expect(svc.lastVerification).toBeNull();
+
+    await svc.backup();
+
+    expect(svc.lastVerification).not.toBeNull();
+    expect(svc.lastVerification.passed).toBe(true);
+  });
+});
+
+// ── GET /admin/backup/status route tests ─────────────────────────────────────
+
+describe('GET /admin/backup/status', () => {
+  let request;
+  let app;
+  let BackupService;
+
+  beforeEach(() => {
+    setEncryptionKey();
+    jest.resetModules();
+
+    // Mock RBAC before requiring routes
+    jest.mock('../../src/middleware/rbac', () => ({
+      checkPermission: () => (req, res, next) => next(),
+      requireAdmin: () => (req, res, next) => next(),
+      attachUserRole: (req, res, next) => next(),
+    }));
+
+    BackupService = require('../../src/services/BackupService');
+    jest.spyOn(BackupService.prototype, 'listBackups').mockResolvedValue([
+      { backupId: 'backup_999_aabbccdd', filePath: '/data/backups/backup_999_aabbccdd.enc', size: 1024, createdAt: '2026-04-01T12:00:00.000Z' },
+    ]);
+
+    const express = require('express');
+    const backupRoutes = require('../../src/routes/admin/backup');
+    app = express();
+    app.use(express.json());
+    app.use('/', backupRoutes);
+
+    request = require('supertest');
+  });
+
+  afterEach(() => {
+    jest.restoreAllMocks();
+  });
+
+  it('GET /status returns 200 with lastBackupTime and lastVerification', async () => {
+    const res = await request(app).get('/status');
+    expect(res.status).toBe(200);
+    expect(res.body.success).toBe(true);
+    expect(res.body.data).toHaveProperty('lastBackupTime');
+    expect(res.body.data).toHaveProperty('lastBackupId');
+    expect(res.body.data).toHaveProperty('lastVerification');
+  });
+
+  it('GET /status returns null lastBackupTime when no backups exist', async () => {
+    BackupService.prototype.listBackups.mockResolvedValue([]);
+    const res = await request(app).get('/status');
+    expect(res.status).toBe(200);
+    expect(res.body.data.lastBackupTime).toBeNull();
+    expect(res.body.data.lastBackupId).toBeNull();
+  });
+
+  it('GET /status returns lastBackupTime from most recent backup', async () => {
+    const res = await request(app).get('/status');
+    expect(res.status).toBe(200);
+    expect(res.body.data.lastBackupTime).toBe('2026-04-01T12:00:00.000Z');
+    expect(res.body.data.lastBackupId).toBe('backup_999_aabbccdd');
+  });
+});

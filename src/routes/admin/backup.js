@@ -29,6 +29,27 @@ router.post('/', checkPermission(PERMISSIONS.ADMIN_ALL), payloadSizeLimiter(ENDP
 }));
 
 /**
+ * GET /admin/backup/status
+ * Show the last backup time and verification result.
+ */
+router.get('/status', checkPermission(PERMISSIONS.ADMIN_ALL), asyncHandler(async (req, res, next) => {
+  try {
+    const backups = await backupService.listBackups();
+    const lastBackup = backups.length > 0 ? backups[0] : null;
+    res.json({
+      success: true,
+      data: {
+        lastBackupTime: lastBackup ? lastBackup.createdAt : null,
+        lastBackupId: lastBackup ? lastBackup.backupId : null,
+        lastVerification: backupService.lastVerification,
+      },
+    });
+  } catch (err) {
+    next(err);
+  }
+}));
+
+/**
  * GET /admin/backups
  * List all available backups.
  */
