@@ -12,6 +12,8 @@
 const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
+const os = require('os');
+const sqlite3 = require('sqlite3').verbose();
 const log = require('../utils/log');
 
 const DB_PATH = path.join(__dirname, '../../data/stellar_donations.db');
@@ -73,6 +75,8 @@ class BackupService {
     this.s3 = options.s3 || null;
     this.s3Bucket = options.s3Bucket || process.env.BACKUP_S3_BUCKET || null;
     this.s3Prefix = options.s3Prefix || process.env.BACKUP_S3_PREFIX || 'backups/';
+    /** @type {{backupId: string, passed: boolean, checkedAt: string, details: object}|null} */
+    this.lastVerification = null;
   }
 
   /**
@@ -117,7 +121,116 @@ class BackupService {
     }
 
     log.info('BACKUP', 'Backup completed', { backupId, size: meta.size });
+    await this.verifyBackup(backupId);
     return meta;
+  }
+
+  /**
+   * Verify a backup file is valid and restorable.
+   *
+   * Decrypts the backup to a temp file, opens it with SQLite, runs
+   * PRAGMA integrity_check, and compares row counts for critical tables
+   * against the source database.
+   *
+   * @param {string} backupId
+   * @returns {Promise<{backupId: string, passed: boolean, checkedAt: string, details: object}>}
+   */
+  async verifyBackup(backupId) {
+    const filePath = path.join(this.backupDir, `${backupId}.enc`);
+    const checkedAt = new Date().toISOString();
+
+    if (!fs.existsSync(filePath)) {
+      throw new Error(`Backup not found: ${backupId}`);
+    }
+
+    const encrypted = fs.readFileSync(filePath);
+    const decrypted = decryptBuffer(encrypted);
+
+    const tmpFile = path.join(os.tmpdir(), `verify_${backupId}_${Date.now()}.db`);
+    let passed = false;
+    let details = {};
+
+    try {
+      fs.writeFileSync(tmpFile, decrypted);
+
+      try {
+        const integrityResult = await this._runSqliteQuery(tmpFile, 'PRAGMA integrity_check');
+        const integrityOk = integrityResult.length === 1 && integrityResult[0].integrity_check === 'ok';
+
+        const CRITICAL_TABLES = ['users', 'transactions', 'recurring_donations'];
+        const rowCounts = {};
+        const sourceRowCounts = {};
+        const rowCountMismatches = [];
+
+        for (const table of CRITICAL_TABLES) {
+          const [backupCount, sourceCount] = await Promise.all([
+            this._getRowCount(tmpFile, table),
+            this._getRowCount(this.dbPath, table),
+          ]);
+          rowCounts[table] = backupCount;
+          sourceRowCounts[table] = sourceCount;
+          if (backupCount !== sourceCount) {
+            rowCountMismatches.push({ table, backup: backupCount, source: sourceCount });
+          }
+        }
+
+        passed = integrityOk && rowCountMismatches.length === 0;
+        details = { integrityOk, rowCounts, sourceRowCounts, rowCountMismatches };
+      } catch (sqliteErr) {
+        passed = false;
+        details = { error: sqliteErr.message };
+      }
+    } finally {
+      try { fs.unlinkSync(tmpFile); } catch (_) { /* ignore */ }
+    }
+
+    const verification = { backupId, passed, checkedAt, details };
+    this.lastVerification = verification;
+
+    if (passed) {
+      log.info('BACKUP', 'Backup verification passed', { backupId });
+    } else {
+      log.error('BACKUP', 'Backup verification FAILED', { backupId, details });
+    }
+
+    return verification;
+  }
+
+  /**
+   * Run a SQLite query and return all rows.
+   * @param {string} dbFile
+   * @param {string} sql
+   * @returns {Promise<object[]>}
+   * @private
+   */
+  _runSqliteQuery(dbFile, sql) {
+    return new Promise((resolve, reject) => {
+      const db = new sqlite3.Database(dbFile, sqlite3.OPEN_READONLY, err => {
+        if (err) return reject(err);
+      });
+      db.all(sql, [], (err, rows) => {
+        db.close();
+        if (err) return reject(err);
+        resolve(rows);
+      });
+    });
+  }
+
+  /**
+   * Get row count for a table, returning 0 if the table doesn't exist.
+   * @param {string} dbFile
+   * @param {string} table
+   * @returns {Promise<number>}
+   * @private
+   */
+  async _getRowCount(dbFile, table) {
+    if (!fs.existsSync(dbFile)) return 0;
+    try {
+      const rows = await this._runSqliteQuery(dbFile, `SELECT COUNT(*) as count FROM "${table}"`);
+      return rows[0] ? rows[0].count : 0;
+    } catch (_) {
+      return 0;
+    }
   }
 
   /**
