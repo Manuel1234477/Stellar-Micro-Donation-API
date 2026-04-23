@@ -21,6 +21,7 @@ const { ValidationError, NotFoundError } = require('../../utils/errors');
 const { validateSchema } = require('../../middleware/schemaValidation');
 const AuditLogService = require('../../services/AuditLogService');
 const asyncHandler = require('../../utils/asyncHandler');
+const { payloadSizeLimiter, ENDPOINT_LIMITS } = require('../../middleware/payloadSizeLimiter');
 
 /**
  * GET /admin/feature-flags
@@ -177,7 +178,7 @@ const createFlagSchema = validateSchema({
   }
 });
 
-router.post('/', checkPermission(PERMISSIONS.ADMIN_ALL), createFlagSchema, asyncHandler(async (req, res, next) => {
+router.post('/', checkPermission(PERMISSIONS.ADMIN_ALL), createFlagSchema, payloadSizeLimiter(ENDPOINT_LIMITS.admin), asyncHandler(async (req, res, next) => {
   try {
     const { name, enabled, scope, scope_value, description } = req.body;
 
@@ -264,7 +265,7 @@ const updateFlagSchema = validateSchema({
   }
 });
 
-router.patch('/:name', checkPermission(PERMISSIONS.ADMIN_ALL), updateFlagSchema, asyncHandler(async (req, res, next) => {
+router.patch('/:name', checkPermission(PERMISSIONS.ADMIN_ALL), updateFlagSchema, payloadSizeLimiter(ENDPOINT_LIMITS.admin), asyncHandler(async (req, res, next) => {
   try {
     const { name } = req.params;
     const { scope, scope_value } = req.query;
@@ -394,7 +395,7 @@ router.delete('/:name', checkPermission(PERMISSIONS.ADMIN_ALL), asyncHandler(asy
  * 
  * Creates flag if it doesn't exist, sets enabled=true
  */
-router.post('/:flag/enable', checkPermission(PERMISSIONS.ADMIN_ALL), asyncHandler(async (req, res, next) => {
+router.post('/:flag/enable', checkPermission(PERMISSIONS.ADMIN_ALL), payloadSizeLimiter(ENDPOINT_LIMITS.admin), asyncHandler(async (req, res, next) => {
   try {
     const { flag } = req.params;
     const { description } = req.body || {};
@@ -456,7 +457,7 @@ router.post('/:flag/enable', checkPermission(PERMISSIONS.ADMIN_ALL), asyncHandle
  * 
  * Creates flag if it doesn't exist, sets enabled=false
  */
-router.post('/:flag/disable', checkPermission(PERMISSIONS.ADMIN_ALL), asyncHandler(async (req, res, next) => {
+router.post('/:flag/disable', checkPermission(PERMISSIONS.ADMIN_ALL), payloadSizeLimiter(ENDPOINT_LIMITS.admin), asyncHandler(async (req, res, next) => {
   try {
     const { flag } = req.params;
     const { description } = req.body || {};

@@ -130,7 +130,7 @@ const { getStellarService } = require('../config/stellar');
  * POST /liquidity-pools/deposit
  * Deposit assets into a Stellar AMM liquidity pool.
  */
-router.post('/deposit', requireApiKey, checkPermission(PERMISSIONS.DONATIONS_WRITE), asyncHandler(async (req, res, next) => {
+router.post('/deposit', requireApiKey, checkPermission(PERMISSIONS.DONATIONS_WRITE), payloadSizeLimiter(ENDPOINT_LIMITS.default), asyncHandler(async (req, res, next) => {
   try {
     const { secret, assetA, assetB, maxAmountA, maxAmountB } = req.body;
 
@@ -154,7 +154,7 @@ router.post('/deposit', requireApiKey, checkPermission(PERMISSIONS.DONATIONS_WRI
  * POST /liquidity-pools/withdraw
  * Withdraw assets from a Stellar AMM liquidity pool.
  */
-router.post('/withdraw', requireApiKey, checkPermission(PERMISSIONS.DONATIONS_WRITE), asyncHandler(async (req, res, next) => {
+router.post('/withdraw', requireApiKey, checkPermission(PERMISSIONS.DONATIONS_WRITE), payloadSizeLimiter(ENDPOINT_LIMITS.default), asyncHandler(async (req, res, next) => {
   try {
     const { secret, poolId, amount } = req.body;
 

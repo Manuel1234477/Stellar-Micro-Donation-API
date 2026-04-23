@@ -14,6 +14,7 @@ const { requireAdmin } = require('../../middleware/rbac');
 const { validateSchema } = require('../../middleware/schemaValidation');
 const log = require('../../utils/log');
 const asyncHandler = require('../../utils/asyncHandler');
+const { payloadSizeLimiter, ENDPOINT_LIMITS } = require('../../middleware/payloadSizeLimiter');
 
 const createCorporateMatchingSchema = validateSchema({
   body: {
@@ -38,7 +39,7 @@ const updateStatusSchema = validateSchema({
  * POST /admin/corporate-matching
  * Create a new corporate matching program.
  */
-router.post('/', requireApiKey, requireAdmin(), createCorporateMatchingSchema, asyncHandler(async (req, res, next) => {
+router.post('/', requireApiKey, requireAdmin(), createCorporateMatchingSchema, payloadSizeLimiter(ENDPOINT_LIMITS.admin), asyncHandler(async (req, res, next) => {
   try {
     const { sponsor_id, match_ratio, per_employee_limit, total_limit } = req.body;
 
@@ -105,7 +106,7 @@ router.get('/:id', requireApiKey, requireAdmin(), asyncHandler(async (req, res, 
  * PATCH /admin/corporate-matching/:id/status
  * Update the status of a corporate matching program.
  */
-router.patch('/:id/status', requireApiKey, requireAdmin(), updateStatusSchema, asyncHandler(async (req, res, next) => {
+router.patch('/:id/status', requireApiKey, requireAdmin(), updateStatusSchema, payloadSizeLimiter(ENDPOINT_LIMITS.admin), asyncHandler(async (req, res, next) => {
   try {
     const { id } = req.params;
     const { status } = req.body;

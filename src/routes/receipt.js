@@ -26,7 +26,7 @@ const receiptLog = new Map();
  * Returns a PDF receipt for a confirmed donation.
  * Optionally emails it when `email` is provided in the request body.
  */
-router.post('/:id/receipt', requireApiKey, checkPermission(PERMISSIONS.DONATIONS_READ), asyncHandler(async (req, res, next) => {
+router.post('/:id/receipt', requireApiKey, checkPermission(PERMISSIONS.DONATIONS_READ), payloadSizeLimiter(ENDPOINT_LIMITS.singleDonation), asyncHandler(async (req, res, next) => {
   try {
     const { id } = req.params;
     const { email } = req.body || {};

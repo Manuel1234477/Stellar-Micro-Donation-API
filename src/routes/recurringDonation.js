@@ -28,6 +28,7 @@ const {
 const log = require('../utils/log');
 const serviceContainer = require('../config/serviceContainer');
 const asyncHandler = require('../utils/asyncHandler');
+const { payloadSizeLimiter, ENDPOINT_LIMITS } = require('../middleware/payloadSizeLimiter');
 
 // ─────────────────────────────────────────────────────────────────────────────
 // POST /donations/recurring
@@ -47,7 +48,7 @@ const asyncHandler = require('../utils/asyncHandler');
  * @body {string}  [webhookUrl]        - URL to POST on persistent failure
  * @body {string}  [startDate]         - ISO date for first execution (default: now + 1 interval)
  */
-router.post('/', checkPermission(PERMISSIONS.STREAM_CREATE), asyncHandler(async (req, res, next) => {
+router.post('/', checkPermission(PERMISSIONS.STREAM_CREATE), payloadSizeLimiter(ENDPOINT_LIMITS.singleDonation), asyncHandler(async (req, res, next) => {
   try {
     const {
       donorPublicKey,

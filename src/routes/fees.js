@@ -11,6 +11,7 @@ const express = require('express');
 const router = express.Router();
 const FeeService = require('../services/FeeService');
 const asyncHandler = require('../utils/asyncHandler');
+const { payloadSizeLimiter, ENDPOINT_LIMITS } = require('../middleware/payloadSizeLimiter');
 const { requireAdmin } = require('../middleware/rbac');
 
 /**
@@ -18,7 +19,7 @@ const { requireAdmin } = require('../middleware/rbac');
  * Create a new fee record for a student (admin only).
  * Body: { studentId, description, totalAmount }
  */
-router.post('/', requireAdmin(), asyncHandler(async (req, res, next) => {
+router.post('/', requireAdmin(), payloadSizeLimiter(ENDPOINT_LIMITS.admin), asyncHandler(async (req, res, next) => {
   try {
     const { studentId, description, totalAmount } = req.body;
     const fee = await FeeService.createFee(studentId, description, Number(totalAmount));
@@ -33,7 +34,7 @@ router.post('/', requireAdmin(), asyncHandler(async (req, res, next) => {
  * Record an installment payment toward a fee.
  * Body: { amount, note? }
  */
-router.post('/:id/payments', asyncHandler(async (req, res, next) => {
+router.post('/:id/payments', payloadSizeLimiter(ENDPOINT_LIMITS.admin), asyncHandler(async (req, res, next) => {
   try {
     const feeId = parseInt(req.params.id, 10);
     if (isNaN(feeId) || feeId < 1) {

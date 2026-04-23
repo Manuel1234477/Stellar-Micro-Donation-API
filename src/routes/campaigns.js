@@ -9,6 +9,7 @@ const router = express.Router();
 const Database = require('../utils/database');
 const requireApiKey = require('../middleware/apiKey');
 const asyncHandler = require('../utils/asyncHandler');
+const { payloadSizeLimiter, ENDPOINT_LIMITS } = require('../middleware/payloadSizeLimiter');
 const { checkPermission } = require('../middleware/rbac');
 const { PERMISSIONS } = require('../utils/permissions');
 const { validateSchema } = require('../middleware/schemaValidation');
@@ -44,7 +45,7 @@ const updateCampaignSchema = validateSchema({
  * POST /campaigns
  * Creates a new donation campaign natively tracking goals.
  */
-router.post('/', requireApiKey, checkPermission(PERMISSIONS.ADMIN), createCampaignSchema, asyncHandler(async (req, res, next) => {
+router.post('/', requireApiKey, checkPermission(PERMISSIONS.ADMIN), createCampaignSchema, payloadSizeLimiter(ENDPOINT_LIMITS.campaign), asyncHandler(async (req, res, next) => {
   try {
     const { name, description, goal_amount, start_date, end_date, funding_model } = req.body;
     
@@ -132,7 +133,7 @@ router.get('/:id', cacheMiddleware('campaign', 'public'), asyncHandler(async (re
  * PATCH /campaigns/:id
  * Update metrics or pause/complete campaigns inherently.
  */
-router.patch('/:id', requireApiKey, checkPermission(PERMISSIONS.ADMIN), updateCampaignSchema, asyncHandler(async (req, res, next) => {
+router.patch('/:id', requireApiKey, checkPermission(PERMISSIONS.ADMIN), updateCampaignSchema, payloadSizeLimiter(ENDPOINT_LIMITS.campaign), asyncHandler(async (req, res, next) => {
   try {
     const id = req.params.id;
     const updates = req.body;
@@ -366,7 +367,7 @@ const CrowdfundingService = require('../services/CrowdfundingService');
  * Pledge a donation to an all-or-nothing campaign (held in escrow).
  * Body: { donor_id: number, amount: number }
  */
-router.post('/:id/pledge', requireApiKey, asyncHandler(async (req, res, next) => {
+router.post('/:id/pledge', requireApiKey, payloadSizeLimiter(ENDPOINT_LIMITS.campaign), asyncHandler(async (req, res, next) => {
   try {
     const campaignId = parseInt(req.params.id, 10);
     const { donor_id, amount } = req.body;
@@ -392,7 +393,7 @@ router.post('/:id/pledge', requireApiKey, asyncHandler(async (req, res, next) =>
  * Settle a campaign: release funds if goal met, refund all donors otherwise.
  * Idempotent — safe to call multiple times.
  */
-router.post('/:id/settle', requireApiKey, checkPermission(PERMISSIONS.ADMIN), asyncHandler(async (req, res, next) => {
+router.post('/:id/settle', requireApiKey, checkPermission(PERMISSIONS.ADMIN), payloadSizeLimiter(ENDPOINT_LIMITS.campaign), asyncHandler(async (req, res, next) => {
   try {
     const campaignId = parseInt(req.params.id, 10);
     const result = await CrowdfundingService.settle(campaignId);
@@ -427,7 +428,7 @@ module.exports = router;
  * Create a milestone for a campaign.
  * Body: { title, description, target_amount }
  */
-router.post('/:id/milestones', requireApiKey, checkPermission(PERMISSIONS.ADMIN), asyncHandler(async (req, res, next) => {
+router.post('/:id/milestones', requireApiKey, checkPermission(PERMISSIONS.ADMIN), payloadSizeLimiter(ENDPOINT_LIMITS.campaign), asyncHandler(async (req, res, next) => {
   try {
     const campaignId = parseInt(req.params.id, 10);
     const { title, description, target_amount } = req.body;
@@ -487,7 +488,7 @@ router.get('/:id/milestones', requireApiKey, asyncHandler(async (req, res, next)
  * POST /admin/campaigns/:id/milestones/:milestoneId/verify
  * Admin verifies a milestone, triggering fund release.
  */
-router.post('/admin/:id/milestones/:milestoneId/verify', requireApiKey, checkPermission(PERMISSIONS.ADMIN), asyncHandler(async (req, res, next) => {
+router.post('/admin/:id/milestones/:milestoneId/verify', requireApiKey, checkPermission(PERMISSIONS.ADMIN), payloadSizeLimiter(ENDPOINT_LIMITS.campaign), asyncHandler(async (req, res, next) => {
   try {
     const campaignId = parseInt(req.params.id, 10);
     const milestoneId = parseInt(req.params.milestoneId, 10);

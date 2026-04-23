@@ -67,8 +67,7 @@ const log = require('../utils/log');
 const requestId = require('../middleware/requestId');
 const { attachLifecycleTracking } = require('../middleware/requestLifecycle');
 const serviceContainer = require('../config/serviceContainer');
-const { payloadSizeLimiter } = require('../middleware/payloadSizeLimiter');
-const { requestTimeout, TIMEOUTS } = require('../middleware/requestTimeout');
+const { payloadSizeLimiter, ENDPOINT_LIMITS } = require('../middleware/payloadSizeLimiter');
 const { createCorsMiddleware } = require('../middleware/cors');
 const { createCspMiddleware, cspReportRouter } = require('../middleware/csp');
 const { responseFormatterMiddleware } = require('../utils/responseFormatter');
@@ -179,7 +178,7 @@ app.use(cspReportRouter);
 app.use(require('../middleware/geoBlock'));
 
 // Payload size limit (must be before body parsers)
-app.use(payloadSizeLimiter);
+app.use(payloadSizeLimiter());
 
 app.use(express.json({
   verify: (req, _res, buf) => { req.rawBody = buf.toString('utf8'); }
@@ -452,7 +451,7 @@ app.get('/admin/audit-logs', require('../middleware/rbac').requireAdmin(), async
 }));
 
 // Manual reconciliation trigger (admin only)
-app.post('/reconcile', require('../middleware/rbac').requireAdmin(), asyncHandler(async (req, res, next) => {
+app.post('/reconcile', require('../middleware/rbac').requireAdmin(), payloadSizeLimiter(ENDPOINT_LIMITS.admin), payloadSizeLimiter(ENDPOINT_LIMITS.admin), asyncHandler(async (req, res, next) => {
   try {
     if (reconciliationService.reconciliationInProgress) {
       return res.status(409).json({
@@ -474,7 +473,7 @@ app.post('/reconcile', require('../middleware/rbac').requireAdmin(), asyncHandle
 }));
 
 // Admin reconcile endpoint (canonical path)
-app.post('/admin/reconcile', require('../middleware/rbac').requireAdmin(), asyncHandler(async (req, res, next) => {
+app.post('/admin/reconcile', require('../middleware/rbac').requireAdmin(), payloadSizeLimiter(ENDPOINT_LIMITS.admin), asyncHandler(async (req, res, next) => {
   try {
     if (reconciliationService.reconciliationInProgress) {
       return res.status(409).json({
@@ -495,7 +494,7 @@ app.post('/admin/reconcile', require('../middleware/rbac').requireAdmin(), async
 }));
 
 // Admin sync endpoint — triggers immediate transaction sync for all wallets
-app.post('/admin/sync', require('../middleware/rbac').requireAdmin(), asyncHandler(async (req, res, next) => {
+app.post('/admin/sync', require('../middleware/rbac').requireAdmin(), payloadSizeLimiter(ENDPOINT_LIMITS.admin), asyncHandler(async (req, res, next) => {
   try {
     const result = await transactionSyncScheduler.syncAllWallets();
     res.json({

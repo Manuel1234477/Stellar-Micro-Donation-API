@@ -14,6 +14,7 @@ const StellarSdk = require('stellar-sdk');
 const { ValidationError } = require('../utils/errors');
 const log = require('../utils/log');
 const asyncHandler = require('../utils/asyncHandler');
+const { payloadSizeLimiter, ENDPOINT_LIMITS } = require('../middleware/payloadSizeLimiter');
 
 /**
  * POST /tools/decode-transaction
@@ -23,7 +24,7 @@ const asyncHandler = require('../utils/asyncHandler');
  * @param {string} networkPassphrase - Network passphrase (defaults to Testnet if not provided)
  * @returns {Object} Human-readable breakdown of operations, signers, and signatures
  */
-router.post('/decode-transaction', asyncHandler(async (req, res, next) => {
+router.post('/decode-transaction', payloadSizeLimiter(ENDPOINT_LIMITS.default), asyncHandler(async (req, res, next) => {
   try {
     const { xdr, networkPassphrase = StellarSdk.Networks.TESTNET } = req.body;
 

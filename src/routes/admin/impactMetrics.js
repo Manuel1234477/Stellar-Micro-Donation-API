@@ -29,7 +29,7 @@ const createImpactMetricSchema = validateSchema({
  * POST /admin/impact-metrics
  * Create a new impact metric for a campaign.
  */
-router.post('/', requireApiKey, requireAdmin(), createImpactMetricSchema, asyncHandler(async (req, res, next) => {
+router.post('/', requireApiKey, requireAdmin(), createImpactMetricSchema, payloadSizeLimiter(ENDPOINT_LIMITS.admin), asyncHandler(async (req, res, next) => {
   try {
     const { campaign_id, unit, amount_per_unit, description } = req.body;
 
@@ -61,6 +61,7 @@ router.get('/', requireApiKey, requireAdmin(), asyncHandler(async (req, res, nex
     } else {
       const Database = require('../../utils/database');
 const asyncHandler = require('../../utils/asyncHandler');
+const { payloadSizeLimiter, ENDPOINT_LIMITS } = require('../../middleware/payloadSizeLimiter');
       metrics = await Database.query('SELECT * FROM impact_metrics ORDER BY campaign_id, amount_per_unit ASC');
     }
 

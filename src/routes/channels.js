@@ -26,6 +26,7 @@ const { getStellarService } = require('../config/stellar');
 const { PaymentChannelService } = require('../services/PaymentChannelService');
 const log = require('../utils/log');
 const asyncHandler = require('../utils/asyncHandler');
+const { payloadSizeLimiter, ENDPOINT_LIMITS } = require('../middleware/payloadSizeLimiter');
 
 const channelService = new PaymentChannelService(getStellarService());
 
@@ -40,7 +41,7 @@ channelService.initTable().catch((err) =>
  * Open a new payment channel.
  * Body: { senderKey, receiverKey, capacity, fundingTxId?, metadata? }
  */
-router.post('/open', requireApiKey, checkPermission(PERMISSIONS.DONATIONS_CREATE), asyncHandler(async (req, res, next) => {
+router.post('/open', requireApiKey, checkPermission(PERMISSIONS.DONATIONS_CREATE), payloadSizeLimiter(ENDPOINT_LIMITS.default), asyncHandler(async (req, res, next) => {
   try {
     const { senderKey, receiverKey, capacity, fundingTxId, metadata } = req.body;
     const channel = await channelService.openChannel({ senderKey, receiverKey, capacity: Number(capacity), fundingTxId, metadata });
@@ -85,7 +86,7 @@ router.get('/:id', requireApiKey, checkPermission(PERMISSIONS.DONATIONS_READ), a
  * Apply a signed off-chain state update.
  * Body: { amount, senderSecret, receiverSecret, senderSig, receiverSig }
  */
-router.post('/:id/update', requireApiKey, checkPermission(PERMISSIONS.DONATIONS_CREATE), asyncHandler(async (req, res, next) => {
+router.post('/:id/update', requireApiKey, checkPermission(PERMISSIONS.DONATIONS_CREATE), payloadSizeLimiter(ENDPOINT_LIMITS.default), asyncHandler(async (req, res, next) => {
   try {
     const { amount, senderSecret, receiverSecret, senderSig, receiverSig } = req.body;
     const channel = await channelService.updateChannel({
@@ -108,7 +109,7 @@ router.post('/:id/update', requireApiKey, checkPermission(PERMISSIONS.DONATIONS_
  * Settle the channel on-chain.
  * Body: { senderSecret }
  */
-router.post('/:id/close', requireApiKey, checkPermission(PERMISSIONS.DONATIONS_CREATE), asyncHandler(async (req, res, next) => {
+router.post('/:id/close', requireApiKey, checkPermission(PERMISSIONS.DONATIONS_CREATE), payloadSizeLimiter(ENDPOINT_LIMITS.default), asyncHandler(async (req, res, next) => {
   try {
     const channel = await channelService.closeChannel({
       channelId: req.params.id,
@@ -126,7 +127,7 @@ router.post('/:id/close', requireApiKey, checkPermission(PERMISSIONS.DONATIONS_C
  * Raise a dispute with a higher-sequence signed state.
  * Body: { sequence, balance, senderSig, receiverSig, senderSecret, receiverSecret }
  */
-router.post('/:id/dispute', requireApiKey, checkPermission(PERMISSIONS.DONATIONS_CREATE), asyncHandler(async (req, res, next) => {
+router.post('/:id/dispute', requireApiKey, checkPermission(PERMISSIONS.DONATIONS_CREATE), payloadSizeLimiter(ENDPOINT_LIMITS.default), asyncHandler(async (req, res, next) => {
   try {
     const { sequence, balance, senderSig, receiverSig, senderSecret, receiverSecret } = req.body;
     const channel = await channelService.disputeChannel({

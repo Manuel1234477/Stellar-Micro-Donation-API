@@ -341,3 +341,95 @@ describe('Default limit fallback', () => {
     expect(res.status).toBe(200);
   });
 });
+
+// ─── New ENDPOINT_LIMITS constants (#700) ────────────────────────────────────
+
+describe('ENDPOINT_LIMITS — new constants added in #700', () => {
+  it('exports auth limit (1 KB)', () => {
+    expect(ENDPOINT_LIMITS.auth).toBe(1 * 1024);
+  });
+  it('exports admin limit (10 KB)', () => {
+    expect(ENDPOINT_LIMITS.admin).toBe(10 * 1024);
+  });
+  it('exports bulk limit (1 MB)', () => {
+    expect(ENDPOINT_LIMITS.bulk).toBe(1 * 1024 * 1024);
+  });
+  it('exports webhook limit (20 KB)', () => {
+    expect(ENDPOINT_LIMITS.webhook).toBe(20 * 1024);
+  });
+  it('exports asset limit (50 KB)', () => {
+    expect(ENDPOINT_LIMITS.asset).toBe(50 * 1024);
+  });
+  it('exports campaign limit (20 KB)', () => {
+    expect(ENDPOINT_LIMITS.campaign).toBe(20 * 1024);
+  });
+});
+
+// ─── Global limit rejects oversized payloads before route handlers (#700) ────
+
+describe('Global payloadSizeLimiter — rejects oversized payloads with 413', () => {
+  function buildGlobalApp(routeLimit) {
+    const app = express();
+    app.use((req, _res, next) => { req.id = 'global-test'; next(); });
+    // Simulate the global guard (default 100 KB) — before body parsing
+    app.use(payloadSizeLimiter());
+    // Per-route guard applied before body parsing via a route-specific pre-handler
+    app.post('/auth/token', payloadSizeLimiter(routeLimit), express.json(), (req, res) => {
+      res.json({ reached: true });
+    });
+    return app;
+  }
+
+  it('returns 413 when payload exceeds the global default limit', async () => {
+    const app = buildGlobalApp(ENDPOINT_LIMITS.auth);
+    const oversized = jsonOfSize(ENDPOINT_LIMITS.default + 1);
+    const res = await request(app)
+      .post('/auth/token')
+      .set('Content-Type', 'application/json')
+      .set('Content-Length', String(Buffer.byteLength(oversized)))
+      .send(oversized);
+    expect(res.status).toBe(413);
+    expect(res.body.error.code).toBe('PAYLOAD_TOO_LARGE');
+  });
+
+  it('returns 413 when payload exceeds the per-route auth limit (1 KB)', async () => {
+    const app = buildGlobalApp(ENDPOINT_LIMITS.auth);
+    // Build a payload that is definitely larger than 1 KB
+    const oversized = JSON.stringify({ data: 'x'.repeat(ENDPOINT_LIMITS.auth + 100) });
+    const res = await request(app)
+      .post('/auth/token')
+      .set('Content-Type', 'application/json')
+      .set('Content-Length', String(Buffer.byteLength(oversized)))
+      .send(oversized);
+    expect(res.status).toBe(413);
+  });
+
+  it('allows a payload within the per-route auth limit', async () => {
+    const app = buildGlobalApp(ENDPOINT_LIMITS.auth);
+    const small = JSON.stringify({ username: 'alice', password: 'secret' });
+    const res = await request(app)
+      .post('/auth/token')
+      .set('Content-Type', 'application/json')
+      .send(small);
+    expect(res.status).toBe(200);
+    expect(res.body.reached).toBe(true);
+  });
+
+  it('route handler is never called when 413 is returned', async () => {
+    const handlerSpy = jest.fn((req, res) => res.json({ reached: true }));
+    const app = express();
+    app.use((req, _res, next) => { req.id = 'x'; next(); });
+    app.use(payloadSizeLimiter(ENDPOINT_LIMITS.auth));
+    app.use(express.json());
+    app.post('/test', handlerSpy);
+
+    const oversized = JSON.stringify({ data: 'x'.repeat(ENDPOINT_LIMITS.auth + 100) });
+    await request(app)
+      .post('/test')
+      .set('Content-Type', 'application/json')
+      .set('Content-Length', String(Buffer.byteLength(oversized)))
+      .send(oversized);
+
+    expect(handlerSpy).not.toHaveBeenCalled();
+  });
+});

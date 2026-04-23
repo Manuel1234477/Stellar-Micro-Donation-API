@@ -12,13 +12,14 @@ const requireApiKey = require('../../middleware/apiKey');
 const { requireAdmin } = require('../../middleware/rbac');
 const serviceContainer = require('../../config/serviceContainer');
 const asyncHandler = require('../../utils/asyncHandler');
+const { payloadSizeLimiter, ENDPOINT_LIMITS } = require('../../middleware/payloadSizeLimiter');
 
 /**
  * POST /admin/routing/pools
  * Create a new recipient pool.
  * Body: { name: string, recipients?: Array<{id, displayName?, latitude?, longitude?, campaignDeadline?}> }
  */
-router.post('/pools', requireApiKey, requireAdmin(), asyncHandler(async (req, res, next) => {
+router.post('/pools', requireApiKey, requireAdmin(), payloadSizeLimiter(ENDPOINT_LIMITS.admin), asyncHandler(async (req, res, next) => {
   try {
     const { name, recipients = [] } = req.body;
     if (!name) {
@@ -51,7 +52,7 @@ router.get('/pools/:name', requireApiKey, requireAdmin(), asyncHandler(async (re
  * Add members to an existing pool.
  * Body: { recipients: Array<{id, displayName?, latitude?, longitude?, campaignDeadline?}> }
  */
-router.post('/pools/:name/members', requireApiKey, requireAdmin(), asyncHandler(async (req, res, next) => {
+router.post('/pools/:name/members', requireApiKey, requireAdmin(), payloadSizeLimiter(ENDPOINT_LIMITS.admin), asyncHandler(async (req, res, next) => {
   try {
     const { recipients } = req.body;
     if (!Array.isArray(recipients) || recipients.length === 0) {
@@ -105,7 +106,7 @@ router.delete('/pools/:name', requireApiKey, requireAdmin(), asyncHandler(async 
  * Set the active routing strategy for a pool.
  * Body: { poolName: string, strategy: string }
  */
-router.post('/strategies', requireApiKey, requireAdmin(), asyncHandler(async (req, res, next) => {
+router.post('/strategies', requireApiKey, requireAdmin(), payloadSizeLimiter(ENDPOINT_LIMITS.admin), asyncHandler(async (req, res, next) => {
   try {
     const { poolName, strategy } = req.body;
     if (!poolName || !strategy) {

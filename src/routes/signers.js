@@ -19,6 +19,7 @@ const AuditLogService = require('../services/AuditLogService');
 const { getStellarService } = require('../config/stellar');
 const log = require('../utils/log');
 const asyncHandler = require('../utils/asyncHandler');
+const { payloadSizeLimiter, ENDPOINT_LIMITS } = require('../middleware/payloadSizeLimiter');
 
 const stellarService = getStellarService();
 
@@ -154,7 +155,7 @@ router.get('/:id/signers', checkPermission(PERMISSIONS.WALLETS_READ), asyncHandl
  * POST /wallets/:id/signers
  * Add a signer to a wallet
  */
-router.post('/:id/signers', checkPermission(PERMISSIONS.WALLETS_UPDATE), addSignerSchema, asyncHandler(async (req, res, next) => {
+router.post('/:id/signers', checkPermission(PERMISSIONS.WALLETS_UPDATE), addSignerSchema, payloadSizeLimiter(ENDPOINT_LIMITS.admin), asyncHandler(async (req, res, next) => {
   try {
     const walletId = parseInt(req.params.id, 10);
     const { signerPublic, weight = 1, masterSecret } = req.body;
@@ -271,7 +272,7 @@ router.delete('/:id/signers/:key', checkPermission(PERMISSIONS.WALLETS_UPDATE), 
  * PATCH /wallets/:id/signers/:key
  * Update the weight of an existing signer
  */
-router.patch('/:id/signers/:key', checkPermission(PERMISSIONS.WALLETS_UPDATE), updateSignerWeightSchema, asyncHandler(async (req, res, next) => {
+router.patch('/:id/signers/:key', checkPermission(PERMISSIONS.WALLETS_UPDATE), updateSignerWeightSchema, payloadSizeLimiter(ENDPOINT_LIMITS.admin), asyncHandler(async (req, res, next) => {
   try {
     const walletId = parseInt(req.params.id, 10);
     const signerPublic = req.params.key;

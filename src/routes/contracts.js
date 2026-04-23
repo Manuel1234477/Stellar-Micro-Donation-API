@@ -9,6 +9,7 @@ const requireApiKey = require('../middleware/apiKey');
 const { requireAdmin } = require('../middleware/rbac');
 const AuditLogService = require('../services/AuditLogService');
 const asyncHandler = require('../utils/asyncHandler');
+const { payloadSizeLimiter, ENDPOINT_LIMITS } = require('../middleware/payloadSizeLimiter');
 
 const router = express.Router();
 
@@ -23,7 +24,7 @@ const router = express.Router();
  *   400 { success: false, error: { code: "VALIDATION_ERROR", message: string } }
  *   500 { success: false, error: { code: "INVOKE_FAILED", message: string } }
  */
-router.post('/:contractId/invoke', requireApiKey, requireAdmin(), asyncHandler(async (req, res) => {
+router.post('/:contractId/invoke', requireApiKey, requireAdmin(), payloadSizeLimiter(ENDPOINT_LIMITS.admin), asyncHandler(async (req, res) => {
   const { contractId } = req.params;
   const { method, args = [], sourceSecret } = req.body;
 
@@ -76,7 +77,7 @@ router.post('/:contractId/invoke', requireApiKey, requireAdmin(), asyncHandler(a
  *   400 { success: false, error: { code: "VALIDATION_ERROR", message: string } }
  *   500 { success: false, error: { code: "SIMULATE_FAILED", message: string } }
  */
-router.post('/:contractId/simulate', requireApiKey, requireAdmin(), asyncHandler(async (req, res) => {
+router.post('/:contractId/simulate', requireApiKey, requireAdmin(), payloadSizeLimiter(ENDPOINT_LIMITS.admin), asyncHandler(async (req, res) => {
   const { contractId } = req.params;
   const { method, args = [] } = req.body;
 

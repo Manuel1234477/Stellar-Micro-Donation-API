@@ -10,6 +10,7 @@ const express = require('express');
 const router = express.Router();
 const requireApiKey = require('../../middleware/apiKey');
 const asyncHandler = require('../../utils/asyncHandler');
+const { payloadSizeLimiter, ENDPOINT_LIMITS } = require('../../middleware/payloadSizeLimiter');
 const { requireAdmin } = require('../../middleware/rbac');
 const { WebhookService } = require('../../services/WebhookService');
 
@@ -33,7 +34,7 @@ router.get('/dead-letter', requireApiKey, requireAdmin(), asyncHandler(async (re
  * POST /admin/webhooks/dead-letter/:id/replay
  * Re-schedule a dead-letter entry as a fresh retry attempt.
  */
-router.post('/dead-letter/:id/replay', requireApiKey, requireAdmin(), asyncHandler(async (req, res, next) => {
+router.post('/dead-letter/:id/replay', requireApiKey, requireAdmin(), payloadSizeLimiter(ENDPOINT_LIMITS.webhook), asyncHandler(async (req, res, next) => {
   try {
     await WebhookService.replayDeadLetter(parseInt(req.params.id, 10));
     res.json({ success: true, data: { replayed: true, id: parseInt(req.params.id, 10) } });

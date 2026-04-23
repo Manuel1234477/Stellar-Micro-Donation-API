@@ -11,6 +11,7 @@ const { checkPermission } = require('../../middleware/rbac');
 const { PERMISSIONS } = require('../../utils/permissions');
 const retentionService = require('../../services/RetentionService');
 const asyncHandler = require('../../utils/asyncHandler');
+const { payloadSizeLimiter, ENDPOINT_LIMITS } = require('../../middleware/payloadSizeLimiter');
 
 /**
  * GET /admin/retention/status
@@ -29,7 +30,7 @@ router.get('/status', checkPermission(PERMISSIONS.ADMIN_ALL), asyncHandler(async
  * POST /admin/retention/run
  * Manually trigger a full retention run (admin only).
  */
-router.post('/run', checkPermission(PERMISSIONS.ADMIN_ALL), asyncHandler(async (req, res, next) => {
+router.post('/run', checkPermission(PERMISSIONS.ADMIN_ALL), payloadSizeLimiter(ENDPOINT_LIMITS.admin), asyncHandler(async (req, res, next) => {
   try {
     const result = await retentionService.runAll();
     res.json({ success: true, data: result });

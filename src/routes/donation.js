@@ -300,7 +300,7 @@ router.get('/:id/receipt', checkPermission(PERMISSIONS.DONATIONS_READ), donation
  * Send a PDF receipt to the provided email address.
  * Body: { email: string }
  */
-router.post('/:id/receipt/email', requireApiKey, donationIdParamSchema, asyncHandler(async (req, res, next) => {
+router.post('/:id/receipt/email', requireApiKey, donationIdParamSchema, payloadSizeLimiter(ENDPOINT_LIMITS.singleDonation), asyncHandler(async (req, res, next) => {
   try {
     const ReceiptService = require('../services/ReceiptService');
     const { email } = req.body;
@@ -456,7 +456,7 @@ router.get('/:id', checkPermission(PERMISSIONS.DONATIONS_READ), donationIdParamS
  * PATCH /donations/:id/status
  * Update donation transaction status
  */
-router.patch('/:id/status', checkPermission(PERMISSIONS.DONATIONS_UPDATE), updateDonationStatusSchema, asyncHandler(async (req, res, next) => {
+router.patch('/:id/status', checkPermission(PERMISSIONS.DONATIONS_UPDATE), updateDonationStatusSchema, payloadSizeLimiter(ENDPOINT_LIMITS.singleDonation), asyncHandler(async (req, res, next) => {
   try {
     const { id } = req.params;
     const { status, stellarTxId, ledger, notes, tags } = req.body;
@@ -492,7 +492,7 @@ router.patch('/:id/status', checkPermission(PERMISSIONS.DONATIONS_UPDATE), updat
  * Initiate a refund for a confirmed donation
  * Requires admin or refund permission
  */
-router.post('/:id/refund', requireApiKey, checkPermission(PERMISSIONS.DONATIONS_UPDATE), donationIdParamSchema, asyncHandler(async (req, res, next) => {
+router.post('/:id/refund', requireApiKey, checkPermission(PERMISSIONS.DONATIONS_UPDATE), donationIdParamSchema, payloadSizeLimiter(ENDPOINT_LIMITS.singleDonation), asyncHandler(async (req, res, next) => {
   try {
     const { id } = req.params;
     const { reason } = req.body;

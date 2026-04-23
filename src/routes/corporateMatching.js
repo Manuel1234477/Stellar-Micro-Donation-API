@@ -8,6 +8,7 @@ const router = express.Router();
 const CorporateMatchingService = require('../services/CorporateMatchingService');
 const MockStellarService = require('../services/MockStellarService');
 const asyncHandler = require('../utils/asyncHandler');
+const { payloadSizeLimiter, ENDPOINT_LIMITS } = require('../middleware/payloadSizeLimiter');
 
 // Shared service instance (can be replaced in tests)
 const stellarService = new MockStellarService();
@@ -69,7 +70,7 @@ router.get('/admin/corporate-matching/claims', (req, res) => {
  * Approve a claim and trigger the on-chain matching donation.
  * Body: { sourcePublicKey, donorPublicKey }
  */
-router.post('/admin/corporate-matching/claims/:id/approve', asyncHandler(async (req, res) => {
+router.post('/admin/corporate-matching/claims/:id/approve', payloadSizeLimiter(ENDPOINT_LIMITS.admin), asyncHandler(async (req, res) => {
   try {
     const { sourcePublicKey, donorPublicKey } = req.body;
     const claim = await matchingService.approveClaim(req.params.id, sourcePublicKey, donorPublicKey);

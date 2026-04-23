@@ -23,6 +23,7 @@ const SubscriptionTierService = require('../services/SubscriptionTierService');
 const serviceContainer = require('../config/serviceContainer');
 const AuditLogService = require('../services/AuditLogService');
 const asyncHandler = require('../utils/asyncHandler');
+const { payloadSizeLimiter, ENDPOINT_LIMITS } = require('../middleware/payloadSizeLimiter');
 
 /** Lazy singleton — avoids circular-require issues at module load time */
 function getTierService() {
@@ -43,7 +44,7 @@ function getTierService() {
  * @body {string} [interval]        - daily | weekly | monthly (default: monthly)
  * @body {string|Object} [benefits] - Free-form benefits description
  */
-router.post('/', checkPermission(PERMISSIONS.ADMIN_ALL), asyncHandler(async (req, res, next) => {
+router.post('/', checkPermission(PERMISSIONS.ADMIN_ALL), payloadSizeLimiter(ENDPOINT_LIMITS.admin), asyncHandler(async (req, res, next) => {
   try {
     const { name, amount, interval, benefits } = req.body;
     const tier = await getTierService().createTier({ name, amount, interval, benefits });
@@ -129,7 +130,7 @@ router.get('/analytics', checkPermission(PERMISSIONS.STATS_ADMIN), asyncHandler(
  * @body  {string} recipientPublicKey    - Recipient's Stellar public key
  * @body  {string} [startDate]           - ISO date for first execution
  */
-router.post('/:id/subscribe', checkPermission(PERMISSIONS.STREAM_CREATE), asyncHandler(async (req, res, next) => {
+router.post('/:id/subscribe', checkPermission(PERMISSIONS.STREAM_CREATE), payloadSizeLimiter(ENDPOINT_LIMITS.admin), asyncHandler(async (req, res, next) => {
   try {
     const tierId = parseInt(req.params.id, 10);
     if (!Number.isInteger(tierId) || tierId < 1) {

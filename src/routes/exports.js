@@ -5,6 +5,7 @@ const { validateSchema } = require('../middleware/schemaValidation');
 const { requireTier } = require('../middleware/rbac');
 const ExportService = require('../services/ExportService');
 const asyncHandler = require('../utils/asyncHandler');
+const { payloadSizeLimiter, ENDPOINT_LIMITS } = require('../middleware/payloadSizeLimiter');
 const { ValidationError, NotFoundError } = require('../utils/errors');
 
 const createExportSchema = validateSchema({
@@ -37,7 +38,7 @@ const exportIdSchema = validateSchema({
  * Initiate asynchronous export generation.
  * Requires 'pro' tier or higher.
  */
-router.post('/', requireApiKey, requireTier('pro'), createExportSchema, asyncHandler(async (req, res, next) => {
+router.post('/', requireApiKey, requireTier('pro'), createExportSchema, payloadSizeLimiter(ENDPOINT_LIMITS.bulk), asyncHandler(async (req, res, next) => {
   try {
     const { type, format, startDate, endDate } = req.body;
     const exportId = await ExportService.initiateExport({

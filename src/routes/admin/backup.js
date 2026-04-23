@@ -11,6 +11,7 @@ const { checkPermission } = require('../../middleware/rbac');
 const { PERMISSIONS } = require('../../utils/permissions');
 const BackupService = require('../../services/BackupService');
 const asyncHandler = require('../../utils/asyncHandler');
+const { payloadSizeLimiter, ENDPOINT_LIMITS } = require('../../middleware/payloadSizeLimiter');
 
 const backupService = new BackupService();
 
@@ -18,7 +19,7 @@ const backupService = new BackupService();
  * POST /admin/backup
  * Trigger an immediate encrypted database backup.
  */
-router.post('/', checkPermission(PERMISSIONS.ADMIN_ALL), asyncHandler(async (req, res, next) => {
+router.post('/', checkPermission(PERMISSIONS.ADMIN_ALL), payloadSizeLimiter(ENDPOINT_LIMITS.admin), asyncHandler(async (req, res, next) => {
   try {
     const result = await backupService.backup();
     res.status(201).json({ success: true, data: result });
@@ -44,7 +45,7 @@ router.get('/', checkPermission(PERMISSIONS.ADMIN_ALL), asyncHandler(async (req,
  * POST /admin/restore/:backupId
  * Restore the database from a specific backup.
  */
-router.post('/restore/:backupId', checkPermission(PERMISSIONS.ADMIN_ALL), asyncHandler(async (req, res, next) => {
+router.post('/restore/:backupId', checkPermission(PERMISSIONS.ADMIN_ALL), payloadSizeLimiter(ENDPOINT_LIMITS.admin), asyncHandler(async (req, res, next) => {
   try {
     const result = await backupService.restore(req.params.backupId);
     res.json({ success: true, data: result });

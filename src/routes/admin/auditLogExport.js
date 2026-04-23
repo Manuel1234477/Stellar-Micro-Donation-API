@@ -102,7 +102,7 @@ const { ValidationError, NotFoundError, ERROR_CODES } = require('../../utils/err
  * POST /admin/audit-logs/export
  * Queue an async audit log export job with date range and event type filters.
  */
-router.post('/', requireAdmin(), asyncHandler(async (req, res, next) => {
+router.post('/', requireAdmin(), payloadSizeLimiter(ENDPOINT_LIMITS.admin), asyncHandler(async (req, res, next) => {
   try {
     const { startDate, endDate, eventType, format = 'json' } = req.body;
 

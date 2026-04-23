@@ -21,6 +21,7 @@ const { validateScopes } = require('../utils/scopeValidator');
 const AuditLogService = require('../services/AuditLogService');
 const TOTPService = require('../services/TOTPService');
 const asyncHandler = require('../utils/asyncHandler');
+const { payloadSizeLimiter, ENDPOINT_LIMITS } = require('../middleware/payloadSizeLimiter');
 
 const { validateSchema } = require('../middleware/schemaValidation');
 const { API_KEY_STATUS } = require('../constants');
@@ -70,7 +71,7 @@ const apiKeyCleanupSchema = validateSchema({
  * Create a new API key (admin only)
  * Request body can include optional 'scopes' array for fine-grained access control
  */
-router.post('/', requireAdmin(), apiKeyCreateSchema, asyncHandler(async (req, res, next) => {
+router.post('/', requireAdmin(), apiKeyCreateSchema, payloadSizeLimiter(ENDPOINT_LIMITS.admin), asyncHandler(async (req, res, next) => {
   try {
     const { name, role = 'user', expiresInDays, metadata, rateLimit, rateLimitWindowSeconds, allowedIps } = req.body;
 
@@ -202,7 +203,7 @@ const apiKeyRotateSchema = validateSchema({
  * POST /api/v1/api-keys/:id/rotate
  * Atomically rotate an API key: creates a new key and deprecates the old one (admin only)
  */
-router.post('/:id/rotate', requireAdmin(), apiKeyIdParamSchema, apiKeyRotateSchema, asyncHandler(async (req, res, next) => {
+router.post('/:id/rotate', requireAdmin(), apiKeyIdParamSchema, apiKeyRotateSchema, payloadSizeLimiter(ENDPOINT_LIMITS.admin), asyncHandler(async (req, res, next) => {
   try {
     const keyIdValidation = validateInteger(req.params.id, { min: 1 });
     if (!keyIdValidation.valid) {
@@ -261,7 +262,7 @@ router.post('/:id/rotate', requireAdmin(), apiKeyIdParamSchema, apiKeyRotateSche
     next(error);
   }
 }));
-router.post('/:id/deprecate', requireAdmin(), apiKeyIdParamSchema, asyncHandler(async (req, res, next) => {
+router.post('/:id/deprecate', requireAdmin(), apiKeyIdParamSchema, payloadSizeLimiter(ENDPOINT_LIMITS.admin), asyncHandler(async (req, res, next) => {
   try {
     const keyIdValidation = validateInteger(req.params.id, { min: 1 });
 
@@ -310,7 +311,7 @@ router.post('/:id/deprecate', requireAdmin(), apiKeyIdParamSchema, asyncHandler(
  * PATCH /api/v1/api-keys/:id
  * Update mutable fields on an API key, e.g. allowedIps (admin only)
  */
-router.patch('/:id', requireAdmin(), apiKeyIdParamSchema, asyncHandler(async (req, res, next) => {
+router.patch('/:id', requireAdmin(), apiKeyIdParamSchema, payloadSizeLimiter(ENDPOINT_LIMITS.admin), asyncHandler(async (req, res, next) => {
   try {
     const keyIdValidation = validateInteger(req.params.id, { min: 1 });
     if (!keyIdValidation.valid) {
@@ -400,7 +401,7 @@ router.delete('/:id', requireAdmin(), apiKeyIdParamSchema, asyncHandler(async (r
  * POST /api/v1/api-keys/cleanup
  * Clean up old expired and revoked keys (admin only)
  */
-router.post('/cleanup', requireAdmin(), apiKeyCleanupSchema, asyncHandler(async (req, res, next) => {
+router.post('/cleanup', requireAdmin(), apiKeyCleanupSchema, payloadSizeLimiter(ENDPOINT_LIMITS.admin), asyncHandler(async (req, res, next) => {
   try {
     const { retentionDays = 90 } = req.body;
 
@@ -441,7 +442,7 @@ router.post('/cleanup', requireAdmin(), apiKeyCleanupSchema, asyncHandler(async 
  * Generate a TOTP secret and QR code for an API key (admin only).
  * TOTP is not yet active — the admin must call /verify to activate it.
  */
-router.post('/:id/totp/setup', requireAdmin(), apiKeyIdParamSchema, asyncHandler(async (req, res, next) => {
+router.post('/:id/totp/setup', requireAdmin(), apiKeyIdParamSchema, payloadSizeLimiter(ENDPOINT_LIMITS.admin), asyncHandler(async (req, res, next) => {
   try {
     const { value: keyId } = validateInteger(req.params.id, { min: 1 });
 
@@ -492,7 +493,7 @@ router.post('/:id/totp/setup', requireAdmin(), apiKeyIdParamSchema, asyncHandler
  * Verify a TOTP code and activate TOTP for the API key (admin only).
  * Also accepts a backup code to authenticate when TOTP is already enabled.
  */
-router.post('/:id/totp/verify', requireAdmin(), apiKeyIdParamSchema, asyncHandler(async (req, res, next) => {
+router.post('/:id/totp/verify', requireAdmin(), apiKeyIdParamSchema, payloadSizeLimiter(ENDPOINT_LIMITS.admin), asyncHandler(async (req, res, next) => {
   try {
     const { value: keyId } = validateInteger(req.params.id, { min: 1 });
     const { code } = req.body;

@@ -10,13 +10,14 @@ const router = express.Router();
 const requireApiKey = require('../middleware/apiKey');
 const WebhookService = require('../services/WebhookService');
 const asyncHandler = require('../utils/asyncHandler');
+const { payloadSizeLimiter, ENDPOINT_LIMITS } = require('../middleware/payloadSizeLimiter');
 
 /**
  * POST /webhooks
  * Register a new webhook endpoint.
  * Body: { url, events: string[], secret? }
  */
-router.post('/', requireApiKey, asyncHandler(async (req, res, next) => {
+router.post('/', requireApiKey, payloadSizeLimiter(ENDPOINT_LIMITS.webhook), asyncHandler(async (req, res, next) => {
   try {
     const { url, events, secret } = req.body;
     const webhook = await WebhookService.register({

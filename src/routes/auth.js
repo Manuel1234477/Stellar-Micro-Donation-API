@@ -19,6 +19,7 @@ const config = require('../config');
 const { getStellarService } = require('../config/stellar');
 const log = require('../utils/log');
 const asyncHandler = require('../utils/asyncHandler');
+const { payloadSizeLimiter, ENDPOINT_LIMITS } = require('../middleware/payloadSizeLimiter');
 
 const stellarService = getStellarService();
 const sep10Config = config.sep10 || {};
@@ -41,7 +42,7 @@ const sep10Service = serverSigningKey
  * Exchange a valid API key for a JWT access token + refresh token pair.
  * Requires: X-API-Key header
  */
-router.post('/token/apikey', requireApiKey, asyncHandler(async (req, res) => {
+router.post('/token/apikey', requireApiKey, payloadSizeLimiter(ENDPOINT_LIMITS.auth), asyncHandler(async (req, res) => {
   try {
     const apiKeyId = req.apiKey.id || 0;
     const claims = { role: req.apiKey.role || 'user' };
@@ -69,7 +70,7 @@ router.post('/token/apikey', requireApiKey, asyncHandler(async (req, res) => {
  * Rotate a refresh token. Returns a new access token + refresh token.
  * Body: { refreshToken: string }
  */
-router.post('/refresh', asyncHandler(async (req, res) => {
+router.post('/refresh', payloadSizeLimiter(ENDPOINT_LIMITS.auth), asyncHandler(async (req, res) => {
   const { refreshToken } = req.body || {};
 
   if (!refreshToken || typeof refreshToken !== 'string') {
@@ -145,7 +146,7 @@ router.get('/challenge', asyncHandler(async (req, res) => {
  * Verifies a signed SEP-0010 challenge and returns a JWT access token.
  * Body: { transaction: '<signed_tx_xdr>' }
  */
-router.post('/token', asyncHandler(async (req, res) => {
+router.post('/token', payloadSizeLimiter(ENDPOINT_LIMITS.auth), asyncHandler(async (req, res) => {
   if (!sep10Service) {
     return res.status(501).json({
       success: false,

@@ -18,6 +18,7 @@ const router = express.Router();
 const Database = require('../../utils/database');
 const requireApiKey = require('../../middleware/apiKey');
 const asyncHandler = require('../../utils/asyncHandler');
+const { payloadSizeLimiter, ENDPOINT_LIMITS } = require('../../middleware/payloadSizeLimiter');
 const { requireAdmin } = require('../../middleware/rbac');
 const { invalidateCache } = require('../../middleware/cors');
 
@@ -44,7 +45,7 @@ router.get('/', requireApiKey, requireAdmin(), asyncHandler(async (req, res, nex
  * @body {string} origin            - Origin URL or wildcard pattern (e.g. https://example.com or *.example.com)
  * @body {boolean} [allowCredentials=true] - Whether to allow credentials for this origin
  */
-router.post('/', requireApiKey, requireAdmin(), asyncHandler(async (req, res, next) => {
+router.post('/', requireApiKey, requireAdmin(), payloadSizeLimiter(ENDPOINT_LIMITS.admin), asyncHandler(async (req, res, next) => {
   try {
     const { origin, allowCredentials = true } = req.body;
 

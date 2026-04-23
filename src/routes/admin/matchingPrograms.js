@@ -14,6 +14,7 @@ const { requireAdmin } = require('../../middleware/rbac');
 const { validateSchema } = require('../../middleware/schemaValidation');
 const log = require('../../utils/log');
 const asyncHandler = require('../../utils/asyncHandler');
+const { payloadSizeLimiter, ENDPOINT_LIMITS } = require('../../middleware/payloadSizeLimiter');
 
 const createMatchingProgramSchema = validateSchema({
   body: {
@@ -38,7 +39,7 @@ const updateStatusSchema = validateSchema({
  * POST /admin/matching-programs
  * Create a new donation matching program.
  */
-router.post('/', requireApiKey, requireAdmin(), createMatchingProgramSchema, asyncHandler(async (req, res, next) => {
+router.post('/', requireApiKey, requireAdmin(), createMatchingProgramSchema, payloadSizeLimiter(ENDPOINT_LIMITS.admin), asyncHandler(async (req, res, next) => {
   try {
     const { sponsor_wallet_id, match_ratio, max_match_amount, campaign_id } = req.body;
 
@@ -103,7 +104,7 @@ router.get('/:id/utilization', requireApiKey, requireAdmin(), asyncHandler(async
  * PATCH /admin/matching-programs/:id/status
  * Update matching program status (active, paused, exhausted).
  */
-router.patch('/:id/status', requireApiKey, requireAdmin(), updateStatusSchema, asyncHandler(async (req, res, next) => {
+router.patch('/:id/status', requireApiKey, requireAdmin(), updateStatusSchema, payloadSizeLimiter(ENDPOINT_LIMITS.admin), asyncHandler(async (req, res, next) => {
   try {
     const program = await MatchingProgramService.updateStatus(
       parseInt(req.params.id, 10),

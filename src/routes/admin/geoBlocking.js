@@ -26,6 +26,7 @@ const AuditLogService = require('../../services/AuditLogService');
 const GeoRuleService = require('../../services/GeoRuleService');
 const log = require('../../utils/log');
 const asyncHandler = require('../../utils/asyncHandler');
+const { payloadSizeLimiter, ENDPOINT_LIMITS } = require('../../middleware/payloadSizeLimiter');
 const { reloadGeoIpDatabase } = require('../../middleware/geoBlock');
 
 const router = express.Router();
@@ -342,7 +343,7 @@ router.get('/', requireApiKey, hydrateUserFromApiKey, requireAdmin(), asyncHandl
  * PUT /
  * Legacy endpoint for updating static in-memory config values.
  */
-router.put('/', requireApiKey, hydrateUserFromApiKey, requireAdmin(), asyncHandler(async (req, res, next) => {
+router.put('/', requireApiKey, hydrateUserFromApiKey, requireAdmin(), payloadSizeLimiter(ENDPOINT_LIMITS.admin), asyncHandler(async (req, res, next) => {
   try {
     const blockedCountries = Array.isArray(req.body?.blockedCountries)
       ? req.body.blockedCountries.map(GeoRuleService.normalizeCountryCode)
@@ -407,7 +408,7 @@ router.put('/', requireApiKey, hydrateUserFromApiKey, requireAdmin(), asyncHandl
  * POST /reload-db
  * Reload the MaxMind database without restarting the API.
  */
-router.post('/reload-db', requireApiKey, hydrateUserFromApiKey, requireAdmin(), asyncHandler(async (req, res, next) => {
+router.post('/reload-db', requireApiKey, hydrateUserFromApiKey, requireAdmin(), payloadSizeLimiter(ENDPOINT_LIMITS.admin), asyncHandler(async (req, res, next) => {
   try {
     await reloadGeoIpDatabase();
 

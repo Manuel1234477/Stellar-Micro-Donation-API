@@ -13,6 +13,7 @@ const express = require('express');
 const router = express.Router();
 const requireApiKey = require('../middleware/apiKey');
 const asyncHandler = require('../utils/asyncHandler');
+const { payloadSizeLimiter, ENDPOINT_LIMITS } = require('../middleware/payloadSizeLimiter');
 const { checkPermission } = require('../middleware/rbac');
 const { PERMISSIONS } = require('../utils/permissions');
 const { ValidationError } = require('../utils/errors');
@@ -51,7 +52,7 @@ function normaliseAsset(asset) {
  *   amount        {string} - Amount of selling asset
  *   price         {string} - Price ratio ('n/d') or decimal
  */
-router.post('/', requireApiKey, checkPermission(PERMISSIONS.DONATIONS_CREATE), asyncHandler(async (req, res) => {
+router.post('/', requireApiKey, checkPermission(PERMISSIONS.DONATIONS_CREATE), payloadSizeLimiter(ENDPOINT_LIMITS.default), asyncHandler(async (req, res) => {
   try {
     const { signedXDR, sellingAsset, buyingAsset, amount, price } = req.body;
 

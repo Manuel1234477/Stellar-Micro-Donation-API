@@ -20,6 +20,7 @@ const Database = require('../../utils/database');
 const LimitService = require('../../services/LimitService');
 const config = require('../../config');
 const asyncHandler = require('../../utils/asyncHandler');
+const { payloadSizeLimiter, ENDPOINT_LIMITS } = require('../../middleware/payloadSizeLimiter');
 
 /**
  * Validate a limit value: must be a positive finite number or null.
@@ -41,7 +42,7 @@ function validateLimitValue(val) {
  * where min_amount maps to per_transaction_limit (min), max_amount to per_transaction_limit,
  * and daily_cap to daily_limit.
  */
-router.post('/:id/limits', requireAdmin(), asyncHandler(async (req, res, next) => {
+router.post('/:id/limits', requireAdmin(), payloadSizeLimiter(ENDPOINT_LIMITS.admin), asyncHandler(async (req, res, next) => {
   try {
     const walletId = parseInt(req.params.id, 10);
     if (isNaN(walletId) || walletId < 1) {

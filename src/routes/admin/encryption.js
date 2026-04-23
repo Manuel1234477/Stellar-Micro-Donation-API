@@ -20,10 +20,11 @@ const log = require('../../utils/log');
  * Records already encrypted with the current version are skipped.
  * Admin only.
  */
-router.post('/rotate', requireAdmin(), asyncHandler(async (req, res, next) => {
+router.post('/rotate', requireAdmin(), payloadSizeLimiter(ENDPOINT_LIMITS.admin), asyncHandler(async (req, res, next) => {
   try {
     const svc = require('../../services/EncryptionService');
 const asyncHandler = require('../../utils/asyncHandler');
+const { payloadSizeLimiter, ENDPOINT_LIMITS } = require('../../middleware/payloadSizeLimiter');
     const targetVersion = parseInt(process.env.ENCRYPTION_KEY_VERSION || '1', 10);
 
     const wallets = Wallet.loadWallets();
@@ -92,7 +93,7 @@ const asyncHandler = require('../../utils/asyncHandler');
  *
  * Admin only.
  */
-router.post('/memo-rotate', checkPermission(PERMISSIONS.ADMIN_ALL), asyncHandler(async (req, res, next) => {
+router.post('/memo-rotate', checkPermission(PERMISSIONS.ADMIN_ALL), payloadSizeLimiter(ENDPOINT_LIMITS.admin), asyncHandler(async (req, res, next) => {
   try {
     const MemoEncryptionService = require('../../services/MemoEncryptionService');
     const memoKeyManager = require('../../utils/memoKeyManager');
