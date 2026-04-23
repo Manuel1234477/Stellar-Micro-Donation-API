@@ -21,6 +21,7 @@
 const { AppError, ERROR_CODES } = require("../utils/errors");
 const log = require('../utils/log');
 const { parseLanguage, getMessage } = require('../utils/i18n');
+const { maskSensitiveData } = require('../utils/dataMasker');
 
 /**
  * Production-safe message sanitizer
@@ -119,7 +120,7 @@ function errorHandler(err, req, res, next) {
       numericCode: err.numericCode,
       statusCode: err.statusCode || err.status,
       ...(!isProduction && { stack: err.stack }),
-      ...(err.details && { details: err.details }),
+      ...(err.details && { details: maskSensitiveData(err.details) }),
     },
     ...(req.get && { userAgent: req.get("User-Agent") }),
     ...(req.ip && { ip: req.ip }),

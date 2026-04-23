@@ -43,6 +43,12 @@ const SENSITIVE_PATTERNS = [
   'source_secret',
   'destinationsecret',
   'destination_secret',
+  'claimantsecret',
+  'claimant_secret',
+  'secretkey',
+  'secret_key',
+  'signingkey',
+  'signing_key',
   'seed',
   'mnemonic',
   

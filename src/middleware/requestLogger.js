@@ -14,30 +14,14 @@
 
 const log = require('../utils/log');
 const config = require('../config');
+const { maskSensitiveData, SENSITIVE_PATTERNS } = require('../utils/dataMasker');
 
 /**
- * Sensitive field patterns that should never appear in logs
+ * Sensitive field patterns — sourced from the canonical dataMasker list so
+ * both systems stay in sync automatically.
  * @type {string[]}
  */
-const DEFAULT_SENSITIVE_FIELDS = [
-  'password',
-  'secret',
-  'secretkey',
-  'secret_key',
-  'privatekey',
-  'private_key',
-  'token',
-  'authorization',
-  'apikey',
-  'api_key',
-  'api-key',
-  'creditcard',
-  'credit_card',
-  'ssn',
-  'social_security',
-  'encryptionkey',
-  'encryption_key'
-];
+const DEFAULT_SENSITIVE_FIELDS = SENSITIVE_PATTERNS;
 
 /**
  * Parse comma-separated path patterns from environment variable
@@ -241,12 +225,12 @@ class ConfigurableRequestLogger {
   }
 
   /**
-   * Sanitize sensitive data from object
+   * Sanitize sensitive data from object using the canonical dataMasker
    * @param {Object} data - Data to sanitize
    * @returns {Object} Sanitized data
    */
   sanitize(data) {
-    return sanitizeObject(data, this.sensitiveFields);
+    return maskSensitiveData(data);
   }
 
   /**
