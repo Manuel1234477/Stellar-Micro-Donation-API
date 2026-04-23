@@ -14,20 +14,20 @@ const request = require('supertest');
 
 // ── Mocks ────────────────────────────────────────────────────────────────────
 
-jest.mock('../src/utils/log', () => ({
+jest.mock('../../src/utils/log', () => ({
   info: jest.fn(), warn: jest.fn(), error: jest.fn(), debug: jest.fn(),
 }));
 
-jest.mock('../src/utils/correlation', () => ({
+jest.mock('../../src/utils/correlation', () => ({
   withBackgroundContext: (_n, fn) => fn(),
   withAsyncContext: (_n, fn, _ctx) => fn(),
   getCorrelationSummary: () => ({ correlationId: 'test-corr', traceId: 'test-trace' }),
 }));
 
-jest.mock('../src/utils/database');
+jest.mock('../../src/utils/database');
 const Database = require('../../src/utils/database');
 
-jest.mock('../src/services/WebhookService', () => ({
+jest.mock('../../src/services/WebhookService', () => ({
   sendFailureNotification: jest.fn().mockResolvedValue({ delivered: true, statusCode: 200 }),
 }));
 

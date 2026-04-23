@@ -1,13 +1,13 @@
 const RecurringDonationScheduler = require('../../src/services/RecurringDonationScheduler');
 
-jest.mock('../src/utils/log', () => ({
+jest.mock('../../src/utils/log', () => ({
   info: jest.fn(),
   warn: jest.fn(),
   error: jest.fn(),
   debug: jest.fn(),
 }));
 
-jest.mock('../src/utils/correlation', () => ({
+jest.mock('../../src/utils/correlation', () => ({
   withBackgroundContext: (_task, fn) => fn(),
   withAsyncContext: (_task, fn) => fn(),
   getCorrelationSummary: () => ({
