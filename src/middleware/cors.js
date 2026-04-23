@@ -137,6 +137,7 @@ function validateCorsConfig(allowedOrigins) {
  *   - Database cors_origins table (runtime, 60s TTL cache)
  *   - CORS_ALLOWED_ORIGINS env var (static fallback/supplement)
  *   - CORS_ALLOWED_METHODS, CORS_ALLOWED_HEADERS, CORS_MAX_AGE env vars
+ *   - Development mode fallback: allows localhost origins if not configured
  *
  * @param {Object} [options] - Optional overrides (useful in tests)
  * @param {string[]} [options.allowedOrigins] - Override parsed origins (disables DB lookup)
@@ -147,9 +148,15 @@ function validateCorsConfig(allowedOrigins) {
  * @returns {Function} Express middleware
  */
 function createCorsMiddleware(options = {}) {
-  const staticOrigins = options.allowedOrigins !== undefined
+  let staticOrigins = options.allowedOrigins !== undefined
     ? options.allowedOrigins
     : parseAllowedOrigins();
+
+  // Development mode fallback: if no origins configured and in development, allow localhost
+  if (staticOrigins.length === 0 && process.env.NODE_ENV === 'development') {
+    staticOrigins = ['http://localhost:3000', 'http://localhost:3001', 'http://localhost:8080'];
+    log.info('CORS', 'Development mode: allowing localhost origins', { origins: staticOrigins });
+  }
 
   const methods = options.methods
     || process.env.CORS_ALLOWED_METHODS

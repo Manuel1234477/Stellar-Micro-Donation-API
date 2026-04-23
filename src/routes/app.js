@@ -213,8 +213,16 @@ app.use(metricsMiddleware);
 
 // GET /metrics — Prometheus scrape endpoint (admin only)
 app.get('/metrics', requireApiKey, requireAdmin(), async (req, res) => {
-  res.set('Content-Type', registry.contentType);
-  res.end(await registry.metrics());
+  try {
+    res.set('Content-Type', registry.contentType);
+    res.end(await registry.metrics());
+  } catch (err) {
+    log.error('METRICS', 'Failed to generate metrics', { error: err.message });
+    res.status(503).json({
+      success: false,
+      error: { code: 'METRICS_ERROR', message: 'Failed to generate metrics' }
+    });
+  }
 });
 // Content-based request deduplication (for requests without idempotency keys)
 app.use(createDeduplicationMiddleware());
@@ -303,17 +311,26 @@ try {
 // Health check endpoint
 // Health check endpoints
 app.get('/health', async (req, res) => {
-  const health = await HealthCheckService.getFullHealth(stellarService, networkStatusService);
-  const stellarConfig = require('../config/stellar');
-  health.stellarEnvironment = stellarConfig.environment || 'testnet';
-  health.stellarNetwork = stellarConfig.network || 'testnet';
-  health.clientIp = req.ip;
-  health.protocol = req.protocol;
-  health.requestId = req.id;
-  health.transactionSync = transactionSyncScheduler.getSyncStatus();
-  
-  const httpStatus = health.status === 'healthy' ? 200 : 503;
-  return res.status(httpStatus).json(health);
+  try {
+    const health = await HealthCheckService.getFullHealth(stellarService, networkStatusService);
+    const stellarConfig = require('../config/stellar');
+    health.stellarEnvironment = stellarConfig.environment || 'testnet';
+    health.stellarNetwork = stellarConfig.network || 'testnet';
+    health.clientIp = req.ip;
+    health.protocol = req.protocol;
+    health.requestId = req.id;
+    health.transactionSync = transactionSyncScheduler.getSyncStatus();
+    
+    const httpStatus = health.status === 'healthy' ? 200 : 503;
+    return res.status(httpStatus).json(health);
+  } catch (err) {
+    log.error('HEALTH', 'Health check failed', { error: err.message });
+    return res.status(503).json({
+      success: false,
+      status: 'unhealthy',
+      error: { code: 'HEALTH_CHECK_ERROR', message: 'Health check failed' }
+    });
+  }
 });
 
 // Liveness probe — returns 200 as long as the process is running
@@ -323,9 +340,18 @@ app.get('/health/live', (req, res) => {
 
 // Readiness probe — returns 200 only when all dependencies are healthy
 app.get('/health/ready', async (req, res) => {
-  const readiness = await HealthCheckService.getReadiness(stellarService, networkStatusService);
-  const httpStatus = readiness.ready ? 200 : 503;
-  return res.status(httpStatus).json(readiness);
+  try {
+    const readiness = await HealthCheckService.getReadiness(stellarService, networkStatusService);
+    const httpStatus = readiness.ready ? 200 : 503;
+    return res.status(httpStatus).json(readiness);
+  } catch (err) {
+    log.error('HEALTH', 'Readiness check failed', { error: err.message });
+    return res.status(503).json({
+      success: false,
+      ready: false,
+      error: { code: 'READINESS_CHECK_ERROR', message: 'Readiness check failed' }
+    });
+  }
 });
 
 // Abuse detection stats endpoint (admin only)
@@ -500,11 +526,31 @@ app.use(errorHandler);
 
 // Handle unhandled promise rejections
 process.on('unhandledRejection', (reason, promise) => {
-  log.error('APP', 'Unhandled promise rejection', {
-    reason,
-    promise,
+  // Extract error details from reason object
+  const errorDetails = {
+    message: reason?.message || String(reason),
+    stack: reason?.stack,
+    name: reason?.name,
+    code: reason?.code,
     timestamp: new Date().toISOString()
-  });
+  };
+  
+  log.error('APP', 'Unhandled promise rejection', errorDetails);
+});
+
+process.on('uncaughtException', (error) => {
+  // Extract error details from error object
+  const errorDetails = {
+    message: error?.message || String(error),
+    stack: error?.stack,
+    name: error?.name,
+    code: error?.code,
+    timestamp: new Date().toISOString()
+  };
+  
+  log.error('APP', 'Uncaught exception', errorDetails);
+  // Exit process after logging uncaught exception
+  process.exit(1);
 });
 
 const PORT = config.server.port;
