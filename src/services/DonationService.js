@@ -539,6 +539,12 @@ class DonationService {
   }) {
     // Sanitize identifiers
     const rawDonor = donor ? sanitizeIdentifier(donor) : 'Anonymous';
+    const rawRecipient = recipient ? sanitizeIdentifier(recipient) : null;
+
+    // Validate donor and recipient are different (check raw values before anonymization)
+    if (rawDonor && rawRecipient && rawDonor !== 'Anonymous' && rawDonor === rawRecipient) {
+      throw new ValidationError('Sender and recipient cannot be the same wallet', null, ERROR_CODES.INVALID_REQUEST);
+    }
 
     // When anonymous=true, replace the real wallet address with a pseudonymous ID
     let sanitizedDonor;
@@ -550,12 +556,7 @@ class DonationService {
       sanitizedDonor = rawDonor;
     }
 
-    const sanitizedRecipient = sanitizeIdentifier(recipient);
-
-    // Validate donor and recipient are different
-    if (sanitizedDonor && sanitizedRecipient && sanitizedDonor === sanitizedRecipient) {
-      throw new ValidationError('Sender and recipient wallets must be different');
-    }
+    const sanitizedRecipient = rawRecipient;
 
     // Validate memo with type-aware validation
     const memoResult = memoType && memoType !== 'text'
