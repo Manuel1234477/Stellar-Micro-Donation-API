@@ -47,7 +47,8 @@ jest.mock('../../src/models/apiKeys', () => ({
 }));
 
 // Require these AFTER mocks are set up
-const RecurringDonationScheduler = require('../../src/services/RecurringDonationScheduler');
+const RecurringDonationSchedulerModule = require('../../src/services/RecurringDonationScheduler');
+const RecurringDonationScheduler = RecurringDonationSchedulerModule.Class || RecurringDonationSchedulerModule;
 const MockStellarService = require('../../src/services/MockStellarService');
 const WebhookService = require('../../src/services/WebhookService');
 const { DONATION_FREQUENCIES, SCHEDULE_STATUS } = require('../../src/constants');
