@@ -551,11 +551,16 @@ router.post('/:id/home-domain/verify', checkPermission(PERMISSIONS.WALLETS_READ)
 
 /**
  * GET /wallets/:publicKey/transactions
- * Get all transactions (sent and received) for a wallet
+ * Get all transactions (sent and received) for a wallet with pagination
+ * Query params:
+ *   - limit: number of results per page (default 20, max 100)
+ *   - cursor: pagination cursor (transaction ID to start after)
  */
 router.get('/:publicKey/transactions', checkPermission(PERMISSIONS.WALLETS_READ), walletPublicKeySchema, asyncHandler(async (req, res, next) => {
   try {
     const { publicKey } = req.params;
+    const limit = Math.min(Math.max(parseInt(req.query.limit, 10) || 20, 1), 100);
+    const cursor = req.query.cursor ? parseInt(req.query.cursor, 10) : null;
 
     // First, check if user exists with this publicKey
     const user = await Database.get(
@@ -569,13 +574,22 @@ router.get('/:publicKey/transactions', checkPermission(PERMISSIONS.WALLETS_READ)
         success: true,
         data: [],
         count: 0,
+        total: 0,
         message: 'No user found with this public key'
       });
     }
 
-    // Get all transactions where user is sender or receiver
-    const transactions = await Database.query(
-      `SELECT
+    // Get total count
+    const countResult = await Database.get(
+      `SELECT COUNT(*) as total
+      FROM transactions t
+      WHERE t.senderId = ? OR t.receiverId = ?`,
+      [user.id, user.id]
+    );
+    const total = countResult.total;
+
+    // Build query with cursor-based pagination
+    let query = `SELECT
         t.id,
         t.senderId,
         t.receiverId,
@@ -587,13 +601,23 @@ router.get('/:publicKey/transactions', checkPermission(PERMISSIONS.WALLETS_READ)
       FROM transactions t
       LEFT JOIN users sender ON t.senderId = sender.id
       LEFT JOIN users receiver ON t.receiverId = receiver.id
-      WHERE t.senderId = ? OR t.receiverId = ?
-      ORDER BY t.timestamp DESC`,
-      [user.id, user.id]
-    );
+      WHERE (t.senderId = ? OR t.receiverId = ?)`;
+    
+    const params = [user.id, user.id];
+
+    // Add cursor condition if provided
+    if (cursor) {
+      query += ` AND t.id > ?`;
+      params.push(cursor);
+    }
+
+    query += ` ORDER BY t.id ASC LIMIT ?`;
+    params.push(limit);
+
+    // Get transactions
+    const transactions = await Database.query(query, params);
 
     // Format the response
-    // eslint-disable-next-line no-unused-vars
     const formattedTransactions = transactions.map(tx => ({
       id: tx.id,
       sender: tx.senderPublicKey,
@@ -603,13 +627,20 @@ router.get('/:publicKey/transactions', checkPermission(PERMISSIONS.WALLETS_READ)
       timestamp: tx.timestamp
     }));
 
+    // Calculate next cursor
+    const nextCursor = transactions.length === limit && transactions.length > 0
+      ? transactions[transactions.length - 1].id
+      : null;
+
     res.json({
       success: true,
-      data: transactions,
-      count: transactions.length,
       data: formattedTransactions,
       count: formattedTransactions.length,
-      count: formattedTransactions.length
+      total,
+      pagination: {
+        limit,
+        nextCursor
+      }
     });
   } catch (error) {
     next(error);
