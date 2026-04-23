@@ -91,12 +91,18 @@ cd Stellar-Micro-Donation-API
 npm install
 ```
 
-3. Initialize the database:
+3. Configure environment variables:
+```bash
+cp .env.example .env
+# Edit .env — at minimum set ENCRYPTION_KEY (run `npm run generate-key`) and API_KEYS
+```
+
+4. Initialize the database:
 ```bash
 npm run init-db
 ```
 
-4. Start the server:
+5. Start the server:
 ```bash
 npm start
 ```

@@ -6,6 +6,7 @@
   "scripts": {
     "start": "node src/routes/app.js",
     "check": "node src/utils/startupChecks.js",
+    "validate-env": "node src/utils/startupChecks.js",
     "init-db": "node src/scripts/initDB.js",
     "migrate": "node src/scripts/migrate.js",
     "migrate:memo": "node src/scripts/addMemoColumn.js",
