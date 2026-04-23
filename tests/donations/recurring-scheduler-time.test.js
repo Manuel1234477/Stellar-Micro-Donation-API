@@ -1,4 +1,5 @@
-const RecurringDonationScheduler = require('../../src/services/RecurringDonationScheduler');
+const RecurringDonationSchedulerModule = require('../../src/services/RecurringDonationScheduler');
+const RecurringDonationScheduler = RecurringDonationSchedulerModule.Class || RecurringDonationSchedulerModule;
 
 jest.mock('../../src/utils/log', () => ({
   info: jest.fn(),
