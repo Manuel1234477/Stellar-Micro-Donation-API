@@ -175,6 +175,18 @@ class CircuitBreaker {
   }
 
   /**
+   * Manually reset the circuit breaker to CLOSED state.
+   * Clears all recorded failures and resets the opened timestamp.
+   * Intended for use by admin endpoints to recover from stuck-open circuits.
+   */
+  reset() {
+    this._state = STATES.CLOSED;
+    this._failures = [];
+    this._openedAt = null;
+    this._probeInFlight = false;
+  }
+
+  /**
    * Remove failure timestamps outside the sliding window.
    * @private
    */
