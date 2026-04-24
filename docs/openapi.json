@@ -16,7 +16,8 @@
       "ApiKeyAuth": {
         "type": "apiKey",
         "in": "header",
-        "name": "x-api-key"
+        "name": "x-api-key",
+        "description": "API key passed in the x-api-key header. Obtain via `npm run keys:create`."
       }
     },
     "schemas": {
@@ -31,11 +32,155 @@
             "type": "object",
             "properties": {
               "message": {
-                "type": "string"
+                "type": "string",
+                "example": "Validation failed"
               },
               "code": {
-                "type": "string"
+                "type": "string",
+                "example": "VALIDATION_ERROR"
               }
+            }
+          }
+        }
+      },
+      "ValidationError": {
+        "allOf": [
+          {
+            "$ref": "#/components/schemas/Error"
+          },
+          {
+            "type": "object",
+            "properties": {
+              "error": {
+                "type": "object",
+                "properties": {
+                  "code": {
+                    "type": "string",
+                    "example": "VALIDATION_ERROR"
+                  },
+                  "message": {
+                    "type": "string",
+                    "example": "Invalid request parameters"
+                  },
+                  "details": {
+                    "type": "array",
+                    "items": {
+                      "type": "object",
+                      "properties": {
+                        "field": {
+                          "type": "string"
+                        },
+                        "message": {
+                          "type": "string"
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        ]
+      },
+      "UnauthorizedError": {
+        "type": "object",
+        "properties": {
+          "success": {
+            "type": "boolean",
+            "example": false
+          },
+          "error": {
+            "type": "object",
+            "properties": {
+              "code": {
+                "type": "string",
+                "example": "UNAUTHORIZED"
+              },
+              "message": {
+                "type": "string",
+                "example": "Invalid or missing API key"
+              }
+            }
+          }
+        }
+      },
+      "NotFoundError": {
+        "type": "object",
+        "properties": {
+          "success": {
+            "type": "boolean",
+            "example": false
+          },
+          "error": {
+            "type": "object",
+            "properties": {
+              "code": {
+                "type": "string",
+                "example": "NOT_FOUND"
+              },
+              "message": {
+                "type": "string",
+                "example": "Resource not found"
+              }
+            }
+          }
+        }
+      },
+      "PaginationMeta": {
+        "type": "object",
+        "properties": {
+          "limit": {
+            "type": "integer",
+            "example": 20
+          },
+          "direction": {
+            "type": "string",
+            "enum": [
+              "next",
+              "prev"
+            ],
+            "example": "next"
+          },
+          "next_cursor": {
+            "type": "string",
+            "nullable": true,
+            "example": "eyJ0aW1lc3RhbXAiOiIyMDI0LTAxLTAxVDAwOjAwOjAwLjAwMFoiLCJpZCI6IjEifQ=="
+          },
+          "prev_cursor": {
+            "type": "string",
+            "nullable": true,
+            "example": null
+          }
+        }
+      }
+    },
+    "responses": {
+      "Unauthorized": {
+        "description": "Missing or invalid API key",
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/UnauthorizedError"
+            }
+          }
+        }
+      },
+      "NotFound": {
+        "description": "Resource not found",
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/NotFoundError"
+            }
+          }
+        }
+      },
+      "ValidationError": {
+        "description": "Validation error",
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/ValidationError"
             }
           }
         }
@@ -899,6 +1044,323 @@
           }
         }
       }
+    },
+    "/liquidity-pools/deposit": {
+      "post": {
+        "tags": [
+          "LiquidityPools"
+        ],
+        "summary": "Deposit assets into a Stellar liquidity pool",
+        "security": [
+          {
+            "ApiKeyAuth": []
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "secret",
+                  "assetA",
+                  "assetB",
+                  "maxAmountA",
+                  "maxAmountB"
+                ],
+                "properties": {
+                  "secret": {
+                    "type": "string",
+                    "description": "Source account secret key"
+                  },
+                  "assetA": {
+                    "type": "object",
+                    "description": "First asset (e.g. {type:\"native\"} or {type:\"credit_alphanum4\",code:\"USDC\",issuer:\"G...\"})"
+                  },
+                  "assetB": {
+                    "type": "object",
+                    "description": "Second asset"
+                  },
+                  "maxAmountA": {
+                    "type": "string",
+                    "description": "Maximum amount of assetA to deposit"
+                  },
+                  "maxAmountB": {
+                    "type": "string",
+                    "description": "Maximum amount of assetB to deposit"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Deposit successful",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "success": {
+                      "type": "boolean"
+                    },
+                    "data": {
+                      "type": "object",
+                      "properties": {
+                        "poolId": {
+                          "type": "string"
+                        },
+                        "sharesReceived": {
+                          "type": "string"
+                        },
+                        "transactionId": {
+                          "type": "string"
+                        },
+                        "ledger": {
+                          "type": "integer"
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Validation error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized"
+          }
+        }
+      }
+    },
+    "/liquidity-pools/withdraw": {
+      "post": {
+        "tags": [
+          "LiquidityPools"
+        ],
+        "summary": "Withdraw assets from a Stellar liquidity pool",
+        "security": [
+          {
+            "ApiKeyAuth": []
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "secret",
+                  "poolId",
+                  "amount"
+                ],
+                "properties": {
+                  "secret": {
+                    "type": "string"
+                  },
+                  "poolId": {
+                    "type": "string"
+                  },
+                  "amount": {
+                    "type": "string",
+                    "description": "Number of pool shares to redeem"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Withdrawal successful"
+          },
+          "400": {
+            "description": "Validation error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized"
+          }
+        }
+      }
+    },
+    "/liquidity-pools/{id}/earnings": {
+      "get": {
+        "tags": [
+          "LiquidityPools"
+        ],
+        "summary": "Get earnings for a liquidity pool",
+        "security": [
+          {
+            "ApiKeyAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Pool ID"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Pool earnings"
+          },
+          "404": {
+            "description": "Pool not found"
+          }
+        }
+      }
+    },
+    "/admin/audit-logs/export": {
+      "post": {
+        "tags": [
+          "AuditLogExport"
+        ],
+        "summary": "Queue an async audit log export job",
+        "security": [
+          {
+            "ApiKeyAuth": []
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "startDate": {
+                    "type": "string",
+                    "format": "date-time"
+                  },
+                  "endDate": {
+                    "type": "string",
+                    "format": "date-time"
+                  },
+                  "eventType": {
+                    "type": "string"
+                  },
+                  "format": {
+                    "type": "string",
+                    "enum": [
+                      "json",
+                      "csv"
+                    ],
+                    "default": "json"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "202": {
+            "description": "Export job queued"
+          },
+          "400": {
+            "description": "Validation error"
+          }
+        }
+      }
+    },
+    "/admin/audit-logs/export/{jobId}/status": {
+      "get": {
+        "tags": [
+          "AuditLogExport"
+        ],
+        "summary": "Poll export job status",
+        "security": [
+          {
+            "ApiKeyAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "in": "path",
+            "name": "jobId",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Job status"
+          },
+          "404": {
+            "description": "Job not found"
+          }
+        }
+      }
+    },
+    "/admin/audit-logs/export/{jobId}/download": {
+      "get": {
+        "tags": [
+          "AuditLogExport"
+        ],
+        "summary": "Get signed download URL for completed export",
+        "security": [
+          {
+            "ApiKeyAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "in": "path",
+            "name": "jobId",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "format",
+            "schema": {
+              "type": "string",
+              "enum": [
+                "json",
+                "csv"
+              ]
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Signed download URL"
+          },
+          "202": {
+            "description": "Export not yet complete"
+          },
+          "404": {
+            "description": "Job not found"
+          }
+        }
+      }
     }
   },
   "tags": [
@@ -921,6 +1383,14 @@
     {
       "name": "Statistics",
       "description": "Donation analytics and statistics"
+    },
+    {
+      "name": "LiquidityPools",
+      "description": "Stellar AMM liquidity pool deposit, withdrawal, and earnings"
+    },
+    {
+      "name": "AuditLogExport",
+      "description": "Compliance audit log export with async jobs and signed URLs"
     }
   ]
 }
