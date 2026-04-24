@@ -128,8 +128,11 @@ class Transaction {
   static getCursorPaginated({ limit = 20, cursor = null } = {}) {
     const transactions = this.loadTransactions();
     
+    // Exclude soft-deleted records
+    const active = transactions.filter(t => !t.deleted_at);
+
     // Sort by timestamp DESC, then by id DESC for consistent ordering
-    const sorted = transactions.sort((a, b) => {
+    const sorted = active.sort((a, b) => {
       const timeA = new Date(a.timestamp).getTime();
       const timeB = new Date(b.timestamp).getTime();
       if (timeB !== timeA) return timeB - timeA;
@@ -182,7 +185,10 @@ class Transaction {
 
   static getById(id) {
     const transactions = this.loadTransactions();
-    return transactions.find(t => t.id === id);
+    const tx = transactions.find(t => t.id === id);
+    // Return null for soft-deleted records (treat as not found)
+    if (tx && tx.deleted_at) return null;
+    return tx;
   }
 
   static getByDateRange(startDate, endDate) {
@@ -193,8 +199,10 @@ class Transaction {
     });
   }
 
-  static getAll() {
-    return this.loadTransactions();
+  static getAll({ includeDeleted = false } = {}) {
+    const transactions = this.loadTransactions();
+    if (includeDeleted) return transactions;
+    return transactions.filter(t => !t.deleted_at);
   }
 
   static updateStatus(id, status, stellarData = {}) {
