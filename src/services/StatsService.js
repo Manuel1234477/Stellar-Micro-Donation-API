@@ -277,55 +277,67 @@ class StatsService {
   }
 
   /**
-   * Get analytics fee summary
+   * Get analytics fee summary broken down by asset type.
+   * Fees are grouped per asset so mixed-currency totals are not meaninglessly summed.
+   * A `totalInXLM` field provides a unified view using stored exchange rates.
    * @param {Date} startDate - Start date for aggregation
    * @param {Date} endDate - End date for aggregation
-   * @returns {Object} Analytics fee summary
+   * @returns {Object} Analytics fee summary with per-asset breakdown
    */
   static getAnalyticsFeeStats(startDate, endDate) {
     const transactions = Transaction.getByDateRange(startDate, endDate);
-    
-    const feeStats = {
-      totalFeesCalculated: 0,
-      totalDonationVolume: 0,
-      transactionCount: transactions.length,
-      averageFeePerTransaction: 0,
-      feesByRecipient: {},
-      dateRange: {
-        start: startDate.toISOString(),
-        end: endDate.toISOString()
-      }
-    };
 
-    if (transactions.length === 0) {
-      return feeStats;
-    }
+    const byAsset = {};
 
     transactions.forEach(tx => {
+      const asset = tx.asset || tx.assetCode || 'XLM';
       const amount = parseFloat(tx.amount) || 0;
       const fee = parseFloat(tx.analyticsFee) || 0;
-      
-      feeStats.totalFeesCalculated += fee;
-      feeStats.totalDonationVolume += amount;
+      const xlmRate = parseFloat(tx.xlmRate) || (asset === 'XLM' ? 1 : 0);
 
-      const recipient = tx.recipient || 'Unknown';
-      if (!feeStats.feesByRecipient[recipient]) {
-        feeStats.feesByRecipient[recipient] = {
+      if (!byAsset[asset]) {
+        byAsset[asset] = {
+          asset,
           totalFees: 0,
-          donationCount: 0,
-          totalVolume: 0
+          totalVolume: 0,
+          transactionCount: 0,
+          totalFeesInXLM: 0,
         };
       }
-      
-      feeStats.feesByRecipient[recipient].totalFees += fee;
-      feeStats.feesByRecipient[recipient].donationCount += 1;
-      feeStats.feesByRecipient[recipient].totalVolume += amount;
+
+      byAsset[asset].totalFees += fee;
+      byAsset[asset].totalVolume += amount;
+      byAsset[asset].transactionCount += 1;
+      byAsset[asset].totalFeesInXLM += asset === 'XLM' ? fee : fee * xlmRate;
     });
 
-    feeStats.averageFeePerTransaction = feeStats.totalFeesCalculated / transactions.length;
-    feeStats.effectiveFeePercentage = (feeStats.totalFeesCalculated / feeStats.totalDonationVolume) * 100;
+    const feesByAsset = Object.values(byAsset).map(a => ({
+      ...a,
+      totalFees: +a.totalFees.toFixed(7),
+      totalVolume: +a.totalVolume.toFixed(7),
+      totalFeesInXLM: +a.totalFeesInXLM.toFixed(7),
+      effectiveFeePercentage: a.totalVolume > 0
+        ? +((a.totalFees / a.totalVolume) * 100).toFixed(4)
+        : 0,
+    }));
 
-    return feeStats;
+    const totalInXLM = +feesByAsset.reduce((s, a) => s + a.totalFeesInXLM, 0).toFixed(7);
+    const totalTransactions = transactions.length;
+    const totalFeesXLM = feesByAsset.find(a => a.asset === 'XLM');
+
+    return {
+      feesByAsset,
+      totalInXLM,
+      transactionCount: totalTransactions,
+      averageFeePerTransactionXLM: totalTransactions > 0
+        ? +(totalInXLM / totalTransactions).toFixed(7)
+        : 0,
+      dateRange: {
+        start: startDate.toISOString(),
+        end: endDate.toISOString(),
+      },
+      note: 'totalInXLM uses exchange rates stored at transaction time; non-XLM assets with no rate are excluded from totalInXLM',
+    };
   }
   /**
    * Get wallet donation analytics
