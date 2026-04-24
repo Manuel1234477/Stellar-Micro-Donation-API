@@ -101,6 +101,7 @@ const SseManager = require('../services/SseManager');
 const donationEvents = require('../events/donationEvents');
 const { payloadSizeLimiter, ENDPOINT_LIMITS } = require('../middleware/payloadSizeLimiter');
 const { requestTimeout, TIMEOUTS } = require('../middleware/requestTimeout');
+const asyncHandler = require('../utils/asyncHandler');
 
 const streamCreateSchema = validateSchema({
   body: {
@@ -309,12 +310,26 @@ router.post('/create', payloadSizeLimiter(ENDPOINT_LIMITS.stream), requestTimeou
 
 /**
  * GET /stream/schedules
- * Get all recurring donation schedules.
+ * Get recurring donation schedules.
+ * Regular users see only their own schedules (where they are the donor).
+ * Admin users can see all schedules by passing ?all=true.
  * Supports optional ?status= filter (e.g. ?status=paused).
  */
 router.get('/schedules', checkPermission(PERMISSIONS.STREAM_READ), asyncHandler(async (req, res, next) => {
   try {
-    const { status } = req.query;
+    const { status, all } = req.query;
+    const isAdmin = req.user?.role === 'admin' || req.apiKey?.role === 'admin';
+    const userPublicKey = req.user?.subject || req.apiKey?.subject;
+
+    // Non-admins must be filtered to their own schedules
+    if (!isAdmin && !userPublicKey) {
+      return res.status(403).json({
+        success: false,
+        error: { code: 'FORBIDDEN', message: 'Cannot identify requesting user' }
+      });
+    }
+
+    const showAll = isAdmin && all === 'true';
 
     let query = `SELECT
         rd.id,
@@ -334,9 +349,18 @@ router.get('/schedules', checkPermission(PERMISSIONS.STREAM_READ), asyncHandler(
        JOIN users recipient ON rd.recipientId = recipient.id`;
 
     const params = [];
+    const conditions = [];
+
+    if (!showAll) {
+      conditions.push('donor.publicKey = ?');
+      params.push(userPublicKey);
+    }
     if (status) {
-      query += ' WHERE rd.status = ?';
+      conditions.push('rd.status = ?');
       params.push(status);
+    }
+    if (conditions.length) {
+      query += ' WHERE ' + conditions.join(' AND ');
     }
     query += ' ORDER BY rd.createdAt DESC';
 

@@ -19,6 +19,7 @@ const perKeyRateLimit = require('./perKeyRateLimit');
 const { checkRateLimit, buildRateLimitHeaders, DEFAULT_RATE_LIMIT, DEFAULT_WINDOW_SECONDS } = require('./perKeyRateLimit');
 const crypto = require('crypto');
 const { tierMeetsMinimum } = require('../config/permissionMatrix');
+const { verifyAccessToken } = require('../services/JwtService');
 
 /**
  * Role-Based Access Control (RBAC) Configuration
