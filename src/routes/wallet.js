@@ -276,7 +276,11 @@ router.post('/', payloadSizeLimiter(ENDPOINT_LIMITS.wallet), checkPermission(PER
 
 /**
  * GET /wallets
- * Get all wallets
+ * List wallets with cursor-based pagination.
+ * Query params:
+ *   - limit: page size (default 20, max 100)
+ *   - cursor: opaque pagination cursor
+ *   - direction: 'next' | 'prev' (default 'next')
  */
 router.get('/', checkPermission(PERMISSIONS.WALLETS_READ), cacheMiddleware('wallet', 'private'), (req, res, next) => {
   try {
@@ -289,6 +293,8 @@ router.get('/', checkPermission(PERMISSIONS.WALLETS_READ), cacheMiddleware('wall
       success: true,
       data: result.data,
       count: result.data.length,
+      total: result.totalCount,
+      nextCursor: result.meta.next_cursor,
       meta: result.meta
     });
   } catch (error) {
