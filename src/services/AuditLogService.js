@@ -114,29 +114,42 @@ const AUDIT_ACTION = {
 let tableInitialized = false;
 let tableInitPromise = null;
 
+/** Tracks audit log write failures for observability */
+const auditLogMetrics = {
+  totalAttempts: 0,
+  totalFailures: 0,
+};
+
 class AuditLogService {
   /**
-   * Log a non-fatal audit write failure without polluting test output.
-   * Audit logging is best-effort for application flows, so swallowed write
-   * failures in tests should not surface as console errors.
-   *
+   * Return a snapshot of audit log failure metrics.
+   * @returns {{ totalAttempts: number, totalFailures: number, failureRate: number }}
+   */
+  static getMetrics() {
+    const { totalAttempts, totalFailures } = auditLogMetrics;
+    return {
+      totalAttempts,
+      totalFailures,
+      failureRate: totalAttempts === 0 ? 0 : totalFailures / totalAttempts,
+    };
+  }
+
+  /**
+   * Log a non-fatal audit write failure at WARN level and increment failure metric.
    * @param {Error} error - Original failure.
    * @param {string} category - Audit category.
    * @param {string} action - Audit action.
    */
   static logWriteFailure(error, category, action) {
-    const meta = {
-      error: error.message,
-      category,
-      action
-    };
+    auditLogMetrics.totalFailures += 1;
+    const meta = { error: error.message, category, action };
 
     if (process.env.NODE_ENV === 'test') {
       log.debug('AUDIT_SERVICE', 'Audit log write skipped due to database failure in test mode', meta);
       return;
     }
 
-    log.error('AUDIT_SERVICE', 'Failed to create audit log', meta);
+    log.warn('AUDIT_SERVICE', 'Audit log write failed — primary operation unaffected', meta);
   }
 
   /**
@@ -243,19 +256,25 @@ class AuditLogService {
    * @returns {Promise<Object>} Created audit log entry
    */
   static async log(params) {
-    if (process.env.NODE_ENV === 'test') {
-      return { success: true, skipped: true };
-    }
-    
-    if (!tableInitialized) {
-      if (tableInitPromise) {
-        await tableInitPromise;
-      } else {
-        tableInitPromise = AuditLogService.initializeTable();
-        await tableInitPromise;
+    auditLogMetrics.totalAttempts += 1;
+    try {
+      if (process.env.NODE_ENV === 'test') {
+        return { success: true, skipped: true };
       }
+
+      if (!tableInitialized) {
+        if (tableInitPromise) {
+          await tableInitPromise;
+        } else {
+          tableInitPromise = AuditLogService.initializeTable();
+          await tableInitPromise;
+        }
+      }
+      return await AuditLogService._log(params);
+    } catch (error) {
+      this.logWriteFailure(error, params && params.category, params && params.action);
+      return { success: false, error: error.message };
     }
-    return AuditLogService._log(params);
   }
 
   static async initializeTable() {
@@ -577,5 +596,6 @@ class AuditLogService {
 AuditLogService.SEVERITY = AUDIT_SEVERITY;
 AuditLogService.CATEGORY = AUDIT_CATEGORY;
 AuditLogService.ACTION = AUDIT_ACTION;
+AuditLogService.metrics = auditLogMetrics;
 
 module.exports = AuditLogService;
