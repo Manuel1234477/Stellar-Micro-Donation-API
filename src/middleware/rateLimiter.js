@@ -85,15 +85,24 @@ const donationRateLimiter = rateLimit({
  * Verification Endpoint Limiter (Moderate)
  * Intent: Prevent excessive polling of the Stellar Horizon API through our verify endpoint.
  * Scope: Targeted at POST /donations/verify.
- * * Flow & Configuration:
- * 1. Threshold: Higher limit (30 req/min) to accommodate legitimate verification polling
- * while still preventing denial-of-service attempts.
- * 2. Header Injection: Returns standard RateLimit headers so frontend clients can implement
- * proactive throttling.
+ *
+ * Flow & Configuration:
+ * 1. Key: API key identity when available, falling back to IP (fixes shared-IP / NAT fairness).
+ * 2. Threshold: Higher limit (30 req/min) to accommodate legitimate verification polling
+ *    while still preventing denial-of-service attempts.
+ * 3. Header Injection: Returns standard RateLimit headers plus X-RateLimit-Identifier
+ *    so clients know whether the limit is per-key or per-IP.
  */
 const verificationRateLimiter = rateLimit({
   windowMs: 60 * 1000,
   max: 30,
+  // Use API key ID when present; fall back to IP for unauthenticated requests
+  keyGenerator: (req) => {
+    if (req.apiKey && req.apiKey.id && !req.apiKey.isLegacy) {
+      return `key:${req.apiKey.id}`;
+    }
+    return `ip:${req.ip}`;
+  },
   message: {
     success: false,
     error: {
@@ -105,6 +114,8 @@ const verificationRateLimiter = rateLimit({
   legacyHeaders: false,
   validate: false,
   handler: (req, res) => {
+    const isKeyBased = req.apiKey && req.apiKey.id && !req.apiKey.isLegacy;
+
     // Audit log: Verification rate limit exceeded
     AuditLogService.log({
       category: AuditLogService.CATEGORY.RATE_LIMITING,
@@ -118,21 +129,32 @@ const verificationRateLimiter = rateLimit({
       details: {
         limit: 30,
         window: '60s',
+        limitedBy: isKeyBased ? 'api-key' : 'ip',
         resetTime: req.rateLimit.resetTime
       }
     }).catch(err => {
       console.error('Audit log failed:', err);
     });
 
+    res.set('X-RateLimit-Identifier', isKeyBased ? 'api-key' : 'ip');
     res.status(429).json({
       success: false,
       error: {
         code: 'RATE_LIMIT_EXCEEDED',
-        message: 'Too many verification requests from this IP. Please try again later.',
-        retryAfter: req.rateLimit.resetTime
+        message: isKeyBased
+          ? 'Too many verification requests for this API key. Please try again later.'
+          : 'Too many verification requests from this IP. Please try again later.',
+        retryAfter: req.rateLimit.resetTime,
+        limitedBy: isKeyBased ? 'api-key' : 'ip',
       }
     });
-  }
+  },
+  // Attach identifier header on every response (not just 429s)
+  skip: (req, res) => {
+    const isKeyBased = req.apiKey && req.apiKey.id && !req.apiKey.isLegacy;
+    res.set('X-RateLimit-Identifier', isKeyBased ? 'api-key' : 'ip');
+    return false;
+  },
 });
 
 /**
