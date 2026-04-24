@@ -32,6 +32,32 @@ describe('Request ID Middleware with Correlation Support', () => {
     jest.clearAllMocks();
   });
 
+  describe('X-Request-ID Response Header', () => {
+    test('should include X-Request-ID in response when not provided by client', async () => {
+      const response = await request(app).get('/test').expect(200);
+      expect(response.headers['x-request-id']).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i);
+    });
+
+    test('should echo valid UUID v4 X-Request-ID from client', async () => {
+      const clientId = '550e8400-e29b-41d4-a716-446655440000';
+      const response = await request(app).get('/test').set('X-Request-ID', clientId).expect(200);
+      expect(response.headers['x-request-id']).toBe(clientId);
+    });
+
+    test('should ignore invalid X-Request-ID and generate a new UUID v4', async () => {
+      const response = await request(app).get('/test').set('X-Request-ID', 'not-a-uuid').expect(200);
+      expect(response.headers['x-request-id']).not.toBe('not-a-uuid');
+      expect(response.headers['x-request-id']).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i);
+    });
+
+    test('should include X-Request-ID on error responses', async () => {
+      app.get('/error-test', (req, res, next) => next(new Error('boom')));
+      app.use((err, req, res, next) => { void next; res.status(500).json({ error: err.message }); });
+      const response = await request(app).get('/error-test');
+      expect(response.headers['x-request-id']).toBeDefined();
+    });
+  });
+
   describe('Basic Request ID Functionality', () => {
     test('should generate request ID when not provided in headers', async () => {
       const response = await request(app)
@@ -43,7 +69,7 @@ describe('Request ID Middleware with Correlation Support', () => {
     });
 
     test('should use existing request ID from headers', async () => {
-      const existingRequestId = 'existing-request-123';
+      const existingRequestId = '550e8400-e29b-41d4-a716-446655440001';
       
       const response = await request(app)
         .get('/test')
@@ -103,7 +129,7 @@ describe('Request ID Middleware with Correlation Support', () => {
 
     test('should maintain trace ID when correlation ID is provided', async () => {
       const headers = {
-        'X-Request-ID': 'req-123',
+        'X-Request-ID': '550e8400-e29b-41d4-a716-446655440002',
         'X-Correlation-ID': 'corr-456',
         'X-Trace-ID': 'trace-789'
       };
@@ -115,7 +141,7 @@ describe('Request ID Middleware with Correlation Support', () => {
       
       const { correlationContext } = response.body;
       
-      expect(correlationContext.requestId).toBe('req-123');
+      expect(correlationContext.requestId).toBe('550e8400-e29b-41d4-a716-446655440002');
       expect(correlationContext.correlationId).toBe('corr-456');
       expect(correlationContext.traceId).toBe('trace-789');
       expect(response.body.headers['X-Trace-ID']).toBe('trace-789');

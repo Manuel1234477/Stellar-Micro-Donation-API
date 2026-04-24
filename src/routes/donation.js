@@ -44,6 +44,9 @@
  *     responses:
  *       201:
  *         description: Donation created successfully
+ *         headers:
+ *           X-Request-ID:
+ *             $ref: '#/components/headers/XRequestID'
  *       400:
  *         description: Validation error
  *         content:

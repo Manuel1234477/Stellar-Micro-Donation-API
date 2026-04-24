@@ -34,6 +34,15 @@ const options = {
           description: 'API key passed in the x-api-key header. Obtain via `npm run keys:create`.',
         },
       },
+      headers: {
+        XRequestID: {
+          description:
+            'Unique identifier for the request. Include this in support requests to correlate client activity with server logs. ' +
+            'If you supply a valid UUID v4 in the `X-Request-ID` request header the server echoes it back; ' +
+            'otherwise the server generates one automatically.',
+          schema: { type: 'string', format: 'uuid', example: '550e8400-e29b-41d4-a716-446655440000' },
+        },
+      },
       schemas: {
         Error: {
           type: 'object',
