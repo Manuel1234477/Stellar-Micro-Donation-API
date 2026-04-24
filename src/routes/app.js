@@ -240,36 +240,39 @@ app.use((req, res, next) => {
   return requestTimeout(GLOBAL_TIMEOUT_MS)(req, res, next);
 });
 
-// Routes
-app.use('/wallets', walletRoutes);
-app.use('/wallets', thresholdsRouter);
-app.use('/', recoveryRoutes);
-app.use('/donations', donationRoutes);
-app.use('/donations', require('./receipt'));
-app.use('/donations/recurring', recurringDonationRoutes);
-app.use('/assets', assetRoutes);
-app.use('/stats', statsRoutes);
-app.use('/stream', streamRoutes);
-app.use('/network', networkRoutes);
-app.use('/webhooks', webhooksRoutes);
-app.use('/campaigns', campaignsRoutes);
-app.use('/encryption', encryptionRoutes);
-app.use('/tiers', tiersRoutes);
-app.use('/offers', offersRoutes);
-app.use('/orderbook/:baseAsset/:counterAsset', require('./orderbook'));
-app.use('/tags', tagsRoutes);
-app.use('/leaderboard', leaderboardRoutes);
-app.use('/federation', federationLookupRoutes);
-app.use('/tools', toolsRoutes);
-app.use('/auth', authRoutes);
-app.use('/docs', docsRoutes);
-app.use('/transactions', transactionRoutes);
-app.use('/', corporateMatchingRoutes);
-app.use('/claimable-balances', claimableBalancesRoutes);
-app.use('/liquidity-pools', require('./liquidity-pools'));
+// ─── Versioned API Router (issue #738) ───────────────────────────────────────
+// All API routes are mounted under /api/v1
+const apiV1 = express.Router();
+
+apiV1.use('/wallets', walletRoutes);
+apiV1.use('/wallets', thresholdsRouter);
+apiV1.use('/', recoveryRoutes);
+apiV1.use('/donations', donationRoutes);
+apiV1.use('/donations', require('./receipt'));
+apiV1.use('/donations/recurring', recurringDonationRoutes);
+apiV1.use('/assets', assetRoutes);
+apiV1.use('/stats', statsRoutes);
+apiV1.use('/stream', streamRoutes);
+apiV1.use('/network', networkRoutes);
+apiV1.use('/webhooks', webhooksRoutes);
+apiV1.use('/campaigns', campaignsRoutes);
+apiV1.use('/encryption', encryptionRoutes);
+apiV1.use('/tiers', tiersRoutes);
+apiV1.use('/offers', offersRoutes);
+apiV1.use('/orderbook/:baseAsset/:counterAsset', require('./orderbook'));
+apiV1.use('/tags', tagsRoutes);
+apiV1.use('/leaderboard', leaderboardRoutes);
+apiV1.use('/federation', federationLookupRoutes);
+apiV1.use('/tools', toolsRoutes);
+apiV1.use('/auth', authRoutes);
+apiV1.use('/docs', docsRoutes);
+apiV1.use('/transactions', transactionRoutes);
+apiV1.use('/', corporateMatchingRoutes);
+apiV1.use('/claimable-balances', claimableBalancesRoutes);
+apiV1.use('/liquidity-pools', require('./liquidity-pools'));
 
 // Exchange rates endpoint
-app.get('/exchange-rates', asyncHandler(async (req, res) => {
+apiV1.get('/exchange-rates', asyncHandler(async (req, res) => {
   try {
     const priceOracle = require('../services/PriceOracleService');
     const rates = await priceOracle.getRates();
@@ -290,6 +293,30 @@ app.get('/exchange-rates', asyncHandler(async (req, res) => {
     });
   }
 }));
+
+// Mount versioned router
+app.use('/api/v1', apiV1);
+
+// ─── Deprecation redirects for unversioned paths (issue #738) ────────────────
+// Redirect legacy unversioned paths to /api/v1 with a deprecation warning header.
+// Paths that are intentionally unversioned (/health, /metrics, /admin/*, /.well-known/*)
+// are excluded from redirection.
+const UNVERSIONED_PATHS = [
+  '/wallets', '/donations', '/assets', '/stats', '/stream', '/network',
+  '/webhooks', '/campaigns', '/encryption', '/tiers', '/offers', '/orderbook',
+  '/tags', '/leaderboard', '/federation', '/tools', '/auth', '/docs',
+  '/transactions', '/claimable-balances', '/liquidity-pools', '/exchange-rates',
+];
+
+app.use((req, res, next) => {
+  const matchesLegacy = UNVERSIONED_PATHS.some(p => req.path === p || req.path.startsWith(p + '/'));
+  if (!matchesLegacy) return next();
+
+  res.set('Deprecation', 'true');
+  res.set('Link', `</api/v1${req.path}>; rel="successor-version"`);
+  res.set('Sunset', 'Sat, 01 Jan 2027 00:00:00 GMT');
+  return res.redirect(308, `/api/v1${req.url}`);
+});
 
 // SEP-0010 Stellar TOML discovery endpoint
 app.get('/.well-known/stellar.toml', (req, res) => {
@@ -319,8 +346,8 @@ try {
 }
 
 // Health check endpoint
-// Health check endpoints
-app.get('/health', asyncHandler(async (req, res) => {
+// Health check endpoints — available at both /health (unversioned) and /api/v1/health (versioned)
+const healthHandler = asyncHandler(async (req, res) => {
   try {
     const health = await HealthCheckService.getFullHealth(stellarService, networkStatusService);
     const stellarConfig = require('../config/stellar');
@@ -330,7 +357,7 @@ app.get('/health', asyncHandler(async (req, res) => {
     health.protocol = req.protocol;
     health.requestId = req.id;
     health.transactionSync = transactionSyncScheduler.getSyncStatus();
-    
+
     const httpStatus = health.status === 'healthy' ? 200 : 503;
     return res.status(httpStatus).json(health);
   } catch (err) {
@@ -341,7 +368,11 @@ app.get('/health', asyncHandler(async (req, res) => {
       error: { code: 'HEALTH_CHECK_ERROR', message: 'Health check failed' }
     });
   }
-}));
+});
+
+app.get('/api/v1/health', healthHandler);
+
+app.get('/health', healthHandler);
 
 // Liveness probe — returns 200 as long as the process is running
 app.get('/health/live', (req, res) => {
