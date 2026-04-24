@@ -1105,8 +1105,8 @@ class DonationService {
    * Get all donations
    * @returns {Array} Array of transactions
    */
-  getAllDonations() {
-    return Transaction.getAll();
+  getAllDonations({ includeDeleted = false } = {}) {
+    return Transaction.getAll({ includeDeleted });
   }
 
   /**

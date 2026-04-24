@@ -62,6 +62,15 @@ class RecurringDonationScheduler {
 
     /** In-progress schedule IDs – prevents concurrent duplicate execution */
     this.executingSchedules = new Set();
+
+    /** Timestamp of the last completed tick (ISO string or null) */
+    this.lastTickAt = null;
+
+    /** Duration of the last tick in milliseconds */
+    this.lastTickDurationMs = null;
+
+    /** Count of schedules that failed in the last tick */
+    this.lastTickFailedSchedules = 0;
   }
 
   // ─────────────────────────────────────────────────────────────────────────
@@ -220,6 +229,8 @@ class RecurringDonationScheduler {
           : fn();
 
       return runWithTrace('scheduler.processSchedules', async () => {
+      const _tickStart = Date.now();
+      let _tickFailedSchedules = 0;
       try {
         const now = new Date().toISOString();
 
@@ -303,7 +314,8 @@ class RecurringDonationScheduler {
           .filter((schedule) => !this.executingSchedules.has(schedule.id))
           .map((schedule) => this.executeScheduleWithRetry(schedule));
 
-        await Promise.allSettled(promises);
+        const results = await Promise.allSettled(promises);
+        _tickFailedSchedules = results.filter(r => r.status === 'rejected').length;
 
         // Auto-revoke deprecated API keys whose grace period has elapsed
         try {
@@ -352,6 +364,10 @@ class RecurringDonationScheduler {
           correlationId,
           traceId,
         });
+      } finally {
+        this.lastTickAt = new Date().toISOString();
+        this.lastTickDurationMs = Date.now() - _tickStart;
+        this.lastTickFailedSchedules = _tickFailedSchedules;
       }
       }); // end runWithTrace
     });
@@ -758,6 +774,34 @@ class RecurringDonationScheduler {
       executingSchedules: Array.from(this.executingSchedules),
       correlationId,
       traceId,
+    };
+  }
+
+  /**
+   * Return scheduler health for the /health endpoint.
+   * Status is 'unhealthy' if the scheduler has not ticked in more than 2x checkInterval.
+   * @returns {Object}
+   */
+  getSchedulerHealth() {
+    const staleThresholdMs = this.checkInterval * 2;
+    let status = 'healthy';
+
+    if (!this.isRunning) {
+      status = 'unhealthy';
+    } else if (this.lastTickAt) {
+      const msSinceLastTick = Date.now() - new Date(this.lastTickAt).getTime();
+      if (msSinceLastTick > staleThresholdMs) {
+        status = 'unhealthy';
+      }
+    }
+
+    return {
+      status,
+      isRunning: this.isRunning,
+      lastTickAt: this.lastTickAt,
+      lastTickDurationMs: this.lastTickDurationMs,
+      pendingSchedules: this.executingSchedules.size,
+      failedSchedules: this.lastTickFailedSchedules,
     };
   }
 

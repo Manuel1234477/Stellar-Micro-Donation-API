@@ -122,9 +122,10 @@ async function checkNetworkStatus(networkStatusService) {
  *
  * @param {Object} stellarService - StellarService or MockStellarService instance
  * @param {Object} [networkStatusService] - Optional NetworkStatusService instance
+ * @param {Object} [scheduler] - Optional RecurringDonationScheduler instance
  * @returns {Promise<{status: string, dependencies: Object, timestamp: string}>}
  */
-async function getFullHealth(stellarService, networkStatusService) {
+async function getFullHealth(stellarService, networkStatusService, scheduler) {
   // Call through module.exports so Jest spies can intercept individual checks
   const self = module.exports;
   const checks = [
@@ -144,6 +145,11 @@ async function getFullHealth(stellarService, networkStatusService) {
     dependencies.network = network;
   }
 
+  // Include scheduler health if scheduler is provided
+  if (scheduler && typeof scheduler.getSchedulerHealth === 'function') {
+    dependencies.scheduler = scheduler.getSchedulerHealth();
+  }
+
   let status;
   if (database.status === 'unhealthy') {
     status = 'unhealthy';
@@ -151,6 +157,8 @@ async function getFullHealth(stellarService, networkStatusService) {
     // Stellar is a critical dependency for a donation API — treat as unhealthy
     status = 'unhealthy';
   } else if (idempotency.status === 'unhealthy') {
+    status = 'degraded';
+  } else if (dependencies.scheduler && dependencies.scheduler.status === 'unhealthy') {
     status = 'degraded';
   } else {
     status = 'healthy';
@@ -176,10 +184,11 @@ function getLiveness() {
  *
  * @param {Object} stellarService
  * @param {Object} [networkStatusService] - Optional NetworkStatusService instance
+ * @param {Object} [scheduler] - Optional RecurringDonationScheduler instance
  * @returns {Promise<{ready: boolean, status: string, dependencies: Object, timestamp: string}>}
  */
-async function getReadiness(stellarService, networkStatusService) {
-  const health = await getFullHealth(stellarService, networkStatusService);
+async function getReadiness(stellarService, networkStatusService, scheduler) {
+  const health = await getFullHealth(stellarService, networkStatusService, scheduler);
   const ready = health.status === 'healthy';
   return { ready, ...health };
 }

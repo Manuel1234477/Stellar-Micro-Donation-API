@@ -327,7 +327,7 @@ try {
 // Health check endpoints
 app.get('/health', asyncHandler(async (req, res) => {
   try {
-    const health = await HealthCheckService.getFullHealth(stellarService, networkStatusService);
+    const health = await HealthCheckService.getFullHealth(stellarService, networkStatusService, recurringDonationScheduler);
     const stellarConfig = require('../config/stellar');
     health.stellarEnvironment = stellarConfig.environment || 'testnet';
     health.stellarNetwork = stellarConfig.network || 'testnet';
@@ -356,7 +356,7 @@ app.get('/health/live', (req, res) => {
 // Readiness probe — returns 200 only when all dependencies are healthy
 app.get('/health/ready', asyncHandler(async (req, res) => {
   try {
-    const readiness = await HealthCheckService.getReadiness(stellarService, networkStatusService);
+    const readiness = await HealthCheckService.getReadiness(stellarService, networkStatusService, recurringDonationScheduler);
     const httpStatus = readiness.ready ? 200 : 503;
     return res.status(httpStatus).json(readiness);
   } catch (err) {

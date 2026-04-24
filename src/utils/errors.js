@@ -231,5 +231,26 @@ module.exports = {
   BusinessLogicError,
   InternalError,
   DatabaseError,
-  DuplicateError
+  DuplicateError,
+  ConflictError,
+  /**
+   * Build a standard error response body.
+   * Use this for inline res.status().json() calls to ensure consistent format.
+   *
+   * @param {string} code - Error code string (e.g. 'INVALID_PUBLIC_KEY')
+   * @param {string} message - Human-readable error message
+   * @param {string} [requestId] - Request ID from req.id
+   * @returns {{ success: false, error: { code, message, requestId, timestamp } }}
+   */
+  formatError(code, message, requestId) {
+    return {
+      success: false,
+      error: {
+        code,
+        message,
+        ...(requestId && { requestId }),
+        timestamp: new Date().toISOString(),
+      },
+    };
+  },
 };

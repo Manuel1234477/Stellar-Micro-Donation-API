@@ -245,6 +245,13 @@ router.post('/', payloadSizeLimiter(ENDPOINT_LIMITS.wallet), checkPermission(PER
       );
     }
 
+    // Validate Stellar public key format using the Stellar SDK
+    const StellarSdk = require('stellar-sdk');
+    if (!StellarSdk.StrKey.isValidEd25519PublicKey(address)) {
+      const { formatError } = require('../utils/errors');
+      return res.status(400).json(formatError('INVALID_PUBLIC_KEY', 'Invalid Stellar public key format', req.id));
+    }
+
     // Create wallet metadata
     const wallet = await walletService.createWallet({
       address,
