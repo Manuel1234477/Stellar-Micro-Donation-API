@@ -38,6 +38,8 @@ function createTestApp() {
 
 describe('Donation Routes Integration Tests', () => {
   let app;
+  let userApp;
+  let adminApp;
   let stellarService;
   let testDonor;
   let testRecipient;
@@ -53,6 +55,24 @@ describe('Donation Routes Integration Tests', () => {
     // Fund wallets
     await stellarService.fundTestnetWallet(testDonor.publicKey);
     await stellarService.fundTestnetWallet(testRecipient.publicKey);
+
+    // Dedicated apps for verify ownership tests — inject role directly to avoid rate limiting
+    const errorHandler = (err, req, res, next) => {
+      void next;
+      res.status(err.status || 500).json({ success: false, error: { code: err.code || 'INTERNAL_ERROR', message: err.message } });
+    };
+
+    userApp = express();
+    userApp.use(express.json());
+    userApp.use((req, _res, next) => { req.user = { id: 'user-1', role: 'user' }; next(); });
+    userApp.use('/donations', donationRouter);
+    userApp.use(errorHandler);
+
+    adminApp = express();
+    adminApp.use(express.json());
+    adminApp.use((req, _res, next) => { req.user = { id: 'admin-1', role: 'admin' }; next(); });
+    adminApp.use('/donations', donationRouter);
+    adminApp.use(errorHandler);
   });
 
   beforeEach(() => {
@@ -647,6 +667,89 @@ describe('Donation Routes Integration Tests', () => {
 
       expect(response.status).toBeGreaterThanOrEqual(400);
       expect(response.body.success).toBe(false);
+    });
+
+    test('should return 400 when walletAddress is missing for non-admin user', async () => {
+      // Use sendDonation which stores transactionId (used by verifyTransaction)
+      const txResult = await stellarService.sendDonation({
+        sourceSecret: testDonor.secretKey,
+        destinationPublic: testRecipient.publicKey,
+        amount: '10'
+      });
+      const transactionHash = txResult.transactionId;
+
+      const response = await request(userApp)
+        .post('/donations/verify')
+        .send({ transactionHash });
+
+      expect(response.status).toBe(400);
+      expect(response.body.success).toBe(false);
+    });
+
+    test('should return 403 when walletAddress is not sender or recipient', async () => {
+      const txResult = await stellarService.sendDonation({
+        sourceSecret: testDonor.secretKey,
+        destinationPublic: testRecipient.publicKey,
+        amount: '10'
+      });
+      const transactionHash = txResult.transactionId;
+      const unrelatedWallet = await stellarService.createWallet();
+
+      const response = await request(userApp)
+        .post('/donations/verify')
+        .send({ transactionHash, walletAddress: unrelatedWallet.publicKey });
+
+      expect(response.status).toBe(403);
+      expect(response.body.success).toBe(false);
+      expect(response.body.error.code).toBe('FORBIDDEN');
+    });
+
+    test('should allow sender to verify their own transaction', async () => {
+      const txResult = await stellarService.sendDonation({
+        sourceSecret: testDonor.secretKey,
+        destinationPublic: testRecipient.publicKey,
+        amount: '10'
+      });
+      const transactionHash = txResult.transactionId;
+
+      const response = await request(userApp)
+        .post('/donations/verify')
+        .send({ transactionHash, walletAddress: testDonor.publicKey });
+
+      expect(response.status).toBe(200);
+      expect(response.body.success).toBe(true);
+    });
+
+    test('should allow recipient to verify a transaction they received', async () => {
+      const txResult = await stellarService.sendDonation({
+        sourceSecret: testDonor.secretKey,
+        destinationPublic: testRecipient.publicKey,
+        amount: '10'
+      });
+      const transactionHash = txResult.transactionId;
+
+      const response = await request(userApp)
+        .post('/donations/verify')
+        .send({ transactionHash, walletAddress: testRecipient.publicKey });
+
+      expect(response.status).toBe(200);
+      expect(response.body.success).toBe(true);
+    });
+
+    test('should allow admin to verify any transaction without walletAddress', async () => {
+      const txResult = await stellarService.sendDonation({
+        sourceSecret: testDonor.secretKey,
+        destinationPublic: testRecipient.publicKey,
+        amount: '10'
+      });
+      const transactionHash = txResult.transactionId;
+
+      const response = await request(adminApp)
+        .post('/donations/verify')
+        .send({ transactionHash });
+
+      expect(response.status).toBe(200);
+      expect(response.body.success).toBe(true);
     });
   });
 

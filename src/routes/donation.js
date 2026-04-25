@@ -494,6 +494,40 @@ router.get('/recent', checkPermission(PERMISSIONS.DONATIONS_READ), asyncHandler(
 }));
 
 /**
+ * POST /donations/verify
+ * Verify a transaction on the Stellar blockchain.
+ * Non-admin callers must provide their walletAddress and be the sender or recipient.
+ */
+router.post('/verify', verificationRateLimiter, checkPermission(PERMISSIONS.DONATIONS_READ), asyncHandler(async (req, res, next) => {
+  try {
+    const { transactionHash, walletAddress } = req.body;
+
+    if (!transactionHash) {
+      return res.status(400).json({ success: false, error: { code: 'MISSING_FIELD', message: 'transactionHash is required' } });
+    }
+
+    const result = await donationService.verifyTransaction(transactionHash);
+
+    // Admins can verify any transaction; non-admins must own it
+    const isAdmin = req.user && req.user.role === 'admin';
+    if (!isAdmin) {
+      if (!walletAddress) {
+        return res.status(400).json({ success: false, error: { code: 'MISSING_FIELD', message: 'walletAddress is required' } });
+      }
+      const tx = result.transaction;
+      const isOwner = tx && (tx.source === walletAddress || tx.destination === walletAddress);
+      if (!isOwner) {
+        return res.status(403).json({ success: false, error: { code: 'FORBIDDEN', message: 'You are not authorized to verify this transaction' } });
+      }
+    }
+
+    return res.json({ success: true, data: result });
+  } catch (error) {
+    next(error);
+  }
+}));
+
+/**
  * GET /donations/:id
  * Get a specific donation
  */
