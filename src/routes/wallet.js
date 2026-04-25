@@ -373,10 +373,15 @@ router.get('/:id', checkPermission(PERMISSIONS.WALLETS_READ), walletIdSchema, ca
 
 /**
  * PATCH /wallets/:id
- * Update wallet metadata
+ * Update wallet metadata (label, ownerName only — publicKey is immutable)
  */
-router.patch('/:id', checkPermission(PERMISSIONS.WALLETS_UPDATE), walletUpdateSchema, payloadSizeLimiter(ENDPOINT_LIMITS.wallet), asyncHandler(async (req, res, next) => {
+router.patch('/:id', checkPermission(PERMISSIONS.WALLETS_UPDATE), payloadSizeLimiter(ENDPOINT_LIMITS.wallet), asyncHandler(async (req, res, next) => {
   try {
+    // publicKey is immutable — changing it would break all FK relationships
+    if (req.body.publicKey !== undefined) {
+      return res.status(400).json({ success: false, error: 'Public key cannot be changed' });
+    }
+
     const { label, ownerName } = req.body;
 
     if (!label && !ownerName) {
