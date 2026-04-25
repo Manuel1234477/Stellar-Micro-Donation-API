@@ -558,6 +558,72 @@ router.get('/schedules/:id', checkPermission(PERMISSIONS.STREAM_READ), streamSch
 }));
 
 /**
+ * GET /stream/schedules/:id/history
+ * Paginated execution history for a recurring donation schedule.
+ * Accessible to the schedule owner and admins.
+ *
+ * Query params:
+ *   page  {number} - 1-based page number (default 1)
+ *   limit {number} - records per page (default 20, max 100)
+ */
+router.get('/schedules/:id/history', checkPermission(PERMISSIONS.STREAM_READ), streamScheduleIdSchema, asyncHandler(async (req, res) => {
+  try {
+    // Verify schedule exists and check ownership
+    const schedule = await Database.get(
+      `SELECT rd.id, donor.publicKey as donorPublicKey
+       FROM recurring_donations rd
+       JOIN users donor ON rd.donorId = donor.id
+       WHERE rd.id = ?`,
+      [req.params.id]
+    );
+
+    if (!schedule) {
+      return res.status(404).json({ success: false, error: 'Schedule not found' });
+    }
+
+    const isAdmin = req.user?.role === 'admin' || req.apiKey?.role === 'admin';
+    const userPublicKey = req.user?.subject || req.apiKey?.subject;
+
+    if (!isAdmin && userPublicKey !== schedule.donorPublicKey) {
+      return res.status(403).json({
+        success: false,
+        error: { code: 'FORBIDDEN', message: 'Access denied' }
+      });
+    }
+
+    const page  = Math.max(1, parseInt(req.query.page, 10)  || 1);
+    const limit = Math.min(100, Math.max(1, parseInt(req.query.limit, 10) || 20));
+    const offset = (page - 1) * limit;
+
+    const [executions, countRow] = await Promise.all([
+      Database.query(
+        `SELECT id, executedAt, status, transactionHash, errorMessage
+         FROM recurring_donation_executions
+         WHERE scheduleId = ?
+         ORDER BY executedAt DESC
+         LIMIT ? OFFSET ?`,
+        [req.params.id, limit, offset]
+      ),
+      Database.get(
+        'SELECT COUNT(*) as total FROM recurring_donation_executions WHERE scheduleId = ?',
+        [req.params.id]
+      ),
+    ]);
+
+    const total = countRow ? countRow.total : 0;
+
+    res.json({
+      success: true,
+      data: executions,
+      meta: { page, limit, total, totalPages: Math.ceil(total / limit) }
+    });
+  } catch (error) {
+    log.error('STREAM_ROUTE', 'Failed to fetch schedule history', { error: error.message });
+    res.status(500).json({ success: false, error: 'Failed to fetch schedule history' });
+  }
+}));
+
+/**
  * DELETE /stream/schedules/:id
  * Cancel a recurring donation schedule
  * Authorization: Only the donor who created the schedule or an admin can cancel it
