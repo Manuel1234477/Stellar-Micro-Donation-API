@@ -107,6 +107,7 @@ const stellarService = serviceContainer.getStellarService();
 const reconciliationService = serviceContainer.getTransactionReconciliationService();
 const recurringDonationScheduler = serviceContainer.getRecurringDonationScheduler();
 const networkStatusService = serviceContainer.getNetworkStatusService();
+setNetworkService(networkStatusService);
 const transactionSyncScheduler = serviceContainer.getTransactionSyncScheduler();
 
 // Initialize replay detection cleanup timer (will be started in startServer)

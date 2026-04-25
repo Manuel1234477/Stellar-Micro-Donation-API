@@ -67,21 +67,9 @@ class NetworkStatusService extends EventEmitter {
    */
   getStatus() {
     if (!this._initialized) {
-      return {
-        timestamp: new Date().toISOString(),
-        status: 'unknown',
-        connected: null,
-        latencyMs: null,
-        ledgerCloseTimeS: null,
-        feeStroops: null,
-        feeLevel: 'unknown',
-        feeSurgeMultiplier: null,
-        errorRatePercent: null,
-        degraded: false,
-        message: 'Network status initializing, first poll pending'
-      };
+      return this._buildStatus({ connected: false, latencyMs: null, ledgerCloseTimeS: null, feeStroops: null, error: 'No data yet' });
     }
-    return this.currentStatus || this._buildStatus({ connected: false, latencyMs: null, ledgerCloseTimeS: null, feeStroops: null, error: 'No data yet' });
+    return this.currentStatus;
   }
 
   /**

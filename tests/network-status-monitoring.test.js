@@ -250,9 +250,9 @@ describe('GET /network/status', () => {
   test('returns 200 with status object', async () => {
     const res = await request(app).get('/network/status');
     expect(res.status).toBe(200);
-    expect(res.body).toHaveProperty('connected');
-    expect(res.body).toHaveProperty('degraded');
-    expect(res.body).toHaveProperty('timestamp');
+    expect(res.body.success).toBe(true);
+    expect(res.body.data).toHaveProperty('status');
+    expect(res.body.data).toHaveProperty('timestamp');
   });
 
   test('returns connected:true and degraded:false for healthy state', async () => {
@@ -262,9 +262,7 @@ describe('GET /network/status', () => {
     await svc._poll();
 
     const res = await request(app).get('/network/status');
-    expect(res.body.connected).toBe(true);
-    expect(res.body.degraded).toBe(false);
-    expect(res.body.feeLevel).toBe('normal');
+    expect(res.body.data.status).toBe('healthy');
   });
 
   test('returns degraded:true on fee surge', async () => {
@@ -272,7 +270,7 @@ describe('GET /network/status', () => {
     await svc._poll();
 
     const res = await request(app).get('/network/status');
-    expect(res.body.degraded).toBe(true);
+    expect(res.body.data.status).toBe('degraded');
   });
 
   test('returns latencyMs as a number', async () => {
@@ -280,7 +278,7 @@ describe('GET /network/status', () => {
     await svc._poll();
 
     const res = await request(app).get('/network/status');
-    expect(typeof res.body.latencyMs).toBe('number');
+    expect(res.body.data).toHaveProperty('baseFee');
   });
 });
 
@@ -378,6 +376,72 @@ describe('NetworkStatusService._fetchHorizon', () => {
     // Port 1 is reserved and will refuse connections
     const svc2 = new NetworkStatusService({ horizonUrl: 'http://localhost:1' });
     await expect(svc2._fetchHorizon()).rejects.toThrow();
+  });
+});
+
+describe('GET /network/status — required response shape', () => {
+  let svc, app, request;
+
+  beforeAll(() => { request = require('supertest'); });
+
+  beforeEach(() => {
+    svc = new NetworkStatusService({ pollIntervalMs: 60_000 });
+    app = makeApp(svc);
+  });
+
+  afterEach(() => svc.stop());
+
+  test('returns success:true with required fields', async () => {
+    stubFetch(svc, feeStatsResponse({ lastLedger: 3000, feeMode: '100' }));
+    await svc._poll();
+    stubFetch(svc, feeStatsResponse({ lastLedger: 3005, feeMode: '100' }));
+    await svc._poll();
+
+    const res = await request(app).get('/network/status');
+    expect(res.status).toBe(200);
+    expect(res.body.success).toBe(true);
+    expect(res.body.data).toHaveProperty('status');
+    expect(res.body.data).toHaveProperty('lastLedgerCloseTime');
+    expect(res.body.data).toHaveProperty('baseFee');
+    expect(res.body.data).toHaveProperty('capacityUsage');
+    expect(res.body.data).toHaveProperty('timestamp');
+  });
+
+  test('status is "healthy" when connected and not degraded', async () => {
+    stubFetch(svc, feeStatsResponse({ lastLedger: 4000, feeMode: '100' }));
+    await svc._poll();
+    stubFetch(svc, feeStatsResponse({ lastLedger: 4005, feeMode: '100' }));
+    await svc._poll();
+
+    const res = await request(app).get('/network/status');
+    expect(res.body.data.status).toBe('healthy');
+  });
+
+  test('status is "degraded" on fee surge', async () => {
+    stubFetch(svc, feeStatsResponse({ feeMode: '600' }));
+    await svc._poll();
+
+    const res = await request(app).get('/network/status');
+    expect(res.body.data.status).toBe('degraded');
+  });
+
+  test('status is "down" when not connected', async () => {
+    stubFetchError(svc, 'Connection refused');
+    await svc._poll();
+
+    const res = await request(app).get('/network/status');
+    expect(res.body.data.status).toBe('down');
+  });
+
+  test('sets Cache-Control: public, max-age=30', async () => {
+    const res = await request(app).get('/network/status');
+    expect(res.headers['cache-control']).toBe('public, max-age=30');
+  });
+
+  test('accessible without API key (no auth required)', async () => {
+    // No Authorization or X-API-Key header — should still return 200
+    const res = await request(app).get('/network/status');
+    expect(res.status).toBe(200);
   });
 });
 

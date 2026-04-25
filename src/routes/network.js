@@ -20,11 +20,25 @@ function setService(service) {
 
 /**
  * GET /network/status
- * Returns current network health.
+ * Returns current network health. Publicly accessible, cached 30 seconds.
  */
 router.get('/status', (req, res) => {
-  if (!_service) return res.status(503).json({ error: 'NetworkStatusService not initialised' });
-  res.json(_service.getStatus());
+  if (!_service) return res.status(503).json({ success: false, error: 'NetworkStatusService not initialised' });
+
+  const raw = _service.getStatus();
+  const status = !raw.connected ? 'down' : raw.degraded ? 'degraded' : 'healthy';
+
+  res.set('Cache-Control', 'public, max-age=30');
+  res.json({
+    success: true,
+    data: {
+      status,
+      lastLedgerCloseTime: raw.ledgerCloseTimeS,
+      baseFee: raw.feeStroops,
+      capacityUsage: raw.feeSurgeMultiplier,
+      timestamp: raw.timestamp,
+    },
+  });
 });
 
 /**
