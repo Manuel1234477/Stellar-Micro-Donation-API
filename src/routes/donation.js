@@ -429,6 +429,15 @@ router.post('/', donationRateLimiter, checkPermission(PERMISSIONS.DONATIONS_CREA
       return res.status(400).json({ success: false, error: `Invalid amount: ${amountValidation.error}` });
     }
 
+    // Validate memo byte length per Stellar MEMO_TEXT spec (max 28 bytes)
+    if (memo !== undefined && memo !== null && memo !== '') {
+      const MemoValidator = require('../utils/memoValidator');
+      const memoValidation = MemoValidator.validate(memo);
+      if (!memoValidation.valid) {
+        return res.status(400).json({ success: false, error: 'Memo text must be 28 bytes or less' });
+      }
+    }
+
     const result = await donationService.sendCustodialDonation({
       senderId,
       receiverId,
