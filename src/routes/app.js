@@ -270,6 +270,8 @@ apiV1.use('/transactions', transactionRoutes);
 apiV1.use('/', corporateMatchingRoutes);
 apiV1.use('/claimable-balances', claimableBalancesRoutes);
 apiV1.use('/liquidity-pools', require('./liquidity-pools'));
+apiV1.use('/api-keys', apiKeysRoutes);
+apiV1.use('/api-keys', apiKeyUsageRoutes);
 
 // Exchange rates endpoint
 apiV1.get('/exchange-rates', asyncHandler(async (req, res) => {

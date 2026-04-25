@@ -649,4 +649,65 @@ router.get('/:id/tier', requireAdmin(), apiKeyIdParamSchema, asyncHandler(async 
   }
 }));
 
+/**
+ * GET /api-keys/me/usage
+ * Returns usage statistics for the currently authenticated API key.
+ * Accessible with any valid API key (not admin-only).
+ */
+router.get('/me/usage', asyncHandler(async (req, res, next) => {
+  try {
+    const apiKey = req.apiKey;
+    if (!apiKey) {
+      return res.status(401).json({ success: false, error: 'API key authentication required' });
+    }
+
+    const ApiKeyUsageService = require('../services/ApiKeyUsageService');
+    const usageService = ApiKeyUsageService.instance;
+
+    const now = Date.now();
+    const startOfDay   = new Date(); startOfDay.setUTCHours(0, 0, 0, 0);
+    const startOfMonth = new Date(); startOfMonth.setUTCDate(1); startOfMonth.setUTCHours(0, 0, 0, 0);
+
+    const keyIdentifier = String(apiKey.id || apiKey.key || apiKey.keyHash || 'unknown');
+
+    let requestsToday = 0;
+    let requestsThisMonth = 0;
+    try {
+      const todaySeries   = usageService.getTimeSeries(keyIdentifier, 'day',   { from: startOfDay.getTime(),   to: now });
+      const monthSeries   = usageService.getTimeSeries(keyIdentifier, 'day',   { from: startOfMonth.getTime(), to: now });
+      requestsToday       = todaySeries.reduce((s, b) => s + b.requests, 0);
+      requestsThisMonth   = monthSeries.reduce((s, b) => s + b.requests, 0);
+    } catch (_) {
+      // Key has no recorded usage yet — counts stay 0
+    }
+
+    const quotaLimit     = apiKey.quotaLimit     ?? null;
+    const quotaUsed      = apiKey.quotaUsed      ?? null;
+    const quotaRemaining = quotaLimit !== null && quotaUsed !== null ? Math.max(0, quotaLimit - quotaUsed) : null;
+
+    const rateLimitMax    = apiKey.rateLimit       ?? null;
+    const rateLimitWindow = apiKey.rateLimitWindowSeconds ?? null;
+
+    res.json({
+      success: true,
+      data: {
+        keyId: apiKey.id,
+        requestsToday,
+        requestsThisMonth,
+        quota: {
+          limit: quotaLimit,
+          used: quotaUsed,
+          remaining: quotaRemaining,
+        },
+        rateLimit: {
+          requestsPerWindow: rateLimitMax,
+          windowSeconds: rateLimitWindow,
+        },
+      },
+    });
+  } catch (error) {
+    next(error);
+  }
+}));
+
 module.exports = router;
