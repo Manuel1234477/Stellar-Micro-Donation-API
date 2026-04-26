@@ -633,19 +633,13 @@ router.get('/:publicKey/transactions', checkPermission(PERMISSIONS.WALLETS_READ)
 
     // First, check if user exists with this publicKey
     const user = await Database.get(
-      'SELECT id, publicKey, createdAt FROM users WHERE publicKey = ?',
+      'SELECT id, publicKey, createdAt FROM users WHERE publicKey = ? AND deleted_at IS NULL',
       [publicKey]
     );
 
     if (!user) {
-      // Return empty array if wallet doesn't exist (as per acceptance criteria)
-      return res.json({
-        success: true,
-        data: [],
-        count: 0,
-        total: 0,
-        message: 'No user found with this public key'
-      });
+      // Return 404 if wallet doesn't exist or is soft-deleted
+      return res.status(404).json({ error: 'Wallet not found' });
     }
 
     // Get total count
@@ -929,43 +923,7 @@ router.get('/admin/deleted', requireAdmin(), asyncHandler(async (req, res, next)
   }
 }));
 
-/**
- * UPDATED: GET /wallets/:publicKey/transactions
- * Now filters out soft-deleted transactions
- */
-router.get('/:publicKey/transactions', checkPermission(PERMISSIONS.WALLETS_READ), walletPublicKeySchema, asyncHandler(async (req, res, next) => {
-  try {
-    const { publicKey } = req.params;
 
-    const user = await Database.get(
-      'SELECT id FROM users WHERE publicKey = ? AND deleted_at IS NULL',
-      [publicKey]
-    );
-
-    if (!user) {
-      return res.json({ success: true, data: [], count: 0, message: 'No active user found' });
-    }
-
-    // Added "t.deleted_at IS NULL" to the WHERE clause
-    const transactions = await Database.query(
-      `SELECT t.*, sender.publicKey as senderPublicKey, receiver.publicKey as receiverPublicKey
-       FROM transactions t
-       LEFT JOIN users sender ON t.senderId = sender.id
-       LEFT JOIN users receiver ON t.receiverId = receiver.id
-       WHERE (t.senderId = ? OR t.receiverId = ?) AND t.deleted_at IS NULL
-       ORDER BY t.timestamp DESC`,
-      [user.id, user.id]
-    );
-
-    res.json({
-      success: true,
-      data: transactions,
-      count: transactions.length
-    });
-  } catch (error) {
-    next(error);
-  }
-}));
 
 /**
  * POST /wallets/:id/data
