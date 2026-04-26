@@ -363,4 +363,22 @@ module.exports = {
   authTokenRateLimiter,
   authRefreshRateLimiter,
   createRateLimiter,
+  friendbotRateLimiter: rateLimit({
+    windowMs: 60 * 1000,
+    max: 5,
+    keyGenerator: (req) => req.apiKey?.id || req.ip,
+    standardHeaders: true,
+    legacyHeaders: false,
+    validate: false,
+    handler: (req, res) => {
+      res.status(429).json({
+        success: false,
+        error: {
+          code: 'RATE_LIMIT_EXCEEDED',
+          message: 'Too many Friendbot funding requests. Please try again later.',
+          retryAfter: req.rateLimit?.resetTime,
+        }
+      });
+    }
+  }),
 };

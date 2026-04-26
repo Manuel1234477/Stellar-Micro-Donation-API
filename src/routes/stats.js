@@ -143,6 +143,17 @@ const strictDateRangeQuerySchema = validateSchema({
   },
 });
 
+const optionalDateRangeQuerySchema = validateSchema({
+  query: {
+    fields: {
+      startDate: { type: 'dateString', required: false },
+      endDate: { type: 'dateString', required: false },
+      from: { type: 'dateString', required: false },
+      to: { type: 'dateString', required: false },
+    },
+  },
+});
+
 const walletAnalyticsSchema = validateSchema({
   params: {
     fields: {
@@ -280,20 +291,38 @@ router.get(
 /**
  * GET /stats/summary
  * Get overall summary statistics
- * Query params: startDate, endDate (ISO format)
+ * Query params: startDate/endDate or from/to (all optional, ISO format)
  */
 router.get(
   "/summary",
   checkPermission(PERMISSIONS.STATS_READ),
   auditStatsAccess,
   cacheMiddleware('stats', 'private'),
-  strictDateRangeQuerySchema,
-  validateDateRange,
+  optionalDateRangeQuerySchema,
   withStatsCache('stats:summary', (req, res, next) => {
     try {
-      const { startDate, endDate } = req.query;
-      const start = new Date(startDate);
-      const end = new Date(endDate);
+      const fromParam = req.query.from || req.query.startDate;
+      const toParam = req.query.to || req.query.endDate;
+
+      let start, end;
+
+      if (fromParam) {
+        start = new Date(fromParam);
+        if (isNaN(start.getTime())) {
+          return res.status(400).json({ success: false, error: 'Invalid date format for startDate/from' });
+        }
+      } else {
+        start = new Date(0);
+      }
+
+      if (toParam) {
+        end = new Date(toParam);
+        if (isNaN(end.getTime())) {
+          return res.status(400).json({ success: false, error: 'Invalid date format for endDate/to' });
+        }
+      } else {
+        end = new Date();
+      }
 
       const stats = StatsService.getSummaryStats(start, end);
 

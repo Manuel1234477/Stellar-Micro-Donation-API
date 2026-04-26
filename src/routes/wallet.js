@@ -316,15 +316,48 @@ router.get('/', checkPermission(PERMISSIONS.WALLETS_READ), cacheMiddleware('wall
 router.get('/:id/balance', checkPermission(PERMISSIONS.WALLETS_READ), walletIdSchema, asyncHandler(async (req, res, next) => {
   try {
     const forceRefresh = req.query.refresh === 'true';
+    const wallet = walletService.getWalletById(req.params.id);
+    const address = wallet.address || wallet.publicKey;
+    const stellarSvc = getStellarService();
+
+    res.setHeader('Cache-Control', 'max-age=10');
+
+    // Try to get all asset balances if available
+    if (stellarSvc && typeof stellarSvc.getAccountBalances === 'function') {
+      try {
+        const balances = await stellarSvc.getAccountBalances(address);
+        const nativeBalance = balances.find(b => b.asset_type === 'native');
+        const xlmBalance = nativeBalance ? parseFloat(nativeBalance.balance) : 0;
+        const subentryCount = balances.filter(b => b.asset_type !== 'native').length;
+        const minimumReserve = 1.0 + subentryCount * 0.5;
+
+        return res.json({
+          success: true,
+          data: {
+            balances: balances.map(b => ({
+              asset: b.asset_type === 'native' ? 'XLM' : `${b.asset_code}:${b.asset_issuer}`,
+              balance: b.balance,
+              assetType: b.asset_type,
+            })),
+            xlmBalance: nativeBalance ? nativeBalance.balance : '0',
+            minimumReserve: minimumReserve.toFixed(7),
+          }
+        });
+      } catch (_) {
+        // fall through to getBalance
+      }
+    }
+
     const result = await walletService.getBalance(req.params.id, forceRefresh);
-    
+
     res.setHeader('X-Cache', result.cached ? 'HIT' : 'MISS');
-    
+
     res.json({
       success: true,
       data: {
         balance: result.balance,
-        asset: result.asset
+        asset: result.asset,
+        minimumReserve: '1.0000000',
       }
     });
   } catch (error) {
@@ -1573,5 +1606,86 @@ router.post(
     }
   })
 );
+
+/**
+ * POST /wallets/:id/fund
+ * Fund a wallet via Stellar Friendbot (testnet only).
+ * Rate limited to 5 requests per minute per API key.
+ */
+const { friendbotRateLimiter } = require('../middleware/rateLimiter');
+const requireApiKey = require('../middleware/apiKey');
+
+router.post('/:id/fund', requireApiKey, checkPermission(PERMISSIONS.WALLETS_UPDATE), walletIdSchema, friendbotRateLimiter, asyncHandler(async (req, res, next) => {
+  try {
+    const { id } = req.params;
+    const force = req.query.force === 'true';
+
+    // Look up wallet
+    const wallet = await Database.get(
+      'SELECT id, publicKey FROM users WHERE id = ?',
+      [id]
+    );
+    if (!wallet) {
+      return res.status(404).json({ success: false, error: 'Wallet not found' });
+    }
+
+    const address = wallet.publicKey || wallet.address;
+    const stellarSvc = getStellarService();
+
+    // Check network — Friendbot only works on testnet
+    const network = stellarSvc.getNetwork ? stellarSvc.getNetwork() : 'testnet';
+    if (network === 'mainnet' || network === 'public') {
+      return res.status(400).json({
+        success: false,
+        error: 'Friendbot funding is only available on testnet',
+        network: 'mainnet',
+        hint: 'Fund mainnet wallets by receiving XLM from an existing funded account',
+      });
+    }
+
+    // Unless force=true, check if already funded
+    if (!force) {
+      try {
+        const fundedStatus = await stellarSvc.isAccountFunded(address);
+        if (fundedStatus && fundedStatus.funded) {
+          return res.status(409).json({
+            success: false,
+            error: 'Wallet already has a funded account on the Stellar network',
+            currentBalanceXLM: fundedStatus.balance,
+            hint: 'Use POST /wallets/:id/fund?force=true to fund again (adds more XLM)',
+          });
+        }
+      } catch (_) {
+        // Account doesn't exist yet — proceed with funding
+      }
+    }
+
+    // Fund via Friendbot
+    const fundResult = await stellarSvc.fundWithFriendbot(address);
+
+    // Update wallet record with fundedAt timestamp
+    const now = new Date().toISOString();
+    try {
+      await Database.run('ALTER TABLE users ADD COLUMN IF NOT EXISTS fundedAt TEXT');
+    } catch (_) {
+      // Column may already exist — ignore
+    }
+    await Database.run('UPDATE users SET fundedAt = ? WHERE id = ?', [now, id]);
+
+    return res.status(200).json({
+      success: true,
+      data: {
+        walletId: id,
+        publicKey: address,
+        fundedAmount: '10000',
+        fundedAmountXLM: 10000,
+        network: network || 'testnet',
+        message: 'Wallet successfully funded via Stellar Friendbot',
+      },
+    });
+  } catch (error) {
+    next(error);
+  }
+}));
 
 module.exports = router;

@@ -139,6 +139,9 @@ router.post('/', checkPermission(PERMISSIONS.STREAM_CREATE), payloadSizeLimiter(
       if (isNaN(firstExecution.getTime())) {
         return res.status(400).json({ success: false, error: 'Invalid startDate format' });
       }
+      if (firstExecution.getTime() < Date.now() + 60000) {
+        return res.status(400).json({ success: false, error: 'Start date must be in the future' });
+      }
     } else {
       firstExecution = scheduler.calculateNextExecutionDate(
         new Date(),

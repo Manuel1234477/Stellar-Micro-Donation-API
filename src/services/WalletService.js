@@ -264,7 +264,7 @@ class WalletService {
   async getBalance(id, forceRefresh = false) {
     const wallet = this.getWalletById(id);
     const cacheKey = `wallet_balance_${wallet.address}`;
-    const cacheTtl = parseInt(process.env.WALLET_BALANCE_CACHE_TTL, 10) || 30000;
+    const cacheTtl = parseInt(process.env.WALLET_BALANCE_CACHE_TTL, 10) || 10000;
     
     const Cache = require('../utils/cache');
     const serviceContainer = require('../config/serviceContainer');
