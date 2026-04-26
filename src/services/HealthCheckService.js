@@ -12,7 +12,7 @@
 const Database = require('../utils/database');
 
 /** Maximum time (ms) allowed for any single dependency check */
-const DEPENDENCY_TIMEOUT_MS = 2000;
+const DEPENDENCY_TIMEOUT_MS = 500;
 
 /**
  * Run a single dependency check with a hard 2-second timeout.
