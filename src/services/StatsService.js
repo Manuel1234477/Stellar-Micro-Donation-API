@@ -16,15 +16,16 @@ class StatsService {
    * Get daily aggregated stats
    * @param {Date} startDate - Start date for aggregation
    * @param {Date} endDate - End date for aggregation
+   * @param {string} [timezone='UTC'] - IANA timezone string
    * @returns {Array} Array of daily stats with date and total volume
    */
-  static getDailyStats(startDate, endDate) {
+  static getDailyStats(startDate, endDate, timezone = 'UTC') {
     const transactions = Transaction.getByDateRange(startDate, endDate);
     const dailyMap = new Map();
 
     transactions.forEach(tx => {
       const date = new Date(tx.timestamp);
-      const dateKey = this.getDateKey(date);
+      const dateKey = this.getDateKeyInTimezone(date, timezone);
       
       if (!dailyMap.has(dateKey)) {
         dailyMap.set(dateKey, {
