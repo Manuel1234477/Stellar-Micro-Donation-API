@@ -175,9 +175,16 @@ router.get('/stream', checkPermission(PERMISSIONS.STATS_READ), (req, res, next) 
     
     // Register SSE client
     const client = SseManager.addClient(clientId, keyId, filter, res);
+
+    // Keepalive pings
+    const keepaliveMs = parseInt(process.env.LEADERBOARD_KEEPALIVE_MS || '15000', 10);
+    const pingInterval = setInterval(() => {
+      res.write(': ping\n\n');
+    }, keepaliveMs);
     
     // Handle client disconnect
     req.on('close', () => {
+      clearInterval(pingInterval);
       SseManager.removeClient(clientId);
       console.log(`[Leaderboard SSE] Client disconnected: ${clientId}`);
     });
@@ -276,7 +283,16 @@ router.get('/stream', checkPermission(PERMISSIONS.STATS_READ), (req, res, next) 
     const keyId = req.apiKey ? req.apiKey.id : 'anonymous';
     SseManager.addClient(clientId, keyId, { window }, res);
 
-    req.on('close', () => SseManager.removeClient(clientId));
+    // Keepalive pings
+    const keepaliveMs = parseInt(process.env.LEADERBOARD_KEEPALIVE_MS || '15000', 10);
+    const pingInterval = setInterval(() => {
+      res.write(': ping\n\n');
+    }, keepaliveMs);
+
+    req.on('close', () => {
+      clearInterval(pingInterval);
+      SseManager.removeClient(clientId);
+    });
 
     // Send initial snapshot
     const snapshot = LeaderboardSSE.getSnapshot(window);
