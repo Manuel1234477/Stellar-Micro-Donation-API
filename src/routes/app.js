@@ -361,8 +361,6 @@ const healthHandler = asyncHandler(async (req, res) => {
     const stellarConfig = require('../config/stellar');
     health.stellarEnvironment = stellarConfig.environment || 'testnet';
     health.stellarNetwork = stellarConfig.network || 'testnet';
-    health.clientIp = req.ip;
-    health.protocol = req.protocol;
     health.requestId = req.id;
     health.transactionSync = transactionSyncScheduler.getSyncStatus();
 
