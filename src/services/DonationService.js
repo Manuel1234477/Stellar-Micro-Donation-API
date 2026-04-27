@@ -1211,7 +1211,7 @@ class DonationService {
       if (end && new Date(tx.timestamp) > end) return false;
       if (minAmt !== null && tx.amount < minAmt) return false;
       if (maxAmt !== null && tx.amount > maxAmt) return false;
-      if (status && tx.status !== status) return false;
+      if (status && Array.isArray(status) ? !status.includes(tx.status) : (status && tx.status !== status)) return false;
       if (donorLower && !(tx.donor || '').toLowerCase().includes(donorLower)) return false;
       if (recipientLower && !(tx.recipient || '').toLowerCase().includes(recipientLower)) return false;
       if (memoLower && !(tx.memo || '').toLowerCase().includes(memoLower)) return false;
