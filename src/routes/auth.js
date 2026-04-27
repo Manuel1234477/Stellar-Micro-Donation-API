@@ -104,7 +104,13 @@ router.post('/refresh', authRefreshRateLimiter, payloadSizeLimiter(ENDPOINT_LIMI
     if (err.code === 'TOKEN_FAMILY_REVOKED') {
       return res.status(401).json({
         success: false,
-        error: { code: 'TOKEN_FAMILY_REVOKED', message: 'Token reuse detected; all sessions revoked' },
+        error: { code: 'TOKEN_FAMILY_REVOKED', message: 'Refresh token reuse detected. All sessions have been revoked.' },
+      });
+    }
+    if (err.code === 'TOKEN_REVOKED') {
+      return res.status(401).json({
+        success: false,
+        error: { code: 'TOKEN_REVOKED', message: 'Refresh token has been revoked' },
       });
     }
     log.error('AUTH', 'Refresh token rotation failed', { error: err.message });

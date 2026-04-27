@@ -1449,7 +1449,26 @@ class DonationService {
       updateData.confirmedAt = new Date().toISOString();
     }
 
-    return Transaction.updateStatus(id, normalizedStatus, updateData);
+    const updated = Transaction.updateStatus(id, normalizedStatus, updateData);
+
+    // Emit donation lifecycle event for SSE subscribers and other listeners
+    const eventMap = {
+      submitted: donationEvents.constructor.EVENTS?.SUBMITTED || 'donation.submitted',
+      confirmed: donationEvents.constructor.EVENTS?.CONFIRMED || 'donation.confirmed',
+      failed: donationEvents.constructor.EVENTS?.FAILED || 'donation.failed',
+    };
+    const eventName = eventMap[normalizedStatus];
+    if (eventName) {
+      donationEvents.emitLifecycleEvent(eventName, {
+        donationId: updated.id,
+        status: normalizedStatus,
+        txHash: updated.stellar_tx_id || stellarData.transactionId,
+        ledger: updated.ledger || stellarData.ledger,
+        timestamp: new Date().toISOString(),
+      });
+    }
+
+    return updated;
   }
 
   /**

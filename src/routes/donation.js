@@ -196,6 +196,7 @@ const LimitService = require('../services/LimitService');
 const Transaction = require('./models/transaction');
 const donationValidator = require('../utils/donationValidator');
 const { buildErrorResponse } = require('../utils/validationErrorFormatter');
+const donationEvents = require('../events/donationEvents');
 
 const donationService = new DonationService(getStellarService());
 
@@ -522,6 +523,109 @@ router.post('/verify', verificationRateLimiter, checkPermission(PERMISSIONS.DONA
     }
 
     return res.json({ success: true, data: result });
+  } catch (error) {
+    next(error);
+  }
+}));
+
+/**
+ * GET /donations/:id/status
+ * Server-Sent Events (SSE) endpoint for real-time donation status updates.
+ * Opens a long-lived HTTP connection and pushes status_update events as the
+ * donation progresses through its lifecycle (pending → processing → completed/failed).
+ *
+ * Authentication: Requires API key
+ * Authorization: Users may only stream their own donations; admins may stream any donation
+ * Auto-close: Connection closes when donation reaches terminal state (completed/failed)
+ * Timeout: Connection closes after 5 minutes regardless of state
+ * Keepalive: Sends comment every 15 seconds to prevent proxy timeouts
+ * Reconnection: Instructs clients to reconnect after 3 seconds if connection drops
+ */
+router.get('/:id/status', requireApiKey, donationIdParamSchema, asyncHandler(async (req, res, next) => {
+  const donationId = req.params.id;
+
+  try {
+    // Fetch donation to verify it exists and check authorization
+    const donation = donationService.getDonationById(donationId);
+
+    // Authorization: users can only stream their own donations, admins can stream any
+    const isAdmin = req.apiKey?.role === 'admin';
+    const userOwns = donation.senderId === req.apiKey?.id || donation.receiverId === req.apiKey?.id;
+    if (!isAdmin && !userOwns) {
+      return res.status(403).json({
+        success: false,
+        error: { code: 'FORBIDDEN', message: 'You do not have permission to stream this donation' },
+      });
+    }
+
+    // Set SSE headers
+    res.setHeader('Content-Type', 'text/event-stream');
+    res.setHeader('Cache-Control', 'no-cache');
+    res.setHeader('Connection', 'keep-alive');
+    res.setHeader('X-Accel-Buffering', 'no'); // Disable nginx buffering
+    res.flushHeaders();
+
+    // Send retry directive (3 seconds)
+    res.write('retry: 3000\n\n');
+
+    // Send initial status_update event
+    const sendStatusUpdate = (status, txHash, ledger) => {
+      const event = {
+        donationId: donation.id,
+        status,
+        timestamp: new Date().toISOString(),
+      };
+      if (txHash) event.txHash = txHash;
+      if (ledger) event.ledger = ledger;
+      res.write(`event: status_update\ndata: ${JSON.stringify(event)}\n\n`);
+    };
+
+    sendStatusUpdate(donation.status, donation.stellar_tx_id, donation.ledger);
+
+    // If already in terminal state, close immediately
+    if (donation.status === 'confirmed' || donation.status === 'failed') {
+      res.write(`event: stream_closed\ndata: ${JSON.stringify({ reason: 'terminal_state', finalStatus: donation.status })}\n\n`);
+      res.end();
+      return;
+    }
+
+    // Keepalive interval (15 seconds)
+    const keepaliveInterval = setInterval(() => {
+      res.write(': keepalive\n\n');
+    }, 15000);
+
+    // 5-minute timeout
+    const timeoutMs = 5 * 60 * 1000;
+    const timeoutTimer = setTimeout(() => {
+      res.write(`event: stream_closed\ndata: ${JSON.stringify({ reason: 'timeout', finalStatus: donation.status })}\n\n`);
+      res.end();
+    }, timeoutMs);
+
+    // Listen for donation status updates
+    const statusUpdateHandler = (payload) => {
+      if (payload.donationId === donation.id) {
+        sendStatusUpdate(payload.status, payload.txHash, payload.ledger);
+
+        // Close connection on terminal state (confirmed = completed in this system)
+        if (payload.status === 'confirmed' || payload.status === 'failed') {
+          res.write(`event: stream_closed\ndata: ${JSON.stringify({ reason: 'terminal_state', finalStatus: payload.status })}\n\n`);
+          res.end();
+        }
+      }
+    };
+
+    donationEvents.on('donation.submitted', statusUpdateHandler);
+    donationEvents.on('donation.confirmed', statusUpdateHandler);
+    donationEvents.on('donation.failed', statusUpdateHandler);
+
+    // Cleanup on client disconnect
+    req.on('close', () => {
+      clearInterval(keepaliveInterval);
+      clearTimeout(timeoutTimer);
+      donationEvents.off('donation.submitted', statusUpdateHandler);
+      donationEvents.off('donation.confirmed', statusUpdateHandler);
+      donationEvents.off('donation.failed', statusUpdateHandler);
+    });
   } catch (error) {
     next(error);
   }
