@@ -13,6 +13,8 @@ const { PERMISSIONS } = require('../../utils/permissions');
 const Wallet = require('../models/wallet');
 const Transaction = require('../models/transaction');
 const log = require('../../utils/log');
+const asyncHandler = require('../../utils/asyncHandler');
+const { payloadSizeLimiter, ENDPOINT_LIMITS } = require('../../middleware/payloadSizeLimiter');
 
 /**
  * POST /admin/encryption/rotate
@@ -23,8 +25,6 @@ const log = require('../../utils/log');
 router.post('/rotate', requireAdmin(), payloadSizeLimiter(ENDPOINT_LIMITS.admin), asyncHandler(async (req, res, next) => {
   try {
     const svc = require('../../services/EncryptionService');
-const asyncHandler = require('../../utils/asyncHandler');
-const { payloadSizeLimiter, ENDPOINT_LIMITS } = require('../../middleware/payloadSizeLimiter');
     const targetVersion = parseInt(process.env.ENCRYPTION_KEY_VERSION || '1', 10);
 
     const wallets = Wallet.loadWallets();

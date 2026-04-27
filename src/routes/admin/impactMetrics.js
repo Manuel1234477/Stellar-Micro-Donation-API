@@ -13,6 +13,8 @@ const requireApiKey = require('../../middleware/apiKey');
 const { requireAdmin } = require('../../middleware/rbac');
 const { validateSchema } = require('../../middleware/schemaValidation');
 const log = require('../../utils/log');
+const asyncHandler = require('../../utils/asyncHandler');
+const { payloadSizeLimiter, ENDPOINT_LIMITS } = require('../../middleware/payloadSizeLimiter');
 
 const createImpactMetricSchema = validateSchema({
   body: {
@@ -60,8 +62,6 @@ router.get('/', requireApiKey, requireAdmin(), asyncHandler(async (req, res, nex
       metrics = await ImpactMetricService.getByCampaign(parseInt(campaign_id, 10));
     } else {
       const Database = require('../../utils/database');
-const asyncHandler = require('../../utils/asyncHandler');
-const { payloadSizeLimiter, ENDPOINT_LIMITS } = require('../../middleware/payloadSizeLimiter');
       metrics = await Database.query('SELECT * FROM impact_metrics ORDER BY campaign_id, amount_per_unit ASC');
     }
 

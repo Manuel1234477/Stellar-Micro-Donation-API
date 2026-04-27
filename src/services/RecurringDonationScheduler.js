@@ -338,8 +338,13 @@ class RecurringDonationScheduler {
         this.lastTickDurationMs = Date.now() - _tickStart;
         this.lastTickFailedSchedules = _tickFailedSchedules;
       }
-      }); // end runWithTrace
-    });
+    } catch (outerError) {
+      log.error('RECURRING_SCHEDULER', 'Unexpected error in processSchedules', {
+        error: outerError.message,
+        correlationId: correlation.correlationId,
+        traceId: correlation.traceId,
+      });
+    }
   }
 
   // ─────────────────────────────────────────────────────────────────────────

@@ -133,7 +133,7 @@
 
 const express = require('express');
 const router = express.Router();
-const Transaction = require('../models/transaction');
+const Transaction = require('./models/transaction');
 const TransactionSyncService = require('../services/TransactionSyncService');
 const MultiSigService = require('../services/MultiSigService');
 const { buildErrorResponse } = require('../utils/validationErrorFormatter');
@@ -141,8 +141,7 @@ const sseManager = require('../services/SseManager');
 const serviceContainer = require('../config/serviceContainer');
 const { checkPermission } = require('../middleware/rbac');
 const { PERMISSIONS } = require('../utils/permissions');
-const { payloadSizeLimiter } = require('../middleware/payloadSizeLimiter');
-const { ENDPOINT_LIMITS } = require('../constants');
+const { payloadSizeLimiter, ENDPOINT_LIMITS } = require('../middleware/payloadSizeLimiter');
 const { validateSchema } = require('../middleware/schemaValidation');
 const asyncHandler = require('../utils/asyncHandler');
 
@@ -326,7 +325,7 @@ router.post(
     } catch (error) {
       next(error);
     }
-  },
+  })
 );
 
 
@@ -681,7 +680,7 @@ router.get('/stream', (req, res) => {
 
   // Send initial connection event
   res.write(`data: ${JSON.stringify({ type: 'connected' })}\n\n`);
-}));
+});
 
 /**
  * GET /transactions/:id

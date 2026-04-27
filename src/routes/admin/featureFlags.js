@@ -12,6 +12,7 @@
  * - Bulk operations
  */
 
+const crypto = require('crypto');
 const express = require('express');
 const router = express.Router();
 const featureFlagsUtil = require('../../utils/featureFlags');
@@ -75,27 +76,112 @@ router.get('/', checkPermission(PERMISSIONS.ADMIN_ALL), asyncHandler(async (req,
       }
     }).catch(() => {});
 
+    const flagData = flags.map(f => ({
+      id: f.id,
+      name: f.name,
+      enabled: Boolean(f.enabled),
+      scope: f.scope,
+      scope_value: f.scope_value,
+      description: f.description,
+      created_at: f.created_at,
+      updated_at: f.updated_at,
+      updated_by: f.updated_by
+    }));
+
+    if (req.accepts(['html', 'json']) === 'html') {
+      const rows = flagData.map(f => `
+        <tr>
+          <td>${escHtml(f.name)}</td>
+          <td>${escHtml(f.scope)}${f.scope_value ? ': ' + escHtml(f.scope_value) : ''}</td>
+          <td>${escHtml(f.description || '')}</td>
+          <td>
+            <label class="toggle">
+              <input type="checkbox" data-name="${escHtml(f.name)}" data-scope="${escHtml(f.scope)}" data-scope-value="${escHtml(f.scope_value || '')}" ${f.enabled ? 'checked' : ''}>
+              <span>${f.enabled ? 'ON' : 'OFF'}</span>
+            </label>
+          </td>
+        </tr>`).join('');
+
+      const apiKey = req.headers['x-api-key'] || '';
+      const nonce = res.locals.cspNonce || '';
+      const csrfToken = crypto.randomBytes(16).toString('hex');
+      res.cookie('ff_csrf', csrfToken, { httpOnly: false, sameSite: 'strict' });
+
+      const html = `<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Feature Flags Admin</title>
+<style>
+  body{font-family:sans-serif;max-width:900px;margin:2rem auto;padding:0 1rem}
+  h1{font-size:1.4rem}
+  table{width:100%;border-collapse:collapse}
+  th,td{text-align:left;padding:.5rem .75rem;border-bottom:1px solid #ddd}
+  th{background:#f5f5f5}
+  .toggle input{display:none}
+  .toggle span{cursor:pointer;padding:.25rem .6rem;border-radius:3px;background:#ccc;color:#fff;font-size:.85rem;user-select:none}
+  .toggle input:checked+span{background:#2a9d2a}
+  #toast{position:fixed;bottom:1rem;right:1rem;padding:.6rem 1rem;border-radius:4px;display:none;color:#fff;font-size:.9rem}
+  #toast.ok{background:#2a9d2a} #toast.err{background:#c0392b}
+</style>
+</head>
+<body>
+<h1>Feature Flags Admin</h1>
+<table>
+  <thead><tr><th>Name</th><th>Scope</th><th>Description</th><th>State</th></tr></thead>
+  <tbody>${rows}</tbody>
+</table>
+<div id="toast"></div>
+<script nonce="${nonce}">
+const API_KEY = ${JSON.stringify(apiKey)};
+const CSRF_TOKEN = ${JSON.stringify(csrfToken)};
+function showToast(msg, ok) {
+  const t = document.getElementById('toast');
+  t.textContent = msg; t.className = ok ? 'ok' : 'err'; t.style.display = 'block';
+  setTimeout(() => { t.style.display = 'none'; }, 3000);
+}
+document.querySelectorAll('.toggle input').forEach(cb => {
+  cb.addEventListener('change', async function() {
+    const name = this.dataset.name, scope = this.dataset.scope, sv = this.dataset.scopeValue;
+    const enabled = this.checked;
+    const span = this.nextElementSibling;
+    const prev = !enabled;
+    try {
+      const url = '/admin/feature-flags/' + encodeURIComponent(name) + '?scope=' + encodeURIComponent(scope) + (sv ? '&scope_value=' + encodeURIComponent(sv) : '');
+      const r = await fetch(url, {
+        method: 'PATCH',
+        headers: {'Content-Type':'application/json','x-api-key': API_KEY,'x-csrf-token': CSRF_TOKEN},
+        body: JSON.stringify({enabled})
+      });
+      if (!r.ok) throw new Error((await r.json()).error?.message || r.statusText);
+      span.textContent = enabled ? 'ON' : 'OFF';
+      showToast(name + ' ' + (enabled ? 'enabled' : 'disabled'), true);
+    } catch(e) {
+      this.checked = prev;
+      span.textContent = prev ? 'ON' : 'OFF';
+      showToast('Error: ' + e.message, false);
+    }
+  });
+});
+</script>
+</body>
+</html>`;
+      return res.set('Content-Type', 'text/html').send(html);
+    }
+
     res.json({
       success: true,
-      data: {
-        flags: flags.map(f => ({
-          id: f.id,
-          name: f.name,
-          enabled: Boolean(f.enabled),
-          scope: f.scope,
-          scope_value: f.scope_value,
-          description: f.description,
-          created_at: f.created_at,
-          updated_at: f.updated_at,
-          updated_by: f.updated_by
-        })),
-        total: flags.length
-      }
+      data: { flags: flagData, total: flags.length }
     });
   } catch (error) {
     next(error);
   }
 }));
+
+function escHtml(str) {
+  return String(str).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;');
+}
 
 /**
  * GET /admin/feature-flags/:name
@@ -267,6 +353,18 @@ const updateFlagSchema = validateSchema({
 
 router.patch('/:name', checkPermission(PERMISSIONS.ADMIN_ALL), updateFlagSchema, payloadSizeLimiter(ENDPOINT_LIMITS.admin), asyncHandler(async (req, res, next) => {
   try {
+    // CSRF double-submit cookie validation (applies when request originates from the HTML UI)
+    const rawCookie = req.headers.cookie || '';
+    const csrfCookie = rawCookie.split(';').reduce((acc, part) => {
+      const [k, v] = part.trim().split('=');
+      if (k === 'ff_csrf') acc = decodeURIComponent(v || '');
+      return acc;
+    }, '');
+    const csrfHeader = req.headers['x-csrf-token'];
+    if (csrfCookie && (!csrfHeader || csrfHeader !== csrfCookie)) {
+      return res.status(403).json({ success: false, error: { code: 'CSRF_INVALID', message: 'CSRF token mismatch' } });
+    }
+
     const { name } = req.params;
     const { scope, scope_value } = req.query;
     const { enabled, description } = req.body;

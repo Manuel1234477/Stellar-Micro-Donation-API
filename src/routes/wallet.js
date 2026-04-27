@@ -18,6 +18,39 @@ const Database = require('../utils/database');
 const asyncHandler = require('../utils/asyncHandler');
 const { payloadSizeLimiter, ENDPOINT_LIMITS } = require('../middleware/payloadSizeLimiter');
 const { buildErrorResponse } = require('../utils/validationErrorFormatter');
+const { validateSchema } = require('../middleware/schemaValidation');
+const { cacheMiddleware } = require('../middleware/caching');
+const { validateDataEntry } = require('../middleware/validateDataEntry');
+
+const requireAuth = requireAdmin;
+const requirePermission = (perm) => checkPermission(perm);
+
+const walletIdSchema = validateSchema({
+  params: {
+    fields: {
+      id: { type: 'string', required: true, trim: true, minLength: 1 }
+    }
+  }
+});
+
+const walletPublicKeySchema = validateSchema({
+  params: {
+    fields: {
+      publicKey: { type: 'string', required: true, trim: true, minLength: 1 }
+    }
+  }
+});
+
+const walletCreateSchema = validateSchema({
+  body: {
+    fields: {
+      address: { type: 'string', required: true, trim: true, minLength: 1 },
+      label: { type: 'string', required: false, nullable: true },
+      ownerName: { type: 'string', required: false, nullable: true },
+      sponsored: { type: 'boolean', required: false, nullable: true }
+    }
+  }
+});
 
 // Inflation destination schema for PATCH
 const inflationDestinationSchema = {

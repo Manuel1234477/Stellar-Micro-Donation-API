@@ -221,6 +221,18 @@ const updateDonationStatusSchema = validateSchema({
   }
 });
 
+const sendDonationSchema = validateSchema({
+  body: {
+    fields: {
+      senderId: { type: 'string', required: true, trim: true, minLength: 1 },
+      receiverId: { type: 'string', required: true, trim: true, minLength: 1 },
+      amount: { type: 'number', required: true },
+      memo: { type: 'string', required: false, maxLength: 28, nullable: true },
+      campaign_id: { type: 'string', required: false, nullable: true }
+    }
+  }
+});
+
 /**
  * POST /donations/send
  * Send XLM from one wallet to another and record it
@@ -359,7 +371,7 @@ router.post('/send', payloadSizeLimiter(ENDPOINT_LIMITS.singleDonation), donatio
  * Donations with the same donor are grouped into multi-operation Stellar transactions.
  * Rate limited: 10 batch requests per minute per IP.
  */
-router.post('/batch', payloadSizeLimiter(ENDPOINT_LIMITS.batchDonation), safeBatchRateLimiter, requireApiKey, async (req, res, next) => {
+router.post('/batch', payloadSizeLimiter(ENDPOINT_LIMITS.batchDonation), batchRateLimiter, requireApiKey, async (req, res, next) => {
   try {
     const { donations } = req.body;
 
@@ -400,6 +412,23 @@ router.post('/batch', payloadSizeLimiter(ENDPOINT_LIMITS.batchDonation), safeBat
     });
   } catch (error) {
     next(error);
+  }
+});
+
+const createDonationSchema = validateSchema({
+  body: {
+    fields: {
+      amount: { type: 'number', required: true },
+      recipient: { type: 'string', required: true, trim: true, minLength: 1 },
+      currency: { type: 'string', required: false, nullable: true },
+      donor: { type: 'string', required: false, nullable: true },
+      memo: { type: 'string', required: false, maxLength: 28, nullable: true },
+      memoType: { type: 'string', required: false, nullable: true },
+      notes: { type: 'string', required: false, nullable: true },
+      tags: { type: 'array', required: false, nullable: true },
+      sourceAsset: { type: 'string', required: false, nullable: true },
+      sourceAmount: { type: 'number', required: false, nullable: true }
+    }
   }
 });
 

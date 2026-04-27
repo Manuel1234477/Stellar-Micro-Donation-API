@@ -94,6 +94,7 @@ const { metricsMiddleware, registry } = require('../utils/metrics');
 const { attachSubscriptionServer } = require('../graphql');
 const sseManager = require('../services/SseManager');
 const claimableBalancesRoutes = require('./claimableBalances');
+const { requestTimeout, TIMEOUTS } = require('../middleware/requestTimeout');
 
 const app = express();
 
@@ -454,6 +455,9 @@ app.get('/suspicious-patterns', require('../middleware/rbac').requireAdmin(), (r
   });
 });
 
+// Feature flags admin UI + API (issue #807)
+app.use('/admin/feature-flags', requireApiKey, featureFlagsAdminRoutes);
+
 // Circuit breaker admin endpoints (issue #736)
 app.use('/admin/circuit-breaker', requireApiKey, require('./admin/circuitBreaker'));
 
@@ -475,21 +479,6 @@ const AUDIT_LOG_MAX_LIMIT = 500;
 
 app.get('/admin/audit-logs', require('../middleware/rbac').requireAdmin(), asyncHandler(async (req, res, next) => {
   try {
-<<<<<<< fix/760-audit-logs-input-validation
-    const pagination = parseCursorPaginationQuery(req.query);
-
-    // Allowlist validation — reject unknown enum values before they reach the DB layer
-    const VALID_CATEGORIES = new Set(Object.values(AuditLogService.CATEGORY));
-    const VALID_SEVERITIES = new Set(Object.values(AuditLogService.SEVERITY));
-
-    if (req.query.category && !VALID_CATEGORIES.has(req.query.category)) {
-      return res.status(400).json({ success: false, error: 'Invalid category value' });
-    }
-    if (req.query.severity && !VALID_SEVERITIES.has(req.query.severity)) {
-      return res.status(400).json({ success: false, error: 'Invalid severity value' });
-    }
-
-=======
     // Parse and enforce limit bounds (default 50, max 500)
     let limit = AUDIT_LOG_DEFAULT_LIMIT;
     if (req.query.limit !== undefined) {
@@ -503,11 +492,21 @@ app.get('/admin/audit-logs', require('../middleware/rbac').requireAdmin(), async
       limit = parsed;
     }
 
+    // Allowlist validation — reject unknown enum values before they reach the DB layer
+    const VALID_CATEGORIES = new Set(Object.values(AuditLogService.CATEGORY));
+    const VALID_SEVERITIES = new Set(Object.values(AuditLogService.SEVERITY));
+
+    if (req.query.category && !VALID_CATEGORIES.has(req.query.category)) {
+      return res.status(400).json({ success: false, error: 'Invalid category value' });
+    }
+    if (req.query.severity && !VALID_SEVERITIES.has(req.query.severity)) {
+      return res.status(400).json({ success: false, error: 'Invalid severity value' });
+    }
+
     // Parse cursor using existing utility but override limit
     const pagination = parseCursorPaginationQuery({ ...req.query, limit: String(limit) });
     pagination.limit = limit; // ensure our validated limit is used
 
->>>>>>> main
     const filters = {
       category: req.query.category,
       action: req.query.action,
