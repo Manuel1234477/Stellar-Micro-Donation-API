@@ -516,6 +516,128 @@ router.post('/', donationRateLimiter, checkPermission(PERMISSIONS.DONATIONS_CREA
   }
 }));
 
+function formatBatchDonationError(index, code, message) {
+  return {
+    success: false,
+    index,
+    error: {
+      code,
+      message,
+    },
+  };
+}
+
+function formatBatchDonationSuccess(index, data) {
+  return {
+    success: true,
+    index,
+    data,
+  };
+}
+
+router.post('/batch', requireApiKey, batchRateLimiter, checkPermission(PERMISSIONS.DONATIONS_CREATE), payloadSizeLimiter(ENDPOINT_LIMITS.batchDonation), asyncHandler(async (req, res, next) => {
+  try {
+    const donations = req.body;
+
+    if (!Array.isArray(donations)) {
+      return res.status(400).json({
+        success: false,
+        error: {
+          code: 'INVALID_PAYLOAD',
+          message: 'Request body must be an array of donation objects'
+        }
+      });
+    }
+
+    if (donations.length === 0 || donations.length > 100) {
+      return res.status(400).json({
+        success: false,
+        error: {
+          code: 'INVALID_BATCH_SIZE',
+          message: 'Batch must contain between 1 and 100 donation objects'
+        }
+      });
+    }
+
+    const results = [];
+
+    for (let index = 0; index < donations.length; index += 1) {
+      const donation = donations[index];
+
+      if (!donation || typeof donation !== 'object' || Array.isArray(donation)) {
+        results.push(formatBatchDonationError(index, 'INVALID_DONATION', 'Each batch item must be an object')); 
+        continue;
+      }
+
+      const missingFields = [];
+      if (donation.senderId === undefined || donation.senderId === null) missingFields.push('senderId');
+      if (donation.receiverId === undefined || donation.receiverId === null) missingFields.push('receiverId');
+      if (donation.amount === undefined || donation.amount === null) missingFields.push('amount');
+
+      if (missingFields.length > 0) {
+        results.push(formatBatchDonationError(index, 'MISSING_FIELDS', `Missing required fields: ${missingFields.join(', ')}`));
+        continue;
+      }
+
+      const senderIdValidation = validateInteger(donation.senderId, { min: 1 });
+      if (!senderIdValidation.valid) {
+        results.push(formatBatchDonationError(index, 'INVALID_SENDER_ID', `Invalid senderId: ${senderIdValidation.error}`));
+        continue;
+      }
+
+      const receiverIdValidation = validateInteger(donation.receiverId, { min: 1 });
+      if (!receiverIdValidation.valid) {
+        results.push(formatBatchDonationError(index, 'INVALID_RECEIVER_ID', `Invalid receiverId: ${receiverIdValidation.error}`));
+        continue;
+      }
+
+      const amountValidation = validateFloat(donation.amount);
+      if (!amountValidation.valid) {
+        results.push(formatBatchDonationError(index, 'INVALID_AMOUNT', `Invalid amount: ${amountValidation.error}`));
+        continue;
+      }
+
+      if (donation.memo !== undefined && donation.memo !== null && donation.memo !== '') {
+        if (typeof donation.memo !== 'string') {
+          results.push(formatBatchDonationError(index, 'INVALID_MEMO', 'Memo must be a string')); 
+          continue;
+        }
+        const MemoValidator = require('../utils/memoValidator');
+        const memoValidation = MemoValidator.validate(donation.memo);
+        if (!memoValidation.valid) {
+          results.push(formatBatchDonationError(index, 'INVALID_MEMO', 'Memo text must be 28 bytes or less'));
+          continue;
+        }
+      }
+
+      try {
+        const result = await donationService.sendCustodialDonation({
+          senderId: senderIdValidation.value,
+          receiverId: receiverIdValidation.value,
+          amount: amountValidation.value,
+          memo: donation.memo || null,
+          notes: donation.notes || null,
+          tags: donation.tags || null,
+          apiKeyId: req.apiKey?.id,
+          requestId: req.id,
+        });
+        results.push(formatBatchDonationSuccess(index, result));
+      } catch (error) {
+        const code = error.code || 'DONATION_FAILED';
+        const message = error.message || 'Donation processing failed';
+        results.push(formatBatchDonationError(index, code, message));
+      }
+    }
+
+    return res.status(207).json({
+      success: true,
+      results,
+    });
+  } catch (error) {
+    next(error);
+  }
+}));
+
 /**
  * GET /donations
  * List all donations with optional pagination.
