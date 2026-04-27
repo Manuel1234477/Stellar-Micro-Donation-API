@@ -413,6 +413,23 @@ router.get('/:id/certificate', checkPermission(PERMISSIONS.DONATIONS_READ), dona
  * Create a new donation.
  * Requires Idempotency-Key header (UUID v4) to prevent duplicate donations from network retries.
  */
+// In-memory per-donor serialization lock to prevent TOCTOU on daily limit checks (#806).
+// Acceptable for single-instance deployments; replace with a distributed lock for multi-instance.
+const _donorLocks = new Map();
+async function withDonorLock(donorId, fn) {
+  const prev = _donorLocks.get(donorId) || Promise.resolve();
+  let release;
+  const next = new Promise(r => { release = r; });
+  _donorLocks.set(donorId, next);
+  try {
+    await prev;
+    return await fn();
+  } finally {
+    release();
+    if (_donorLocks.get(donorId) === next) _donorLocks.delete(donorId);
+  }
+}
+
 router.post('/', donationRateLimiter, checkPermission(PERMISSIONS.DONATIONS_CREATE), requireIdempotency, payloadSizeLimiter(ENDPOINT_LIMITS.singleDonation), asyncHandler(async (req, res, next) => {
   try {
     const { senderId, receiverId, amount, memo } = req.body;
@@ -435,6 +452,48 @@ router.post('/', donationRateLimiter, checkPermission(PERMISSIONS.DONATIONS_CREA
       const memoValidation = MemoValidator.validate(memo);
       if (!memoValidation.valid) {
         return res.status(400).json({ success: false, error: 'Memo text must be 28 bytes or less' });
+      }
+    }
+
+    // #806: enforce maxDailyPerDonor limit with per-donor serialization to prevent TOCTOU
+    const config = require('../config');
+    const globalDailyMax = config.donations.maxDailyPerDonor;
+
+    // Compute rate-limit header values (best-effort; 0 = unlimited)
+    let dailyLimit = null;
+    let dailyUsed = 0;
+    if (globalDailyMax > 0) {
+      dailyUsed = await LimitService.getDailyTotal(senderId);
+      dailyLimit = globalDailyMax;
+    }
+
+    // Set X-RateLimit-* headers on every POST /donations response
+    const resetsAt = new Date();
+    resetsAt.setUTCHours(24, 0, 0, 0); // midnight UTC next day
+    if (dailyLimit !== null) {
+      res.set('X-RateLimit-Limit', String(dailyLimit));
+      res.set('X-RateLimit-Remaining', String(Math.max(0, dailyLimit - dailyUsed)));
+      res.set('X-RateLimit-Reset', String(Math.floor(resetsAt.getTime() / 1000)));
+    }
+
+    // Enforce the limit inside a per-donor lock to prevent concurrent bypass
+    if (globalDailyMax > 0) {
+      try {
+        await withDonorLock(String(senderId), () =>
+          LimitService.checkLimits(senderId, amountValidation.value)
+        );
+      } catch (limitErr) {
+        if (limitErr && limitErr.details && limitErr.details.limit !== undefined) {
+          const { limit, used, remaining } = limitErr.details;
+          return res.status(429).json({
+            error: 'Daily donation limit exceeded',
+            limit,
+            used,
+            remaining: remaining !== undefined ? remaining : Math.max(0, limit - used),
+            resetsAt: resetsAt.toISOString(),
+          });
+        }
+        return next(limitErr);
       }
     }
 
