@@ -9,8 +9,12 @@
 const express = require('express');
 const asyncHandler = require('../utils/asyncHandler');
 const router = express.Router();
-const { requireAuth, requirePermission } = require('../middleware/auth');
-const { getStellarService } = require('../utils/serviceLocator');
+const { checkPermission } = require('../middleware/rbac');
+const requireApiKey = require('../middleware/apiKey');
+
+const requireAuth = requireApiKey;
+const requirePermission = (perm) => checkPermission(perm);
+const { getStellarService } = require('../config/stellar');
 
 /**
  * @openapi

@@ -25,10 +25,6 @@ const {
 } = require('../utils/correlation');
 const { withSpan, injectTraceHeaders } = require('../utils/tracing');
 
-const MAX_RETRIES = 3;
-const BASE_BACKOFF_MS = 1000;
-const MAX_CONSECUTIVE_FAILURES = 5;
-
 /** Retry queue constants */
 const RETRY_DELAYS_MS = [
   60 * 1000,        // 1 minute
