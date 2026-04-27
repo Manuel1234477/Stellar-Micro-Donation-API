@@ -458,6 +458,9 @@ app.get('/suspicious-patterns', require('../middleware/rbac').requireAdmin(), (r
 // Circuit breaker admin endpoints (issue #736)
 app.use('/admin/circuit-breaker', requireApiKey, require('./admin/circuitBreaker'));
 
+// Database monitoring admin endpoints
+app.use('/admin/db', requireApiKey, dbAdminRoutes);
+
 // Transaction inspection (admin only)
 app.use('/admin/inspect/xdr', require('../middleware/rbac').requireAdmin(), adminInspectRoutes);
 
