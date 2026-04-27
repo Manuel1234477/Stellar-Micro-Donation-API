@@ -54,15 +54,30 @@ const ERROR_CODES = {
   FEE_BUMP_NO_ENVELOPE:   { code: 'FEE_BUMP_NO_ENVELOPE',   numeric: 5013 },
   FEE_BUMP_FAILED:        { code: 'FEE_BUMP_FAILED',        numeric: 5014 },
 
+  // Routing errors (5020-5029)
+  ROUTING_STRATEGY_REQUIRED: { code: 'ROUTING_STRATEGY_REQUIRED', numeric: 5020 },
+  INVALID_ROUTING_STRATEGY:  { code: 'INVALID_ROUTING_STRATEGY',  numeric: 5021 },
+  POOL_NAME_REQUIRED:        { code: 'POOL_NAME_REQUIRED',        numeric: 5022 },
+  POOL_NOT_FOUND:            { code: 'POOL_NOT_FOUND',            numeric: 5023 },
+  POOL_EMPTY:                { code: 'POOL_EMPTY',                numeric: 5024 },
+  POOL_ALREADY_EXISTS:       { code: 'POOL_ALREADY_EXISTS',       numeric: 5025 },
+  RECIPIENT_NOT_IN_POOL:     { code: 'RECIPIENT_NOT_IN_POOL',     numeric: 5026 },
+  DONOR_COORDINATES_REQUIRED:{ code: 'DONOR_COORDINATES_REQUIRED',numeric: 5027 },
+  NO_ELIGIBLE_RECIPIENTS:    { code: 'NO_ELIGIBLE_RECIPIENTS',    numeric: 5028 },
+  NO_ACTIVE_CAMPAIGNS:       { code: 'NO_ACTIVE_CAMPAIGNS',       numeric: 5029 },
+
   // Rate limiting errors (6000-6099)
   RATE_LIMIT_EXCEEDED: { code: 'RATE_LIMIT_EXCEEDED', numeric: 6000 },
 
-  // Server errors (9000-9099)
+  // Server errors (9000-9999)
   INTERNAL_ERROR:        { code: 'INTERNAL_ERROR',        numeric: 9000 },
   DATABASE_ERROR:        { code: 'DATABASE_ERROR',        numeric: 9001 },
   VERIFICATION_FAILED:   { code: 'VERIFICATION_FAILED',   numeric: 9002 },
   SERVICE_UNAVAILABLE:   { code: 'SERVICE_UNAVAILABLE',   numeric: 9003 },
   STELLAR_NETWORK_ERROR: { code: 'STELLAR_NETWORK_ERROR', numeric: 9004 },
+  EXTERNAL_SERVICE_ERROR:{ code: 'EXTERNAL_SERVICE_ERROR',numeric: 9005 },
+  RESOURCE_CONFLICT:     { code: 'RESOURCE_CONFLICT',     numeric: 4009 },
+  NOT_IMPLEMENTED:       { code: 'NOT_IMPLEMENTED',       numeric: 9006 },
 };
 
 /**
@@ -176,9 +191,11 @@ class InternalError extends AppError {
  * Database error (500)
  */
 class DatabaseError extends AppError {
-  constructor(message, originalError = null) {
-    const details = originalError ? { originalError: originalError.message } : null;
-    super(ERROR_CODES.DATABASE_ERROR, message, 500, details);
+  constructor(message = "A database error occurred", originalError = null) {
+    // Audit: We store originalError for internal logging if needed, 
+    // but the base class message is normalized.
+    super(ERROR_CODES.DATABASE_ERROR, message, 500, null);
+    this.originalError = originalError;
   }
 }
 
@@ -195,6 +212,15 @@ class DuplicateError extends AppError {
   }
 }
 
+class ConflictError extends AppError {
+  constructor(
+    message = "Resource conflict",
+    errorCode = ERROR_CODES.RESOURCE_CONFLICT,
+  ) {
+    super(errorCode, message, 409);
+  }
+}
+
 module.exports = {
   ERROR_CODES,
   AppError,
@@ -205,5 +231,26 @@ module.exports = {
   BusinessLogicError,
   InternalError,
   DatabaseError,
-  DuplicateError
+  DuplicateError,
+  ConflictError,
+  /**
+   * Build a standard error response body.
+   * Use this for inline res.status().json() calls to ensure consistent format.
+   *
+   * @param {string} code - Error code string (e.g. 'INVALID_PUBLIC_KEY')
+   * @param {string} message - Human-readable error message
+   * @param {string} [requestId] - Request ID from req.id
+   * @returns {{ success: false, error: { code, message, requestId, timestamp } }}
+   */
+  formatError(code, message, requestId) {
+    return {
+      success: false,
+      error: {
+        code,
+        message,
+        ...(requestId && { requestId }),
+        timestamp: new Date().toISOString(),
+      },
+    };
+  },
 };

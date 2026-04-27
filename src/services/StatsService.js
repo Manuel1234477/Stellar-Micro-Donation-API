@@ -16,15 +16,16 @@ class StatsService {
    * Get daily aggregated stats
    * @param {Date} startDate - Start date for aggregation
    * @param {Date} endDate - End date for aggregation
+   * @param {string} [timezone='UTC'] - IANA timezone string
    * @returns {Array} Array of daily stats with date and total volume
    */
-  static getDailyStats(startDate, endDate) {
+  static getDailyStats(startDate, endDate, timezone = 'UTC') {
     const transactions = Transaction.getByDateRange(startDate, endDate);
     const dailyMap = new Map();
 
     transactions.forEach(tx => {
       const date = new Date(tx.timestamp);
-      const dateKey = this.getDateKey(date);
+      const dateKey = this.getDateKeyInTimezone(date, timezone);
       
       if (!dailyMap.has(dateKey)) {
         dailyMap.set(dateKey, {
@@ -277,55 +278,67 @@ class StatsService {
   }
 
   /**
-   * Get analytics fee summary
+   * Get analytics fee summary broken down by asset type.
+   * Fees are grouped per asset so mixed-currency totals are not meaninglessly summed.
+   * A `totalInXLM` field provides a unified view using stored exchange rates.
    * @param {Date} startDate - Start date for aggregation
    * @param {Date} endDate - End date for aggregation
-   * @returns {Object} Analytics fee summary
+   * @returns {Object} Analytics fee summary with per-asset breakdown
    */
   static getAnalyticsFeeStats(startDate, endDate) {
     const transactions = Transaction.getByDateRange(startDate, endDate);
-    
-    const feeStats = {
-      totalFeesCalculated: 0,
-      totalDonationVolume: 0,
-      transactionCount: transactions.length,
-      averageFeePerTransaction: 0,
-      feesByRecipient: {},
-      dateRange: {
-        start: startDate.toISOString(),
-        end: endDate.toISOString()
-      }
-    };
 
-    if (transactions.length === 0) {
-      return feeStats;
-    }
+    const byAsset = {};
 
     transactions.forEach(tx => {
+      const asset = tx.asset || tx.assetCode || 'XLM';
       const amount = parseFloat(tx.amount) || 0;
       const fee = parseFloat(tx.analyticsFee) || 0;
-      
-      feeStats.totalFeesCalculated += fee;
-      feeStats.totalDonationVolume += amount;
+      const xlmRate = parseFloat(tx.xlmRate) || (asset === 'XLM' ? 1 : 0);
 
-      const recipient = tx.recipient || 'Unknown';
-      if (!feeStats.feesByRecipient[recipient]) {
-        feeStats.feesByRecipient[recipient] = {
+      if (!byAsset[asset]) {
+        byAsset[asset] = {
+          asset,
           totalFees: 0,
-          donationCount: 0,
-          totalVolume: 0
+          totalVolume: 0,
+          transactionCount: 0,
+          totalFeesInXLM: 0,
         };
       }
-      
-      feeStats.feesByRecipient[recipient].totalFees += fee;
-      feeStats.feesByRecipient[recipient].donationCount += 1;
-      feeStats.feesByRecipient[recipient].totalVolume += amount;
+
+      byAsset[asset].totalFees += fee;
+      byAsset[asset].totalVolume += amount;
+      byAsset[asset].transactionCount += 1;
+      byAsset[asset].totalFeesInXLM += asset === 'XLM' ? fee : fee * xlmRate;
     });
 
-    feeStats.averageFeePerTransaction = feeStats.totalFeesCalculated / transactions.length;
-    feeStats.effectiveFeePercentage = (feeStats.totalFeesCalculated / feeStats.totalDonationVolume) * 100;
+    const feesByAsset = Object.values(byAsset).map(a => ({
+      ...a,
+      totalFees: +a.totalFees.toFixed(7),
+      totalVolume: +a.totalVolume.toFixed(7),
+      totalFeesInXLM: +a.totalFeesInXLM.toFixed(7),
+      effectiveFeePercentage: a.totalVolume > 0
+        ? +((a.totalFees / a.totalVolume) * 100).toFixed(4)
+        : 0,
+    }));
 
-    return feeStats;
+    const totalInXLM = +feesByAsset.reduce((s, a) => s + a.totalFeesInXLM, 0).toFixed(7);
+    const totalTransactions = transactions.length;
+    const totalFeesXLM = feesByAsset.find(a => a.asset === 'XLM');
+
+    return {
+      feesByAsset,
+      totalInXLM,
+      transactionCount: totalTransactions,
+      averageFeePerTransactionXLM: totalTransactions > 0
+        ? +(totalInXLM / totalTransactions).toFixed(7)
+        : 0,
+      dateRange: {
+        start: startDate.toISOString(),
+        end: endDate.toISOString(),
+      },
+      note: 'totalInXLM uses exchange rates stored at transaction time; non-XLM assets with no rate are excluded from totalInXLM',
+    };
   }
   /**
    * Get wallet donation analytics
@@ -553,181 +566,221 @@ class StatsService {
       throw error;
     }
   }
-  */
+  /**
+   * Parse a period string (e.g. '7d', '30d', '90d', '1y') into a date range.
+   * @param {string} period
+   * @returns {{ start: Date, end: Date, granularity: string }}
+   */
+  static parsePeriod(period = '30d') {
+    const now = new Date();
+    const match = String(period).match(/^(\d+)(h|d|w|m|y)$/i);
+    if (!match) {
+      const err = new Error('Invalid period format. Use e.g. 7d, 24h, 4w, 3m, 1y');
+      err.statusCode = 400;
+      throw err;
+    }
+
+    const [, n, unit] = match;
+    const num = parseInt(n, 10);
+    const start = new Date(now);
+
+    switch (unit.toLowerCase()) {
+      case 'h': start.setHours(start.getHours() - num); break;
+      case 'd': start.setDate(start.getDate() - num); break;
+      case 'w': start.setDate(start.getDate() - num * 7); break;
+      case 'm': start.setMonth(start.getMonth() - num); break;
+      case 'y': start.setFullYear(start.getFullYear() - num); break;
+    }
+
+    const hours = (now - start) / 3_600_000;
+    let granularity = 'daily';
+    if (hours <= 48) granularity = 'hourly';
+    else if (hours <= 24 * 14) granularity = 'daily';
+    else if (hours <= 24 * 90) granularity = 'weekly';
+    else granularity = 'monthly';
+
+    return { start, end: now, granularity };
+  }
+
+  /**
+   * Bucket transactions by granularity.
+   * @param {Array} transactions
+   * @param {'hourly'|'daily'|'weekly'|'monthly'} granularity
+   * @returns {Array<{bucket: string, count: number, totalAmount: number, avgAmount: number}>}
+   */
+  static bucketByGranularity(transactions, granularity) {
+    const map = new Map();
+
+    for (const tx of transactions) {
+      const d = new Date(tx.timestamp);
+      let key;
+      switch (granularity) {
+        case 'hourly':
+          key = `${d.toISOString().slice(0, 13)}:00:00Z`;
+          break;
+        case 'weekly':
+          key = StatsService.getWeekKey(d).key;
+          break;
+        case 'monthly':
+          key = `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, '0')}`;
+          break;
+        default:
+          key = StatsService.getDateKey(d);
+      }
+
+      if (!map.has(key)) map.set(key, { bucket: key, count: 0, totalAmount: 0 });
+      const b = map.get(key);
+      b.count += 1;
+      b.totalAmount += parseFloat(tx.amount) || 0;
+    }
+
+    return Array.from(map.values())
+      .map(b => ({ ...b, totalAmount: +b.totalAmount.toFixed(7), avgAmount: b.count ? +(b.totalAmount / b.count).toFixed(7) : 0 }))
+      .sort((a, b) => a.bucket.localeCompare(b.bucket));
+  }
+
+  /**
+   * Compute a simple moving average over bucketed trend data.
+   * @param {Array<{bucket: string, totalAmount: number}>} buckets
+   * @param {number} [window=3]
+   * @returns {Array<{bucket: string, movingAvg: number}>}
+   */
+  static movingAverage(buckets, window = 3) {
+    return buckets.map((b, i) => {
+      const slice = buckets.slice(Math.max(0, i - window + 1), i + 1);
+      const avg = slice.reduce((s, x) => s + x.totalAmount, 0) / slice.length;
+      return { bucket: b.bucket, movingAvg: +avg.toFixed(7) };
+    });
+  }
+
+  /**
+   * Build the full dashboard analytics payload with 5-minute caching.
+   *
+   * @param {object} [options]
+   * @param {string} [options.period='30d']       - Period string (e.g. '7d', '24h', '3m').
+   * @param {string} [options.granularity]        - Override: hourly|daily|weekly|monthly.
+   * @param {number} [options.topN=10]            - Top donors/recipients count.
+   * @param {number} [options.movingAvgWindow=3]  - Moving average window size.
+   * @returns {object} Dashboard data payload.
+   */
+  static getDashboardData({ period = '30d', granularity: granularityOverride, topN = 10, movingAvgWindow = 3 } = {}) {
+    const Cache = require('../utils/cache');
+    const CACHE_TTL_MS = 5 * 60 * 1000;
+    const cacheKey = `dashboard:${period}:${granularityOverride || 'auto'}:${topN}:${movingAvgWindow}`;
+
+    const cached = Cache.get(cacheKey);
+    if (cached) return { ...cached, cached: true };
+
+    const { start, end, granularity: autoGranularity } = StatsService.parsePeriod(period);
+    const granularity = granularityOverride || autoGranularity;
+
+    const Transaction = require('../routes/models/transaction');
+    const transactions = Transaction.getByDateRange(start, end);
+
+    const totalAmount = transactions.reduce((s, tx) => s + (parseFloat(tx.amount) || 0), 0);
+    const totalDonations = transactions.length;
+    const avgAmount = totalDonations ? totalAmount / totalDonations : 0;
+
+    const trendBuckets = StatsService.bucketByGranularity(transactions, granularity);
+    const trendMovingAvg = StatsService.movingAverage(trendBuckets, movingAvgWindow);
+
+    const donorMap = new Map();
+    for (const tx of transactions) {
+      if (tx.anonymous) continue; // exclude anonymous donations from public leaderboard
+      const key = tx.donor || 'anonymous';
+      if (!donorMap.has(key)) donorMap.set(key, { address: key, totalAmount: 0, count: 0 });
+      const d = donorMap.get(key);
+      d.totalAmount += parseFloat(tx.amount) || 0;
+      d.count += 1;
+    }
+    const topDonors = Array.from(donorMap.values())
+      .sort((a, b) => b.totalAmount - a.totalAmount)
+      .slice(0, topN)
+      .map(d => ({ ...d, totalAmount: +d.totalAmount.toFixed(7) }));
+
+    const recipientMap = new Map();
+    for (const tx of transactions) {
+      const key = tx.recipient || 'unknown';
+      if (!recipientMap.has(key)) recipientMap.set(key, { address: key, totalAmount: 0, count: 0 });
+      const r = recipientMap.get(key);
+      r.totalAmount += parseFloat(tx.amount) || 0;
+      r.count += 1;
+    }
+    const topRecipients = Array.from(recipientMap.values())
+      .sort((a, b) => b.totalAmount - a.totalAmount)
+      .slice(0, topN)
+      .map(r => ({ ...r, totalAmount: +r.totalAmount.toFixed(7) }));
+
+    const result = {
+      period,
+      granularity,
+      dateRange: { start: start.toISOString(), end: end.toISOString() },
+      summary: {
+        totalDonations,
+        totalAmount: +totalAmount.toFixed(7),
+        avgAmount: +avgAmount.toFixed(7),
+      },
+      trend: trendBuckets,
+      trendMovingAvg,
+      topDonors,
+      topRecipients,
+      cached: false,
+    };
+
+    Cache.set(cacheKey, result, CACHE_TTL_MS);
+    return result;
+  }
+
+  /**
+   * Get anonymous vs identified donation breakdown
+   * @param {Date} startDate - Start date for aggregation
+   * @param {Date} endDate - End date for aggregation
+   * @returns {object} Breakdown with anonymous and identified totals
+   */
+  static getAnonymousBreakdown(startDate, endDate) {
+    const Transaction = require('../routes/models/transaction');
+    const transactions = Transaction.getByDateRange(startDate, endDate);
+    let anonymousCount = 0;
+    let anonymousAmount = 0;
+    let identifiedCount = 0;
+    let identifiedAmount = 0;
+
+    transactions.forEach(tx => {
+      const amount = parseFloat(tx.amount) || 0;
+      if (tx.anonymous) {
+        anonymousCount += 1;
+        anonymousAmount += amount;
+      } else {
+        identifiedCount += 1;
+        identifiedAmount += amount;
+      }
+    });
+
+    return {
+      anonymous: {
+        count: anonymousCount,
+        totalAmount: +anonymousAmount.toFixed(7),
+      },
+      identified: {
+        count: identifiedCount,
+        totalAmount: +identifiedAmount.toFixed(7),
+      },
+      total: {
+        count: anonymousCount + identifiedCount,
+        totalAmount: +(anonymousAmount + identifiedAmount).toFixed(7),
+      },
+    };
+  }
 }
 
 // ─── Dashboard analytics (appended) ──────────────────────────────────────────
 
-/**
- * Parse a period string (e.g. '7d', '30d', '90d', '1y') into a date range.
- * @param {string} period
- * @returns {{ start: Date, end: Date, granularity: string }}
- */
-StatsService.parsePeriod = function parsePeriod(period = '30d') {
-  const now = new Date();
-  const match = String(period).match(/^(\d+)(h|d|w|m|y)$/i);
-  if (!match) {
-    const err = new Error('Invalid period format. Use e.g. 7d, 24h, 4w, 3m, 1y');
-    err.statusCode = 400;
-    throw err;
-  }
-
-  const [, n, unit] = match;
-  const num = parseInt(n, 10);
-  const start = new Date(now);
-
-  switch (unit.toLowerCase()) {
-    case 'h': start.setHours(start.getHours() - num); break;
-    case 'd': start.setDate(start.getDate() - num); break;
-    case 'w': start.setDate(start.getDate() - num * 7); break;
-    case 'm': start.setMonth(start.getMonth() - num); break;
-    case 'y': start.setFullYear(start.getFullYear() - num); break;
-  }
-
-  const hours = (now - start) / 3_600_000;
-  let granularity = 'daily';
-  if (hours <= 48) granularity = 'hourly';
-  else if (hours <= 24 * 14) granularity = 'daily';
-  else if (hours <= 24 * 90) granularity = 'weekly';
-  else granularity = 'monthly';
-
-  return { start, end: now, granularity };
-};
-
-/**
- * Bucket transactions by granularity.
- * @param {Array} transactions
- * @param {'hourly'|'daily'|'weekly'|'monthly'} granularity
- * @returns {Array<{bucket: string, count: number, totalAmount: number, avgAmount: number}>}
- */
-StatsService.bucketByGranularity = function bucketByGranularity(transactions, granularity) {
-  const map = new Map();
-
-  for (const tx of transactions) {
-    const d = new Date(tx.timestamp);
-    let key;
-    switch (granularity) {
-      case 'hourly':
-        key = `${d.toISOString().slice(0, 13)}:00:00Z`;
-        break;
-      case 'weekly':
-        key = StatsService.getWeekKey(d).key;
-        break;
-      case 'monthly':
-        key = `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, '0')}`;
-        break;
-      default:
-        key = StatsService.getDateKey(d);
-    }
-
-    if (!map.has(key)) map.set(key, { bucket: key, count: 0, totalAmount: 0 });
-    const b = map.get(key);
-    b.count += 1;
-    b.totalAmount += parseFloat(tx.amount) || 0;
-  }
-
-  return Array.from(map.values())
-    .map(b => ({ ...b, totalAmount: +b.totalAmount.toFixed(7), avgAmount: b.count ? +(b.totalAmount / b.count).toFixed(7) : 0 }))
-    .sort((a, b) => a.bucket.localeCompare(b.bucket));
-};
-
-/**
- * Compute a simple moving average over bucketed trend data.
- * @param {Array<{bucket: string, totalAmount: number}>} buckets
- * @param {number} [window=3]
- * @returns {Array<{bucket: string, movingAvg: number}>}
- */
-StatsService.movingAverage = function movingAverage(buckets, window = 3) {
-  return buckets.map((b, i) => {
-    const slice = buckets.slice(Math.max(0, i - window + 1), i + 1);
-    const avg = slice.reduce((s, x) => s + x.totalAmount, 0) / slice.length;
-    return { bucket: b.bucket, movingAvg: +avg.toFixed(7) };
-  });
-};
-
-/**
- * Build the full dashboard analytics payload with 5-minute caching.
- *
- * @param {object} [options]
- * @param {string} [options.period='30d']       - Period string (e.g. '7d', '24h', '3m').
- * @param {string} [options.granularity]        - Override: hourly|daily|weekly|monthly.
- * @param {number} [options.topN=10]            - Top donors/recipients count.
- * @param {number} [options.movingAvgWindow=3]  - Moving average window size.
- * @returns {object} Dashboard data payload.
- */
-StatsService.getDashboardData = function getDashboardData({ period = '30d', granularity: granularityOverride, topN = 10, movingAvgWindow = 3 } = {}) {
-  const Cache = require('../utils/cache');
-  const CACHE_TTL_MS = 5 * 60 * 1000;
-  const cacheKey = `dashboard:${period}:${granularityOverride || 'auto'}:${topN}:${movingAvgWindow}`;
-
-  const cached = Cache.get(cacheKey);
-  if (cached) return { ...cached, cached: true };
-
-  const { start, end, granularity: autoGranularity } = StatsService.parsePeriod(period);
-  const granularity = granularityOverride || autoGranularity;
-
-  const Transaction = require('../routes/models/transaction');
-  const transactions = Transaction.getByDateRange(start, end);
-
-  const totalAmount = transactions.reduce((s, tx) => s + (parseFloat(tx.amount) || 0), 0);
-  const totalDonations = transactions.length;
-  const avgAmount = totalDonations ? totalAmount / totalDonations : 0;
-
-  const trendBuckets = StatsService.bucketByGranularity(transactions, granularity);
-  const trendMovingAvg = StatsService.movingAverage(trendBuckets, movingAvgWindow);
-
-  const donorMap = new Map();
-  for (const tx of transactions) {
-    if (tx.anonymous) continue; // exclude anonymous donations from public leaderboard
-    const key = tx.donor || 'anonymous';
-    if (!donorMap.has(key)) donorMap.set(key, { address: key, totalAmount: 0, count: 0 });
-    const d = donorMap.get(key);
-    d.totalAmount += parseFloat(tx.amount) || 0;
-    d.count += 1;
-  }
-  const topDonors = Array.from(donorMap.values())
-    .sort((a, b) => b.totalAmount - a.totalAmount)
-    .slice(0, topN)
-    .map(d => ({ ...d, totalAmount: +d.totalAmount.toFixed(7) }));
-
-  const recipientMap = new Map();
-  for (const tx of transactions) {
-    const key = tx.recipient || 'unknown';
-    if (!recipientMap.has(key)) recipientMap.set(key, { address: key, totalAmount: 0, count: 0 });
-    const r = recipientMap.get(key);
-    r.totalAmount += parseFloat(tx.amount) || 0;
-    r.count += 1;
-  }
-  const topRecipients = Array.from(recipientMap.values())
-    .sort((a, b) => b.totalAmount - a.totalAmount)
-    .slice(0, topN)
-    .map(r => ({ ...r, totalAmount: +r.totalAmount.toFixed(7) }));
-
-  const result = {
-    period,
-    granularity,
-    dateRange: { start: start.toISOString(), end: end.toISOString() },
-    summary: {
-      totalDonations,
-      totalAmount: +totalAmount.toFixed(7),
-      avgAmount: +avgAmount.toFixed(7),
-    },
-    trend: trendBuckets,
-    trendMovingAvg,
-    topDonors,
-    topRecipients,
-    cached: false,
-  };
-
-  Cache.set(cacheKey, result, CACHE_TTL_MS);
-  return result;
-};
-
-// Invalidate dashboard cache whenever a new donation is created
+// Invalidate dashboard AND stats cache whenever a new donation is created
 const donationEvents = require('../events/donationEvents');
 donationEvents.on('donation.created', () => {
   const Cache = require('../utils/cache');
   Cache.clearPrefix('dashboard:');
+  Cache.clearPrefix('stats:');
 });
 
 module.exports = StatsService;

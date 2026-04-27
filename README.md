@@ -14,7 +14,6 @@ A Node.js/Express API for managing micro-donations on the Stellar blockchain net
 - [Testing](#testing)
 - [Troubleshooting](#troubleshooting)
 - [Documentation](#documentation)
-
 ## ✨ Features
 
 - **One-Time Donations**: Create and verify donations on Stellar testnet/mainnet
@@ -92,12 +91,18 @@ cd Stellar-Micro-Donation-API
 npm install
 ```
 
-3. Initialize the database:
+3. Configure environment variables:
+```bash
+cp .env.example .env
+# Edit .env — at minimum set ENCRYPTION_KEY (run `npm run generate-key`) and API_KEYS
+```
+
+4. Initialize the database:
 ```bash
 npm run init-db
 ```
 
-4. Start the server:
+5. Start the server:
 ```bash
 npm start
 ```
@@ -358,10 +363,10 @@ npm run check-coverage
 ```
 
 Validates that coverage meets minimum thresholds:
-- **Branches**: 30%
-- **Functions**: 30%
-- **Lines**: 30%
-- **Statements**: 30%
+- **Branches**: 60%
+- **Functions**: 60%
+- **Lines**: 60%
+- **Statements**: 60%
 
 ### View Coverage Report
 
@@ -381,7 +386,7 @@ xdg-open coverage/lcov-report/index.html
 ### Coverage Enforcement
 
 Coverage is automatically enforced in CI/CD:
-- ✅ PRs must meet minimum 30% coverage thresholds
+- ✅ PRs must meet minimum 60% coverage thresholds
 - ❌ Builds fail if coverage drops below thresholds
 - 📊 Coverage reports uploaded as artifacts (30-day retention)
 
@@ -513,7 +518,7 @@ The scheduler runs automatically when the server starts and checks for due donat
 
 **Note:** All CI checks must pass before merge, including:
 - ✅ All tests passing
-- ✅ Coverage thresholds met (30% minimum)
+- ✅ Coverage thresholds met (60% minimum)
 - ✅ Linting checks passed
 - ✅ Security checks passed
 

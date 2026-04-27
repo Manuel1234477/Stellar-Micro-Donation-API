@@ -119,6 +119,35 @@ const TransactionEventType = new GraphQLObjectType({
   }),
 });
 
+/** Subscription event payload for donation lifecycle events */
+const DonationEventType = new GraphQLObjectType({
+  name: 'DonationEvent',
+  fields: () => ({
+    id: { type: GraphQLString },
+    donor: { type: GraphQLString },
+    recipient: { type: GraphQLString },
+    amount: { type: GraphQLFloat },
+    status: { type: GraphQLString },
+    stellarTxId: { type: GraphQLString },
+    campaign_id: { type: GraphQLInt },
+    timestamp: { type: GraphQLString },
+  }),
+});
+
+/** Subscription event payload for recurring donation execution */
+const RecurringDonationEventType = new GraphQLObjectType({
+  name: 'RecurringDonationEvent',
+  fields: () => ({
+    scheduleId: { type: GraphQLInt },
+    donor: { type: GraphQLString },
+    recipient: { type: GraphQLString },
+    amount: { type: GraphQLFloat },
+    txHash: { type: GraphQLString },
+    executionCount: { type: GraphQLInt },
+    timestamp: { type: GraphQLString },
+  }),
+});
+
 // ─── Input types ──────────────────────────────────────────────────────────────
 
 const CreateDonationInput = new GraphQLInputObjectType({
@@ -316,21 +345,52 @@ function buildMutationType({ donationService, walletService }) {
 
 /**
  * Build the root Subscription type.
- * Clients subscribe to real-time transaction events via WebSocket.
- * The pubsub object must expose { asyncIterator(topic) }.
+ * Clients subscribe to real-time donation lifecycle events via WebSocket.
+ * All subscriptions support optional filters: walletAddress, campaignId, minAmount.
  * @param {object} pubsub - PubSub instance
  */
 function buildSubscriptionType(pubsub) {
+  /** Shared filter args for all donation subscriptions */
+  const filterArgs = {
+    walletAddress: { type: GraphQLString },
+    campaignId: { type: GraphQLInt },
+    minAmount: { type: GraphQLFloat },
+  };
+
   return new GraphQLObjectType({
     name: 'Subscription',
     fields: () => ({
-      /**
-       * Subscribe to new transaction events.
-       * Emits a TransactionEvent whenever a donation transaction is created.
-       */
+      /** Legacy: subscribe to raw transaction creation events */
       transactionCreated: {
         type: TransactionEventType,
         subscribe: () => pubsub.asyncIterator('TRANSACTION_CREATED'),
+        resolve: (payload) => payload,
+      },
+
+      /** Subscribe to new donation creation events */
+      donationCreated: {
+        type: DonationEventType,
+        args: filterArgs,
+        subscribe: (_, args) => pubsub.filteredIterator(pubsub.TOPICS.DONATION_CREATED, args),
+        resolve: (payload) => payload,
+      },
+
+      /** Subscribe to donation completion (confirmed) events */
+      donationCompleted: {
+        type: DonationEventType,
+        args: filterArgs,
+        subscribe: (_, args) => pubsub.filteredIterator(pubsub.TOPICS.DONATION_COMPLETED, args),
+        resolve: (payload) => payload,
+      },
+
+      /** Subscribe to recurring donation execution events */
+      recurringDonationExecuted: {
+        type: RecurringDonationEventType,
+        args: {
+          walletAddress: { type: GraphQLString },
+          minAmount: { type: GraphQLFloat },
+        },
+        subscribe: (_, args) => pubsub.filteredIterator(pubsub.TOPICS.RECURRING_DONATION_EXECUTED, args),
         resolve: (payload) => payload,
       },
     }),
@@ -352,4 +412,4 @@ function buildSchema({ donationService, walletService, statsService, pubsub }) {
   });
 }
 
-module.exports = { buildSchema, TransactionEventType };
+module.exports = { buildSchema, TransactionEventType, DonationEventType, RecurringDonationEventType };

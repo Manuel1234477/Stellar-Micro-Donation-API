@@ -13,8 +13,11 @@ try {
 const log = require('../utils/log');
 const correlationUtils = require("../utils/correlation");
 
+const UUID_V4_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+
 const requestIdMiddleware = (req, res, next) => {
-  const requestId = req.get('X-Request-ID') || uuidv4();
+  const clientId = req.get('X-Request-ID');
+  const requestId = (clientId && UUID_V4_RE.test(clientId)) ? clientId : uuidv4();
 
   req.id = requestId;
   res.setHeader('X-Request-ID', requestId);

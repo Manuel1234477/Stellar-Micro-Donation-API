@@ -10,12 +10,14 @@
  */
 
 const { securityConfig } = require("../config/securityConfig");
-const { validateKey } = require("../models/apiKeys");
+const { validateKey, incrementQuota } = require("../models/apiKeys");
+const { verifyAccessToken } = require("../services/JwtService");
 const log = require("../utils/log");
 const AuditLogService = require("../services/AuditLogService");
 const { verify: verifySignature } = require("../utils/requestSigner");
 const { isIpAllowed } = require("../utils/ipAllowlist");
 const { defaultStore: nonceStore } = require("../utils/nonceStore");
+const WebhookService = require("../services/WebhookService");
 
 /**
  * Legacy Support Configuration
@@ -39,6 +41,34 @@ const legacyKeys = securityConfig.API_KEYS || [];
  */
 const requireApiKey = async (req, res, next) => {
   if (req.apiKey) {
+    return next();
+  }
+
+  // Allow JWT bearer token as an alternate auth method
+  const authorization = req.get('Authorization') || req.get('authorization');
+  if (authorization && authorization.startsWith('Bearer ')) {
+    const token = authorization.slice(7).trim();
+    const result = verifyAccessToken(token);
+    if (result.valid) {
+      req.user = {
+        id: `jwt-${result.payload.sub || 'unknown'}`,
+        role: result.payload.role || 'user',
+        authMethod: 'jwt',
+        claims: result.payload,
+      };
+      return next();
+    }
+
+    return res.status(401).json({
+      success: false,
+      error: {
+        code: 'UNAUTHORIZED',
+        message: 'Invalid or expired bearer token',
+      },
+    });
+  }
+
+  if (req.user && req.user.authMethod === 'jwt') {
     return next();
   }
 
@@ -84,6 +114,60 @@ const requireApiKey = async (req, res, next) => {
 
     if (keyInfo) {
       req.apiKey = keyInfo;
+
+      // --- Quota Check ---
+      if (keyInfo.monthlyQuota) {
+        const quotaRemaining = keyInfo.monthlyQuota - keyInfo.quotaUsed;
+        
+        if (quotaRemaining <= 0) {
+          log.warn('API_KEY_AUTH', 'Request rejected: quota exceeded', {
+            keyId: keyInfo.id,
+            keyPrefix: keyInfo.keyPrefix,
+            quotaUsed: keyInfo.quotaUsed,
+            monthlyQuota: keyInfo.monthlyQuota,
+            path: req.path,
+          });
+
+          AuditLogService.log({
+            category: AuditLogService.CATEGORY.AUTHENTICATION,
+            action: AuditLogService.ACTION.API_KEY_VALIDATION_FAILED,
+            severity: AuditLogService.SEVERITY.MEDIUM,
+            result: 'FAILURE',
+            userId: keyInfo.id?.toString(),
+            requestId: req.id,
+            ipAddress: req.ip,
+            resource: req.path,
+            reason: 'Monthly quota exceeded',
+            details: { keyId: keyInfo.id, quotaUsed: keyInfo.quotaUsed, monthlyQuota: keyInfo.monthlyQuota },
+          }).catch(() => {});
+
+          // Fire quota.exceeded webhook event
+          WebhookService.deliver('quota.exceeded', {
+            keyId: keyInfo.id,
+            keyName: keyInfo.name,
+            quotaUsed: keyInfo.quotaUsed,
+            monthlyQuota: keyInfo.monthlyQuota,
+            quotaResetAt: keyInfo.quotaResetAt ? new Date(keyInfo.quotaResetAt).toISOString() : null,
+          }).catch(() => {});
+
+          return res.status(429).json({
+            success: false,
+            error: {
+              code: 'QUOTA_EXCEEDED',
+              message: 'Monthly API quota exceeded',
+              requestId: req.id,
+              timestamp: new Date().toISOString(),
+              quotaResetAt: keyInfo.quotaResetAt ? new Date(keyInfo.quotaResetAt).toISOString() : null,
+            },
+          });
+        }
+
+        // Set quota headers
+        res.setHeader('X-Quota-Limit', keyInfo.monthlyQuota.toString());
+        res.setHeader('X-Quota-Remaining', quotaRemaining.toString());
+        res.setHeader('X-Quota-Reset', keyInfo.quotaResetAt ? new Date(keyInfo.quotaResetAt).toISOString() : '');
+      }
+      // --- End Quota Check ---
 
       // --- IP Allowlist Check ---
       if (!isIpAllowed(req.ip, keyInfo.allowedIps)) {
@@ -218,6 +302,15 @@ const requireApiKey = async (req, res, next) => {
         const thresholdMs = keyInfo.gracePeriodDays * 0.8 * 24 * 60 * 60 * 1000;
         if (ageMs >= thresholdMs) {
           res.setHeader("X-Rotation-Suggested", "true");
+        }
+      }
+
+      // Expiry proximity header — show days remaining when key expires within 30 days
+      if (keyInfo.expiresAt) {
+        const msRemaining = keyInfo.expiresAt - Date.now();
+        const daysRemaining = Math.ceil(msRemaining / (24 * 60 * 60 * 1000));
+        if (daysRemaining <= 30) {
+          res.setHeader("X-API-Key-Expires-In", String(daysRemaining));
         }
       }
 

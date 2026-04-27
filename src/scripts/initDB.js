@@ -37,7 +37,8 @@ function createUsersTable(db) {
         deleted_at DATETIME DEFAULT NULL,
         daily_limit REAL DEFAULT NULL,
         monthly_limit REAL DEFAULT NULL,
-        per_transaction_limit REAL DEFAULT NULL
+        per_transaction_limit REAL DEFAULT NULL,
+        tenant_id TEXT NOT NULL DEFAULT 'default'
       )
     `;
 
@@ -69,6 +70,9 @@ function createTransactionsTable(db) {
         stellar_tx_id TEXT UNIQUE,
         is_orphan INTEGER NOT NULL DEFAULT 0,
         campaign_id INTEGER,
+        validAfter INTEGER DEFAULT 0,
+        validBefore INTEGER DEFAULT 0,
+        tenant_id TEXT NOT NULL DEFAULT 'default',
         FOREIGN KEY (campaign_id) REFERENCES campaigns(id),
         FOREIGN KEY (senderId) REFERENCES users(id),
         FOREIGN KEY (receiverId) REFERENCES users(id)
@@ -120,6 +124,7 @@ function createCampaignsTable(db) {
         createdAt DATETIME DEFAULT CURRENT_TIMESTAMP,
         updatedAt DATETIME DEFAULT CURRENT_TIMESTAMP,
         deleted_at DATETIME DEFAULT NULL,
+        tenant_id TEXT NOT NULL DEFAULT 'default',
         FOREIGN KEY (created_by) REFERENCES users(id)
       )
     `;
@@ -129,6 +134,41 @@ function createCampaignsTable(db) {
         reject(err);
       } else {
         console.log('✓ Created campaigns table (with soft-delete support)');
+        resolve();
+      }
+    });
+  });
+}
+
+function createRecurringDonationsTable(db) {
+  return new Promise((resolve, reject) => {
+    const createTableSQL = `
+      CREATE TABLE IF NOT EXISTS recurring_donations (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        donorId INTEGER NOT NULL,
+        recipientId INTEGER NOT NULL,
+        amount REAL NOT NULL,
+        frequency TEXT NOT NULL,
+        nextExecutionDate DATETIME NOT NULL,
+        status TEXT DEFAULT 'active',
+        executionCount INTEGER DEFAULT 0,
+        customIntervalDays INTEGER DEFAULT NULL,
+        maxExecutions INTEGER DEFAULT NULL,
+        webhookUrl TEXT DEFAULT NULL,
+        failureCount INTEGER DEFAULT 0,
+        lastExecutionDate DATETIME DEFAULT NULL,
+        deleted_at DATETIME DEFAULT NULL,
+        tenant_id TEXT NOT NULL DEFAULT 'default',
+        FOREIGN KEY (donorId) REFERENCES users(id),
+        FOREIGN KEY (recipientId) REFERENCES users(id)
+      )
+    `;
+
+    db.run(createTableSQL, (err) => {
+      if (err) {
+        reject(err);
+      } else {
+        console.log('✓ Created recurring_donations table (with all required columns)');
         resolve();
       }
     });
@@ -146,7 +186,8 @@ function createStudentFeeTables(db) {
         paidAmount REAL NOT NULL DEFAULT 0,
         createdAt DATETIME DEFAULT CURRENT_TIMESTAMP,
         updatedAt DATETIME DEFAULT CURRENT_TIMESTAMP,
-        deleted_at DATETIME DEFAULT NULL
+        deleted_at DATETIME DEFAULT NULL,
+        tenant_id TEXT NOT NULL DEFAULT 'default'
       )`, (err) => { if (err) return reject(err); });
 
       db.run(`CREATE TABLE IF NOT EXISTS fee_payments (
@@ -156,6 +197,7 @@ function createStudentFeeTables(db) {
         note TEXT,
         paidAt DATETIME DEFAULT CURRENT_TIMESTAMP,
         deleted_at DATETIME DEFAULT NULL,
+        tenant_id TEXT NOT NULL DEFAULT 'default',
         FOREIGN KEY (feeId) REFERENCES student_fees(id)
       )`, (err) => {
         if (err) return reject(err);
@@ -179,6 +221,7 @@ async function main() {
     await createTransactionsTable(db);
     await createIndexes(db);
     await createCampaignsTable(db);
+    await createRecurringDonationsTable(db);
     await createStudentFeeTables(db);
     
     // Note: If you are running this on an existing DB, you will need to manually 

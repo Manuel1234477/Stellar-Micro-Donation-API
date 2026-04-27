@@ -6,7 +6,7 @@ This checklist ensures the Stellar Micro-Donation API is production-ready before
 
 ### Required Environment Variables
 - [ ] `API_KEYS` - Set with strong, randomly generated keys (use `openssl rand -hex 32`)
-- [ ] `ENCRYPTION_KEY` - Required for production environment (32+ character random string)
+- [ ] `ENCRYPTION_KEY` - Required in all environments (32+ character random string — run `npm run generate-key`)
 - [ ] `NODE_ENV` - Set to `production`
 - [ ] `STELLAR_NETWORK` - Set to `mainnet` for production (or `testnet` for staging)
 - [ ] `PORT` - Configured (default: 3000, must be 1-65535)

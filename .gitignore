@@ -104,3 +104,9 @@ dist/
 test-results/
 playwright-report/
 playwright/.cache/
+
+# Python artifacts
+sdk/python/__pycache__/
+sdk/python/.coverage
+*.pyc
+.pytest_cache/

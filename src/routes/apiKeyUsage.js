@@ -8,12 +8,32 @@
 
 const express = require('express');
 const ApiKeyUsageService = require('../services/ApiKeyUsageService');
+const requireApiKey = require('../middleware/apiKey');
+const { validateInteger } = require('../utils/validationHelpers');
 
 const router = express.Router();
 
 // Allow tests to inject a custom service instance
 let _service = ApiKeyUsageService.instance;
 const setUsageService = (svc) => { _service = svc; };
+
+const requireApiKeyOwnerOrAdmin = (req, res, next) => {
+  const keyId = String(req.params.id);
+
+  if (req.user && req.user.role === 'admin') {
+    return next();
+  }
+
+  if (req.apiKey && String(req.apiKey.id) === keyId) {
+    return next();
+  }
+
+  if (req.user && req.user.authMethod === 'jwt' && String(req.user.subject) === keyId) {
+    return next();
+  }
+
+  return res.status(403).json({ success: false, error: 'Access denied' });
+};
 
 /**
  * GET /api-keys/:id/usage
@@ -25,6 +45,48 @@ router.get('/:id/usage', (req, res) => {
     return res.json({ success: true, data: summary });
   } catch (err) {
     const status = err.message.includes('required') ? 400 : 500;
+    return res.status(status).json({ success: false, error: err.message });
+  }
+});
+
+router.get('/:id/analytics', requireApiKey, requireApiKeyOwnerOrAdmin, (req, res) => {
+  try {
+    const validation = validateInteger(req.params.id, { min: 1 });
+    if (!validation.valid) {
+      return res.status(400).json({ success: false, error: validation.error });
+    }
+
+    const from = req.query.from ? new Date(req.query.from).getTime() : undefined;
+    const to = req.query.to ? new Date(req.query.to).getTime() : undefined;
+    if ((req.query.from && isNaN(from)) || (req.query.to && isNaN(to))) {
+      return res.status(400).json({ success: false, error: 'Invalid from/to date format' });
+    }
+
+    const analytics = _service.getAnalytics(req.params.id, { from, to });
+    return res.json({ success: true, data: analytics });
+  } catch (err) {
+    const status = err.message.includes('required') || err.message.includes('Invalid') ? 400 : 500;
+    return res.status(status).json({ success: false, error: err.message });
+  }
+});
+
+router.get('/:id/analytics/summary', requireApiKey, requireApiKeyOwnerOrAdmin, (req, res) => {
+  try {
+    const validation = validateInteger(req.params.id, { min: 1 });
+    if (!validation.valid) {
+      return res.status(400).json({ success: false, error: validation.error });
+    }
+
+    const from = req.query.from ? new Date(req.query.from).getTime() : undefined;
+    const to = req.query.to ? new Date(req.query.to).getTime() : undefined;
+    if ((req.query.from && isNaN(from)) || (req.query.to && isNaN(to))) {
+      return res.status(400).json({ success: false, error: 'Invalid from/to date format' });
+    }
+
+    const summary = _service.getAnalyticsSummary(req.params.id, { from, to });
+    return res.json({ success: true, data: summary });
+  } catch (err) {
+    const status = err.message.includes('required') || err.message.includes('Invalid') ? 400 : 500;
     return res.status(status).json({ success: false, error: err.message });
   }
 });

@@ -7,6 +7,86 @@
  * DEPENDENCIES: Database, middleware (auth, RBAC), SseManager, donationEvents
  */
 
+/**
+ * @openapi
+ * tags:
+ *   - name: Stream
+ *     description: Recurring donation schedules
+ *
+ * /stream/create:
+ *   post:
+ *     tags: [Stream]
+ *     summary: Create a recurring donation schedule
+ *     security:
+ *       - ApiKeyAuth: []
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             required: [donorPublicKey, recipientPublicKey, amount, frequency]
+ *             properties:
+ *               donorPublicKey:
+ *                 type: string
+ *               recipientPublicKey:
+ *                 type: string
+ *               amount:
+ *                 type: number
+ *               frequency:
+ *                 type: string
+ *                 enum: [daily, weekly, monthly]
+ *     responses:
+ *       201:
+ *         description: Schedule created
+ *       400:
+ *         description: Validation error
+ *
+ * /stream/schedules:
+ *   get:
+ *     tags: [Stream]
+ *     summary: List all recurring donation schedules
+ *     security:
+ *       - ApiKeyAuth: []
+ *     responses:
+ *       200:
+ *         description: List of schedules
+ *
+ * /stream/schedules/{id}:
+ *   get:
+ *     tags: [Stream]
+ *     summary: Get a specific schedule
+ *     security:
+ *       - ApiKeyAuth: []
+ *     parameters:
+ *       - in: path
+ *         name: id
+ *         required: true
+ *         schema:
+ *           type: integer
+ *     responses:
+ *       200:
+ *         description: Schedule details
+ *       404:
+ *         description: Schedule not found
+ *   delete:
+ *     tags: [Stream]
+ *     summary: Cancel a recurring donation schedule
+ *     security:
+ *       - ApiKeyAuth: []
+ *     parameters:
+ *       - in: path
+ *         name: id
+ *         required: true
+ *         schema:
+ *           type: integer
+ *     responses:
+ *       200:
+ *         description: Schedule cancelled
+ *       404:
+ *         description: Schedule not found
+ */
+
 const express = require('express');
 const router = express.Router();
 const crypto = require('crypto');
@@ -21,6 +101,7 @@ const SseManager = require('../services/SseManager');
 const donationEvents = require('../events/donationEvents');
 const { payloadSizeLimiter, ENDPOINT_LIMITS } = require('../middleware/payloadSizeLimiter');
 const { requestTimeout, TIMEOUTS } = require('../middleware/requestTimeout');
+const asyncHandler = require('../utils/asyncHandler');
 
 const streamCreateSchema = validateSchema({
   body: {
@@ -52,6 +133,19 @@ const streamCreateSchema = validateSchema({
             : `frequency must be one of: ${VALID_FREQUENCIES.join(', ')}`;
         },
       },
+      customIntervalDays: {
+        type: 'number',
+        required: false,
+        min: 1,
+      },
+    },
+    validate: (body) => {
+      if (body.frequency && body.frequency.toLowerCase() === 'custom') {
+        if (!body.customIntervalDays || !Number.isInteger(Number(body.customIntervalDays)) || Number(body.customIntervalDays) < 1) {
+          return 'customIntervalDays is required and must be a positive integer when frequency is "custom"';
+        }
+      }
+      return null;
     },
   },
 });
@@ -68,9 +162,9 @@ const streamScheduleIdSchema = validateSchema({
  * POST /stream/create
  * Create a recurring donation schedule
  */
-router.post('/create', payloadSizeLimiter(ENDPOINT_LIMITS.stream), requestTimeout(TIMEOUTS.stream), checkPermission(PERMISSIONS.STREAM_CREATE), streamCreateSchema, async (req, res, next) => {
+router.post('/create', payloadSizeLimiter(ENDPOINT_LIMITS.stream), requestTimeout(TIMEOUTS.stream), checkPermission(PERMISSIONS.STREAM_CREATE), streamCreateSchema, asyncHandler(async (req, res, next) => {
   try {
-    const { donorPublicKey, recipientPublicKey, amount, frequency } = req.body;
+    const { donorPublicKey, recipientPublicKey, amount, frequency, customIntervalDays } = req.body;
 
     // Validate required fields
     const requiredValidation = validateRequiredFields(
@@ -101,6 +195,17 @@ router.post('/create', payloadSizeLimiter(ENDPOINT_LIMITS.stream), requestTimeou
         success: false,
         error: frequencyValidation.error
       });
+    }
+
+    // Validate customIntervalDays when frequency is 'custom'
+    const normalizedFrequency = frequency.toLowerCase();
+    if (normalizedFrequency === 'custom') {
+      if (!customIntervalDays || !Number.isInteger(Number(customIntervalDays)) || Number(customIntervalDays) < 1) {
+        return res.status(400).json({
+          success: false,
+          error: 'customIntervalDays is required and must be a positive integer when frequency is "custom"'
+        });
+      }
     }
 
     // Check if donor exists
@@ -151,6 +256,9 @@ router.post('/create', payloadSizeLimiter(ENDPOINT_LIMITS.stream), requestTimeou
       case 'monthly':
         nextExecutionDate.setMonth(nextExecutionDate.getMonth() + 1);
         break;
+      case 'custom':
+        nextExecutionDate.setDate(nextExecutionDate.getDate() + parseInt(customIntervalDays, 10));
+        break;
     }
 
     // Insert recurring donation schedule
@@ -189,6 +297,7 @@ router.post('/create', payloadSizeLimiter(ENDPOINT_LIMITS.stream), requestTimeou
         recipient: schedule.recipientPublicKey,
         amount: schedule.amount,
         frequency: schedule.frequency,
+        ...(schedule.frequency === 'custom' && { customIntervalDays: parseInt(customIntervalDays, 10) }),
         nextExecution: schedule.nextExecutionDate,
         status: schedule.status,
         executionCount: schedule.executionCount
@@ -197,16 +306,51 @@ router.post('/create', payloadSizeLimiter(ENDPOINT_LIMITS.stream), requestTimeou
   } catch (error) {
     next(error);
   }
-});
+}));
 
 /**
  * GET /stream/schedules
- * Get all recurring donation schedules
+ * Get recurring donation schedules.
+ * Regular users see only their own schedules (where they are the donor).
+ * Admin users can see all schedules by passing ?all=true.
+ * Supports optional ?status= filter and ?sort= (default id:asc) — #798.
  */
-router.get('/schedules', checkPermission(PERMISSIONS.STREAM_READ), async (req, res, next) => {
+router.get('/schedules', checkPermission(PERMISSIONS.STREAM_READ), asyncHandler(async (req, res, next) => {
   try {
-    const schedules = await Database.query(
-      `SELECT
+    const { status, all } = req.query;
+    const isAdmin = req.user?.role === 'admin' || req.apiKey?.role === 'admin';
+    const userPublicKey = req.user?.subject || req.apiKey?.subject;
+
+    // Non-admins must be filtered to their own schedules
+    if (!isAdmin && !userPublicKey) {
+      return res.status(403).json({
+        success: false,
+        error: { code: 'FORBIDDEN', message: 'Cannot identify requesting user' }
+      });
+    }
+
+    // #798: validate ?sort param — default id:asc for stable pagination
+    const VALID_SORT = {
+      'id:asc': 'rd.id ASC',
+      'id:desc': 'rd.id DESC',
+      'createdAt:asc': 'rd.id ASC',   // createdAt not stored; id is a stable proxy
+      'createdAt:desc': 'rd.id DESC',
+    };
+    const sortParam = req.query.sort || 'id:asc';
+    if (!VALID_SORT[sortParam]) {
+      return res.status(400).json({
+        success: false,
+        error: {
+          code: 'INVALID_SORT',
+          message: `Invalid sort value. Valid options: ${Object.keys(VALID_SORT).join(', ')}`,
+        },
+      });
+    }
+    const orderByClause = VALID_SORT[sortParam];
+
+    const showAll = isAdmin && all === 'true';
+
+    let query = `SELECT
         rd.id,
         rd.amount,
         rd.frequency,
@@ -215,13 +359,31 @@ router.get('/schedules', checkPermission(PERMISSIONS.STREAM_READ), async (req, r
         rd.lastExecutionDate,
         rd.status,
         rd.executionCount,
+        rd.pausedAt,
+        rd.resumedAt,
         donor.publicKey as donorPublicKey,
         recipient.publicKey as recipientPublicKey
        FROM recurring_donations rd
        JOIN users donor ON rd.donorId = donor.id
-       JOIN users recipient ON rd.recipientId = recipient.id
-       ORDER BY rd.createdAt DESC`
-    );
+       JOIN users recipient ON rd.recipientId = recipient.id`;
+
+    const params = [];
+    const conditions = [];
+
+    if (!showAll) {
+      conditions.push('donor.publicKey = ?');
+      params.push(userPublicKey);
+    }
+    if (status) {
+      conditions.push('rd.status = ?');
+      params.push(status);
+    }
+    if (conditions.length) {
+      query += ' WHERE ' + conditions.join(' AND ');
+    }
+    query += ` ORDER BY ${orderByClause}`;
+
+    const schedules = await Database.query(query, params);
 
     res.json({
       success: true,
@@ -231,13 +393,146 @@ router.get('/schedules', checkPermission(PERMISSIONS.STREAM_READ), async (req, r
   } catch (error) {
     next(error);
   }
-});
+}));
+
+/**
+ * POST /stream/schedules/:id/pause
+ * Pause an active recurring donation schedule.
+ * Returns 409 if the schedule is already paused.
+ * Authorization: Only the donor who created the schedule or an admin can pause it
+ */
+router.post('/schedules/:id/pause', checkPermission(PERMISSIONS.STREAM_UPDATE), streamScheduleIdSchema, payloadSizeLimiter(ENDPOINT_LIMITS.stream), asyncHandler(async (req, res, next) => {
+  try {
+    const schedule = await Database.get(
+      `SELECT rd.id, rd.status, donor.publicKey as donorPublicKey
+       FROM recurring_donations rd
+       JOIN users donor ON rd.donorId = donor.id
+       WHERE rd.id = ?`,
+      [req.params.id]
+    );
+
+    if (!schedule) {
+      return res.status(404).json({ success: false, error: 'Schedule not found' });
+    }
+
+    // Authorization check: verify ownership or admin role
+    const isAdmin = req.user && req.user.role === 'admin';
+    const userPublicKey = req.user && req.user.subject;
+    
+    if (!isAdmin && userPublicKey !== schedule.donorPublicKey) {
+      return res.status(403).json({
+        success: false,
+        error: {
+          code: 'FORBIDDEN',
+          message: 'You do not have permission to pause this schedule. Only the schedule owner or an admin can pause it.'
+        }
+      });
+    }
+
+    if (schedule.status === SCHEDULE_STATUS.PAUSED) {
+      return res.status(409).json({ success: false, error: 'Schedule is already paused' });
+    }
+
+    if (schedule.status !== SCHEDULE_STATUS.ACTIVE) {
+      return res.status(400).json({
+        success: false,
+        error: `Cannot pause a schedule with status: ${schedule.status}`
+      });
+    }
+
+    const now = new Date().toISOString();
+    await Database.run(
+      'UPDATE recurring_donations SET status = ?, pausedAt = ? WHERE id = ?',
+      [SCHEDULE_STATUS.PAUSED, now, req.params.id]
+    );
+
+    res.json({
+      success: true,
+      message: 'Recurring donation schedule paused successfully',
+      data: { id: schedule.id, status: SCHEDULE_STATUS.PAUSED, pausedAt: now }
+    });
+  } catch (error) {
+    next(error);
+  }
+}));
+
+/**
+ * POST /stream/schedules/:id/resume
+ * Resume a paused recurring donation schedule.
+ * Recalculates nextExecutionDate from now based on frequency.
+ * Authorization: Only the donor who created the schedule or an admin can resume it
+ */
+router.post('/schedules/:id/resume', checkPermission(PERMISSIONS.STREAM_UPDATE), streamScheduleIdSchema, payloadSizeLimiter(ENDPOINT_LIMITS.stream), asyncHandler(async (req, res, next) => {
+  try {
+    const schedule = await Database.get(
+      `SELECT rd.id, rd.status, rd.frequency, donor.publicKey as donorPublicKey
+       FROM recurring_donations rd
+       JOIN users donor ON rd.donorId = donor.id
+       WHERE rd.id = ?`,
+      [req.params.id]
+    );
+
+    if (!schedule) {
+      return res.status(404).json({ success: false, error: 'Schedule not found' });
+    }
+
+    // Authorization check: verify ownership or admin role
+    const isAdmin = req.user && req.user.role === 'admin';
+    const userPublicKey = req.user && req.user.subject;
+    
+    if (!isAdmin && userPublicKey !== schedule.donorPublicKey) {
+      return res.status(403).json({
+        success: false,
+        error: {
+          code: 'FORBIDDEN',
+          message: 'You do not have permission to resume this schedule. Only the schedule owner or an admin can resume it.'
+        }
+      });
+    }
+
+    if (schedule.status !== SCHEDULE_STATUS.PAUSED) {
+      return res.status(400).json({
+        success: false,
+        error: `Cannot resume a schedule with status: ${schedule.status}`
+      });
+    }
+
+    // Recalculate next execution date from now
+    const now = new Date();
+    const nextExecutionDate = new Date(now);
+    switch (schedule.frequency) {
+      case 'daily':  nextExecutionDate.setDate(nextExecutionDate.getDate() + 1); break;
+      case 'weekly': nextExecutionDate.setDate(nextExecutionDate.getDate() + 7); break;
+      case 'monthly': nextExecutionDate.setMonth(nextExecutionDate.getMonth() + 1); break;
+      default: nextExecutionDate.setDate(nextExecutionDate.getDate() + 1);
+    }
+
+    const resumedAt = now.toISOString();
+    await Database.run(
+      'UPDATE recurring_donations SET status = ?, resumedAt = ?, nextExecutionDate = ? WHERE id = ?',
+      [SCHEDULE_STATUS.ACTIVE, resumedAt, nextExecutionDate.toISOString(), req.params.id]
+    );
+
+    res.json({
+      success: true,
+      message: 'Recurring donation schedule resumed successfully',
+      data: {
+        id: schedule.id,
+        status: SCHEDULE_STATUS.ACTIVE,
+        resumedAt,
+        nextExecutionDate: nextExecutionDate.toISOString()
+      }
+    });
+  } catch (error) {
+    next(error);
+  }
+}));
 
 /**
  * GET /stream/schedules/:id
  * Get a specific recurring donation schedule
  */
-router.get('/schedules/:id', checkPermission(PERMISSIONS.STREAM_READ), streamScheduleIdSchema, async (req, res) => {
+router.get('/schedules/:id', checkPermission(PERMISSIONS.STREAM_READ), streamScheduleIdSchema, asyncHandler(async (req, res) => {
   try {
     const schedule = await Database.get(
       `SELECT
@@ -249,6 +544,8 @@ router.get('/schedules/:id', checkPermission(PERMISSIONS.STREAM_READ), streamSch
         rd.lastExecutionDate,
         rd.status,
         rd.executionCount,
+        rd.pausedAt,
+        rd.resumedAt,
         donor.publicKey as donorPublicKey,
         recipient.publicKey as recipientPublicKey
        FROM recurring_donations rd
@@ -277,16 +574,86 @@ router.get('/schedules/:id', checkPermission(PERMISSIONS.STREAM_READ), streamSch
       message: error.message
     });
   }
-});
+}));
+
+/**
+ * GET /stream/schedules/:id/history
+ * Paginated execution history for a recurring donation schedule.
+ * Accessible to the schedule owner and admins.
+ *
+ * Query params:
+ *   page  {number} - 1-based page number (default 1)
+ *   limit {number} - records per page (default 20, max 100)
+ */
+router.get('/schedules/:id/history', checkPermission(PERMISSIONS.STREAM_READ), streamScheduleIdSchema, asyncHandler(async (req, res) => {
+  try {
+    // Verify schedule exists and check ownership
+    const schedule = await Database.get(
+      `SELECT rd.id, donor.publicKey as donorPublicKey
+       FROM recurring_donations rd
+       JOIN users donor ON rd.donorId = donor.id
+       WHERE rd.id = ?`,
+      [req.params.id]
+    );
+
+    if (!schedule) {
+      return res.status(404).json({ success: false, error: 'Schedule not found' });
+    }
+
+    const isAdmin = req.user?.role === 'admin' || req.apiKey?.role === 'admin';
+    const userPublicKey = req.user?.subject || req.apiKey?.subject;
+
+    if (!isAdmin && userPublicKey !== schedule.donorPublicKey) {
+      return res.status(403).json({
+        success: false,
+        error: { code: 'FORBIDDEN', message: 'Access denied' }
+      });
+    }
+
+    const page  = Math.max(1, parseInt(req.query.page, 10)  || 1);
+    const limit = Math.min(100, Math.max(1, parseInt(req.query.limit, 10) || 20));
+    const offset = (page - 1) * limit;
+
+    const [executions, countRow] = await Promise.all([
+      Database.query(
+        `SELECT id, executedAt, status, transactionHash, errorMessage
+         FROM recurring_donation_executions
+         WHERE scheduleId = ?
+         ORDER BY executedAt DESC
+         LIMIT ? OFFSET ?`,
+        [req.params.id, limit, offset]
+      ),
+      Database.get(
+        'SELECT COUNT(*) as total FROM recurring_donation_executions WHERE scheduleId = ?',
+        [req.params.id]
+      ),
+    ]);
+
+    const total = countRow ? countRow.total : 0;
+
+    res.json({
+      success: true,
+      data: executions,
+      meta: { page, limit, total, totalPages: Math.ceil(total / limit) }
+    });
+  } catch (error) {
+    log.error('STREAM_ROUTE', 'Failed to fetch schedule history', { error: error.message });
+    res.status(500).json({ success: false, error: 'Failed to fetch schedule history' });
+  }
+}));
 
 /**
  * DELETE /stream/schedules/:id
  * Cancel a recurring donation schedule
+ * Authorization: Only the donor who created the schedule or an admin can cancel it
  */
-router.delete('/schedules/:id', checkPermission(PERMISSIONS.STREAM_DELETE), streamScheduleIdSchema, async (req, res) => {
+router.delete('/schedules/:id', checkPermission(PERMISSIONS.STREAM_DELETE), streamScheduleIdSchema, asyncHandler(async (req, res) => {
   try {
     const schedule = await Database.get(
-      'SELECT id, status FROM recurring_donations WHERE id = ?',
+      `SELECT rd.id, rd.status, donor.publicKey as donorPublicKey
+       FROM recurring_donations rd
+       JOIN users donor ON rd.donorId = donor.id
+       WHERE rd.id = ?`,
       [req.params.id]
     );
 
@@ -297,13 +664,69 @@ router.delete('/schedules/:id', checkPermission(PERMISSIONS.STREAM_DELETE), stre
       });
     }
 
+    // Authorization check: verify ownership or admin role
+    const isAdmin = req.user && req.user.role === 'admin';
+    
+    // For SEP-10 JWT authentication, the subject contains the public key
+    const userPublicKey = req.user && req.user.subject;
+    
+    // Check if the requesting user is the donor or an admin
+    if (!isAdmin && userPublicKey !== schedule.donorPublicKey) {
+      log.warn('STREAM_ROUTE', 'Unauthorized schedule cancellation attempt', {
+        scheduleId: req.params.id,
+        requestingUser: userPublicKey || req.user?.id,
+        scheduleOwner: schedule.donorPublicKey,
+        userRole: req.user?.role
+      });
+      
+      return res.status(403).json({
+        success: false,
+        error: {
+          code: 'FORBIDDEN',
+          message: 'You do not have permission to cancel this schedule. Only the schedule owner or an admin can cancel it.'
+        }
+      });
+    }
+
+    // Check if the schedule is currently being executed (#778)
+    const scheduler = require('../services/RecurringDonationScheduler');
+    const scheduleIdNum = parseInt(req.params.id, 10);
+    const isInProgress = scheduler.executingSchedules && scheduler.executingSchedules.has(scheduleIdNum);
+
+    if (isInProgress) {
+      // Mark as pending_cancellation — the scheduler will set it to cancelled after execution completes
+      await Database.run(
+        'UPDATE recurring_donations SET status = ? WHERE id = ?',
+        ['pending_cancellation', req.params.id]
+      );
+
+      log.info('STREAM_ROUTE', 'Schedule cancellation deferred — execution in progress', {
+        scheduleId: req.params.id,
+        cancelledBy: userPublicKey || req.user?.id,
+        isAdmin
+      });
+
+      return res.json({
+        success: true,
+        cancellationStatus: 'deferred',
+        message: 'Schedule is currently executing. Cancellation will take effect after the current execution completes.'
+      });
+    }
+
     await Database.run(
       'UPDATE recurring_donations SET status = ? WHERE id = ?',
       ['cancelled', req.params.id]
     );
 
+    log.info('STREAM_ROUTE', 'Schedule cancelled immediately', {
+      scheduleId: req.params.id,
+      cancelledBy: userPublicKey || req.user?.id,
+      isAdmin
+    });
+
     res.json({
       success: true,
+      cancellationStatus: 'immediate',
       message: 'Recurring donation schedule cancelled successfully'
     });
   } catch (error) {
@@ -314,7 +737,7 @@ router.delete('/schedules/:id', checkPermission(PERMISSIONS.STREAM_DELETE), stre
       message: error.message
     });
   }
-});
+}));
 
 // ─── SSE Transaction Feed ────────────────────────────────────────────────────
 

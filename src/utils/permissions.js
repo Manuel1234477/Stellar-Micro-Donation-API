@@ -33,6 +33,7 @@ const PERMISSIONS = {
   // Transaction permissions
   TRANSACTIONS_READ: 'transactions:read',
   TRANSACTIONS_SYNC: 'transactions:sync',
+  TRANSACTIONS_SIMULATE: 'transactions:simulate',
 
   // Admin permissions
   ADMIN_ALL: '*'

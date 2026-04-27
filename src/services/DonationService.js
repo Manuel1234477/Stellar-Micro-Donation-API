@@ -18,14 +18,17 @@ const { calculateAnalyticsFee } = require('../utils/feeCalculator');
 const { sanitizeIdentifier, sanitizeMemo } = require('../utils/sanitizer');
 const { generatePseudonymousId } = require('../utils/anonymization');
 const { TRANSACTION_STATES } = require('../utils/transactionStateMachine');
-const { ValidationError, NotFoundError, ERROR_CODES } = require('../utils/errors');
+const { ValidationError, NotFoundError, BusinessLogicError, ERROR_CODES } = require('../utils/errors');
+const { withTimeout } = require('../utils/timeoutHandler');
 const { PREDEFINED_TAGS } = require('../constants/tags');
 const { paginateCollection } = require('../utils/pagination');
 const { checkConfirmations } = require('../utils/confirmationChecker');
 const { CONFIRMATION_LEDGER_THRESHOLD } = require('../config/confirmationThreshold');
 
 const LimitService = require('./LimitService');
+const DonationVelocityService = require('./DonationVelocityService');
 const MatchingProgramService = require('./MatchingProgramService');
+const CorporateMatchingService = require('./CorporateMatchingService');
 const log = require('../utils/log');
 const priceOracle = require('./PriceOracleService');
 const { buildOverpaymentRecord } = require('../utils/overpaymentDetector');
@@ -35,6 +38,7 @@ const {
   isSameAsset,
   serializeAsset,
 } = require('../utils/stellarAsset');
+const donationEvents = require('../events/donationEvents');
 
 const DEFAULT_DESTINATION_ASSET = {
   type: 'native',
@@ -130,11 +134,36 @@ class DonationService {
     // Check per-wallet donation limits
     await LimitService.checkLimits(senderId, amount);
 
+    // Check per-recipient velocity limits (before Stellar transaction)
+    await DonationVelocityService.checkVelocityLimits(senderId, receiverId, amount);
+
     // Sanitize memo to prevent XSS and injection attacks
     const sanitizedMemo = memo ? sanitizeMemo(memo) : undefined;
 
     // Decrypt sender's secret key
     const secret = encryption.decrypt(sender.encryptedSecret);
+
+    // Check sender balance before submitting (max 2s to avoid slowing donation flow)
+    try {
+      const { balance } = await withTimeout(
+        this.stellarService.getBalance(sender.publicKey),
+        2000,
+        'balanceCheck'
+      );
+      const available = parseFloat(balance);
+      const reserve = parseFloat(process.env.STELLAR_BASE_RESERVE || '1');
+      const required = parseFloat(amount) + reserve;
+      if (available < required) {
+        throw new BusinessLogicError(
+          ERROR_CODES.INSUFFICIENT_BALANCE,
+          `Insufficient balance. Required: ${required.toFixed(7)} XLM, Available: ${available.toFixed(7)} XLM`
+        );
+      }
+    } catch (err) {
+      if (err instanceof BusinessLogicError) throw err;
+      // Balance check timed out or failed — log and proceed optimistically
+      log.warn('DONATION_SERVICE', 'Balance check skipped', { requestId, error: err.message });
+    }
 
     log.debug('DONATION_SERVICE', 'Initiating Stellar transaction', {
       requestId
@@ -160,11 +189,28 @@ class DonationService {
       [senderId, receiverId, amount, sanitizedMemo, notes || null, JSON.stringify(tags || []), idempotencyKey, stellarResult.transactionId]
     );
 
+    // Emit donation.created to trigger cache invalidation and other listeners (non-blocking)
+    try {
+      donationEvents.emit(donationEvents.constructor.EVENTS?.CREATED || 'donation.created', {
+        id: dbResult.id,
+        senderId,
+        receiverId,
+        amount,
+      });
+    } catch (err) {
+      log.error('DONATION_SERVICE', 'Failed to emit donation.created event', { error: err.message });
+    }
+
     if (campaign_id) {
       await this.processCampaignContribution(campaign_id, amount).catch(err => {
         log.error('DONATION_SERVICE', 'Failed to update campaign contribution', { error: err.message });
       });
     }
+
+    // Record velocity usage (non-blocking)
+    DonationVelocityService.recordDonation(senderId, receiverId, amount).catch(err => {
+      log.error('DONATION_SERVICE', 'Failed to record velocity', { error: err.message });
+    });
 
     // Process donation matching programs (non-blocking)
     let matchingDonations = [];
@@ -504,12 +550,24 @@ class DonationService {
     idempotencyKey,
     receivedAmount,
     sessionId,
-    campaign_id,
+    campaign_id = null,
+    anonymous = false,
     sourceAsset,
     sourceAmount,
+    validAfter = 0,
+    validBefore = 0,
+    memoEnvelope = null,
+    encryptionMetadata = null,
+    sdgCategories = [],
   }) {
     // Sanitize identifiers
     const rawDonor = donor ? sanitizeIdentifier(donor) : 'Anonymous';
+    const rawRecipient = recipient ? sanitizeIdentifier(recipient) : null;
+
+    // Validate donor and recipient are different (check raw values before anonymization)
+    if (rawDonor && rawRecipient && rawDonor !== 'Anonymous' && rawDonor === rawRecipient) {
+      throw new ValidationError('Sender and recipient cannot be the same wallet', null, ERROR_CODES.INVALID_REQUEST);
+    }
 
     // When anonymous=true, replace the real wallet address with a pseudonymous ID
     let sanitizedDonor;
@@ -521,12 +579,7 @@ class DonationService {
       sanitizedDonor = rawDonor;
     }
 
-    const sanitizedRecipient = sanitizeIdentifier(recipient);
-
-    // Validate donor and recipient are different
-    if (sanitizedDonor && sanitizedRecipient && sanitizedDonor === sanitizedRecipient) {
-      throw new ValidationError('Sender and recipient wallets must be different');
-    }
+    const sanitizedRecipient = rawRecipient;
 
     // Validate memo with type-aware validation
     const memoResult = memoType && memoType !== 'text'
@@ -611,6 +664,8 @@ class DonationService {
           amount: normalizedSourceAmount.toString(),
           memo: memoResult.sanitized,
           asset: normalizedSourceAsset,
+          validAfter,
+          validBefore,
         });
         paymentMethod = 'direct';
       } else {
@@ -653,6 +708,8 @@ class DonationService {
               amount: normalizedSourceAmount.toString(),
               memo: memoResult.sanitized,
               asset: normalizedSourceAsset,
+              validAfter,
+              validBefore,
             });
             paymentMethod = 'direct';
             fallbackUsed = true;
@@ -699,6 +756,10 @@ class DonationService {
       // Anonymous donation fields
       anonymous: anonymous === true,
       pseudonymousId: pseudonymousId || null,
+      // Time-bound transaction fields
+      validAfter: validAfter || 0,
+      validBefore: validBefore || 0,
+      sdgCategories: sdgCategories || [],
     });
 
     if (campaign_id) {
@@ -719,6 +780,24 @@ class DonationService {
       }
     } catch (err) {
       log.error('DONATION_SERVICE', 'Failed to process donation matching', { error: err.message });
+    }
+
+    // Process corporate matching programs (non-blocking)
+    try {
+      // Get sender user ID from public key
+      const senderUser = await Database.get('SELECT id FROM users WHERE publicKey = ?', [sanitizedDonor]);
+      if (senderUser) {
+        const corporateMatchingResults = await CorporateMatchingService.processCorporateMatching({
+          id: transaction.id,
+          amount: xlmAmount,
+          senderId: senderUser.id
+        });
+        if (corporateMatchingResults.length > 0) {
+          transaction.corporateMatchingDonations = corporateMatchingResults;
+        }
+      }
+    } catch (err) {
+      log.error('DONATION_SERVICE', 'Failed to process corporate matching', { error: err.message });
     }
 
     // Detect memo collision after the record is created so we have a transactionId
@@ -749,14 +828,104 @@ class DonationService {
       transaction.memoCollisionReason = null;
     }
 
+    // Publish GraphQL subscription events
+    const pubsub = require('../graphql/pubsub');
+    const donationEvent = {
+      id: transaction.id,
+      donor: transaction.donor,
+      recipient: transaction.recipient,
+      amount: transaction.amount,
+      status: transaction.status,
+      stellarTxId: transaction.stellarTxId,
+      campaign_id: transaction.campaign_id || null,
+      timestamp: transaction.timestamp,
+    };
+    pubsub.publish(pubsub.TOPICS.DONATION_CREATED, donationEvent);
+    if (transaction.status === TRANSACTION_STATES.CONFIRMED) {
+      pubsub.publish(pubsub.TOPICS.DONATION_COMPLETED, donationEvent);
+    }
+
     return transaction;
   }
 
   /**
-   * Update campaign progress and trigger Webhooks if goal met
+   * Calculate milestone percentages for a campaign (0.25, 0.5, 0.75, 1.0)
+   * @param {number} totalRaised - Total amount raised
+   * @param {number} goalAmount - Campaign goal amount
+   * @returns {number[]} Array of milestones that have been reached (as decimals)
+   */
+  checkMilestones(totalRaised, goalAmount) {
+    const milestones = [0.25, 0.5, 0.75, 1.0];
+    const currentProgress = totalRaised / goalAmount;
+    
+    return milestones.filter(m => currentProgress >= m);
+  }
+
+  /**
+   * Get notified milestones for a campaign (stored as JSON)
+   * @param {Object} campaign - Campaign record from database
+   * @returns {number[]} Array of milestone decimals already notified
+   */
+  getNotifiedMilestones(campaign) {
+    if (!campaign.notified_milestones) return [];
+    
+    try {
+      const notified = JSON.parse(campaign.notified_milestones);
+      return Array.isArray(notified) ? notified : [];
+    } catch (err) {
+      log.warn('CAMPAIGN', 'Failed to parse notified_milestones JSON', { error: err.message });
+      return [];
+    }
+  }
+
+  /**
+   * Emit milestone reached event for SSE clients
+   * @param {number} campaignId - Campaign ID
+   * @param {Object} campaign - Campaign record
+   * @param {number[]} newMilestones - Array of newly reached milestones
+   */
+  async emitMilestoneEvents(campaignId, campaign, newMilestones) {
+    const SseManager = require('./SseManager');
+    const { EventEmitter } = require('events');
+    
+    // Create a local event emitter for campaign milestone events
+    const campaignEmitter = new EventEmitter();
+    
+    for (const milestone of newMilestones) {
+      const progressPercentage = Math.round(milestone * 100);
+      const data = {
+        campaign_id: campaignId,
+        campaign_name: campaign.name,
+        milestone_percentage: progressPercentage,
+        current_amount: campaign.current_amount,
+        goal_amount: campaign.goal_amount,
+        progress_percentage: Math.round((campaign.current_amount / campaign.goal_amount) * 100),
+        timestamp: new Date().toISOString()
+      };
+
+      // Emit for in-memory SSE streaming
+      campaignEmitter.emit('milestone_reached', data);
+      
+      // Also broadcast via SseManager if it has campaign progress support
+      if (SseManager.broadcastCampaignProgress) {
+        SseManager.broadcastCampaignProgress(data);
+      }
+
+      log.info('CAMPAIGN', `Milestone ${progressPercentage}% reached for campaign ${campaignId}`, data);
+    }
+
+    return campaignEmitter;
+  }
+
+  /**
+   * Update campaign progress with milestone detection and webhook dispatch
+   * @param {number} campaignId - Campaign ID
+   * @param {number} amount - Donation amount
    */
   async processCampaignContribution(campaignId, amount) {
     const WebhookService = require('./WebhookService');
+    const donationEvents = require('../events/donationEvents');
+    
     const updateResult = await Database.run(
       `UPDATE campaigns 
        SET current_amount = current_amount + ? 
@@ -764,21 +933,110 @@ class DonationService {
       [amount, campaignId]
     );
 
-    if (updateResult && updateResult.changes > 0) {
-      const campaign = await Database.get('SELECT * FROM campaigns WHERE id = ?', [campaignId]);
+    if (!updateResult || updateResult.changes === 0) {
+      log.debug('CAMPAIGN', 'No active campaign found or update had no effect', { campaignId });
+      return;
+    }
+
+    // Fetch updated campaign
+    const campaign = await Database.get('SELECT * FROM campaigns WHERE id = ?', [campaignId]);
+    if (!campaign) {
+      log.warn('CAMPAIGN', 'Campaign not found after update', { campaignId });
+      return;
+    }
+
+    // Check for new milestones
+    const reachedMilestones = this.checkMilestones(campaign.current_amount, campaign.goal_amount);
+    const notifiedMilestones = this.getNotifiedMilestones(campaign);
+    const newMilestones = reachedMilestones.filter(m => !notifiedMilestones.includes(m));
+
+    // Update notified milestones in the database
+    if (newMilestones.length > 0) {
+      const updatedNotified = [...notifiedMilestones, ...newMilestones];
       
-      if (campaign && campaign.current_amount >= campaign.goal_amount) {
-        await Database.run(`UPDATE campaigns SET status = 'completed' WHERE id = ?`, [campaignId]);
+      try {
+        await Database.run(
+          `UPDATE campaigns 
+           SET notified_milestones = ?, last_milestone_notification = CURRENT_TIMESTAMP 
+           WHERE id = ?`,
+          [JSON.stringify(updatedNotified), campaignId]
+        );
         
-        await WebhookService.deliver('campaign.completed', {
+        log.info('CAMPAIGN', `Updated notified milestones for campaign ${campaignId}`, { updatedNotified });
+      } catch (err) {
+        log.error('CAMPAIGN', 'Failed to update notified_milestones', { campaignId, error: err.message });
+      }
+
+      // Emit milestone events for SSE
+      try {
+        await this.emitMilestoneEvents(campaignId, campaign, newMilestones);
+      } catch (err) {
+        log.error('CAMPAIGN', 'Failed to emit milestone events', { campaignId, error: err.message });
+      }
+
+      // Dispatch webhooks for each new milestone
+      for (const milestone of newMilestones) {
+        const progressPercentage = Math.round(milestone * 100);
+        
+        try {
+          await WebhookService.deliver('campaign.milestone', {
+            campaign_id: campaignId,
+            name: campaign.name,
+            milestone_percentage: progressPercentage,
+            current_amount: campaign.current_amount,
+            goal_amount: campaign.goal_amount,
+            progress_percentage: Math.round((campaign.current_amount / campaign.goal_amount) * 100),
+            timestamp: new Date().toISOString()
+          });
+          
+          log.info('CAMPAIGN', `Webhook dispatched for ${progressPercentage}% milestone`, { campaignId });
+        } catch (err) {
+          log.error('CAMPAIGN', 'Failed to dispatch milestone webhook', { campaignId, milestone, error: err.message });
+        }
+      }
+    }
+
+    // Check if goal is reached
+    if (campaign.current_amount >= campaign.goal_amount && campaign.status === 'active') {
+      try {
+        // Update campaign status to closed and set closed_at timestamp
+        await Database.run(
+          `UPDATE campaigns 
+           SET status = 'closed', closed_at = CURRENT_TIMESTAMP 
+           WHERE id = ?`,
+          [campaignId]
+        );
+
+        // Emit goal reached event
+        try {
+          const goalReachedData = {
+            campaign_id: campaignId,
+            campaign_name: campaign.name,
+            goal_amount: campaign.goal_amount,
+            final_amount: campaign.current_amount,
+            reached_at: new Date().toISOString()
+          };
+          
+          donationEvents.emitLifecycleEvent('campaign.goal_reached', goalReachedData);
+        } catch (err) {
+          log.error('CAMPAIGN', 'Failed to emit goal reached event', { campaignId, error: err.message });
+        }
+
+        // Dispatch goal reached webhook
+        await WebhookService.deliver('campaign.goal_reached', {
           campaign_id: campaignId,
           name: campaign.name,
           goal_amount: campaign.goal_amount,
           final_amount: campaign.current_amount,
-          completed_at: new Date().toISOString()
+          reached_at: new Date().toISOString()
         });
-        
-        log.info('CAMPAIGN', `Campaign ${campaignId} reached its goal and is now completed`);
+
+        log.info('CAMPAIGN', `Campaign ${campaignId} reached its goal and is now closed`, {
+          goalAmount: campaign.goal_amount,
+          finalAmount: campaign.current_amount
+        });
+      } catch (err) {
+        log.error('CAMPAIGN', 'Failed to process goal reached', { campaignId, error: err.message });
       }
     }
   }
@@ -870,8 +1128,8 @@ class DonationService {
    * Get all donations
    * @returns {Array} Array of transactions
    */
-  getAllDonations() {
-    return Transaction.getAll();
+  getAllDonations({ includeDeleted = false } = {}) {
+    return Transaction.getAll({ includeDeleted });
   }
 
   /**
@@ -1168,17 +1426,44 @@ class DonationService {
    * @returns {Object} Updated transaction
    */
   updateDonationStatus(id, status, stellarData = {}) {
-    const validStatuses = Object.values(TRANSACTION_STATES);
-    if (!validStatuses.includes(status)) {
-      throw new ValidationError(`Invalid status. Must be one of: ${validStatuses.join(', ')}`);
-    }
+    const { assertValidState, assertValidTransition, normalizeState } = require('../utils/transactionStateMachine');
+    
+    // Normalize and validate the new status
+    const normalizedStatus = normalizeState(status);
+    assertValidState(normalizedStatus, 'status');
+
+    // Get current donation to check state transition
+    const currentDonation = this.getDonationById(id);
+    const currentStatus = normalizeState(currentDonation.status);
+
+    // Validate state transition
+    assertValidTransition(currentStatus, normalizedStatus);
 
     const updateData = { ...stellarData };
-    if (status === 'confirmed') {
+    if (normalizedStatus === 'confirmed') {
       updateData.confirmedAt = new Date().toISOString();
     }
 
-    return Transaction.updateStatus(id, status, updateData);
+    const updated = Transaction.updateStatus(id, normalizedStatus, updateData);
+
+    // Emit donation lifecycle event for SSE subscribers and other listeners
+    const eventMap = {
+      submitted: donationEvents.constructor.EVENTS?.SUBMITTED || 'donation.submitted',
+      confirmed: donationEvents.constructor.EVENTS?.CONFIRMED || 'donation.confirmed',
+      failed: donationEvents.constructor.EVENTS?.FAILED || 'donation.failed',
+    };
+    const eventName = eventMap[normalizedStatus];
+    if (eventName) {
+      donationEvents.emitLifecycleEvent(eventName, {
+        donationId: updated.id,
+        status: normalizedStatus,
+        txHash: updated.stellar_tx_id || stellarData.transactionId,
+        ledger: updated.ledger || stellarData.ledger,
+        timestamp: new Date().toISOString(),
+      });
+    }
+
+    return updated;
   }
 
   /**
@@ -1206,8 +1491,8 @@ class DonationService {
    * @throws {ValidationError} If donation is not eligible for refund
    * @throws {BusinessLogicError} If refund fails
    */
-  async refundDonation(donationId, { reason, requestId }) {
-    const { BusinessLogicError } = require('../utils/errors');
+  async refundDonation(donationId, { reason, notes, idempotencyKey, recipientSecret, requestId }) {
+    const { BusinessLogicError, DuplicateError } = require('../utils/errors');
     const config = require('../config');
     const AuditLogService = require('./AuditLogService');
 
@@ -1220,20 +1505,39 @@ class DonationService {
     // Get the original donation
     const donation = this.getDonationById(donationId);
 
+    // Idempotency: if idempotencyKey provided, check for existing refund with same key
+    if (idempotencyKey) {
+      const existing = await Database.get(
+        `SELECT * FROM refunds WHERE idempotency_key = ? LIMIT 1`,
+        [idempotencyKey]
+      ).catch(() => null);
+      if (existing) {
+        return {
+          refundId: existing.id,
+          originalDonationId: donationId,
+          reverseTxId: existing.reverse_transaction_id,
+          amount: existing.amount,
+          reason: existing.reason,
+          refundedAt: existing.refunded_at,
+          status: existing.status,
+          alreadyProcessed: true,
+        };
+      }
+    }
+
     // Check if donation is already refunded
     if (donation.status === 'refunded') {
-      throw new BusinessLogicError(
-        ERROR_CODES.TRANSACTION_FAILED,
+      throw new DuplicateError(
         'Donation has already been refunded',
-        { donationId, currentStatus: donation.status }
+        ERROR_CODES.DUPLICATE_DONATION
       );
     }
 
-    // Check if donation is confirmed
-    if (donation.status !== TRANSACTION_STATES.CONFIRMED) {
+    // Check if donation is in completed/confirmed status
+    if (donation.status !== TRANSACTION_STATES.CONFIRMED && donation.status !== 'completed') {
       throw new BusinessLogicError(
         ERROR_CODES.TRANSACTION_FAILED,
-        `Cannot refund donation with status "${donation.status}". Only confirmed donations can be refunded.`,
+        `Cannot refund donation with status "${donation.status}". Only completed donations can be refunded.`,
         { donationId, currentStatus: donation.status }
       );
     }
@@ -1257,18 +1561,25 @@ class DonationService {
       );
     }
 
-    // Get sender (original recipient becomes sender for reverse transaction)
-    const sender = await this.getUserById(donation.senderId || 1, 'Sender');
-    this.validateSenderSecret(sender);
-
-    // Decrypt sender's secret key
-    const secret = encryption.decrypt(sender.encryptedSecret);
+    // Determine the secret key to use for signing the refund transaction.
+    // If the caller provides recipientSecret (over HTTPS), use it directly and never log it.
+    // Otherwise fall back to the encrypted secret stored in the DB.
+    let secret;
+    if (recipientSecret) {
+      // Use caller-provided key in-memory only — never log this value
+      secret = recipientSecret;
+    } else {
+      const sender = await this.getUserById(donation.senderId || 1, 'Sender');
+      this.validateSenderSecret(sender);
+      secret = encryption.decrypt(sender.encryptedSecret);
+    }
 
     log.debug('DONATION_SERVICE', 'Creating reverse Stellar transaction', {
       requestId,
       donationId,
       amount: donation.amount,
       originalTxId: donation.stellarTxId
+      // NOTE: secret key is intentionally NOT logged
     });
 
     // Create reverse Stellar transaction
@@ -1279,6 +1590,9 @@ class DonationService {
       memo: `REFUND:${donationId}`
     });
 
+    // Immediately discard the secret from local scope
+    secret = null;
+
     log.debug('DONATION_SERVICE', 'Reverse transaction successful', {
       requestId,
       reverseTxId: reverseResult.transactionId,
@@ -1288,16 +1602,18 @@ class DonationService {
     // Record refund in database
     const refundRecord = await Database.run(
       `INSERT INTO refunds (
-        original_donation_id, reverse_transaction_id, amount, reason, 
-        refunded_at, stellar_ledger, status
-      ) VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP, ?, ?)`,
+        original_donation_id, reverse_transaction_id, amount, reason, notes,
+        idempotency_key, refunded_at, stellar_ledger, status
+      ) VALUES (?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, ?, ?)`,
       [
         donationId,
         reverseResult.transactionId,
         donation.amount,
         reason || 'No reason provided',
+        notes || null,
+        idempotencyKey || null,
         reverseResult.ledger,
-        'pending'
+        'completed'
       ]
     );
 
@@ -1342,9 +1658,12 @@ class DonationService {
       reverseTxId: reverseResult.transactionId,
       reverseLedger: reverseResult.ledger,
       amount: donation.amount,
+      refundedAmount: donation.amount,
+      networkFeeDeducted: 0,
       reason,
+      notes: notes || null,
       refundedAt: new Date().toISOString(),
-      status: 'pending'
+      status: 'completed',
     };
   }
 }

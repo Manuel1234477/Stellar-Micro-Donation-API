@@ -1,0 +1,22 @@
+{
+  "vectors": [
+    {
+      "description": "basic ASCII payload",
+      "payload": "hello world",
+      "secret": "my-secret-key",
+      "expected_signature": "90eb182d8396f16d4341d582047f45c0a97d73388c5377d9ced478a2212295ad"
+    },
+    {
+      "description": "JSON payload",
+      "payload": "{\"amount\":\"10\",\"recipient\":\"GABC\"}",
+      "secret": "webhook-secret-xyz",
+      "expected_signature": "5bc28bfa08d800517b78dc187f85e17e0b81ace89c1908d690f063735a055986"
+    },
+    {
+      "description": "empty payload",
+      "payload": "",
+      "secret": "secret",
+      "expected_signature": "f9e66e179b6747ae54108f82f8ade8b3c25d76fd30afde6c395822c530196169"
+    }
+  ]
+}

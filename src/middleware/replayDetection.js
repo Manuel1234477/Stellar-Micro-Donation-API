@@ -21,6 +21,12 @@ const log = require('../utils/log');
 // Singleton tracking store instance
 const trackingStore = new TrackingStore();
 
+/** Paths that are always exempt from replay detection */
+const EXEMPT_PATHS = new Set(['/health', '/health/live', '/health/ready']);
+
+/** Hard timeout (ms) for the replay check — fail open if exceeded */
+const TIMEOUT_MS = parseInt(process.env.REPLAY_DETECTION_TIMEOUT_MS, 10) || 200;
+
 /**
  * Replay detection middleware function
  * Processes each request to detect and log replay patterns
@@ -30,66 +36,81 @@ const trackingStore = new TrackingStore();
  * @param {Function} next - Express next middleware function
  */
 function replayDetectionMiddleware(req, res, next) {
-  try {
-    // 1. Compute request fingerprint
-    const fingerprint = computeFingerprint(req);
-    const timestamp = Date.now();
-    
-    // 2. Record fingerprint with timestamp in tracking store
-    trackingStore.record(fingerprint, timestamp);
-    
-    // 3. Check if threshold exceeded within the replay window
-    const windowMs = config.windowSeconds * 1000;
-    const count = trackingStore.getCount(fingerprint, windowMs);
-    const isReplay = count > config.threshold;
-    
-    // 4. If replay detected, log event and add response headers
-    if (isReplay) {
-      const timestamps = trackingStore.getTimestamps(fingerprint, windowMs);
-      const timeElapsedMs = timestamps.length > 0 
-        ? timestamp - timestamps[0] 
-        : 0;
-      
-      // Build log metadata
-      const logMeta = {
-        fingerprint,
-        count,
-        threshold: config.threshold,
-        method: req.method,
+  // Exempt health-check endpoints so they always respond instantly
+  if (EXEMPT_PATHS.has(req.path)) {
+    return next();
+  }
+
+  let done = false;
+
+  // Fail-open timeout: if the check hasn't finished within TIMEOUT_MS, call next() immediately
+  const timer = setTimeout(() => {
+    if (!done) {
+      done = true;
+      log.warn('REPLAY_DETECTION', 'Replay detection timed out — failing open', {
         path: req.path,
-        windowSeconds: config.windowSeconds,
-        timeElapsedMs,
-        timestamps
-      };
-      
-      // Include API key if present in request
-      if (req.headers['x-api-key']) {
-        logMeta.apiKey = req.headers['x-api-key'];
-      }
-      
-      // Log replay event with warn level
-      log.warn('REPLAY_DETECTION', 'Replay detected', logMeta);
-      
-      // Add response headers for client observability
-      res.setHeader('X-Replay-Detected', 'true');
-      res.setHeader('X-Replay-Count', count.toString());
-      res.setHeader('X-Replay-Window', config.windowSeconds.toString());
+        method: req.method,
+        timeoutMs: TIMEOUT_MS,
+      });
+      next();
     }
-  } catch (error) {
-    // Log error but always continue processing
-    log.error('REPLAY_DETECTION', 'Replay detection error', {
-      error: error.message,
-      stack: error.stack,
-      path: req.path,
-      method: req.method
+  }, TIMEOUT_MS);
+
+  // Wrap core logic in a promise so it works whether the store is sync or async
+  Promise.resolve()
+    .then(() => runCheck(req, res))
+    .catch((error) => {
+      log.error('REPLAY_DETECTION', 'Replay detection error', {
+        error: error.message,
+        stack: error.stack,
+        path: req.path,
+        method: req.method,
+      });
+    })
+    .finally(() => {
+      if (!done) {
+        done = true;
+        clearTimeout(timer);
+        next();
+      }
     });
-  } finally {
-    // Always call next() to ensure request processing continues
-    // This is critical for non-blocking behavior (Requirement 4.1, 4.2, 4.3)
-    next();
+}
+
+/**
+ * Core replay-check logic (sync today, may become async if store is replaced).
+ */
+function runCheck(req, res) {
+  const fingerprint = computeFingerprint(req);
+  const timestamp = Date.now();
+
+  trackingStore.record(fingerprint, timestamp);
+
+  const windowMs = config.windowSeconds * 1000;
+  const count = trackingStore.getCount(fingerprint, windowMs);
+
+  if (count > config.threshold) {
+    const timestamps = trackingStore.getTimestamps(fingerprint, windowMs);
+    const logMeta = {
+      fingerprint,
+      count,
+      threshold: config.threshold,
+      method: req.method,
+      path: req.path,
+      windowSeconds: config.windowSeconds,
+      timeElapsedMs: timestamps.length > 0 ? timestamp - timestamps[0] : 0,
+      timestamps,
+    };
+    if (req.headers['x-api-key']) logMeta.apiKey = req.headers['x-api-key'];
+    log.warn('REPLAY_DETECTION', 'Replay detected', logMeta);
+
+    res.setHeader('X-Replay-Detected', 'true');
+    res.setHeader('X-Replay-Count', count.toString());
+    res.setHeader('X-Replay-Window', config.windowSeconds.toString());
   }
 }
 
 // Export middleware function and tracking store for testing/admin access
 module.exports = replayDetectionMiddleware;
 module.exports.trackingStore = trackingStore;
+module.exports.EXEMPT_PATHS = EXEMPT_PATHS;
+module.exports.TIMEOUT_MS = TIMEOUT_MS;

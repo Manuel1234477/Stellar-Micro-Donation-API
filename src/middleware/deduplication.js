@@ -14,22 +14,40 @@ const crypto = require('crypto');
 const Cache = require('../utils/cache');
 const log = require('../utils/log');
 
+
+const DEDUP_WINDOW_MS = process.env.DEDUP_WINDOW_MS ? parseInt(process.env.DEDUP_WINDOW_MS, 10) : 30000;
 const DEFAULT_OPTIONS = {
-  ttlMs: 30000,
-  methods: ['POST', 'PUT', 'PATCH'],
+  ttlMs: DEDUP_WINDOW_MS,
+  methods: ['POST', 'PATCH'],
 };
 
+
 /**
- * Compute a SHA-256 fingerprint for a request
+ * Compute a SHA-256 fingerprint for a request using API key, endpoint, and sorted body JSON
  * @param {Object} req - Express request object
  * @returns {string} Hex digest fingerprint
  */
 function computeFingerprint(req) {
-  const body = req.body ? JSON.stringify(req.body) : '';
-  const bodyHash = crypto.createHash('sha256').update(body).digest('hex');
-  const apiKey = req.headers['x-api-key'] || '';
-  const input = `${req.method}:${req.path}:${bodyHash}:${apiKey}`;
+  const apiKeyId = req.headers['x-api-key'] || '';
+  const endpoint = req.originalUrl || req.url || req.path;
+  let sortedBody = '';
+  if (req.body && typeof req.body === 'object' && Object.keys(req.body).length > 0) {
+    sortedBody = JSON.stringify(sortObject(req.body));
+  }
+  const input = apiKeyId + '|' + endpoint + '|' + sortedBody;
   return crypto.createHash('sha256').update(input).digest('hex');
+}
+
+function sortObject(obj) {
+  if (Array.isArray(obj)) {
+    return obj.map(sortObject);
+  } else if (obj && typeof obj === 'object') {
+    return Object.keys(obj).sort().reduce((acc, key) => {
+      acc[key] = sortObject(obj[key]);
+      return acc;
+    }, {});
+  }
+  return obj;
 }
 
 /**
@@ -40,11 +58,12 @@ function computeFingerprint(req) {
  * @returns {Function} Express middleware
  */
 function createDeduplicationMiddleware(options = {}) {
+
   const { ttlMs, methods } = { ...DEFAULT_OPTIONS, ...options };
   const methodSet = new Set(methods);
 
   return function deduplicationMiddleware(req, res, next) {
-    // Only apply to configured mutation methods
+    // Only apply to POST and PATCH (not GET)
     if (!methodSet.has(req.method)) {
       return next();
     }

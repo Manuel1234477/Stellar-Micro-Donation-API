@@ -12,7 +12,7 @@
 const Database = require('../utils/database');
 
 /** Maximum time (ms) allowed for any single dependency check */
-const DEPENDENCY_TIMEOUT_MS = 2000;
+const DEPENDENCY_TIMEOUT_MS = 500;
 
 /**
  * Run a single dependency check with a hard 2-second timeout.
@@ -56,7 +56,7 @@ async function checkDatabase() {
  * In mock mode this always resolves immediately.
  *
  * @param {Object} stellarService - StellarService or MockStellarService instance
- * @returns {Promise<{status: string, responseTime: number, network?: string, horizonUrl?: string, error?: string}>}
+ * @returns {Promise<{status: string, responseTime: number, network?: string, horizonUrl?: string, circuitBreaker?: Object, error?: string}>}
  */
 async function checkStellar(stellarService) {
   const result = await runCheck('stellar', async () => {
@@ -74,6 +74,9 @@ async function checkStellar(stellarService) {
     network: stellarService.getNetwork ? stellarService.getNetwork() : undefined,
     environment: stellarService.getEnvironment ? stellarService.getEnvironment().name : undefined,
     horizonUrl: stellarService.getHorizonUrl ? stellarService.getHorizonUrl() : undefined,
+    circuitBreaker: stellarService.circuitBreaker
+      ? stellarService.circuitBreaker.getStatus()
+      : undefined,
   };
 }
 
@@ -119,9 +122,10 @@ async function checkNetworkStatus(networkStatusService) {
  *
  * @param {Object} stellarService - StellarService or MockStellarService instance
  * @param {Object} [networkStatusService] - Optional NetworkStatusService instance
+ * @param {Object} [scheduler] - Optional RecurringDonationScheduler instance
  * @returns {Promise<{status: string, dependencies: Object, timestamp: string}>}
  */
-async function getFullHealth(stellarService, networkStatusService) {
+async function getFullHealth(stellarService, networkStatusService, scheduler) {
   // Call through module.exports so Jest spies can intercept individual checks
   const self = module.exports;
   const checks = [
@@ -141,10 +145,20 @@ async function getFullHealth(stellarService, networkStatusService) {
     dependencies.network = network;
   }
 
+  // Include scheduler health if scheduler is provided
+  if (scheduler && typeof scheduler.getSchedulerHealth === 'function') {
+    dependencies.scheduler = scheduler.getSchedulerHealth();
+  }
+
   let status;
   if (database.status === 'unhealthy') {
     status = 'unhealthy';
-  } else if (stellar.status === 'unhealthy' || idempotency.status === 'unhealthy') {
+  } else if (stellar.status === 'unhealthy') {
+    // Stellar is a critical dependency for a donation API — treat as unhealthy
+    status = 'unhealthy';
+  } else if (idempotency.status === 'unhealthy') {
+    status = 'degraded';
+  } else if (dependencies.scheduler && dependencies.scheduler.status === 'unhealthy') {
     status = 'degraded';
   } else {
     status = 'healthy';
@@ -170,10 +184,11 @@ function getLiveness() {
  *
  * @param {Object} stellarService
  * @param {Object} [networkStatusService] - Optional NetworkStatusService instance
+ * @param {Object} [scheduler] - Optional RecurringDonationScheduler instance
  * @returns {Promise<{ready: boolean, status: string, dependencies: Object, timestamp: string}>}
  */
-async function getReadiness(stellarService, networkStatusService) {
-  const health = await getFullHealth(stellarService, networkStatusService);
+async function getReadiness(stellarService, networkStatusService, scheduler) {
+  const health = await getFullHealth(stellarService, networkStatusService, scheduler);
   const ready = health.status === 'healthy';
   return { ready, ...health };
 }

@@ -115,25 +115,12 @@ class IdempotencyService {
       };
     }
 
-    if (key.length < 16) {
+    // Validate UUID v4 format
+    const uuidV4Regex = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+    if (!uuidV4Regex.test(key)) {
       return {
         valid: false,
-        error: 'Idempotency key must be at least 16 characters long'
-      };
-    }
-
-    if (key.length > 255) {
-      return {
-        valid: false,
-        error: 'Idempotency key must not exceed 255 characters'
-      };
-    }
-
-    // Check for valid characters (alphanumeric, hyphens, underscores)
-    if (!/^[a-zA-Z0-9_-]+$/.test(key)) {
-      return {
-        valid: false,
-        error: 'Idempotency key must contain only alphanumeric characters, hyphens, and underscores'
+        error: 'Idempotency-Key must be a valid UUID v4 (e.g. 550e8400-e29b-41d4-a716-446655440000)'
       };
     }
 

@@ -14,7 +14,7 @@ module.exports = {
     jest: true,
   },
   extends: ['eslint:recommended'],
-  plugins: ['no-secrets', ...(hasSecurityPlugin ? ['security'] : [])],
+  plugins: ['no-secrets', ...(hasSecurityPlugin ? ['security'] : []), 'local'],
   parserOptions: {
     ecmaVersion: 12,
   },
@@ -41,6 +41,10 @@ module.exports = {
     'no-implied-eval': 'error',
     'no-new-func': 'error',
     'no-console': 'off', // We use structured logging
+
+    // Require asyncHandler() wrapper on all async Express route handlers
+    // See docs/ASYNC_HANDLER_MIGRATION.md
+    'local/require-async-handler': 'error',
   },
   ignorePatterns: [
     'node_modules/',

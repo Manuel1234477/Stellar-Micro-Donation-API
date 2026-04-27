@@ -13,6 +13,8 @@ const requireApiKey = require('../../middleware/apiKey');
 const { requireAdmin } = require('../../middleware/rbac');
 const { validateSchema } = require('../../middleware/schemaValidation');
 const log = require('../../utils/log');
+const asyncHandler = require('../../utils/asyncHandler');
+const { payloadSizeLimiter, ENDPOINT_LIMITS } = require('../../middleware/payloadSizeLimiter');
 
 const createMatchingProgramSchema = validateSchema({
   body: {
@@ -37,7 +39,7 @@ const updateStatusSchema = validateSchema({
  * POST /admin/matching-programs
  * Create a new donation matching program.
  */
-router.post('/', requireApiKey, requireAdmin(), createMatchingProgramSchema, async (req, res, next) => {
+router.post('/', requireApiKey, requireAdmin(), createMatchingProgramSchema, payloadSizeLimiter(ENDPOINT_LIMITS.admin), asyncHandler(async (req, res, next) => {
   try {
     const { sponsor_wallet_id, match_ratio, max_match_amount, campaign_id } = req.body;
 
@@ -52,14 +54,14 @@ router.post('/', requireApiKey, requireAdmin(), createMatchingProgramSchema, asy
   } catch (error) {
     next(error);
   }
-});
+}));
 
 /**
  * GET /admin/matching-programs
  * List all matching programs with optional filters.
  * Query params: status, campaign_id
  */
-router.get('/', requireApiKey, requireAdmin(), async (req, res, next) => {
+router.get('/', requireApiKey, requireAdmin(), asyncHandler(async (req, res, next) => {
   try {
     const filters = {};
     if (req.query.status) filters.status = req.query.status;
@@ -70,39 +72,39 @@ router.get('/', requireApiKey, requireAdmin(), async (req, res, next) => {
   } catch (error) {
     next(error);
   }
-});
+}));
 
 /**
  * GET /admin/matching-programs/:id
  * Get a specific matching program.
  */
-router.get('/:id', requireApiKey, requireAdmin(), async (req, res, next) => {
+router.get('/:id', requireApiKey, requireAdmin(), asyncHandler(async (req, res, next) => {
   try {
     const program = await MatchingProgramService.getById(parseInt(req.params.id, 10));
     res.json({ success: true, data: program });
   } catch (error) {
     next(error);
   }
-});
+}));
 
 /**
  * GET /admin/matching-programs/:id/utilization
  * Get utilization stats for a matching program.
  */
-router.get('/:id/utilization', requireApiKey, requireAdmin(), async (req, res, next) => {
+router.get('/:id/utilization', requireApiKey, requireAdmin(), asyncHandler(async (req, res, next) => {
   try {
     const stats = await MatchingProgramService.getUtilization(parseInt(req.params.id, 10));
     res.json({ success: true, data: stats });
   } catch (error) {
     next(error);
   }
-});
+}));
 
 /**
  * PATCH /admin/matching-programs/:id/status
  * Update matching program status (active, paused, exhausted).
  */
-router.patch('/:id/status', requireApiKey, requireAdmin(), updateStatusSchema, async (req, res, next) => {
+router.patch('/:id/status', requireApiKey, requireAdmin(), updateStatusSchema, payloadSizeLimiter(ENDPOINT_LIMITS.admin), asyncHandler(async (req, res, next) => {
   try {
     const program = await MatchingProgramService.updateStatus(
       parseInt(req.params.id, 10),
@@ -112,6 +114,6 @@ router.patch('/:id/status', requireApiKey, requireAdmin(), updateStatusSchema, a
   } catch (error) {
     next(error);
   }
-});
+}));
 
 module.exports = router;
