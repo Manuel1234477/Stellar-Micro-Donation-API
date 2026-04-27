@@ -70,7 +70,7 @@ const { attachLifecycleTracking } = require('../middleware/requestLifecycle');
 const serviceContainer = require('../config/serviceContainer');
 const { payloadSizeLimiter, ENDPOINT_LIMITS } = require('../middleware/payloadSizeLimiter');
 const { createCorsMiddleware } = require('../middleware/cors');
-const { createCspMiddleware, cspReportRouter } = require('../middleware/csp');
+const { createPathBasedCspMiddleware, cspReportRouter } = require('../middleware/csp');
 const { responseFormatterMiddleware } = require('../utils/responseFormatter');
 const trackQuotaUsage = require('../middleware/quotaTracker');
 const asyncHandler = require('../utils/asyncHandler');
@@ -150,13 +150,9 @@ app.use(attachLifecycleTracking);
 // Attach res.success / res.failure envelope helpers (must be after requestId)
 app.use(responseFormatterMiddleware());
 // Security headers (helmet must be early, before routes)
+// contentSecurityPolicy disabled here - owned by createPathBasedCspMiddleware below
 app.use(helmet({
-  contentSecurityPolicy: {
-    directives: {
-      defaultSrc: ["'none'"],
-      frameAncestors: ["'none'"],
-    },
-  },
+  contentSecurityPolicy: false,
   frameguard: { action: 'deny' },
   noSniff: true,
   referrerPolicy: { policy: 'no-referrer' },
@@ -165,15 +161,15 @@ app.use(helmet({
     includeSubDomains: true,
     preload: true,
   },
-  xssFilter: false,         // deprecated header — omit for API servers
+  xssFilter: false,         // deprecated header - omit for API servers
   hidePoweredBy: true,
 }));
 
 // CORS (must be before body parsers and route handlers)
 app.use(createCorsMiddleware());
 
-// CSP: per-request nonce + strict directives (after helmet, before routes)
-app.use(createCspMiddleware());
+// CSP: strict for API routes, relaxed for /docs + /api/docs (Swagger UI) — Issue #757
+app.use(createPathBasedCspMiddleware());
 app.use(cspReportRouter);
 
 // Geographic IP blocking (must be before body parsers)
