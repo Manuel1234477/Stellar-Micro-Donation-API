@@ -246,6 +246,9 @@ app.use((req, res, next) => {
 // All API routes are mounted under /api/v1
 const apiV1 = express.Router();
 
+// Public endpoints — mounted before requireApiKey middleware
+apiV1.use('/fees', feesRoutes);
+
 apiV1.use('/wallets', walletRoutes);
 apiV1.use('/wallets', thresholdsRouter);
 apiV1.use('/', recoveryRoutes);

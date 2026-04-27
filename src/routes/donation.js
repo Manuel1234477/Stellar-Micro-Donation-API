@@ -996,6 +996,86 @@ router.get('/', checkPermission(PERMISSIONS.DONATIONS_READ), asyncHandler(async 
 }));
 
 /**
+ * GET /donations/pending (#795)
+ * List donations currently in 'pending' state with stuck-transaction detection.
+ *
+ * Authorization:
+ *   - Regular users: see only their own pending donations (matched by donor field)
+ *   - Admin users: see all pending donations + summary object
+ *
+ * Query params:
+ *   - stuckThresholdSeconds {integer} override stuck threshold (default 600)
+ */
+const STUCK_THRESHOLD_SECONDS = 600; // 10 minutes
+
+router.get('/pending', checkPermission(PERMISSIONS.DONATIONS_READ), asyncHandler(async (req, res, next) => {
+  try {
+    const isAdmin = req.user && req.user.role === 'admin';
+    const stuckThreshold = parseInt(req.query.stuckThresholdSeconds, 10) || STUCK_THRESHOLD_SECONDS;
+    const now = Date.now();
+
+    let pending = Transaction.getByStatus('pending');
+
+    // Non-admin users see only their own pending donations
+    if (!isAdmin) {
+      const userKey = req.user && (req.user.publicKey || req.user.id);
+      if (userKey) {
+        pending = pending.filter(tx => tx.donor === userKey);
+      } else {
+        pending = [];
+      }
+    }
+
+    const enriched = pending.map(tx => {
+      const submittedAt = tx.statusUpdatedAt || tx.timestamp;
+      const pendingDurationSeconds = submittedAt
+        ? Math.floor((now - new Date(submittedAt).getTime()) / 1000)
+        : 0;
+      const isStuck = pendingDurationSeconds >= stuckThreshold;
+
+      const humanDuration = (() => {
+        const s = pendingDurationSeconds;
+        if (s < 60) return `${s} seconds`;
+        if (s < 3600) return `${Math.floor(s / 60)} minutes`;
+        return `${Math.floor(s / 3600)} hours`;
+      })();
+
+      return {
+        id: tx.id,
+        amount: tx.amount,
+        donorPublicKey: tx.donor || null,
+        recipientPublicKey: tx.recipient || null,
+        stellarTxHash: tx.stellarTxId || null,
+        submittedAt: submittedAt || null,
+        pendingDurationSeconds,
+        pendingDurationHuman: humanDuration,
+        retryCount: tx.feeBumpCount || 0,
+        isStuck,
+        stuckThresholdSeconds: stuckThreshold,
+      };
+    });
+
+    const response = { data: enriched };
+
+    if (isAdmin) {
+      const stuckCount = enriched.filter(tx => tx.isStuck).length;
+      const oldestPendingSeconds = enriched.length > 0
+        ? Math.max(...enriched.map(tx => tx.pendingDurationSeconds))
+        : 0;
+      response.summary = {
+        total: enriched.length,
+        stuckCount,
+        oldestPendingSeconds,
+      };
+    }
+
+    res.json(response);
+  } catch (error) {
+    next(error);
+  }
+}));
+
+/**
  * GET /donations/recent
  * Get recent donations, ordered by creation date descending.
  * Must be registered before /:id to prevent Express matching "recent" as an id.
