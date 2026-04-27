@@ -1477,8 +1477,8 @@ class DonationService {
    * @throws {ValidationError} If donation is not eligible for refund
    * @throws {BusinessLogicError} If refund fails
    */
-  async refundDonation(donationId, { reason, requestId }) {
-    const { BusinessLogicError } = require('../utils/errors');
+  async refundDonation(donationId, { reason, notes, idempotencyKey, recipientSecret, requestId }) {
+    const { BusinessLogicError, DuplicateError } = require('../utils/errors');
     const config = require('../config');
     const AuditLogService = require('./AuditLogService');
 
@@ -1491,20 +1491,39 @@ class DonationService {
     // Get the original donation
     const donation = this.getDonationById(donationId);
 
+    // Idempotency: if idempotencyKey provided, check for existing refund with same key
+    if (idempotencyKey) {
+      const existing = await Database.get(
+        `SELECT * FROM refunds WHERE idempotency_key = ? LIMIT 1`,
+        [idempotencyKey]
+      ).catch(() => null);
+      if (existing) {
+        return {
+          refundId: existing.id,
+          originalDonationId: donationId,
+          reverseTxId: existing.reverse_transaction_id,
+          amount: existing.amount,
+          reason: existing.reason,
+          refundedAt: existing.refunded_at,
+          status: existing.status,
+          alreadyProcessed: true,
+        };
+      }
+    }
+
     // Check if donation is already refunded
     if (donation.status === 'refunded') {
-      throw new BusinessLogicError(
-        ERROR_CODES.TRANSACTION_FAILED,
+      throw new DuplicateError(
         'Donation has already been refunded',
-        { donationId, currentStatus: donation.status }
+        ERROR_CODES.DUPLICATE_DONATION
       );
     }
 
-    // Check if donation is confirmed
-    if (donation.status !== TRANSACTION_STATES.CONFIRMED) {
+    // Check if donation is in completed/confirmed status
+    if (donation.status !== TRANSACTION_STATES.CONFIRMED && donation.status !== 'completed') {
       throw new BusinessLogicError(
         ERROR_CODES.TRANSACTION_FAILED,
-        `Cannot refund donation with status "${donation.status}". Only confirmed donations can be refunded.`,
+        `Cannot refund donation with status "${donation.status}". Only completed donations can be refunded.`,
         { donationId, currentStatus: donation.status }
       );
     }
@@ -1528,18 +1547,25 @@ class DonationService {
       );
     }
 
-    // Get sender (original recipient becomes sender for reverse transaction)
-    const sender = await this.getUserById(donation.senderId || 1, 'Sender');
-    this.validateSenderSecret(sender);
-
-    // Decrypt sender's secret key
-    const secret = encryption.decrypt(sender.encryptedSecret);
+    // Determine the secret key to use for signing the refund transaction.
+    // If the caller provides recipientSecret (over HTTPS), use it directly and never log it.
+    // Otherwise fall back to the encrypted secret stored in the DB.
+    let secret;
+    if (recipientSecret) {
+      // Use caller-provided key in-memory only — never log this value
+      secret = recipientSecret;
+    } else {
+      const sender = await this.getUserById(donation.senderId || 1, 'Sender');
+      this.validateSenderSecret(sender);
+      secret = encryption.decrypt(sender.encryptedSecret);
+    }
 
     log.debug('DONATION_SERVICE', 'Creating reverse Stellar transaction', {
       requestId,
       donationId,
       amount: donation.amount,
       originalTxId: donation.stellarTxId
+      // NOTE: secret key is intentionally NOT logged
     });
 
     // Create reverse Stellar transaction
@@ -1550,6 +1576,9 @@ class DonationService {
       memo: `REFUND:${donationId}`
     });
 
+    // Immediately discard the secret from local scope
+    secret = null;
+
     log.debug('DONATION_SERVICE', 'Reverse transaction successful', {
       requestId,
       reverseTxId: reverseResult.transactionId,
@@ -1559,16 +1588,18 @@ class DonationService {
     // Record refund in database
     const refundRecord = await Database.run(
       `INSERT INTO refunds (
-        original_donation_id, reverse_transaction_id, amount, reason, 
-        refunded_at, stellar_ledger, status
-      ) VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP, ?, ?)`,
+        original_donation_id, reverse_transaction_id, amount, reason, notes,
+        idempotency_key, refunded_at, stellar_ledger, status
+      ) VALUES (?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, ?, ?)`,
       [
         donationId,
         reverseResult.transactionId,
         donation.amount,
         reason || 'No reason provided',
+        notes || null,
+        idempotencyKey || null,
         reverseResult.ledger,
-        'pending'
+        'completed'
       ]
     );
 
@@ -1613,9 +1644,12 @@ class DonationService {
       reverseTxId: reverseResult.transactionId,
       reverseLedger: reverseResult.ledger,
       amount: donation.amount,
+      refundedAmount: donation.amount,
+      networkFeeDeducted: 0,
       reason,
+      notes: notes || null,
       refundedAt: new Date().toISOString(),
-      status: 'pending'
+      status: 'completed',
     };
   }
 }

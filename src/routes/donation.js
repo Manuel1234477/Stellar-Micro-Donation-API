@@ -462,8 +462,22 @@ router.post('/', donationRateLimiter, checkPermission(PERMISSIONS.DONATIONS_CREA
  */
 router.get('/', checkPermission(PERMISSIONS.DONATIONS_READ), asyncHandler(async (req, res, next) => {
   try {
+    // #798: validate ?sort param
+    const VALID_SORT = ['id:asc', 'id:desc', 'timestamp:asc', 'timestamp:desc', 'amount:asc', 'amount:desc'];
+    const sort = req.query.sort;
+    if (sort !== undefined && !VALID_SORT.includes(sort)) {
+      return res.status(400).json({
+        success: false,
+        error: {
+          code: 'INVALID_SORT',
+          message: `Invalid sort value. Valid options: ${VALID_SORT.join(', ')}`,
+        },
+      });
+    }
+
     const pagination = parseCursorPaginationQuery(req.query);
-    const result = donationService.getPaginatedDonations(pagination);
+    const [sortBy, order] = sort ? sort.split(':') : ['timestamp', 'desc'];
+    const result = donationService.getPaginatedDonations(pagination, { sortBy, order });
     res.setHeader('X-Total-Count', String(result.totalCount));
     res.json({ success: true, data: result.data, count: result.data.length, meta: result.meta });
   } catch (error) {
@@ -606,36 +620,33 @@ router.patch('/:id/status', checkPermission(PERMISSIONS.DONATIONS_UPDATE), updat
 }));
 
 /**
- * POST /donations/:id/refund
- * Initiate a refund for a confirmed donation
- * Requires admin or refund permission
+ * POST /donations/:id/refund — #797
+ * Initiate a refund for a completed donation.
+ * Body: { reason, notes, idempotencyKey, recipientSecret }
+ * - 404 if donation not found
+ * - 409 if already refunded (idempotency key match returns 200 with existing record)
+ * - 422 if not in completed/confirmed status or refund window expired
  */
 router.post('/:id/refund', requireApiKey, checkPermission(PERMISSIONS.DONATIONS_UPDATE), donationIdParamSchema, payloadSizeLimiter(ENDPOINT_LIMITS.singleDonation), asyncHandler(async (req, res, next) => {
   try {
     const { id } = req.params;
-    const { reason } = req.body;
-
-    log.debug('DONATION_ROUTE', 'Processing refund request', {
-      requestId: req.id,
-      donationId: id,
-      reason
-    });
+    const { reason, notes, idempotencyKey, recipientSecret } = req.body;
 
     // Validate donation ID
     if (!id || isNaN(parseInt(id, 10))) {
       return res.status(400).json({
         success: false,
-        error: {
-          code: 'INVALID_REQUEST',
-          message: 'Invalid donation ID'
-        }
+        error: { code: 'INVALID_REQUEST', message: 'Invalid donation ID' }
       });
     }
 
-    // Process refund
+    // Process refund — service throws NotFoundError(404), BusinessLogicError(422), DuplicateError(409)
     const refundResult = await donationService.refundDonation(id, {
       reason: reason || null,
-      requestId: req.id
+      notes: notes || null,
+      idempotencyKey: idempotencyKey || null,
+      recipientSecret: recipientSecret || null,
+      requestId: req.id,
     });
 
     // Mark processing complete
@@ -643,17 +654,28 @@ router.post('/:id/refund', requireApiKey, checkPermission(PERMISSIONS.DONATIONS_
       req.markLifecycleStage(LIFECYCLE_STAGES.PROCESSED);
     }
 
-    res.status(201).json({
+    // Idempotent replay: service signals this was already processed
+    const statusCode = refundResult.alreadyProcessed ? 200 : 201;
+
+    res.status(statusCode).json({
       success: true,
-      data: refundResult
+      data: {
+        refundId: refundResult.refundId,
+        donationId: parseInt(id, 10),
+        originalAmount: refundResult.amount,
+        refundedAmount: refundResult.refundedAmount || refundResult.amount,
+        networkFeeDeducted: refundResult.networkFeeDeducted || 0,
+        stellarTxHash: refundResult.reverseTxId || refundResult.transactionId || null,
+        status: refundResult.status || 'completed',
+        reason: refundResult.reason || reason || null,
+        processedAt: refundResult.refundedAt || new Date().toISOString(),
+      },
     });
   } catch (error) {
     log.error('DONATION_ROUTE', 'Failed to process refund', {
       requestId: req.id,
       error: error.message,
-      stack: error.stack
     });
-
     next(error);
   }
 }));
