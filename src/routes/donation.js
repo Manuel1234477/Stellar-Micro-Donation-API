@@ -465,6 +465,20 @@ router.get('/', checkPermission(PERMISSIONS.DONATIONS_READ), asyncHandler(async 
     const pagination = parseCursorPaginationQuery(req.query);
     const result = donationService.getPaginatedDonations(pagination);
     res.setHeader('X-Total-Count', String(result.totalCount));
+
+    if (req.query.envelope === 'true') {
+      return res.json({
+        data: result.data,
+        pagination: {
+          total: result.totalCount,
+          limit: result.meta.limit,
+          hasMore: result.meta.next_cursor !== null,
+          next_cursor: result.meta.next_cursor,
+          prev_cursor: result.meta.prev_cursor,
+        },
+      });
+    }
+
     res.json({ success: true, data: result.data, count: result.data.length, meta: result.meta });
   } catch (error) {
     next(error);
@@ -483,10 +497,11 @@ router.get('/recent', checkPermission(PERMISSIONS.DONATIONS_READ), asyncHandler(
   try {
     const limit = Math.min(parseInt(req.query.limit, 10) || 10, 100);
     const Database = require('../utils/database');
-    const rows = await Database.query(
-      `SELECT * FROM transactions ORDER BY timestamp DESC LIMIT ?`,
-      [limit]
-    );
+    const [rows, countRow] = await Promise.all([
+      Database.query(`SELECT * FROM transactions ORDER BY timestamp DESC LIMIT ?`, [limit]),
+      Database.get(`SELECT COUNT(*) AS total FROM transactions`),
+    ]);
+    res.setHeader('X-Total-Count', String(countRow ? countRow.total : rows.length));
     res.json({ success: true, data: rows, count: rows.length });
   } catch (error) {
     next(error);
