@@ -6,7 +6,7 @@ const hasSecurityPlugin = (() => {
     return false;
   }
 })();
-
+//minor comment not neccessary
 module.exports = {
   env: {
     node: true,
@@ -35,7 +35,7 @@ module.exports = {
       'security/detect-possible-timing-attacks': 'warn',
       'security/detect-pseudoRandomBytes': 'error',
     } : {}),
-    
+
     // Code quality rules that affect security
     'no-eval': 'error',
     'no-implied-eval': 'error',
