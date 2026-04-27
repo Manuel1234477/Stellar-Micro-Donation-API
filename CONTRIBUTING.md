@@ -1,95 +1,238 @@
-# Contributing Guide
+# Contributing to Stellar Micro-Donation API
 
-Thanks for contributing to the Stellar Micro-Donation API!
+Thank you for helping improve this project! This guide covers everything you need to contribute effectively.
 
-## Getting Started
+## Table of Contents
 
-1. Fork the repo and clone your fork
-2. Follow the [Quickstart Guide](docs/quickstart.md) to set up locally
-3. Create a feature branch: `git checkout -b feature/your-feature-name`
+- [Dev Setup](#dev-setup)
+- [Coding Standards](#coding-standards)
+- [Testing](#testing)
+- [Conventional Commits](#conventional-commits)
+- [Pull Request Process](#pull-request-process)
+- [Branch Naming](#branch-naming)
+- [Security](#security)
+- [Getting Help](#getting-help)
 
-## Development Workflow
+---
 
-```bash
-npm install          # install dependencies
-npm run init-db      # initialize database
-npm start            # start server (http://localhost:3000)
-npm run dev          # start with auto-reload
-npm test             # run all tests
-npm run lint         # check code style
-```
+## Dev Setup
 
-Always use `MOCK_STELLAR=true` in your `.env` during development — no Stellar account needed.
+### Prerequisites
 
-## Code Style
+- **Node.js v18 or higher** (v20 LTS recommended)
+- **npm v9+**
+- **Git**
 
-- **ESLint** enforces style. Run `npm run lint` before committing.
-- Use `const`/`let`, not `var`
-- Async/await over raw Promise chains
-- Add JSDoc comments to all exported functions:
-
-```js
-/**
- * Creates a donation record and submits it to the Stellar network.
- * @param {object} params - Donation parameters
- * @param {string} params.senderPublicKey - Sender's Stellar public key
- * @param {string} params.recipientPublicKey - Recipient's Stellar public key
- * @param {string} params.amount - Amount in XLM
- * @returns {Promise<object>} Created donation record
- */
-async function createDonation(params) { ... }
-```
-
-## Testing Requirements
-
-- **Minimum 95% coverage** for new code
-- All tests must pass: `npm test`
-- No live Stellar network in tests — use `MockStellarService`
-- Tests must be isolated (no shared state between tests)
-- Name test files to match the feature: `tests/your-feature.test.js`
+### Local Setup
 
 ```bash
-npm run test:coverage    # run with coverage report
-npm run check-coverage   # verify thresholds are met
+# 1. Fork and clone
+git clone https://github.com/YOUR_USERNAME/Stellar-Micro-Donation-API.git
+cd Stellar-Micro-Donation-API
+
+# 2. Install dependencies
+npm install
+
+# 3. Configure environment
+cp .env.example .env
+# Edit .env — minimum required for local dev:
+#   MOCK_STELLAR=true        (no real Stellar account needed)
+#   API_KEYS=dev_key_123
+#   ENCRYPTION_KEY=          (run `npm run generate-key` to create one)
+
+# 4. Generate an encryption key
+npm run generate-key
+
+# 5. Initialize the database
+npm run init-db
+
+# 6. Start the server
+npm run dev          # auto-reload on file changes
 ```
+
+The API will be available at `http://localhost:3000`.
+Swagger UI (dev only): `http://localhost:3000/docs`
+
+### Stellar Credentials
+
+For local development, always use `MOCK_STELLAR=true` — no real Stellar account is required. The mock service simulates all blockchain operations.
+
+For testnet integration testing, create a free account at [Stellar Laboratory](https://laboratory.stellar.org/) and set:
+
+```env
+MOCK_STELLAR=false
+STELLAR_NETWORK=testnet
+HORIZON_URL=https://horizon-testnet.stellar.org
+```
+
+---
+
+## Coding Standards
+
+### Linting
+
+This project uses **ESLint** with security plugins. Run before every commit:
+
+```bash
+npm run lint
+```
+
+Fix all lint errors before opening a PR.
+
+### Naming Conventions
+
+| Construct | Convention | Example |
+|-----------|-----------|---------|
+| Variables & functions | `camelCase` | `donationAmount`, `createWallet()` |
+| Classes | `PascalCase` | `DonationService`, `WalletBuilder` |
+| Constants | `UPPER_SNAKE_CASE` | `MAX_DONATION_AMOUNT` |
+| Files (source) | `camelCase` | `donationService.js` |
+| Files (tests) | `kebab-case.test.js` | `donation-routes.test.js` |
+| Environment variables | `UPPER_SNAKE_CASE` | `STELLAR_NETWORK` |
+
+### Code Style
+
+- Use `const`/`let` — never `var`
+- Prefer `async`/`await` over raw Promise chains
+- All exported functions must have JSDoc comments
+- Use error classes from `src/utils/errors.js` — don't throw raw `Error` in route handlers
+- Wrap all async route handlers with `asyncHandler` from `src/utils/asyncHandler.js`
+
+---
+
+## Testing
+
+### Running Tests
+
+```bash
+npm test                     # full test suite
+npm run test:coverage        # with coverage report
+npm run check-coverage       # verify thresholds
+npm test -- path/to/test.js  # single file
+npm test -- --randomize      # random order (verify isolation)
+```
+
+### Coverage Thresholds
+
+PRs must **maintain or improve** current coverage. Minimum thresholds enforced in CI:
+
+| Metric | Minimum |
+|--------|---------|
+| Branches | 60% |
+| Functions | 60% |
+| Lines | 60% |
+| Statements | 60% |
 
 ### Writing Tests
 
-```js
-const request = require('supertest');
-const app = require('../src/routes/app');
+- Place tests in `tests/` mirroring the source structure
+- Use `MockStellarService` — never call the live Stellar network in tests
+- Tests must be fully isolated (no shared state, no order dependency)
+- Use the builder helpers in `tests/builders/` for common test data
 
-// Set mock mode before importing app
+```js
+'use strict';
+
+const request = require('supertest');
+
 process.env.MOCK_STELLAR = 'true';
 process.env.API_KEYS = 'test_key';
 
-describe('My Feature', () => {
-  it('should do the thing', async () => {
+const app = require('../src/routes/app');
+
+describe('POST /api/v1/donations', () => {
+  it('creates a donation successfully', async () => {
     const res = await request(app)
       .post('/api/v1/donations')
       .set('X-API-Key', 'test_key')
-      .send({ ... });
+      .send({ senderPublicKey: 'G...', recipientPublicKey: 'G...', amount: '10' });
     expect(res.status).toBe(201);
   });
 });
 ```
 
+---
+
+## Conventional Commits
+
+All commit messages must follow [Conventional Commits](https://www.conventionalcommits.org/):
+
+```
+<type>: <short description> [#issue]
+```
+
+### Types
+
+| Type | When to use |
+|------|-------------|
+| `feat` | New feature |
+| `fix` | Bug fix |
+| `docs` | Documentation only |
+| `test` | Adding or updating tests |
+| `refactor` | Code change that is neither fix nor feature |
+| `security` | Security improvement |
+| `chore` | Build process, dependencies, tooling |
+| `perf` | Performance improvement |
+
+### Examples
+
+```
+feat: add webhook notifications for completed donations #412
+fix: handle missing memo field in transaction sync #388
+docs: add CONTRIBUTING.md and GitHub issue templates #759
+security: implement path-based CSP to support Swagger UI #757
+```
+
+**Breaking changes** — append `!` and add a `BREAKING CHANGE:` footer:
+
+```
+feat!: require API key scopes for all donation endpoints #450
+
+BREAKING CHANGE: API keys without explicit scopes will be rejected.
+```
+
+---
+
 ## Pull Request Process
 
-1. Ensure all tests pass and coverage thresholds are met
-2. Run `npm run lint` — fix any issues
-3. Write a clear PR description explaining what and why
-4. Reference the issue number: `Closes #390`
-5. Keep PRs focused — one feature or fix per PR
+### Before Opening a PR
 
-### PR Checklist
+1. Rebase onto latest `main`: `git fetch origin && git rebase origin/main`
+2. All tests pass: `npm test`
+3. Coverage thresholds met: `npm run check-coverage`
+4. No lint errors: `npm run lint`
+5. No secrets or credentials committed
 
-- [ ] Tests added/updated for all changes
-- [ ] `npm test` passes
-- [ ] `npm run lint` passes
-- [ ] `npm run check-coverage` passes
-- [ ] Documentation updated if needed
-- [ ] No secrets or credentials in code
+### Merge Requirements
+
+A PR will be merged when **all** of the following are true:
+
+- ✅ All CI checks pass (tests, coverage, lint, security scan)
+- ✅ At least **one maintainer approval**
+- ✅ No unresolved review comments
+- ✅ PR description references the issue (`Closes #NNN`)
+- ✅ Commits follow Conventional Commits format
+
+### PR Description Template
+
+```
+## Summary
+What this PR does and why.
+
+## Changes
+- Specific change 1
+- Specific change 2
+
+## Testing
+Commands run and scenarios covered.
+
+## Related Issue
+Closes #NNN
+```
+
+Keep PRs focused — **one feature or fix per PR**.
+
+---
 
 ## Branch Naming
 
@@ -98,27 +241,25 @@ describe('My Feature', () => {
 | Feature | `feature/short-description` | `feature/add-webhook-support` |
 | Bug fix | `fix/short-description` | `fix/scheduler-timezone-bug` |
 | Docs | `docs/short-description` | `docs/update-api-reference` |
+| Security | `security/short-description` | `security/csp-swagger-fix` |
+| Chore | `chore/short-description` | `chore/upgrade-dependencies` |
 
-## Commit Messages
+Use lowercase and hyphens, not underscores.
 
-Follow [Conventional Commits](https://www.conventionalcommits.org/):
-
-```
-feat: add webhook notifications for completed donations
-fix: handle missing memo field in transaction sync
-docs: update quickstart with Docker instructions
-test: add coverage for recurring donation edge cases
-```
+---
 
 ## Security
 
-- Never commit secrets, API keys, or private keys
-- Report security vulnerabilities privately via GitHub Security Advisories
-- All inputs are sanitized — use the existing validation helpers in `src/utils/validationHelpers.js`
-- See [Security Documentation](docs/security/) for threat model and security controls
+- **Never commit** secrets, API keys, private keys, or `.env` files
+- Report vulnerabilities privately via [GitHub Security Advisories](../../security/advisories/new) — do not open a public issue
+- Use `src/utils/validationHelpers.js` for input validation
+- Use `src/utils/sanitizer.js` for user-supplied strings
+- See [Security Documentation](docs/security/) for the full threat model
 
-## Questions?
+---
 
-- Open a [GitHub Discussion](../../discussions) for general questions
-- Open an [Issue](../../issues) for bugs or feature requests
-- Check [Troubleshooting Guide](docs/DEVELOPER_TROUBLESHOOTING_GUIDE.md) for common problems
+## Getting Help
+
+- **Bugs / feature requests** → [Open an Issue](../../issues/new/choose)
+- **General questions** → [GitHub Discussions](../../discussions)
+- **Troubleshooting** → [Developer Troubleshooting Guide](docs/DEVELOPER_TROUBLESHOOTING_GUIDE.md)

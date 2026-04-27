@@ -504,6 +504,8 @@ The scheduler runs automatically when the server starts and checks for due donat
 
 ## 🤝 Contributing
 
+Please read our **[Contributing Guide](CONTRIBUTING.md)** before submitting a PR.
+
 **New to the project?** Check out our [Onboarding Checklist](ONBOARDING_CHECKLIST.md) for a step-by-step guide to getting started!
 
 1. Fork the repository
