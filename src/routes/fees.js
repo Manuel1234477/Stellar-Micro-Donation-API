@@ -1,90 +1,81 @@
+'use strict';
+
 /**
- * Fees Routes - Student Fee Installment Endpoint Layer
+ * Fees Routes
  *
- * RESPONSIBILITY: HTTP request handling for student fee creation,
- *                 installment payment recording, and balance queries.
- * OWNER: Backend Team
- * DEPENDENCIES: FeeService, rbac middleware
+ * GET /fees  — public endpoint returning application fees + Stellar network base fee.
+ *              Reads from NetworkStatusService cache; no live Horizon call.
+ *
+ * Closes #794.
  */
 
 const express = require('express');
 const router = express.Router();
-const FeeService = require('../services/FeeService');
+const serviceContainer = require('../config/serviceContainer');
 const asyncHandler = require('../utils/asyncHandler');
-const { payloadSizeLimiter, ENDPOINT_LIMITS } = require('../middleware/payloadSizeLimiter');
-const { requireAdmin } = require('../middleware/rbac');
+
+const STROOPS_PER_XLM = 10_000_000;
+
+/** Map NetworkStatusService feeLevel → congestion label required by #794 */
+function mapCongestion(status) {
+  if (!status || !status.connected) return 'unknown';
+  const { feeSurgeMultiplier } = status;
+  if (feeSurgeMultiplier <= 1) return 'low';
+  if (feeSurgeMultiplier <= 3) return 'medium';
+  return 'high';
+}
 
 /**
- * POST /fees
- * Create a new fee record for a student (admin only).
- * Body: { studentId, description, totalAmount }
+ * GET /fees
+ * Public — no authentication required.
+ * Returns application fee config + Stellar network base fee from cache.
  */
-router.post('/', requireAdmin(), payloadSizeLimiter(ENDPOINT_LIMITS.admin), asyncHandler(async (req, res, next) => {
-  try {
-    const { studentId, description, totalAmount } = req.body;
-    const fee = await FeeService.createFee(studentId, description, Number(totalAmount));
-    res.status(201).json({ success: true, data: fee });
-  } catch (error) {
-    next(error);
-  }
-}));
+router.get('/', asyncHandler(async (req, res) => {
+  const platformFeePercent = parseFloat(process.env.PLATFORM_FEE_PERCENT || '1.5');
+  const minimumFeeXLM     = parseFloat(process.env.MINIMUM_FEE_XLM     || '0.01');
+  const maximumFeeXLM     = parseFloat(process.env.MAXIMUM_FEE_XLM     || '10.00');
 
-/**
- * POST /fees/:id/payments
- * Record an installment payment toward a fee.
- * Body: { amount, note? }
- */
-router.post('/:id/payments', payloadSizeLimiter(ENDPOINT_LIMITS.admin), asyncHandler(async (req, res, next) => {
-  try {
-    const feeId = parseInt(req.params.id, 10);
-    if (isNaN(feeId) || feeId < 1) {
-      return res.status(400).json({
-        success: false,
-        error: { code: 'INVALID_REQUEST', message: 'Invalid fee ID' },
-      });
-    }
+  const networkStatus = serviceContainer.getNetworkStatusService().getStatus();
 
-    const { amount, note } = req.body;
-    const fee = await FeeService.recordPayment(feeId, Number(amount), note);
-    res.status(200).json({ success: true, data: fee });
-  } catch (error) {
-    next(error);
-  }
-}));
+  // Prefer the cached fee; fall back to Stellar baseline (100 stroops)
+  const baseFeeStroops = (networkStatus && networkStatus.feeStroops) || 100;
+  const baseFeeXLM     = parseFloat((baseFeeStroops / STROOPS_PER_XLM).toFixed(7));
 
-/**
- * GET /fees/student/:studentId
- * List all fees for a student.
- * NOTE: must be registered before /:id to avoid route conflict
- */
-router.get('/student/:studentId', asyncHandler(async (req, res, next) => {
-  try {
-    const fees = await FeeService.getFeesForStudent(req.params.studentId);
-    res.json({ success: true, data: fees, count: fees.length });
-  } catch (error) {
-    next(error);
-  }
-}));
+  const feeSource    = (networkStatus && networkStatus.connected) ? 'network_status_cache' : 'fallback_baseline';
+  const lastUpdatedAt = (networkStatus && networkStatus.timestamp) || new Date().toISOString();
+  const congestion   = mapCongestion(networkStatus);
 
-/**
- * GET /fees/:id
- * Get a fee record with payment history and balance summary.
- */
-router.get('/:id', asyncHandler(async (req, res, next) => {
-  try {
-    const feeId = parseInt(req.params.id, 10);
-    if (isNaN(feeId) || feeId < 1) {
-      return res.status(400).json({
-        success: false,
-        error: { code: 'INVALID_REQUEST', message: 'Invalid fee ID' },
-      });
-    }
+  // Example calculation for a 100 XLM donation
+  const exampleAmount   = 100.00;
+  const platformFee     = parseFloat(Math.max(exampleAmount * platformFeePercent / 100, minimumFeeXLM).toFixed(7));
+  const totalCost       = parseFloat((exampleAmount + platformFee + baseFeeXLM).toFixed(7));
 
-    const fee = await FeeService.getFee(feeId);
-    res.json({ success: true, data: fee });
-  } catch (error) {
-    next(error);
-  }
+  const minimumTotalFeeXLM = parseFloat((minimumFeeXLM + baseFeeXLM).toFixed(7));
+
+  res.json({
+    application: {
+      platformFeePercent,
+      minimumFeeXLM,
+      maximumFeeXLM,
+      feeCalculationExample: {
+        donationAmount: exampleAmount,
+        platformFee,
+        stellarFee: baseFeeXLM,
+        totalCost,
+      },
+    },
+    stellar: {
+      baseFeeStroops,
+      baseFeeXLM,
+      feeSource,
+      lastUpdatedAt,
+      networkCongestion: congestion,
+    },
+    total: {
+      minimumTotalFeeXLM,
+      note: 'Total fee = max(platformFee, minimumFeeXLM) + stellarBaseFee',
+    },
+  });
 }));
 
 module.exports = router;
