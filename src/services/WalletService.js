@@ -117,19 +117,43 @@ class WalletService {
   }
 
   /**
-   * Get wallets using cursor-based pagination.
+   * Get wallets using cursor-based pagination with stable sort.
+   * Default sort is id ASC to ensure consistent pagination (#798).
    * @param {Object} pagination - Pagination options.
-   * @param {{ timestamp: string, id: string }|null} pagination.cursor - Decoded cursor.
-   * @param {number} pagination.limit - Page size.
-   * @param {string} pagination.direction - Pagination direction.
+   * @param {string} [sort='id:asc'] - Sort field and direction (e.g. 'id:asc', 'createdAt:desc').
    * @returns {{ data: Array, totalCount: number, meta: Object }} Paginated wallets.
    */
-  getPaginatedWallets(pagination) {
-    return paginateCollection(Wallet.getAll(), {
+  getPaginatedWallets(pagination, sort = 'id:asc') {
+    const [sortField, sortDir] = sort.split(':');
+    const direction = (sortDir || 'asc').toLowerCase();
+
+    const allWallets = Wallet.getAll();
+
+    // Apply stable sort before paginating
+    const sorted = [...allWallets].sort((a, b) => {
+      const aVal = a[sortField] ?? '';
+      const bVal = b[sortField] ?? '';
+      const cmp = String(aVal).localeCompare(String(bVal), 'en', { numeric: true });
+      return direction === 'desc' ? -cmp : cmp;
+    });
+
+    // Use paginateCollection with createdAt as the cursor field (stable for cursor pagination)
+    // but return data in the pre-sorted order
+    const result = paginateCollection(sorted, {
       ...pagination,
       timestampField: 'createdAt',
       idField: 'id',
     });
+
+    // Re-apply the requested sort to the page data (paginateCollection re-sorts by createdAt DESC)
+    const resorted = [...result.data].sort((a, b) => {
+      const aVal = a[sortField] ?? '';
+      const bVal = b[sortField] ?? '';
+      const cmp = String(aVal).localeCompare(String(bVal), 'en', { numeric: true });
+      return direction === 'desc' ? -cmp : cmp;
+    });
+
+    return { ...result, data: resorted };
   }
 
   /**

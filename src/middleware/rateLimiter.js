@@ -163,11 +163,13 @@ const verificationRateLimiter = rateLimit({
  */
 const batchRateLimiter = rateLimit({
   windowMs: 60 * 1000,
-  max: 10,
+  max: 1,
+  keyGenerator: (req) => req.apiKey?.id || req.ip,
   standardHeaders: true,
   legacyHeaders: false,
   validate: false,
   handler: (req, res) => {
+    const identifier = req.apiKey?.id ? `api-key:${req.apiKey.id}` : `ip:${req.ip}`;
     AuditLogService.log({
       category: AuditLogService.CATEGORY.RATE_LIMITING,
       action: AuditLogService.ACTION.RATE_LIMIT_EXCEEDED,
@@ -177,15 +179,16 @@ const batchRateLimiter = rateLimit({
       ipAddress: req.ip,
       resource: req.path,
       reason: 'Batch donation rate limit exceeded',
-      details: { limit: 10, window: '60s', resetTime: req.rateLimit.resetTime }
+      details: { limit: 1, window: '60s', identifier, resetTime: req.rateLimit.resetTime }
     }).catch(err => console.error('Audit log failed:', err));
 
     res.status(429).json({
       success: false,
       error: {
         code: 'RATE_LIMIT_EXCEEDED',
-        message: 'Too many batch requests from this IP. Please try again later.',
-        retryAfter: req.rateLimit.resetTime
+        message: 'Too many batch donation requests. Please try again later.',
+        retryAfter: req.rateLimit.resetTime,
+        limitedBy: req.apiKey?.id ? 'api-key' : 'ip'
       }
     });
   }

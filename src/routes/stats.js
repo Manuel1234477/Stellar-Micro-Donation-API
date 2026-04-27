@@ -77,6 +77,7 @@ const AuditLogService = require('../services/AuditLogService');
 const asyncHandler = require('../utils/asyncHandler');
 const { cacheMiddleware } = require('../middleware/caching');
 const Cache = require('../utils/cache');
+const { isValidStellarPublicKey } = require('../utils/validators');
 
 // Stats cache TTL in milliseconds — configurable via STATS_CACHE_TTL_SECONDS env var (default: 60s)
 const STATS_CACHE_TTL_MS = parseInt(process.env.STATS_CACHE_TTL_SECONDS || '60', 10) * 1000;
@@ -162,6 +163,7 @@ const walletAnalyticsSchema = validateSchema({
         required: true,
         trim: true,
         minLength: 1,
+        validate: (value) => isValidStellarPublicKey(value) || 'Invalid Stellar public key format',
       },
     },
   },
@@ -438,28 +440,15 @@ router.get('/analytics-fees', checkPermission(PERMISSIONS.STATS_READ), auditStat
  * Get donation analytics for a specific wallet
  * Query params: startDate, endDate (optional, ISO format)
  */
-router.get('/wallet/:walletAddress/analytics', checkPermission(PERMISSIONS.STATS_READ), requireTier('pro'), walletAnalyticsSchema, (req, res, next) => {
+router.get('/wallet/:walletAddress/analytics', checkPermission(PERMISSIONS.STATS_READ), requireTier('pro'), walletAnalyticsSchema, asyncHandler(async (req, res, next) => {
   try {
     const { walletAddress } = req.params;
     const { startDate, endDate } = req.query;
 
-    if (!walletAddress) {
-      return res.status(400).json({
-        error: 'Missing required parameter: walletAddress'
-      });
-    }
-
     let start = null;
     let end = null;
 
-    // If date filtering is requested, validate dates
     if (startDate || endDate) {
-      if (!startDate || !endDate) {
-        return res.status(400).json({
-          error: 'Both startDate and endDate are required for date filtering'
-        });
-      }
-
       start = new Date(startDate);
       end = new Date(endDate);
 
@@ -478,31 +467,19 @@ router.get('/wallet/:walletAddress/analytics', checkPermission(PERMISSIONS.STATS
 
     const analytics = StatsService.getWalletAnalytics(walletAddress, start, end);
 
+    if (analytics.donationCount === 0) {
+      return res.status(404).json({
+        success: false,
+        error: {
+          code: 'NOT_FOUND',
+          message: 'Wallet analytics not found for the provided Stellar public key'
+        }
+      });
+    }
+
     res.json({
       success: true,
       data: analytics
-    });
-  } catch (error) {
-    next(error);
-  }
-});
-
-router.get('/wallet/:walletAddress/analytics', checkPermission(PERMISSIONS.STATS_READ), walletAnalyticsSchema, asyncHandler(async (req, res, next) => {
-  try {
-    const { walletAddress } = req.params;
-
-    // Trigger the new aggregation logic
-    const liveStats = await StatsService.aggregateFromNetwork(walletAddress);
-
-    // Combine with your existing local transaction analytics
-    const localAnalytics = StatsService.getWalletAnalytics(walletAddress);
-
-    res.json({
-      success: true,
-      data: {
-        blockchain: liveStats,
-        local: localAnalytics
-      }
     });
   } catch (error) {
     next(error);

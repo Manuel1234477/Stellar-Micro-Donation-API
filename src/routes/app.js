@@ -458,15 +458,22 @@ app.get('/suspicious-patterns', require('../middleware/rbac').requireAdmin(), (r
 // Circuit breaker admin endpoints (issue #736)
 app.use('/admin/circuit-breaker', requireApiKey, require('./admin/circuitBreaker'));
 
+// Database monitoring admin endpoints
+app.use('/admin/db', requireApiKey, dbAdminRoutes);
+
 // Transaction inspection (admin only)
 app.use('/admin/inspect/xdr', require('../middleware/rbac').requireAdmin(), adminInspectRoutes);
 
 // Audit log export (Issue #604) - async jobs with signed download URLs
 app.use('/admin/audit-logs/export', require('./admin/auditLogExport'));
 
-// Audit logs endpoint (admin only)
+// Audit logs endpoint (admin only) — #796: mandatory pagination, default 50, max 500
+const AUDIT_LOG_DEFAULT_LIMIT = 50;
+const AUDIT_LOG_MAX_LIMIT = 500;
+
 app.get('/admin/audit-logs', require('../middleware/rbac').requireAdmin(), asyncHandler(async (req, res, next) => {
   try {
+<<<<<<< fix/760-audit-logs-input-validation
     const pagination = parseCursorPaginationQuery(req.query);
 
     // Allowlist validation — reject unknown enum values before they reach the DB layer
@@ -480,14 +487,35 @@ app.get('/admin/audit-logs', require('../middleware/rbac').requireAdmin(), async
       return res.status(400).json({ success: false, error: 'Invalid severity value' });
     }
 
+=======
+    // Parse and enforce limit bounds (default 50, max 500)
+    let limit = AUDIT_LOG_DEFAULT_LIMIT;
+    if (req.query.limit !== undefined) {
+      const parsed = parseInt(req.query.limit, 10);
+      if (isNaN(parsed) || parsed < 1) {
+        return res.status(400).json({ success: false, error: { code: 'INVALID_LIMIT', message: 'limit must be a positive integer' } });
+      }
+      if (parsed > AUDIT_LOG_MAX_LIMIT) {
+        return res.status(400).json({ success: false, error: { code: 'LIMIT_TOO_LARGE', message: `limit cannot exceed ${AUDIT_LOG_MAX_LIMIT}` } });
+      }
+      limit = parsed;
+    }
+
+    // Parse cursor using existing utility but override limit
+    const pagination = parseCursorPaginationQuery({ ...req.query, limit: String(limit) });
+    pagination.limit = limit; // ensure our validated limit is used
+
+>>>>>>> main
     const filters = {
       category: req.query.category,
       action: req.query.action,
       severity: req.query.severity,
-      userId: req.query.userId,
+      // actorId maps to userId in the schema
+      userId: req.query.actorId || req.query.userId,
       requestId: req.query.requestId,
-      startDate: req.query.startDate,
-      endDate: req.query.endDate,
+      // from/to map to startDate/endDate
+      startDate: req.query.from || req.query.startDate,
+      endDate: req.query.to || req.query.endDate,
     };
 
     const result = await AuditLogService.queryPaginated(filters, pagination);
@@ -497,7 +525,13 @@ app.get('/admin/audit-logs', require('../middleware/rbac').requireAdmin(), async
       success: true,
       data: result.data,
       count: result.data.length,
-      meta: result.meta
+      pagination: {
+        limit,
+        cursor: result.meta.next_cursor || null,
+        hasMore: result.meta.next_cursor !== null,
+        total: result.totalCount,
+      },
+      meta: result.meta,
     });
   } catch (error) {
     next(error);

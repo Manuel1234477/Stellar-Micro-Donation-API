@@ -291,8 +291,21 @@ router.post('/', payloadSizeLimiter(ENDPOINT_LIMITS.wallet), checkPermission(PER
  */
 router.get('/', checkPermission(PERMISSIONS.WALLETS_READ), cacheMiddleware('wallet', 'private'), (req, res, next) => {
   try {
+    // #798: validate ?sort param
+    const VALID_SORT = ['id:asc', 'id:desc', 'createdAt:asc', 'createdAt:desc', 'publicKey:asc', 'publicKey:desc'];
+    const sort = req.query.sort || 'id:asc';
+    if (!VALID_SORT.includes(sort)) {
+      return res.status(400).json({
+        success: false,
+        error: {
+          code: 'INVALID_SORT',
+          message: `Invalid sort value. Valid options: ${VALID_SORT.join(', ')}`,
+        },
+      });
+    }
+
     const pagination = parseCursorPaginationQuery(req.query);
-    const result = walletService.getPaginatedWallets(pagination);
+    const result = walletService.getPaginatedWallets(pagination, sort);
 
     res.setHeader('X-Total-Count', String(result.totalCount));
 

@@ -313,7 +313,7 @@ router.post('/create', payloadSizeLimiter(ENDPOINT_LIMITS.stream), requestTimeou
  * Get recurring donation schedules.
  * Regular users see only their own schedules (where they are the donor).
  * Admin users can see all schedules by passing ?all=true.
- * Supports optional ?status= filter (e.g. ?status=paused).
+ * Supports optional ?status= filter and ?sort= (default id:asc) — #798.
  */
 router.get('/schedules', checkPermission(PERMISSIONS.STREAM_READ), asyncHandler(async (req, res, next) => {
   try {
@@ -328,6 +328,25 @@ router.get('/schedules', checkPermission(PERMISSIONS.STREAM_READ), asyncHandler(
         error: { code: 'FORBIDDEN', message: 'Cannot identify requesting user' }
       });
     }
+
+    // #798: validate ?sort param — default id:asc for stable pagination
+    const VALID_SORT = {
+      'id:asc': 'rd.id ASC',
+      'id:desc': 'rd.id DESC',
+      'createdAt:asc': 'rd.id ASC',   // createdAt not stored; id is a stable proxy
+      'createdAt:desc': 'rd.id DESC',
+    };
+    const sortParam = req.query.sort || 'id:asc';
+    if (!VALID_SORT[sortParam]) {
+      return res.status(400).json({
+        success: false,
+        error: {
+          code: 'INVALID_SORT',
+          message: `Invalid sort value. Valid options: ${Object.keys(VALID_SORT).join(', ')}`,
+        },
+      });
+    }
+    const orderByClause = VALID_SORT[sortParam];
 
     const showAll = isAdmin && all === 'true';
 
@@ -362,7 +381,7 @@ router.get('/schedules', checkPermission(PERMISSIONS.STREAM_READ), asyncHandler(
     if (conditions.length) {
       query += ' WHERE ' + conditions.join(' AND ');
     }
-    query += ' ORDER BY rd.createdAt DESC';
+    query += ` ORDER BY ${orderByClause}`;
 
     const schedules = await Database.query(query, params);
 

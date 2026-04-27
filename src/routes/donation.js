@@ -196,6 +196,7 @@ const LimitService = require('../services/LimitService');
 const Transaction = require('./models/transaction');
 const donationValidator = require('../utils/donationValidator');
 const { buildErrorResponse } = require('../utils/validationErrorFormatter');
+const donationEvents = require('../events/donationEvents');
 
 const donationService = new DonationService(getStellarService());
 
@@ -413,6 +414,23 @@ router.get('/:id/certificate', checkPermission(PERMISSIONS.DONATIONS_READ), dona
  * Create a new donation.
  * Requires Idempotency-Key header (UUID v4) to prevent duplicate donations from network retries.
  */
+// In-memory per-donor serialization lock to prevent TOCTOU on daily limit checks (#806).
+// Acceptable for single-instance deployments; replace with a distributed lock for multi-instance.
+const _donorLocks = new Map();
+async function withDonorLock(donorId, fn) {
+  const prev = _donorLocks.get(donorId) || Promise.resolve();
+  let release;
+  const next = new Promise(r => { release = r; });
+  _donorLocks.set(donorId, next);
+  try {
+    await prev;
+    return await fn();
+  } finally {
+    release();
+    if (_donorLocks.get(donorId) === next) _donorLocks.delete(donorId);
+  }
+}
+
 router.post('/', donationRateLimiter, checkPermission(PERMISSIONS.DONATIONS_CREATE), requireIdempotency, payloadSizeLimiter(ENDPOINT_LIMITS.singleDonation), asyncHandler(async (req, res, next) => {
   try {
     const { senderId, receiverId, amount, memo } = req.body;
@@ -438,6 +456,48 @@ router.post('/', donationRateLimiter, checkPermission(PERMISSIONS.DONATIONS_CREA
       }
     }
 
+    // #806: enforce maxDailyPerDonor limit with per-donor serialization to prevent TOCTOU
+    const config = require('../config');
+    const globalDailyMax = config.donations.maxDailyPerDonor;
+
+    // Compute rate-limit header values (best-effort; 0 = unlimited)
+    let dailyLimit = null;
+    let dailyUsed = 0;
+    if (globalDailyMax > 0) {
+      dailyUsed = await LimitService.getDailyTotal(senderId);
+      dailyLimit = globalDailyMax;
+    }
+
+    // Set X-RateLimit-* headers on every POST /donations response
+    const resetsAt = new Date();
+    resetsAt.setUTCHours(24, 0, 0, 0); // midnight UTC next day
+    if (dailyLimit !== null) {
+      res.set('X-RateLimit-Limit', String(dailyLimit));
+      res.set('X-RateLimit-Remaining', String(Math.max(0, dailyLimit - dailyUsed)));
+      res.set('X-RateLimit-Reset', String(Math.floor(resetsAt.getTime() / 1000)));
+    }
+
+    // Enforce the limit inside a per-donor lock to prevent concurrent bypass
+    if (globalDailyMax > 0) {
+      try {
+        await withDonorLock(String(senderId), () =>
+          LimitService.checkLimits(senderId, amountValidation.value)
+        );
+      } catch (limitErr) {
+        if (limitErr && limitErr.details && limitErr.details.limit !== undefined) {
+          const { limit, used, remaining } = limitErr.details;
+          return res.status(429).json({
+            error: 'Daily donation limit exceeded',
+            limit,
+            used,
+            remaining: remaining !== undefined ? remaining : Math.max(0, limit - used),
+            resetsAt: resetsAt.toISOString(),
+          });
+        }
+        return next(limitErr);
+      }
+    }
+
     const result = await donationService.sendCustodialDonation({
       senderId,
       receiverId,
@@ -456,15 +516,165 @@ router.post('/', donationRateLimiter, checkPermission(PERMISSIONS.DONATIONS_CREA
   }
 }));
 
+function formatBatchDonationError(index, code, message) {
+  return {
+    success: false,
+    index,
+    error: {
+      code,
+      message,
+    },
+  };
+}
+
+function formatBatchDonationSuccess(index, data) {
+  return {
+    success: true,
+    index,
+    data,
+  };
+}
+
+router.post('/batch', requireApiKey, batchRateLimiter, checkPermission(PERMISSIONS.DONATIONS_CREATE), payloadSizeLimiter(ENDPOINT_LIMITS.batchDonation), asyncHandler(async (req, res, next) => {
+  try {
+    const donations = req.body;
+
+    if (!Array.isArray(donations)) {
+      return res.status(400).json({
+        success: false,
+        error: {
+          code: 'INVALID_PAYLOAD',
+          message: 'Request body must be an array of donation objects'
+        }
+      });
+    }
+
+    if (donations.length === 0 || donations.length > 100) {
+      return res.status(400).json({
+        success: false,
+        error: {
+          code: 'INVALID_BATCH_SIZE',
+          message: 'Batch must contain between 1 and 100 donation objects'
+        }
+      });
+    }
+
+    const results = [];
+
+    for (let index = 0; index < donations.length; index += 1) {
+      const donation = donations[index];
+
+      if (!donation || typeof donation !== 'object' || Array.isArray(donation)) {
+        results.push(formatBatchDonationError(index, 'INVALID_DONATION', 'Each batch item must be an object')); 
+        continue;
+      }
+
+      const missingFields = [];
+      if (donation.senderId === undefined || donation.senderId === null) missingFields.push('senderId');
+      if (donation.receiverId === undefined || donation.receiverId === null) missingFields.push('receiverId');
+      if (donation.amount === undefined || donation.amount === null) missingFields.push('amount');
+
+      if (missingFields.length > 0) {
+        results.push(formatBatchDonationError(index, 'MISSING_FIELDS', `Missing required fields: ${missingFields.join(', ')}`));
+        continue;
+      }
+
+      const senderIdValidation = validateInteger(donation.senderId, { min: 1 });
+      if (!senderIdValidation.valid) {
+        results.push(formatBatchDonationError(index, 'INVALID_SENDER_ID', `Invalid senderId: ${senderIdValidation.error}`));
+        continue;
+      }
+
+      const receiverIdValidation = validateInteger(donation.receiverId, { min: 1 });
+      if (!receiverIdValidation.valid) {
+        results.push(formatBatchDonationError(index, 'INVALID_RECEIVER_ID', `Invalid receiverId: ${receiverIdValidation.error}`));
+        continue;
+      }
+
+      const amountValidation = validateFloat(donation.amount);
+      if (!amountValidation.valid) {
+        results.push(formatBatchDonationError(index, 'INVALID_AMOUNT', `Invalid amount: ${amountValidation.error}`));
+        continue;
+      }
+
+      if (donation.memo !== undefined && donation.memo !== null && donation.memo !== '') {
+        if (typeof donation.memo !== 'string') {
+          results.push(formatBatchDonationError(index, 'INVALID_MEMO', 'Memo must be a string')); 
+          continue;
+        }
+        const MemoValidator = require('../utils/memoValidator');
+        const memoValidation = MemoValidator.validate(donation.memo);
+        if (!memoValidation.valid) {
+          results.push(formatBatchDonationError(index, 'INVALID_MEMO', 'Memo text must be 28 bytes or less'));
+          continue;
+        }
+      }
+
+      try {
+        const result = await donationService.sendCustodialDonation({
+          senderId: senderIdValidation.value,
+          receiverId: receiverIdValidation.value,
+          amount: amountValidation.value,
+          memo: donation.memo || null,
+          notes: donation.notes || null,
+          tags: donation.tags || null,
+          apiKeyId: req.apiKey?.id,
+          requestId: req.id,
+        });
+        results.push(formatBatchDonationSuccess(index, result));
+      } catch (error) {
+        const code = error.code || 'DONATION_FAILED';
+        const message = error.message || 'Donation processing failed';
+        results.push(formatBatchDonationError(index, code, message));
+      }
+    }
+
+    return res.status(207).json({
+      success: true,
+      results,
+    });
+  } catch (error) {
+    next(error);
+  }
+}));
+
 /**
  * GET /donations
  * List all donations with optional pagination.
  */
 router.get('/', checkPermission(PERMISSIONS.DONATIONS_READ), asyncHandler(async (req, res, next) => {
   try {
+    // #798: validate ?sort param
+    const VALID_SORT = ['id:asc', 'id:desc', 'timestamp:asc', 'timestamp:desc', 'amount:asc', 'amount:desc'];
+    const sort = req.query.sort;
+    if (sort !== undefined && !VALID_SORT.includes(sort)) {
+      return res.status(400).json({
+        success: false,
+        error: {
+          code: 'INVALID_SORT',
+          message: `Invalid sort value. Valid options: ${VALID_SORT.join(', ')}`,
+        },
+      });
+    }
+
     const pagination = parseCursorPaginationQuery(req.query);
-    const result = donationService.getPaginatedDonations(pagination);
+    const [sortBy, order] = sort ? sort.split(':') : ['timestamp', 'desc'];
+    const result = donationService.getPaginatedDonations(pagination, { sortBy, order });
     res.setHeader('X-Total-Count', String(result.totalCount));
+
+    if (req.query.envelope === 'true') {
+      return res.json({
+        data: result.data,
+        pagination: {
+          total: result.totalCount,
+          limit: result.meta.limit,
+          hasMore: result.meta.next_cursor !== null,
+          next_cursor: result.meta.next_cursor,
+          prev_cursor: result.meta.prev_cursor,
+        },
+      });
+    }
+
     res.json({ success: true, data: result.data, count: result.data.length, meta: result.meta });
   } catch (error) {
     next(error);
@@ -483,10 +693,11 @@ router.get('/recent', checkPermission(PERMISSIONS.DONATIONS_READ), asyncHandler(
   try {
     const limit = Math.min(parseInt(req.query.limit, 10) || 10, 100);
     const Database = require('../utils/database');
-    const rows = await Database.query(
-      `SELECT * FROM transactions ORDER BY timestamp DESC LIMIT ?`,
-      [limit]
-    );
+    const [rows, countRow] = await Promise.all([
+      Database.query(`SELECT * FROM transactions ORDER BY timestamp DESC LIMIT ?`, [limit]),
+      Database.get(`SELECT COUNT(*) AS total FROM transactions`),
+    ]);
+    res.setHeader('X-Total-Count', String(countRow ? countRow.total : rows.length));
     res.json({ success: true, data: rows, count: rows.length });
   } catch (error) {
     next(error);
@@ -522,6 +733,109 @@ router.post('/verify', verificationRateLimiter, checkPermission(PERMISSIONS.DONA
     }
 
     return res.json({ success: true, data: result });
+  } catch (error) {
+    next(error);
+  }
+}));
+
+/**
+ * GET /donations/:id/status
+ * Server-Sent Events (SSE) endpoint for real-time donation status updates.
+ * Opens a long-lived HTTP connection and pushes status_update events as the
+ * donation progresses through its lifecycle (pending → processing → completed/failed).
+ *
+ * Authentication: Requires API key
+ * Authorization: Users may only stream their own donations; admins may stream any donation
+ * Auto-close: Connection closes when donation reaches terminal state (completed/failed)
+ * Timeout: Connection closes after 5 minutes regardless of state
+ * Keepalive: Sends comment every 15 seconds to prevent proxy timeouts
+ * Reconnection: Instructs clients to reconnect after 3 seconds if connection drops
+ */
+router.get('/:id/status', requireApiKey, donationIdParamSchema, asyncHandler(async (req, res, next) => {
+  const donationId = req.params.id;
+
+  try {
+    // Fetch donation to verify it exists and check authorization
+    const donation = donationService.getDonationById(donationId);
+
+    // Authorization: users can only stream their own donations, admins can stream any
+    const isAdmin = req.apiKey?.role === 'admin';
+    const userOwns = donation.senderId === req.apiKey?.id || donation.receiverId === req.apiKey?.id;
+    if (!isAdmin && !userOwns) {
+      return res.status(403).json({
+        success: false,
+        error: { code: 'FORBIDDEN', message: 'You do not have permission to stream this donation' },
+      });
+    }
+
+    // Set SSE headers
+    res.setHeader('Content-Type', 'text/event-stream');
+    res.setHeader('Cache-Control', 'no-cache');
+    res.setHeader('Connection', 'keep-alive');
+    res.setHeader('X-Accel-Buffering', 'no'); // Disable nginx buffering
+    res.flushHeaders();
+
+    // Send retry directive (3 seconds)
+    res.write('retry: 3000\n\n');
+
+    // Send initial status_update event
+    const sendStatusUpdate = (status, txHash, ledger) => {
+      const event = {
+        donationId: donation.id,
+        status,
+        timestamp: new Date().toISOString(),
+      };
+      if (txHash) event.txHash = txHash;
+      if (ledger) event.ledger = ledger;
+      res.write(`event: status_update\ndata: ${JSON.stringify(event)}\n\n`);
+    };
+
+    sendStatusUpdate(donation.status, donation.stellar_tx_id, donation.ledger);
+
+    // If already in terminal state, close immediately
+    if (donation.status === 'confirmed' || donation.status === 'failed') {
+      res.write(`event: stream_closed\ndata: ${JSON.stringify({ reason: 'terminal_state', finalStatus: donation.status })}\n\n`);
+      res.end();
+      return;
+    }
+
+    // Keepalive interval (15 seconds)
+    const keepaliveInterval = setInterval(() => {
+      res.write(': keepalive\n\n');
+    }, 15000);
+
+    // 5-minute timeout
+    const timeoutMs = 5 * 60 * 1000;
+    const timeoutTimer = setTimeout(() => {
+      res.write(`event: stream_closed\ndata: ${JSON.stringify({ reason: 'timeout', finalStatus: donation.status })}\n\n`);
+      res.end();
+    }, timeoutMs);
+
+    // Listen for donation status updates
+    const statusUpdateHandler = (payload) => {
+      if (payload.donationId === donation.id) {
+        sendStatusUpdate(payload.status, payload.txHash, payload.ledger);
+
+        // Close connection on terminal state (confirmed = completed in this system)
+        if (payload.status === 'confirmed' || payload.status === 'failed') {
+          res.write(`event: stream_closed\ndata: ${JSON.stringify({ reason: 'terminal_state', finalStatus: payload.status })}\n\n`);
+          res.end();
+        }
+      }
+    };
+
+    donationEvents.on('donation.submitted', statusUpdateHandler);
+    donationEvents.on('donation.confirmed', statusUpdateHandler);
+    donationEvents.on('donation.failed', statusUpdateHandler);
+
+    // Cleanup on client disconnect
+    req.on('close', () => {
+      clearInterval(keepaliveInterval);
+      clearTimeout(timeoutTimer);
+      donationEvents.off('donation.submitted', statusUpdateHandler);
+      donationEvents.off('donation.confirmed', statusUpdateHandler);
+      donationEvents.off('donation.failed', statusUpdateHandler);
+    });
   } catch (error) {
     next(error);
   }
@@ -606,36 +920,33 @@ router.patch('/:id/status', checkPermission(PERMISSIONS.DONATIONS_UPDATE), updat
 }));
 
 /**
- * POST /donations/:id/refund
- * Initiate a refund for a confirmed donation
- * Requires admin or refund permission
+ * POST /donations/:id/refund — #797
+ * Initiate a refund for a completed donation.
+ * Body: { reason, notes, idempotencyKey, recipientSecret }
+ * - 404 if donation not found
+ * - 409 if already refunded (idempotency key match returns 200 with existing record)
+ * - 422 if not in completed/confirmed status or refund window expired
  */
 router.post('/:id/refund', requireApiKey, checkPermission(PERMISSIONS.DONATIONS_UPDATE), donationIdParamSchema, payloadSizeLimiter(ENDPOINT_LIMITS.singleDonation), asyncHandler(async (req, res, next) => {
   try {
     const { id } = req.params;
-    const { reason } = req.body;
-
-    log.debug('DONATION_ROUTE', 'Processing refund request', {
-      requestId: req.id,
-      donationId: id,
-      reason
-    });
+    const { reason, notes, idempotencyKey, recipientSecret } = req.body;
 
     // Validate donation ID
     if (!id || isNaN(parseInt(id, 10))) {
       return res.status(400).json({
         success: false,
-        error: {
-          code: 'INVALID_REQUEST',
-          message: 'Invalid donation ID'
-        }
+        error: { code: 'INVALID_REQUEST', message: 'Invalid donation ID' }
       });
     }
 
-    // Process refund
+    // Process refund — service throws NotFoundError(404), BusinessLogicError(422), DuplicateError(409)
     const refundResult = await donationService.refundDonation(id, {
       reason: reason || null,
-      requestId: req.id
+      notes: notes || null,
+      idempotencyKey: idempotencyKey || null,
+      recipientSecret: recipientSecret || null,
+      requestId: req.id,
     });
 
     // Mark processing complete
@@ -643,17 +954,28 @@ router.post('/:id/refund', requireApiKey, checkPermission(PERMISSIONS.DONATIONS_
       req.markLifecycleStage(LIFECYCLE_STAGES.PROCESSED);
     }
 
-    res.status(201).json({
+    // Idempotent replay: service signals this was already processed
+    const statusCode = refundResult.alreadyProcessed ? 200 : 201;
+
+    res.status(statusCode).json({
       success: true,
-      data: refundResult
+      data: {
+        refundId: refundResult.refundId,
+        donationId: parseInt(id, 10),
+        originalAmount: refundResult.amount,
+        refundedAmount: refundResult.refundedAmount || refundResult.amount,
+        networkFeeDeducted: refundResult.networkFeeDeducted || 0,
+        stellarTxHash: refundResult.reverseTxId || refundResult.transactionId || null,
+        status: refundResult.status || 'completed',
+        reason: refundResult.reason || reason || null,
+        processedAt: refundResult.refundedAt || new Date().toISOString(),
+      },
     });
   } catch (error) {
     log.error('DONATION_ROUTE', 'Failed to process refund', {
       requestId: req.id,
       error: error.message,
-      stack: error.stack
     });
-
     next(error);
   }
 }));
