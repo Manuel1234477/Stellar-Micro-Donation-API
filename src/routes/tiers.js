@@ -68,18 +68,52 @@ router.post('/', checkPermission(PERMISSIONS.ADMIN_ALL), payloadSizeLimiter(ENDP
 }));
 
 // ─────────────────────────────────────────────────────────────────────────────
-// GET /tiers
+// GET /tiers  — public, rate-limited, CDN-cacheable (#793)
 // ─────────────────────────────────────────────────────────────────────────────
+
+let rateLimit;
+try { rateLimit = require('express-rate-limit'); } catch (_) { rateLimit = () => (_req, _res, next) => next(); }
+
+/** 30 req/min per IP — prevents scraping while allowing normal browsing */
+const tiersPublicRateLimit = rateLimit({
+  windowMs: 60 * 1000,
+  max: 30,
+  standardHeaders: true,
+  legacyHeaders: false,
+  validate: false,
+  message: { success: false, error: { code: 'RATE_LIMIT_EXCEEDED', message: 'Too many requests. Please try again later.' } },
+});
+
+/**
+ * Strip internal fields from a tier row before sending to unauthenticated clients.
+ * Removes: id, stripe_plan_id, internal_feature_flags, discount_rules, created_at, updated_at
+ */
+function sanitizeTierForPublic(tier) {
+  const { name, amount, interval, benefits } = tier;
+  let parsedBenefits = benefits;
+  if (typeof benefits === 'string') {
+    try { parsedBenefits = JSON.parse(benefits); } catch (_) { /* keep as string */ }
+  }
+  return { name, amount, interval, benefits: parsedBenefits };
+}
 
 /**
  * @route   GET /tiers
- * @desc    List all subscription tiers
- * @access  donations:read
+ * @desc    List all subscription tiers — public, no auth required
+ * @access  Public (rate-limited to 30 req/min per IP)
  */
-router.get('/', checkPermission(PERMISSIONS.DONATIONS_READ), asyncHandler(async (req, res, next) => {
+router.get('/', tiersPublicRateLimit, asyncHandler(async (req, res, next) => {
   try {
     const tiers = await getTierService().listTiers();
-    res.json({ success: true, data: tiers, count: tiers.length });
+    const publicTiers = tiers.map(sanitizeTierForPublic);
+
+    res.set('Cache-Control', 'public, max-age=3600');
+    res.json({
+      success: true,
+      data: publicTiers,
+      count: publicTiers.length,
+      lastUpdatedAt: new Date().toISOString(),
+    });
   } catch (err) {
     next(err);
   }
