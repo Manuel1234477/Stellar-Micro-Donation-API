@@ -686,6 +686,114 @@ router.get('/schedules/:id/history', checkPermission(PERMISSIONS.STREAM_READ), s
 }));
 
 /**
+ * PATCH /stream/schedules/:id
+ * Update amount and/or frequency of an active recurring donation schedule.
+ * Changing frequency recalculates nextExecutionDate from now.
+ * Cancelled/suspended schedules cannot be updated (409).
+ * Requires stream:write permission.
+ */
+router.patch('/schedules/:id', checkPermission(PERMISSIONS.STREAM_UPDATE), streamScheduleIdSchema, payloadSizeLimiter(ENDPOINT_LIMITS.stream), asyncHandler(async (req, res, next) => {
+  try {
+    const { amount, frequency } = req.body;
+
+    if (amount === undefined && frequency === undefined) {
+      return res.status(400).json({
+        success: false,
+        error: { code: 'INVALID_REQUEST', message: 'At least one of amount or frequency must be provided' }
+      });
+    }
+
+    if (amount !== undefined) {
+      const amountValidation = validateFloat(amount);
+      if (!amountValidation.valid) {
+        return res.status(400).json({ success: false, error: `Invalid amount: ${amountValidation.error}` });
+      }
+    }
+
+    if (frequency !== undefined) {
+      const freqValidation = validateEnum(frequency, VALID_FREQUENCIES, { caseInsensitive: true });
+      if (!freqValidation.valid) {
+        return res.status(400).json({ success: false, error: freqValidation.error, code: 'INVALID_FREQUENCY' });
+      }
+    }
+
+    const schedule = await Database.get(
+      `SELECT rd.id, rd.status, rd.amount, rd.frequency FROM recurring_donations rd WHERE rd.id = ?`,
+      [req.params.id]
+    );
+
+    if (!schedule) {
+      return res.status(404).json({ success: false, error: 'Schedule not found' });
+    }
+
+    if (schedule.status === SCHEDULE_STATUS.CANCELLED || schedule.status === 'suspended') {
+      return res.status(409).json({
+        success: false,
+        error: { code: 'CONFLICT', message: `Cannot update a schedule with status: ${schedule.status}` }
+      });
+    }
+
+    const oldValues = { amount: schedule.amount, frequency: schedule.frequency };
+    const newAmount = amount !== undefined ? parseFloat(amount) : schedule.amount;
+    const newFrequency = frequency !== undefined ? frequency.toLowerCase() : schedule.frequency;
+
+    // Recalculate nextExecutionDate if frequency changed
+    let nextExecutionDate = null;
+    if (frequency !== undefined && frequency.toLowerCase() !== schedule.frequency) {
+      const now = new Date();
+      nextExecutionDate = new Date(now);
+      switch (newFrequency) {
+        case 'daily':   nextExecutionDate.setDate(nextExecutionDate.getDate() + 1); break;
+        case 'weekly':  nextExecutionDate.setDate(nextExecutionDate.getDate() + 7); break;
+        case 'monthly': nextExecutionDate.setMonth(nextExecutionDate.getMonth() + 1); break;
+      }
+    }
+
+    if (nextExecutionDate) {
+      await Database.run(
+        'UPDATE recurring_donations SET amount = ?, frequency = ?, nextExecutionDate = ? WHERE id = ?',
+        [newAmount, newFrequency, nextExecutionDate.toISOString(), req.params.id]
+      );
+    } else {
+      await Database.run(
+        'UPDATE recurring_donations SET amount = ?, frequency = ? WHERE id = ?',
+        [newAmount, newFrequency, req.params.id]
+      );
+    }
+
+    // Audit log
+    await AuditLogService.log({
+      category: AuditLogService.CATEGORY.FINANCIAL_OPERATION,
+      action: 'SCHEDULE_UPDATED',
+      severity: AuditLogService.SEVERITY.MEDIUM,
+      result: 'SUCCESS',
+      userId: (req.apiKey && req.apiKey.id) || (req.user && req.user.id) || null,
+      requestId: req.id,
+      ipAddress: req.ip,
+      resource: `recurring_donation/${req.params.id}`,
+      details: {
+        scheduleId: req.params.id,
+        oldValues,
+        newValues: { amount: newAmount, frequency: newFrequency },
+      },
+    });
+
+    const updated = await Database.get(
+      `SELECT rd.id, rd.amount, rd.frequency, rd.nextExecutionDate, rd.status FROM recurring_donations rd WHERE rd.id = ?`,
+      [req.params.id]
+    );
+
+    res.json({
+      success: true,
+      message: 'Schedule updated successfully',
+      data: updated,
+    });
+  } catch (error) {
+    next(error);
+  }
+}));
+
+/**
  * DELETE /stream/schedules/:id
  * Cancel a recurring donation schedule
  * Authorization: Only the donor who created the schedule or an admin can cancel it

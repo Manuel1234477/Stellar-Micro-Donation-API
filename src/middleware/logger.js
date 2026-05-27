@@ -162,7 +162,14 @@ class Logger {
    * 6. Output: Dispatches the aggregated data to the console and file system.
    */
   middleware() {
+    const PROBE_PATHS = ['/health/live', '/health/ready'];
     return (req, res, next) => {
+      // Exclude Kubernetes liveness/readiness probes from request logging
+      const path = req.path || req.url;
+      if (PROBE_PATHS.some(p => path === p || path.startsWith(p + '/'))) {
+        return next();
+      }
+
       const startTime = Date.now();
       const timestamp = new Date().toISOString();
       const requestId = req.id;

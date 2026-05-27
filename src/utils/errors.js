@@ -65,7 +65,8 @@ const ERROR_CODES = {
   RECIPIENT_NOT_IN_POOL:     { code: 'RECIPIENT_NOT_IN_POOL',     numeric: 5026 },
   DONOR_COORDINATES_REQUIRED:{ code: 'DONOR_COORDINATES_REQUIRED',numeric: 5027 },
   NO_ELIGIBLE_RECIPIENTS:    { code: 'NO_ELIGIBLE_RECIPIENTS',    numeric: 5028 },
-  NO_ACTIVE_CAMPAIGNS:       { code: 'NO_ACTIVE_CAMPAIGNS',       numeric: 5029 },
+  NO_ACTIVE_CAMPAIGNS:         { code: 'NO_ACTIVE_CAMPAIGNS',         numeric: 5029 },
+  RECIPIENT_ACCOUNT_NOT_FOUND: { code: 'RECIPIENT_ACCOUNT_NOT_FOUND', numeric: 5030 },
 
   // Rate limiting errors (6000-6099)
   RATE_LIMIT_EXCEEDED: { code: 'RATE_LIMIT_EXCEEDED', numeric: 6000 },

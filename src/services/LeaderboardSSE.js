@@ -15,6 +15,7 @@ const StatsService = require('../routes/services/StatsService');
 const donationEvents = require('../events/donationEvents');
 const Transaction = require('../routes/models/transaction');
 const Wallet = require('../routes/models/wallet');
+const log = require('../utils/log');
 
 /** Event name for leaderboard updates */
 const LEADERBOARD_EVENT = 'leaderboard.update';
@@ -141,7 +142,7 @@ function broadcastAll() {
         recipients: data.recipients,
       });
     } catch (err) {
-      console.error('[LeaderboardSSE] Broadcast error for window', window, err.message);
+      log.error('LEADERBOARD_SSE', 'Broadcast error', { window, error: err.message });
     }
   }
 }
@@ -156,7 +157,7 @@ function initLeaderboardSSE() {
   donationEvents.registerHook(donationEvents.EVENTS.CONFIRMED, (payload) => {
     handleDonationConfirmed(payload);
   });
-  console.log('[LeaderboardSSE] Initialized - listening for confirmed donations');
+  log.info('LEADERBOARD_SSE', 'Initialized - listening for confirmed donations');
 }
 
 /**
@@ -166,7 +167,7 @@ function initLeaderboardSSE() {
  * @param {Object} payload - Donation event payload
  */
 function handleDonationConfirmed(payload) {
-  console.log('[LeaderboardSSE] Donation confirmed, invalidating leaderboard cache', {
+  log.info('LEADERBOARD_SSE', 'Donation confirmed, invalidating leaderboard cache', {
     transactionId: payload.transactionId || payload.id,
   });
   StatsService.invalidateLeaderboardCache();

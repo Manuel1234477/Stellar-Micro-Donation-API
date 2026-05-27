@@ -14,6 +14,7 @@ const http = require('http');
 const crypto = require('crypto');
 const { URL } = require('url');
 const log = require('../utils/log');
+const EncryptionService = require('./EncryptionService');
 
 const MAX_RETRIES = 3;
 const MAX_CONSECUTIVE_FAILURES = 5;
@@ -103,7 +104,7 @@ class WebhookService {
    * @param {string} [params.ownerEmail]
    * @returns {Promise<Object>}
    */
-  async register({ url, events, secret, apiKeyId = null, ownerEmail = null, tlsSkipVerify = false }) {
+  async register({ url, events, apiKeyId = null, ownerEmail = null, tlsSkipVerify = false }) {
     if (!url) { const e = new Error('url is required'); e.status = 400; throw e; }
     if (!events || events.length === 0) { const e = new Error('events must be a non-empty array'); e.status = 400; throw e; }
 
@@ -124,15 +125,36 @@ class WebhookService {
       const e = new Error('tlsSkipVerify is not allowed in production'); e.status = 400; throw e;
     }
 
-    const resolvedSecret = secret || crypto.randomBytes(20).toString('hex');
+    // Always generate a 32-byte random secret server-side; never accept caller-supplied secrets
+    const plaintextSecret = crypto.randomBytes(32).toString('hex');
+    const encryptedSecret = EncryptionService.encryptField(plaintextSecret);
     const eventsStr = JSON.stringify(events);
 
     const Database = require('../utils/database');
     const result = await Database.run(
       `INSERT INTO webhooks (url, events, secret, api_key_id, owner_email, tls_skip_verify) VALUES (?, ?, ?, ?, ?, ?)`,
-      [url, eventsStr, resolvedSecret, apiKeyId, ownerEmail, tlsSkipVerify ? 1 : 0]
+      [url, eventsStr, encryptedSecret, apiKeyId, ownerEmail, tlsSkipVerify ? 1 : 0]
     );
-    return { id: result.id, url, events, secret: resolvedSecret, isActive: true, ownerEmail, tlsSkipVerify: !!tlsSkipVerify };
+    // Return plaintext secret once — it cannot be retrieved again, only rotated
+    return { id: result.id, url, events, secret: plaintextSecret, isActive: true, ownerEmail, tlsSkipVerify: !!tlsSkipVerify };
+  }
+
+  /**
+   * Rotate the secret for an existing webhook. Generates a new 32-byte random secret,
+   * encrypts it for storage, and returns the plaintext secret once.
+   * @param {number} id - Webhook ID
+   * @returns {Promise<{id: number, secret: string}>}
+   */
+  static async rotateSecret(id) {
+    const Database = require('../utils/database');
+    const webhook = await Database.get(`SELECT id FROM webhooks WHERE id = ?`, [id]);
+    if (!webhook) {
+      const e = new Error(`Webhook ${id} not found`); e.status = 404; throw e;
+    }
+    const plaintextSecret = crypto.randomBytes(32).toString('hex');
+    const encryptedSecret = EncryptionService.encryptField(plaintextSecret);
+    await Database.run(`UPDATE webhooks SET secret = ? WHERE id = ?`, [encryptedSecret, id]);
+    return { id, secret: plaintextSecret };
   }
 
   /**
@@ -459,7 +481,10 @@ class WebhookService {
         operationId: correlationHeaders['X-Operation-ID'],
       },
     });
-    const signature = WebhookService._sign(body, webhook.secret || '');
+    const plaintextSecret = webhook.secret
+      ? EncryptionService.decryptField(webhook.secret)
+      : '';
+    const signature = WebhookService._sign(body, plaintextSecret);
 
     try {
       const result = await WebhookService._httpPost(webhook.url, body, signature, correlationHeaders, !!webhook.tls_skip_verify);
@@ -511,7 +536,7 @@ class WebhookService {
    * @param {string} secret
    * @returns {string}
    */
-  _sign(body, secret) {
+  static _sign(body, secret) {
     return crypto.createHmac('sha256', secret).update(body).digest('hex');
   }
 
@@ -519,7 +544,7 @@ class WebhookService {
    * POST a JSON body to a URL with a timeout.
    * @private
    */
-  _httpPost(url, body, signature, correlationHeaders = {}, tlsSkipVerify = false) {
+  static _httpPost(url, body, signature, correlationHeaders = {}, tlsSkipVerify = false) {
     return new Promise((resolve, reject) => {
       const parsed = new URL(url);
       const lib = parsed.protocol === 'https:' ? https : http;

@@ -1582,19 +1582,57 @@ router.delete('/:id/trustlines/:asset', checkPermission(PERMISSIONS.WALLETS_UPDA
 
 /**
  * GET /wallets/:id/trustlines
- * List all trustlines for the wallet's Stellar account with their balances.
- *
- * Returns an array of trustlines containing asset details, current balance, and limits.
+ * List all trustlines (and native XLM balance) for the wallet's Stellar account.
+ * Response is cached for 30 seconds per wallet.
  */
 router.get('/:id/trustlines', checkPermission(PERMISSIONS.WALLETS_READ), trustlineListSchema, asyncHandler(async (req, res, next) => {
   try {
     const walletId = parseInt(req.params.id, 10);
 
-    const wallet = await Database.get('SELECT * FROM users WHERE id = ?', [walletId]);
-    if (!wallet) throw new NotFoundError(`Wallet ${walletId} not found`);
+    const wallet = await Database.get('SELECT id, publicKey, address FROM users WHERE id = ?', [walletId]);
+    if (!wallet) {
+      return res.status(404).json({
+        success: false,
+        error: { code: 'WALLET_NOT_FOUND', message: `Wallet ${walletId} not found` },
+      });
+    }
 
+    const publicKey = wallet.publicKey || wallet.address;
     const stellar = getStellarService();
-    const trustlines = await stellar.getTrustlines(wallet.publicKey);
+
+    let balances;
+    try {
+      balances = await stellar.getAccountBalances(publicKey);
+    } catch (err) {
+      // Horizon returns 404 when the account has never been funded
+      const notFound =
+        err?.status === 404 ||
+        err?.response?.status === 404 ||
+        err?.message?.toLowerCase().includes('not found') ||
+        err?.message?.toLowerCase().includes('does not exist');
+      if (notFound) {
+        return res.status(422).json({
+          success: false,
+          error: { code: 'STELLAR_ACCOUNT_NOT_FOUND', message: 'Stellar account does not exist on the network' },
+        });
+      }
+      throw err;
+    }
+
+    const trustlines = balances.map(b => {
+      if (b.asset_type === 'native') {
+        return { assetCode: 'XLM', assetType: 'native', balance: b.balance };
+      }
+      return {
+        assetCode: b.asset_code,
+        assetIssuer: b.asset_issuer,
+        balance: b.balance,
+        limit: b.limit,
+        authorized: Boolean(b.is_authorized),
+      };
+    });
+
+    res.setHeader('Cache-Control', 'private, max-age=30');
 
     await AuditLogService.log({
       category: AuditLogService.CATEGORY.WALLET_OPERATION,
@@ -1608,7 +1646,7 @@ router.get('/:id/trustlines', checkPermission(PERMISSIONS.WALLETS_READ), trustli
       details: { walletId, count: trustlines.length },
     });
 
-    return res.json({ success: true, data: { trustlines, count: trustlines.length } });
+    return res.json({ success: true, data: trustlines, count: trustlines.length });
   } catch (error) {
     next(error);
   }

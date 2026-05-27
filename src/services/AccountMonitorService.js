@@ -14,6 +14,7 @@
 
 const crypto = require('crypto');
 const axios = require('axios');
+const log = require('../utils/log');
 
 class AccountMonitorService {
   /**
@@ -232,12 +233,12 @@ class AccountMonitorService {
         });
       } else if (monitor.alertConfig.channel === 'email') {
         // Placeholder — wire up nodemailer / SES in production
-        console.log(`[AccountMonitorService] EMAIL alert to ${monitor.alertConfig.email}:`, payload);
+        log.info('ACCOUNT_MONITOR_SERVICE', 'EMAIL alert queued', { email: monitor.alertConfig.email, payload });
       }
       logEntry.delivered = true;
     } catch (err) {
       logEntry.error = err.message;
-      console.error('[AccountMonitorService] Alert delivery failed:', err.message);
+      log.error('ACCOUNT_MONITOR_SERVICE', 'Alert delivery failed', { error: err.message });
     }
 
     this._alertLog.push(logEntry);

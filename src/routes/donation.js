@@ -1492,6 +1492,80 @@ router.get('/:id/status', requireApiKey, donationIdParamSchema, asyncHandler(asy
 }));
 
 /**
+ * GET /donations/export
+ * Stream donations as CSV or JSON. Requires admin role.
+ * Supports filters: format, startDate, endDate, status, senderPublicKey, recipientPublicKey
+ * Issue #919
+ */
+router.get('/export', requireApiKey, checkPermission(PERMISSIONS.ADMIN_ALL), asyncHandler(async (req, res) => {
+  const { format = 'csv', startDate, endDate, status, senderPublicKey, recipientPublicKey } = req.query;
+
+  if (!['csv', 'json'].includes(format)) {
+    return res.status(400).json({ success: false, error: { code: 'INVALID_FORMAT', message: 'format must be csv or json' } });
+  }
+
+  const db = require('../utils/database');
+  const BATCH_SIZE = 1000;
+  const CSV_HEADERS = ['id', 'amount', 'senderPublicKey', 'recipientPublicKey', 'memo', 'status', 'timestamp', 'transactionHash'];
+
+  let query = `
+    SELECT t.id, t.amount,
+           sender.publicKey AS senderPublicKey,
+           receiver.publicKey AS recipientPublicKey,
+           t.memo, t.status, t.timestamp, t.stellar_tx_id AS transactionHash
+    FROM transactions t
+    LEFT JOIN users sender ON t.senderId = sender.id
+    LEFT JOIN users receiver ON t.receiverId = receiver.id
+    WHERE 1=1
+  `;
+  const params = [];
+  if (startDate)          { query += ' AND t.timestamp >= ?'; params.push(startDate); }
+  if (endDate)            { query += ' AND t.timestamp <= ?'; params.push(endDate); }
+  if (status)             { query += ' AND t.status = ?'; params.push(status); }
+  if (senderPublicKey)    { query += ' AND sender.publicKey = ?'; params.push(senderPublicKey); }
+  if (recipientPublicKey) { query += ' AND receiver.publicKey = ?'; params.push(recipientPublicKey); }
+  query += ' ORDER BY t.timestamp DESC';
+
+  function csvEscape(v) {
+    if (v === null || v === undefined) return '';
+    const s = String(v);
+    return (s.includes('"') || s.includes(',') || s.includes('\n')) ? `"${s.replace(/"/g, '""')}"` : s;
+  }
+
+  const ts = new Date().toISOString().replace(/[:.]/g, '-');
+
+  if (format === 'csv') {
+    res.setHeader('Content-Type', 'text/csv');
+    res.setHeader('Content-Disposition', `attachment; filename="donations-${ts}.csv"`);
+    res.write(CSV_HEADERS.join(',') + '\n');
+  } else {
+    res.setHeader('Content-Type', 'application/json');
+    res.write('[');
+  }
+
+  let offset = 0;
+  let firstRow = true;
+
+  for (;;) {
+    const rows = await db.all(query + ` LIMIT ${BATCH_SIZE} OFFSET ${offset}`, params);
+    if (!rows || rows.length === 0) break;
+    for (const row of rows) {
+      if (format === 'csv') {
+        res.write(CSV_HEADERS.map(h => csvEscape(row[h])).join(',') + '\n');
+      } else {
+        res.write((firstRow ? '' : ',') + JSON.stringify(row));
+        firstRow = false;
+      }
+    }
+    if (rows.length < BATCH_SIZE) break;
+    offset += BATCH_SIZE;
+  }
+
+  if (format === 'json') res.write(']');
+  res.end();
+}));
+
+/**
  * GET /donations/:id
  * Get a specific donation
  */
@@ -2083,3 +2157,4 @@ router.get('/stats/by-campaign', checkPermission(PERMISSIONS.STATS_READ), asyncH
 }));
 
 module.exports = router;
+
