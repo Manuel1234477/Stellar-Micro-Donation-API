@@ -23,6 +23,7 @@ const log = require('../utils/log');
  * 3. Query the IdempotencyService to see if this key has a successful cached response.
  * 4. If found: Short-circuit the request and return the cached JSON immediately.
  * 5. If not found: Generate a cryptographic hash of the body to detect "Key Reuse" (same key, different data).
+ * Issue #891: Scope idempotency keys by API key ID to prevent cross-tenant collisions
  */
 async function requireIdempotency(req, res, next) {
   try {
@@ -47,10 +48,13 @@ async function requireIdempotency(req, res, next) {
       );
     }
 
-    const existing = await IdempotencyService.get(idempotencyKey);
+    // Issue #891: Get API key ID for scoping
+    const apiKeyId = req.apiKey?.id || null;
+
+    const existing = await IdempotencyService.get(idempotencyKey, apiKeyId);
 
     if (existing) {
-      log.info('IDEMPOTENCY', 'Returning cached response', { idempotencyKey });
+      log.info('IDEMPOTENCY', 'Returning cached response', { idempotencyKey, apiKeyId });
 
       // Return cached response (idempotent behavior)
       return res.status(200).json({
@@ -62,12 +66,13 @@ async function requireIdempotency(req, res, next) {
 
     const requestHash = IdempotencyService.generateRequestHash(req.body);
 
-    const duplicate = await IdempotencyService.findByHash(requestHash, idempotencyKey);
+    const duplicate = await IdempotencyService.findByHash(requestHash, idempotencyKey, apiKeyId);
 
     if (duplicate) {
       log.warn('IDEMPOTENCY', 'Duplicate request payload detected with different key', {
         originalKey: duplicate.idempotencyKey,
         newKey: idempotencyKey,
+        apiKeyId
       });
 
       req.idempotencyWarning = {
@@ -82,7 +87,8 @@ async function requireIdempotency(req, res, next) {
       ...(req.idempotency || {}),
       key: idempotencyKey,
       hash: requestHash,
-      isNew: true
+      isNew: true,
+      apiKeyId
     };
 
     next();
@@ -95,6 +101,7 @@ async function requireIdempotency(req, res, next) {
  * Cache Storage Utility
  * Intent: Store the successful outcome of an operation so it can be replayed later.
  * Flow: Called by the controller after successful DB/Stellar operations -> Persists result to the idempotency table.
+ * Issue #891: Include apiKeyId in storage for scoping
  */
 async function storeIdempotencyResponse(req, response) {
   if (!req.idempotency || !req.idempotency.isNew) {
@@ -106,7 +113,8 @@ async function storeIdempotencyResponse(req, response) {
       req.idempotency.key,
       req.idempotency.hash,
       response,
-      req.user?.id
+      req.user?.id,
+      req.idempotency.apiKeyId
     );
   } catch (error) {
     log.error('IDEMPOTENCY', 'Failed to store idempotent response', { error: error.message });
