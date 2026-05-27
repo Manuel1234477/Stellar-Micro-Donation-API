@@ -189,6 +189,7 @@ const { parseAssetInput } = require('../utils/stellarAsset');
 
 const asyncHandler = require('../utils/asyncHandler');
 const { getStellarService } = require('../config/stellar');
+const config = require('../config');
 const DonationService = require('../services/DonationService');
 const { calculateCostBreakdown } = require('../utils/costBreakdown');
 const LimitService = require('../services/LimitService');
@@ -418,10 +419,22 @@ router.post('/batch', payloadSizeLimiter(ENDPOINT_LIMITS.batchDonation), batchRa
   }
 });
 
+const config = require('../config');
+
 const createDonationSchema = validateSchema({
   body: {
     fields: {
-      amount: { type: 'number', required: true },
+      amount: { 
+        type: 'number', 
+        required: true,
+        min: config.donations.minAmount,
+        max: config.donations.maxAmount,
+        validate: (value) => {
+          if (!Number.isFinite(value)) return 'Amount must be a finite number';
+          if (value <= 0) return 'Amount must be greater than zero';
+          return true;
+        }
+      },
       recipient: { type: 'string', required: true, trim: true, minLength: 1 },
       currency: { type: 'string', required: false, nullable: true },
       donor: { type: 'string', required: false, nullable: true },
@@ -430,7 +443,19 @@ const createDonationSchema = validateSchema({
       notes: { type: 'string', required: false, nullable: true },
       tags: { type: 'array', required: false, nullable: true },
       sourceAsset: { type: 'string', required: false, nullable: true },
-      sourceAmount: { type: 'number', required: false, nullable: true }
+      sourceAmount: { 
+        type: 'number', 
+        required: false, 
+        nullable: true,
+        min: config.donations.minAmount,
+        max: config.donations.maxAmount,
+        validate: (value) => {
+          if (value === null || value === undefined) return true;
+          if (!Number.isFinite(value)) return 'Source amount must be a finite number';
+          if (value <= 0) return 'Source amount must be greater than zero';
+          return true;
+        }
+      }
     }
   }
 });
