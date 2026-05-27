@@ -101,6 +101,7 @@ const SseManager = require('../services/SseManager');
 const donationEvents = require('../events/donationEvents');
 const { payloadSizeLimiter, ENDPOINT_LIMITS } = require('../middleware/payloadSizeLimiter');
 const { requestTimeout, TIMEOUTS } = require('../middleware/requestTimeout');
+const AuditLogService = require('../services/AuditLogService');
 const asyncHandler = require('../utils/asyncHandler');
 
 const streamCreateSchema = validateSchema({
@@ -374,10 +375,16 @@ router.get('/schedules', checkPermission(PERMISSIONS.STREAM_READ), asyncHandler(
       conditions.push('donor.publicKey = ?');
       params.push(userPublicKey);
     }
+
     if (status) {
+      // Explicit status filter — allow any value including 'cancelled'
       conditions.push('rd.status = ?');
       params.push(status);
+    } else {
+      // Default: exclude cancelled schedules so the list shows only active/paused
+      conditions.push("rd.status IN ('active', 'paused')");
     }
+
     if (conditions.length) {
       query += ' WHERE ' + conditions.join(' AND ');
     }
@@ -693,11 +700,14 @@ router.delete('/schedules/:id', checkPermission(PERMISSIONS.STREAM_DELETE), stre
     const scheduleIdNum = parseInt(req.params.id, 10);
     const isInProgress = scheduler.executingSchedules && scheduler.executingSchedules.has(scheduleIdNum);
 
+    const now = new Date().toISOString();
+    const cancellerUserId = (req.apiKey && req.apiKey.id) || (req.user && req.user.id) || null;
+
     if (isInProgress) {
       // Mark as pending_cancellation — the scheduler will set it to cancelled after execution completes
       await Database.run(
-        'UPDATE recurring_donations SET status = ? WHERE id = ?',
-        ['pending_cancellation', req.params.id]
+        'UPDATE recurring_donations SET status = ?, cancelledAt = ? WHERE id = ?',
+        ['pending_cancellation', now, req.params.id]
       );
 
       log.info('STREAM_ROUTE', 'Schedule cancellation deferred — execution in progress', {
@@ -714,9 +724,29 @@ router.delete('/schedules/:id', checkPermission(PERMISSIONS.STREAM_DELETE), stre
     }
 
     await Database.run(
-      'UPDATE recurring_donations SET status = ? WHERE id = ?',
-      ['cancelled', req.params.id]
+      'UPDATE recurring_donations SET status = ?, cancelledAt = ? WHERE id = ?',
+      [SCHEDULE_STATUS.CANCELLED, now, req.params.id]
     );
+
+    // Audit log entry for schedule cancellation
+    AuditLogService.log({
+      category: AuditLogService.CATEGORY.FINANCIAL_OPERATION,
+      action: 'SCHEDULE_CANCELLED',
+      severity: AuditLogService.SEVERITY.MEDIUM,
+      result: 'SUCCESS',
+      userId: cancellerUserId,
+      requestId: req.id,
+      ipAddress: req.ip,
+      resource: `recurring_donation/${req.params.id}`,
+      details: {
+        scheduleId: req.params.id,
+        resourceId: String(req.params.id),
+        cancelledBy: userPublicKey || req.user?.id || null,
+        isAdmin,
+      },
+    }).catch((auditErr) => {
+      log.warn('STREAM_ROUTE', 'Failed to write audit log for schedule cancellation', { error: auditErr.message });
+    });
 
     log.info('STREAM_ROUTE', 'Schedule cancelled immediately', {
       scheduleId: req.params.id,

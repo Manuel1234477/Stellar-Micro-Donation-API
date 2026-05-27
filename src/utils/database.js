@@ -22,6 +22,38 @@ const { DatabaseError, DuplicateError } = require('./errors');
 const { withTimeout, TIMEOUT_DEFAULTS, TimeoutError } = require('./timeoutHandler');
 const log = require('./log');
 
+// ─── OpenTelemetry helpers ────────────────────────────────────────────────────
+
+/**
+ * Extract the SQL verb from a SQL statement for span naming and db.operation attribute.
+ * Parameter values are never included — only the statement template.
+ *
+ * @param {string} sql - SQL statement (may contain ? placeholders)
+ * @returns {string} Uppercase operation keyword (SELECT, INSERT, UPDATE, DELETE, etc.)
+ */
+function _parseSqlOperation(sql) {
+  if (!sql) return 'UNKNOWN';
+  const match = sql.trimStart().match(/^(SELECT|INSERT|UPDATE|DELETE|CREATE|DROP|ALTER|BEGIN|COMMIT|ROLLBACK)/i);
+  return match ? match[1].toUpperCase() : 'UNKNOWN';
+}
+
+/**
+ * Lazily load the tracing module to avoid circular-dependency issues at startup.
+ * Returns a minimal no-op shim when the module cannot be loaded.
+ *
+ * @returns {{ withSpan: Function }}
+ */
+function _getTracing() {
+  try {
+    return require('./tracing');
+  } catch (_err) {
+    // Tracing unavailable — return no-op shim so DB still functions
+    return {
+      withSpan: async (_name, _attrs, fn) => fn({ setAttribute: () => {}, setStatus: () => {}, recordException: () => {} }),
+    };
+  }
+}
+
 const DEFAULT_POOL_SIZE = 5;
 const DEFAULT_POOL_MIN = 1;
 const DEFAULT_POOL_MAX = 10;
@@ -722,6 +754,10 @@ class Database {
   /**
    * Execute a SQLite statement on a pooled connection.
    *
+   * Creates a child OpenTelemetry span for the actual query execution.
+   * Connection acquisition time is excluded from the span duration.
+   * SQL parameter values are NEVER included in span attributes.
+   *
    * @param {'all'|'get'|'run'} method - SQLite method to invoke.
    * @param {string} sql - SQL statement.
    * @param {Array} params - Statement parameters.
@@ -729,93 +765,115 @@ class Database {
    * @returns {Promise<*>} Query result payload.
    */
   static async execute(method, sql, params, failureMessage) {
+    // Acquire the connection BEFORE starting the span so that connection
+    // acquisition time is tracked separately, not included in query duration.
     const lease = await this.acquireConnection();
-    let timedOut = false;
-    let completed = false;
-    const startTimeNs = process.hrtime.bigint();
 
-    let resolveStatement;
-    let rejectStatement;
+    const operation = _parseSqlOperation(sql);
+    const { withSpan } = _getTracing();
 
-    const statementPromise = new Promise((resolve, reject) => {
-      resolveStatement = resolve;
-      rejectStatement = reject;
-    });
+    // SpanKind.CLIENT = 2 (inline to avoid a hard dep on @opentelemetry/api here)
+    return withSpan(
+      `db.${operation.toLowerCase()}`,
+      {
+        'db.system': 'sqlite',
+        'db.operation': operation,
+        // Include the SQL template (with ? placeholders) but NEVER the parameter values
+        'db.statement': sql,
+      },
+      async (span) => {
+        let timedOut = false;
+        let completed = false;
+        const startTimeNs = process.hrtime.bigint();
 
-    statementPromise.catch(() => {});
+        let resolveStatement;
+        let rejectStatement;
 
-    const callback = function(err, result) {
-      const statementContext = this;
-      const durationMs = Number(process.hrtime.bigint() - startTimeNs) / 1e6;
-
-      completed = true;
-      Database.recordQueryExecution({
-        method,
-        sql,
-        params,
-        durationMs,
-        failed: Boolean(err),
-        timedOut,
-      });
-
-      if (err) {
-        rejectStatement(Database.mapDatabaseError(err, failureMessage));
-      } else if (method === 'run') {
-        resolveStatement({ id: statementContext.lastID, changes: statementContext.changes });
-      } else {
-        resolveStatement(result);
-      }
-
-      lease.release({ retire: timedOut }).catch((releaseError) => {
-        log.warn('DATABASE', 'Failed to release pooled connection', {
-          error: releaseError.message,
+        const statementPromise = new Promise((resolve, reject) => {
+          resolveStatement = resolve;
+          rejectStatement = reject;
         });
-      });
-    };
 
-    try {
-      lease.db[method](sql, params, callback);
-    } catch (error) {
-      rejectStatement(Database.mapDatabaseError(error, failureMessage));
-      lease.release({ retire: true }).catch((releaseError) => {
-        log.warn('DATABASE', 'Failed to retire pooled connection after synchronous error', {
-          error: releaseError.message,
-        });
-      });
-    }
+        statementPromise.catch(() => {});
 
-    try {
-      return await withTimeout(
-        statementPromise,
-        this.poolState.queryTimeoutMs || DEFAULT_QUERY_TIMEOUT_MS,
-        `database_${method}`
-      );
-    } catch (error) {
-      if (error instanceof TimeoutError) {
-        timedOut = true;
-        const durationMs = Number(process.hrtime.bigint() - startTimeNs) / 1e6;
-        if (!completed) {
+        const callback = function(err, result) {
+          const statementContext = this;
+          const durationMs = Number(process.hrtime.bigint() - startTimeNs) / 1e6;
+
+          completed = true;
           Database.recordQueryExecution({
             method,
             sql,
             params,
             durationMs,
-            failed: true,
-            timedOut: true,
+            failed: Boolean(err),
+            timedOut,
           });
-          completed = true;
-        }
-        const timeoutError = new DatabaseError(
-          `QUERY_TIMEOUT: query exceeded ${this.poolState.queryTimeoutMs || DEFAULT_QUERY_TIMEOUT_MS}ms (actual: ${durationMs.toFixed(1)}ms) — ${sql.slice(0, 200)}`
-        );
-        timeoutError.code = 'QUERY_TIMEOUT';
-        timeoutError.sql = sql.slice(0, 200);
-        timeoutError.durationMs = durationMs;
-        throw timeoutError;
-      }
 
-      throw error;
-    }
+          if (err) {
+            rejectStatement(Database.mapDatabaseError(err, failureMessage));
+          } else if (method === 'run') {
+            const runResult = { id: statementContext.lastID, changes: statementContext.changes };
+            // Record rows affected for write operations
+            span.setAttribute('db.rows_affected', statementContext.changes || 0);
+            resolveStatement(runResult);
+          } else {
+            resolveStatement(result);
+          }
+
+          lease.release({ retire: timedOut }).catch((releaseError) => {
+            log.warn('DATABASE', 'Failed to release pooled connection', {
+              error: releaseError.message,
+            });
+          });
+        };
+
+        try {
+          lease.db[method](sql, params, callback);
+        } catch (error) {
+          rejectStatement(Database.mapDatabaseError(error, failureMessage));
+          lease.release({ retire: true }).catch((releaseError) => {
+            log.warn('DATABASE', 'Failed to retire pooled connection after synchronous error', {
+              error: releaseError.message,
+            });
+          });
+        }
+
+        try {
+          return await withTimeout(
+            statementPromise,
+            this.poolState.queryTimeoutMs || DEFAULT_QUERY_TIMEOUT_MS,
+            `database_${method}`
+          );
+        } catch (error) {
+          if (error instanceof TimeoutError) {
+            timedOut = true;
+            const durationMs = Number(process.hrtime.bigint() - startTimeNs) / 1e6;
+            if (!completed) {
+              Database.recordQueryExecution({
+                method,
+                sql,
+                params,
+                durationMs,
+                failed: true,
+                timedOut: true,
+              });
+              completed = true;
+            }
+            const timeoutError = new DatabaseError(
+              `QUERY_TIMEOUT: query exceeded ${this.poolState.queryTimeoutMs || DEFAULT_QUERY_TIMEOUT_MS}ms (actual: ${durationMs.toFixed(1)}ms) — ${sql.slice(0, 200)}`
+            );
+            timeoutError.code = 'QUERY_TIMEOUT';
+            timeoutError.sql = sql.slice(0, 200);
+            timeoutError.durationMs = durationMs;
+            throw timeoutError;
+          }
+
+          throw error;
+        }
+      },
+      { kind: 2 /* SpanKind.CLIENT */ }
+    );
   }
 
   /**

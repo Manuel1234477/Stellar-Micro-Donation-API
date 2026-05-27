@@ -28,6 +28,19 @@ const EXPLORER_BASE =
   process.env.STELLAR_EXPLORER_URL ||
   'https://stellar.expert/explorer/testnet/tx';
 
+/**
+ * Mask a Stellar public key for privacy.
+ * Shows the first 8 and last 4 characters with "..." in the middle.
+ * Returns the key unchanged when it is too short to mask sensibly.
+ *
+ * @param {string} key - Full public key
+ * @returns {string} Masked key, e.g. "GABCDEFG...WXYZ"
+ */
+function maskPublicKey(key) {
+  if (!key || key.length <= 12) return key || '';
+  return `${key.slice(0, 8)}...${key.slice(-4)}`;
+}
+
 class ReceiptService {
   /**
    * Generate a PDF receipt Buffer for a donation transaction.
@@ -37,17 +50,37 @@ class ReceiptService {
    * @param {string} [transaction.stellarTxId] - Stellar transaction hash
    * @param {number|string} transaction.amount - Donation amount in XLM
    * @param {string} transaction.timestamp - ISO timestamp
-   * @param {string} [transaction.donor] - Donor identifier
-   * @param {string} transaction.recipient - Recipient identifier
+   * @param {string} [transaction.donor] - Donor public key
+   * @param {string} transaction.recipient - Recipient public key
    * @param {string} transaction.status - Transaction status
    * @param {object} [options={}]
-   * @param {boolean} [options.compress=true] - Compress PDF streams (disable for testing)
+   * @param {boolean} [options.compress=true]       - Compress PDF streams (disable for testing)
+   * @param {boolean} [options.maskKeys=true]        - Mask donor/recipient public keys
+   * @param {boolean} [options.isPending=false]      - Add "PENDING CONFIRMATION" watermark
+   * @param {string}  [options.receiptNumber]        - Receipt number to print; auto-generated if omitted
+   * @param {number|null} [options.usdAmount=null]   - USD equivalent; omitted if null/undefined
    * @returns {Promise<Buffer>} PDF file as a Buffer
    */
-  static async generatePDF(transaction, { compress = true } = {}) {
+  static async generatePDF(transaction, {
+    compress = true,
+    maskKeys = true,
+    isPending = false,
+    receiptNumber,
+    usdAmount = null,
+  } = {}) {
     const explorerUrl = transaction.stellarTxId
       ? `${EXPLORER_BASE}/${transaction.stellarTxId}`
       : null;
+
+    const rcptNumber = receiptNumber || `RCP-${String(transaction.id).padStart(6, '0')}`;
+
+    // Apply public key masking unless caller opts into full disclosure
+    const displayDonor = maskKeys
+      ? maskPublicKey(transaction.donor)
+      : (transaction.donor || 'Anonymous');
+    const displayRecipient = maskKeys
+      ? maskPublicKey(transaction.recipient)
+      : (transaction.recipient || 'N/A');
 
     // Generate QR code as a PNG data URL (or placeholder if no hash)
     let qrDataUrl = null;
@@ -61,16 +94,13 @@ class ReceiptService {
         margin: 50,
         compress,
         info: {
-          Title: `Donation Receipt ${transaction.id}`,
+          Title: `Donation Receipt ${rcptNumber}`,
           Author: 'Stellar Micro-Donation Platform',
           Subject: `Receipt for transaction ${transaction.stellarTxId || transaction.id}`,
           Keywords: [
             transaction.id,
             transaction.stellarTxId,
-            transaction.donor,
-            transaction.recipient,
-            `${transaction.amount} XLM`,
-            explorerUrl,
+            rcptNumber,
           ].filter(Boolean).join(' '),
         },
       });
@@ -80,10 +110,23 @@ class ReceiptService {
       doc.on('end', () => resolve(Buffer.concat(chunks)));
       doc.on('error', reject);
 
+      // ── Pending watermark (diagonal, light grey) ──────────────────────────
+      if (isPending) {
+        doc.save();
+        doc
+          .fontSize(60)
+          .fillColor('#e0e0e0')
+          .opacity(0.35)
+          .rotate(-45, { origin: [297, 420] })
+          .text('PENDING CONFIRMATION', 30, 300, { align: 'center', width: 535 });
+        doc.restore();
+      }
+
       // ── Header ──────────────────────────────────────────────────────────
       doc
         .fontSize(22)
         .font('Helvetica-Bold')
+        .fillColor('#000000')
         .text('Donation Receipt', { align: 'center' })
         .moveDown(0.5);
 
@@ -114,13 +157,18 @@ class ReceiptService {
           .moveDown(0.4);
       };
 
-      field('Receipt ID', transaction.id);
+      field('Receipt Number', rcptNumber);
       field('Date', new Date(transaction.timestamp).toUTCString());
-      field('Status', transaction.status);
-      field('Amount', `${transaction.amount} XLM`);
-      field('Donor', transaction.donor || 'Anonymous');
-      field('Recipient', transaction.recipient);
-      field('Memo', transaction.memo || '—');
+      field('Confirmation Status', isPending ? 'PENDING CONFIRMATION' : (transaction.status || 'Confirmed'));
+
+      // Amount line — include USD equivalent when available
+      const amountLine = usdAmount != null
+        ? `${transaction.amount} XLM (≈ $${Number(usdAmount).toFixed(2)} USD)`
+        : `${transaction.amount} XLM`;
+      field('Amount', amountLine);
+
+      field('Donor Public Key', displayDonor || 'Anonymous');
+      field('Recipient Public Key', displayRecipient);
       field('Stellar Transaction Hash', transaction.stellarTxId || 'Pending');
 
       if (explorerUrl) {
@@ -224,5 +272,7 @@ class ReceiptService {
     return { messageId: info.messageId };
   }
 }
+
+ReceiptService.maskPublicKey = maskPublicKey;
 
 module.exports = ReceiptService;

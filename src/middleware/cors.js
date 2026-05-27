@@ -131,13 +131,35 @@ function validateCorsConfig(allowedOrigins) {
 }
 
 /**
+ * Determine whether "allow all origins" wildcard mode is active.
+ *
+ * Wildcard mode is ONLY permitted when BOTH conditions hold:
+ *   1. NODE_ENV === 'development'
+ *   2. CORS_ALLOW_ALL === 'true'
+ *
+ * Using CORS_ALLOW_ALL=true in production is a hard error (startupChecks enforces this).
+ *
+ * @returns {boolean}
+ */
+function isWildcardAllowed() {
+  return (
+    process.env.NODE_ENV === 'development' &&
+    process.env.CORS_ALLOW_ALL === 'true'
+  );
+}
+
+/**
  * Create the CORS middleware.
  *
  * Reads configuration from:
  *   - Database cors_origins table (runtime, 60s TTL cache)
  *   - CORS_ALLOWED_ORIGINS env var (static fallback/supplement)
  *   - CORS_ALLOWED_METHODS, CORS_ALLOWED_HEADERS, CORS_MAX_AGE env vars
- *   - Development mode fallback: allows localhost origins if not configured
+ *
+ * Wildcard (origin: '*') is only permitted when NODE_ENV=development AND
+ * CORS_ALLOW_ALL=true are both explicitly set.  In all other environments,
+ * CORS_ALLOWED_ORIGINS must be configured or all cross-origin requests are
+ * rejected.
  *
  * @param {Object} [options] - Optional overrides (useful in tests)
  * @param {string[]} [options.allowedOrigins] - Override parsed origins (disables DB lookup)
@@ -145,18 +167,13 @@ function validateCorsConfig(allowedOrigins) {
  * @param {string}   [options.headers]        - Override allowed headers
  * @param {number}   [options.maxAge]         - Override max-age seconds
  * @param {boolean}  [options.skipDbLookup]   - Skip DB lookup (use only static origins)
+ * @param {boolean}  [options.allowAll]       - Force wildcard mode (tests only)
  * @returns {Function} Express middleware
  */
 function createCorsMiddleware(options = {}) {
-  let staticOrigins = options.allowedOrigins !== undefined
+  const staticOrigins = options.allowedOrigins !== undefined
     ? options.allowedOrigins
     : parseAllowedOrigins();
-
-  // Development mode fallback: if no origins configured and in development, allow localhost
-  if (staticOrigins.length === 0 && process.env.NODE_ENV === 'development') {
-    staticOrigins = ['http://localhost:3000', 'http://localhost:3001', 'http://localhost:8080'];
-    log.info('CORS', 'Development mode: allowing localhost origins', { origins: staticOrigins });
-  }
 
   const methods = options.methods
     || process.env.CORS_ALLOWED_METHODS
@@ -172,7 +189,14 @@ function createCorsMiddleware(options = {}) {
 
   const skipDbLookup = options.skipDbLookup === true || options.allowedOrigins !== undefined;
 
+  // Wildcard mode: only when explicitly enabled in development
+  const wildcardMode = options.allowAll === true || isWildcardAllowed();
+
   validateCorsConfig(staticOrigins);
+
+  if (wildcardMode) {
+    log.info('CORS', 'Wildcard mode active (NODE_ENV=development, CORS_ALLOW_ALL=true) — all origins permitted');
+  }
 
   /**
    * CORS middleware function
@@ -188,6 +212,20 @@ function createCorsMiddleware(options = {}) {
       return next();
     }
 
+    // ── Wildcard mode: allow every origin ───────────────────────────────
+    if (wildcardMode) {
+      res.setHeader('Access-Control-Allow-Origin', '*');
+      res.setHeader('Access-Control-Allow-Methods', methods);
+      res.setHeader('Access-Control-Allow-Headers', headers);
+      // Note: credentials cannot be combined with wildcard origin
+      if (req.method === 'OPTIONS') {
+        res.setHeader('Access-Control-Max-Age', String(maxAge));
+        return res.status(204).end();
+      }
+      return next();
+    }
+
+    // ── Strict allowlist mode ───────────────────────────────────────────
     // Use cached origins synchronously to avoid blocking
     let allowedOrigins = staticOrigins;
     if (!skipDbLookup && _cache.origins !== null) {
@@ -202,21 +240,12 @@ function createCorsMiddleware(options = {}) {
     }
 
     if (!isOriginAllowed(origin, allowedOrigins)) {
-      log.warn('CORS', 'Rejected request from disallowed origin', {
+      // DEBUG log for every rejected cross-origin request
+      log.debug('CORS', 'Rejected cross-origin request', {
         origin,
         method: req.method,
         path: req.path,
       });
-
-      if (req.method === 'OPTIONS') {
-        return res.status(403).json({
-          success: false,
-          error: {
-            code: 'CORS_ORIGIN_NOT_ALLOWED',
-            message: 'Origin not allowed by CORS policy',
-          },
-        });
-      }
 
       return res.status(403).json({
         success: false,
@@ -246,6 +275,7 @@ module.exports = {
   createCorsMiddleware,
   parseAllowedOrigins,
   isOriginAllowed,
+  isWildcardAllowed,
   wildcardToRegex,
   validateCorsConfig,
   loadDbOrigins,
