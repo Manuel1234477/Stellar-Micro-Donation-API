@@ -222,6 +222,26 @@ class RecurringDonationScheduler {
     let _tickFailedSchedules = 0;
 
     try {
+      // Detect clock jumps (e.g., NTP correction, DST transition)
+      if (this.lastTickAt) {
+        const lastTickTime = new Date(this.lastTickAt).getTime();
+        const timeSinceLastTick = _tickStart - lastTickTime;
+        const expectedInterval = this.checkInterval;
+        const deviation = Math.abs(timeSinceLastTick - expectedInterval);
+        
+        // If deviation > 90 seconds, log a warning
+        if (deviation > 90000) {
+          log.warn('RECURRING_SCHEDULER', 'Clock jump detected', {
+            expectedIntervalMs: expectedInterval,
+            actualIntervalMs: timeSinceLastTick,
+            deviationMs: deviation,
+            correlationId,
+            traceId,
+          });
+        }
+      }
+      this.lastTickAt = new Date(_tickStart).toISOString();
+
       const now = new Date().toISOString();
 
       const dueSchedules = await Database.query(
@@ -673,38 +693,63 @@ class RecurringDonationScheduler {
 
   /**
    * Calculate the next execution date based on frequency.
+   * Uses UTC arithmetic to avoid DST issues.
+   * For monthly schedules, uses calendar-aware date addition.
    *
    * @param {Date}   currentDate        - Reference date (usually now)
    * @param {string} frequency          - 'daily' | 'weekly' | 'monthly' | 'custom'
    * @param {number} [customIntervalDays] - Required when frequency === 'custom'
-   * @returns {Date}
+   * @returns {Date} Next execution date in UTC
    * @throws {Error} for unknown frequency or missing customIntervalDays
    */
   calculateNextExecutionDate(currentDate, frequency, customIntervalDays) {
-    const next = new Date(currentDate);
+    // Convert to UTC to avoid DST issues
+    const utcDate = new Date(currentDate.toISOString());
+    const year = utcDate.getUTCFullYear();
+    const month = utcDate.getUTCMonth();
+    const day = utcDate.getUTCDate();
+    const hours = utcDate.getUTCHours();
+    const minutes = utcDate.getUTCMinutes();
+    const seconds = utcDate.getUTCSeconds();
+    const ms = utcDate.getUTCMilliseconds();
+
+    let nextYear = year;
+    let nextMonth = month;
+    let nextDay = day;
 
     switch ((frequency || '').toLowerCase()) {
       case DONATION_FREQUENCIES.DAILY:
-        next.setDate(next.getDate() + 1);
+        nextDay += 1;
         break;
       case DONATION_FREQUENCIES.WEEKLY:
-        next.setDate(next.getDate() + 7);
+        nextDay += 7;
         break;
-      case DONATION_FREQUENCIES.MONTHLY:
-        next.setMonth(next.getMonth() + 1);
+      case DONATION_FREQUENCIES.MONTHLY: {
+        // Calendar-aware month addition: if current day doesn't exist in next month, use last day
+        nextMonth += 1;
+        if (nextMonth > 11) {
+          nextMonth = 0;
+          nextYear += 1;
+        }
+        // Get last day of target month
+        const lastDayOfMonth = new Date(Date.UTC(nextYear, nextMonth + 1, 0)).getUTCDate();
+        nextDay = Math.min(day, lastDayOfMonth);
         break;
+      }
       case DONATION_FREQUENCIES.CUSTOM: {
         const days = parseInt(customIntervalDays, 10);
         if (!days || days < 1) {
           throw new Error('customIntervalDays must be a positive integer for custom frequency');
         }
-        next.setDate(next.getDate() + days);
+        nextDay += days;
         break;
       }
       default:
         throw new Error(`Invalid frequency: ${frequency}`);
     }
 
+    // Create new UTC date with calculated values
+    const next = new Date(Date.UTC(nextYear, nextMonth, nextDay, hours, minutes, seconds, ms));
     return next;
   }
 
