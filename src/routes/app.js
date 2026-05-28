@@ -36,6 +36,7 @@ const dbAdminRoutes = require('./admin/db');
 const adminTracesRoutes = require('./admin/traces');
 const systemInfoRoutes = require('./admin/systemInfo');
 const retentionAdminRoutes = require('./admin/retention');
+const retentionService = require('../services/RetentionService');
 const backupAdminRoutes = require('./admin/backup');
 const geoRulesAdminRoutes = require('./admin/geoRules');
 const encryptionAdminRoutes = require('./admin/encryption');
@@ -491,6 +492,9 @@ app.get('/suspicious-patterns', require('../middleware/rbac').requireAdmin(), (r
   });
 });
 
+// Data retention admin endpoints (admin only)
+app.use('/admin/retention', retentionAdminRoutes);
+
 // Geo-rules management (admin only)
 app.use('/admin/geo-rules', geoRulesAdminRoutes);
 
@@ -747,6 +751,7 @@ async function startServer() {
           recurringDonationScheduler.start();
           reconciliationService.start();
           auditLogRetentionService.start();
+          retentionService.start();
           transactionSyncScheduler.start();
           sseManager.start();
 
@@ -859,6 +864,7 @@ async function startServer() {
 
         reconciliationService.stop();
         auditLogRetentionService.stop();
+        retentionService.stop();
         transactionSyncScheduler.stop();
         require('../workers/expiryWorker').stop();
         

@@ -26,6 +26,16 @@ const { toWalletResponse } = require('../utils/responseSanitizer');
 const BulkWalletImportService = require('../services/BulkWalletImportService');
 const Wallet = require('./models/wallet');
 const { STROOPS_PER_XLM } = require('../constants');
+const WalletService = require('../services/WalletService');
+const AuditLogService = require('../services/AuditLogService');
+const log = require('../utils/log');
+const { parseCursorPaginationQuery } = require('../utils/pagination');
+
+const walletService = new WalletService();
+
+function getStellarService() {
+  return require('../config/serviceContainer').getStellarService();
+}
 
 const requireAuth = requireAdmin;
 const requirePermission = (perm) => checkPermission(perm);
@@ -372,59 +382,38 @@ router.get('/', checkPermission(PERMISSIONS.WALLETS_READ), cacheMiddleware('wall
 
 /**
  * GET /wallets/:id/balance
- * Get wallet balance natively bypassing horizon load via TTL
+ * Returns XLM balance with TTL caching. Use ?refresh=true to force a live query.
+ * Requires wallets:read permission.
  */
 router.get('/:id/balance', checkPermission(PERMISSIONS.WALLETS_READ), walletIdSchema, asyncHandler(async (req, res, next) => {
   try {
     const forceRefresh = req.query.refresh === 'true';
-    const wallet = await walletService.getWalletById(req.params.id);
-    
-    if (!wallet) {
-      throw new NotFoundError('Wallet not found', ERROR_CODES.WALLET_NOT_FOUND);
-    }
-    
-    const address = wallet.address || wallet.publicKey;
-    const stellarSvc = getStellarService();
 
-    res.setHeader('Cache-Control', 'max-age=10');
-
-    // Try to get all asset balances if available
-    if (stellarSvc && typeof stellarSvc.getAccountBalances === 'function') {
-      try {
-        const balances = await stellarSvc.getAccountBalances(address);
-        const nativeBalance = balances.find(b => b.asset_type === 'native');
-        const xlmBalance = nativeBalance ? parseFloat(nativeBalance.balance) : 0;
-        const subentryCount = balances.filter(b => b.asset_type !== 'native').length;
-        const minimumReserve = 1.0 + subentryCount * 0.5;
-
-        return res.json({
-          success: true,
-          data: {
-            balances: balances.map(b => ({
-              asset: b.asset_type === 'native' ? 'XLM' : `${b.asset_code}:${b.asset_issuer}`,
-              balance: b.balance,
-              assetType: b.asset_type,
-            })),
-            xlmBalance: nativeBalance ? nativeBalance.balance : '0',
-            minimumReserve: minimumReserve.toFixed(7),
-          }
+    let result;
+    try {
+      result = await walletService.getBalance(req.params.id, forceRefresh);
+    } catch (err) {
+      // StellarErrorHandler throws plain objects: { status, code, message }
+      // A 404 from Horizon means the account exists locally but not on-chain
+      if (err && (err.status === 404 || err.response?.status === 404)) {
+        return res.status(422).json({
+          success: false,
+          error: {
+            code: 'STELLAR_ACCOUNT_NOT_FOUND',
+            message: 'Stellar account not found. The account exists in the local database but has not been funded on the Stellar network.',
+          },
         });
-      } catch (_) {
-        // fall through to getBalance
       }
+      throw err;
     }
-
-    const result = await walletService.getBalance(req.params.id, forceRefresh);
 
     res.setHeader('X-Cache', result.cached ? 'HIT' : 'MISS');
 
-    res.json({
-      success: true,
-      data: {
-        balance: result.balance,
-        asset: result.asset,
-        minimumReserve: '1.0000000',
-      }
+    return res.json({
+      balance: result.balance,
+      asset: result.asset || 'XLM',
+      lastUpdated: result.lastUpdated || new Date().toISOString(),
+      cached: result.cached,
     });
   } catch (error) {
     next(error);

@@ -288,8 +288,9 @@ class WalletService {
   async getBalance(id, forceRefresh = false) {
     const wallet = this.getWalletById(id);
     const cacheKey = `wallet_balance_${wallet.address}`;
-    const cacheTtl = parseInt(process.env.WALLET_BALANCE_CACHE_TTL, 10) || 10000;
-    
+    const ttlSeconds = parseInt(process.env.WALLET_BALANCE_CACHE_TTL_SECONDS, 10);
+    const cacheTtl = (Number.isFinite(ttlSeconds) && ttlSeconds > 0 ? ttlSeconds : 30) * 1000;
+
     const Cache = require('../utils/cache');
     const serviceContainer = require('../config/serviceContainer');
     const stellarService = serviceContainer.getStellarService();
@@ -297,14 +298,15 @@ class WalletService {
     if (!forceRefresh) {
       const cached = Cache.get(cacheKey);
       if (cached !== null) {
-         return { ...cached, cached: true };
+        return { ...cached, cached: true };
       }
     }
 
     const liveBalance = await stellarService.getBalance(wallet.address);
-    Cache.set(cacheKey, liveBalance, cacheTtl);
+    const result = { ...liveBalance, lastUpdated: new Date().toISOString() };
+    Cache.set(cacheKey, result, cacheTtl);
 
-    return { ...liveBalance, cached: false };
+    return { ...result, cached: false };
   }
   /**
    * Revoke platform sponsorship for a wallet.
