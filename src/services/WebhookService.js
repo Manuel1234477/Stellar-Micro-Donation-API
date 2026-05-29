@@ -456,7 +456,17 @@ class WebhookService {
 
     for (const webhook of interested) {
       withAsyncContext('webhook_delivery', async () => {
-        await this._deliverWithRetry(webhook, event, payload, 0);
+        try {
+          await this._deliverWithRetry(webhook, event, payload, 0);
+        } catch (err) {
+          await WebhookService.scheduleRetry({
+            webhookId: webhook.id,
+            event,
+            payload,
+            attempt: 0,
+            lastError: err.message,
+          }).catch(() => {});
+        }
       }, {
         webhookId: webhook.id,
         event,
@@ -527,6 +537,7 @@ class WebhookService {
         await new Promise((r) => setTimeout(r, delay));
         return WebhookService._deliverWithRetry(webhook, event, payload, attempt + 1);
       }
+      throw err;
     }
   }
 

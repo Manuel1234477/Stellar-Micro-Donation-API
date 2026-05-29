@@ -1245,14 +1245,76 @@ class StellarService extends StellarServiceInterface {
   }
 
   /**
+   * Remove a trustline for a custom Stellar asset.
+   * The account must have a zero balance for the asset.
+   *
+   * @param {string} accountSecret - Secret key of the account removing the trustline
+   * @param {string} assetCode     - Asset code (1-12 alphanumeric characters)
+   * @param {string} issuerPublic  - Public key of the asset issuer
+   * @returns {Promise<{hash: string, ledger: number, assetCode: string, issuerPublic: string}>}
+   */
+  async removeTrustline(accountSecret, assetCode, issuerPublic) {
+    return StellarErrorHandler.wrap(async () => {
+      const { ValidationError } = require('../utils/errors');
+
+      if (!assetCode || !/^[A-Za-z0-9]{1,12}$/.test(assetCode)) {
+        throw new ValidationError('Asset code must be 1-12 alphanumeric characters');
+      }
+      if (!issuerPublic || typeof issuerPublic !== 'string') {
+        throw new ValidationError('issuerPublic is required');
+      }
+
+      const keypair = StellarSdk.Keypair.fromSecret(accountSecret);
+      const asset = new StellarSdk.Asset(assetCode, issuerPublic);
+      const account = await this._executeWithRetry(() =>
+        this.server.loadAccount(keypair.publicKey())
+      );
+
+      const balanceLine = account.balances.find((b) => (
+        b.asset_type !== 'native' &&
+        b.asset_code === assetCode &&
+        b.asset_issuer === issuerPublic
+      ));
+
+      if (!balanceLine) {
+        throw new ValidationError('Trustline not found for the requested asset');
+      }
+
+      const balance = parseFloat(balanceLine.balance || '0');
+      if (balance > 0) {
+        throw new ValidationError('Cannot remove a trustline with a non-zero balance');
+      }
+
+      const transaction = new StellarSdk.TransactionBuilder(account, {
+        fee: StellarSdk.BASE_FEE,
+        networkPassphrase: this._getNetworkPassphrase(),
+      })
+        .addOperation(StellarSdk.Operation.changeTrust({
+          asset,
+          limit: '0',
+        }))
+        .setTimeout(30)
+        .build();
+
+      transaction.sign(keypair);
+      const result = await this._submitTransactionWithNetworkSafety(transaction);
+
+      log.info('STELLAR_SERVICE', 'Trustline removed', {
+        assetCode,
+        issuerPublic,
+        hash: result.hash,
+      });
+
+      return { hash: result.hash, ledger: result.ledger, assetCode, issuerPublic };
+    }, 'removeTrustline');
+  }
+
+  /**
    * Issue a custom Stellar asset to a recipient.
    *
    * Flow:
    *  1. Recipient must have an existing trustline for the asset (changeTrust op).
    *  2. Issuer sends a payment of the custom asset to the recipient.
-   *
-   * @param {string} issuerSecret   - Secret key of the asset issuer account
-   * @param {string} assetCode      - Asset code (1-12 alphanumeric characters)
    * @param {string} amount         - Amount to issue (string, 7 decimal places)
    * @param {string} recipientPublic - Public key of the recipient
    * @returns {Promise<{hash: string, ledger: number, assetCode: string, issuerPublic: string, amount: string}>}

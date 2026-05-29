@@ -155,81 +155,6 @@ router.get('/recipients', checkPermission(PERMISSIONS.STATS_READ), auditLeaderbo
  * Server-Sent Events endpoint for real-time leaderboard updates
  * Clients can reconnect with Last-Event-ID to receive missed updates
  */
-router.get('/stream', checkPermission(PERMISSIONS.STATS_READ), (req, res, next) => {
-  try {
-    // Set SSE headers
-    res.setHeader('Content-Type', 'text/event-stream');
-    res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
-    res.setHeader('Connection', 'keep-alive');
-    res.setHeader('X-Accel-Buffering', 'no');
-    
-    // Generate unique client ID
-    const clientId = uuidv4();
-    const keyId = req.apiKey ? req.apiKey.id : 'anonymous';
-    
-    // Parse optional filters from query params
-    const filter = {};
-    if (req.query.period) {
-      filter.period = req.query.period;
-    }
-    
-    // Register SSE client
-    const client = SseManager.addClient(clientId, keyId, filter, res);
-
-    // Keepalive pings
-    const keepaliveMs = parseInt(process.env.LEADERBOARD_KEEPALIVE_MS || '15000', 10);
-    const pingInterval = setInterval(() => {
-      res.write(': ping\n\n');
-    }, keepaliveMs);
-    
-    // Handle client disconnect
-    req.on('close', () => {
-      clearInterval(pingInterval);
-      SseManager.removeClient(clientId);
-      console.log(`[Leaderboard SSE] Client disconnected: ${clientId}`);
-    });
-    
-    // Send initial connection message
-    const initialData = {
-      type: 'connection',
-      clientId,
-      message: 'Connected to leaderboard streaming',
-      timestamp: new Date().toISOString()
-    };
-    
-    SseManager.writeSseEvent(res, '1', 'leaderboard.connected', initialData);
-    
-    // Get missed events if client provides Last-Event-ID
-    const lastEventId = req.headers['last-event-id'];
-    if (lastEventId) {
-      const missedEvents = SseManager.getMissedEvents(lastEventId);
-      missedEvents.forEach((event, index) => {
-        SseManager.writeSseEvent(res, String(index + 2), event.event, event.data);
-      });
-    }
-    
-    // Send initial leaderboard data
-    const periods = ['all', 'monthly', 'weekly', 'daily'];
-    periods.forEach((period, index) => {
-      const donors = StatsService.getDonorLeaderboard(period, 10);
-      const recipients = StatsService.getRecipientLeaderboard(period, 10);
-      
-      SseManager.writeSseEvent(res, String(index + 100), 'leaderboard.update', {
-        type: 'leaderboard',
-        period,
-        timestamp: new Date().toISOString(),
-        donors,
-        recipients
-      });
-    });
-    
-    console.log(`[Leaderboard SSE] Client connected: ${clientId}`);
-  } catch (error) {
-    console.error('[Leaderboard SSE] Error:', error.message);
-    next(error);
-  }
-});
-
 /**
  * GET /leaderboard/snapshot
  * Return current rankings for a given time window (no streaming).
@@ -278,10 +203,21 @@ router.get('/stream', checkPermission(PERMISSIONS.STATS_READ), (req, res, next) 
     res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
     res.setHeader('Connection', 'keep-alive');
     res.setHeader('X-Accel-Buffering', 'no');
+    res.flushHeaders();
 
-    const clientId = uuidv4();
-    const keyId = req.apiKey ? req.apiKey.id : 'anonymous';
-    SseManager.addClient(clientId, keyId, { window }, res);
+    const keyId = req.apiKey ? String(req.apiKey.id) : 'anonymous';
+    const { added, limitExceeded, client } = SseManager.addClient(keyId, res, { window });
+
+    if (limitExceeded) {
+      return res.status(429).json({
+        success: false,
+        error: { code: 'TOO_MANY_CONNECTIONS', message: `Maximum ${SseManager.MAX_CONNECTIONS_PER_KEY} concurrent streams per API key` },
+      });
+    }
+
+    if (!added || !client) {
+      return res.status(500).json({ success: false, error: { code: 'SSE_ERROR', message: 'Failed to add SSE client' } });
+    }
 
     // Keepalive pings
     const keepaliveMs = parseInt(process.env.LEADERBOARD_KEEPALIVE_MS || '15000', 10);
@@ -291,7 +227,7 @@ router.get('/stream', checkPermission(PERMISSIONS.STATS_READ), (req, res, next) 
 
     req.on('close', () => {
       clearInterval(pingInterval);
-      SseManager.removeClient(clientId);
+      SseManager.removeClient(keyId, client);
     });
 
     // Send initial snapshot

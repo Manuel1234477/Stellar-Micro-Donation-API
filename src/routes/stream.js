@@ -944,17 +944,9 @@ donationEvents.on(donationEvents.constructor.EVENTS?.FAILED    || 'donation.fail
 router.get('/feed', checkPermission(PERMISSIONS.STREAM_READ), (req, res) => {
   const keyId = req.apiKey?.id != null ? String(req.apiKey.id) : (req.apiKey?.role || 'legacy');
 
-  if (SseManager.connectionCount(keyId) >= SseManager.MAX_CONNECTIONS_PER_KEY) {
-    return res.status(429).json({
-      success: false,
-      error: { code: 'TOO_MANY_CONNECTIONS', message: `Maximum ${SseManager.MAX_CONNECTIONS_PER_KEY} concurrent streams per API key` },
-    });
-  }
-
-  // Parse filters
   const filter = {};
   if (req.query.walletAddress) filter.walletAddress = req.query.walletAddress;
-  if (req.query.status)        filter.status        = req.query.status;
+  if (req.query.status) filter.status = req.query.status;
   if (req.query.minAmount !== undefined) {
     const v = Number(req.query.minAmount);
     if (!Number.isFinite(v)) return res.status(400).json({ success: false, error: { code: 'INVALID_FILTER', message: 'minAmount must be a number' } });
@@ -966,6 +958,20 @@ router.get('/feed', checkPermission(PERMISSIONS.STREAM_READ), (req, res) => {
     filter.maxAmount = v;
   }
 
+  const clientId = crypto.randomUUID ? crypto.randomUUID() : crypto.randomBytes(16).toString('hex');
+  const { added, limitExceeded, client } = SseManager.addClient(keyId, res, filter);
+
+  if (limitExceeded) {
+    return res.status(429).json({
+      success: false,
+      error: { code: 'TOO_MANY_CONNECTIONS', message: `Maximum ${SseManager.MAX_CONNECTIONS_PER_KEY} concurrent streams per API key` },
+    });
+  }
+
+  if (!added || !client) {
+    return res.status(500).json({ success: false, error: { code: 'SSE_ERROR', message: 'Failed to add SSE client' } });
+  }
+
   // SSE headers
   res.setHeader('Content-Type', 'text/event-stream');
   res.setHeader('Cache-Control', 'no-cache');
@@ -973,16 +979,13 @@ router.get('/feed', checkPermission(PERMISSIONS.STREAM_READ), (req, res) => {
   res.setHeader('X-Accel-Buffering', 'no');
   res.flushHeaders();
 
-  const clientId = crypto.randomUUID ? crypto.randomUUID() : crypto.randomBytes(16).toString('hex');
-  const client = SseManager.addClient(clientId, keyId, filter, res);
-
   // Replay missed events for reconnecting clients
   const lastEventId = req.headers['last-event-id'];
   if (lastEventId) {
     const missed = SseManager.getMissedEvents(lastEventId);
     for (const e of missed) {
       if (SseManager.matchesFilter(e.data, filter)) {
-        client.send(e.id, e.event, e.data);
+        SseManager.writeSseEvent(res, e.id, e.event, e.data);
       }
     }
   }
@@ -997,7 +1000,7 @@ router.get('/feed', checkPermission(PERMISSIONS.STREAM_READ), (req, res) => {
 
   req.on('close', () => {
     clearInterval(heartbeat);
-    SseManager.removeClient(clientId);
+    SseManager.removeClient(keyId, client);
     log.info('SSE', 'Client disconnected', { clientId, keyId });
   });
 });
