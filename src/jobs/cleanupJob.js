@@ -24,7 +24,14 @@ async function runCleanup() {
     console.log(`✓ Cleaned up expired transactions.`);
     console.log(`✓ Cleaned up expired wallets.`);
 
-    // 3. Log the cleanup for audit purposes
+    // 3. Clean up expired refresh token revocations (Issue #68)
+    try {
+      const { cleanupExpiredRevocations } = require('../services/JwtService');
+      const deleted = await cleanupExpiredRevocations();
+      console.log(`✓ Cleaned up ${deleted} expired refresh token revocations.`);
+    } catch (_) { /* table may not exist yet */ }
+
+    // 4. Log the cleanup for audit purposes
     await AuditLogService.log({
       category: AuditLogService.CATEGORY.SYSTEM,
       action: 'SOFT_DELETE_CLEANUP',
