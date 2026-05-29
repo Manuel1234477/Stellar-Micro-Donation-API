@@ -445,9 +445,7 @@ router.post('/batch', payloadSizeLimiter(ENDPOINT_LIMITS.batchDonation), safeBat
  */
 router.post('/', payloadSizeLimiter(ENDPOINT_LIMITS.singleDonation), donationRateLimiter, requireApiKey, requireIdempotency, createDonationSchema, async (req, res, next) => {
   try {
-    const { amount, currency, donor, recipient, memo, memoType, notes, tags, encryptMemo } = req.body;
-    const { amount, currency, donor, recipient, memo, memoType, notes, tags, anonymous } = req.body;
-    const { amount, currency, donor, recipient, memo, memoType, notes, tags, sourceAsset, sourceAmount } = req.body;
+    const { amount, currency, donor, recipient, memo, memoType, notes, tags, encryptMemo, anonymous, sourceAsset, sourceAmount } = req.body;
 
     // Basic validation
     if (!amount || !recipient) {

@@ -90,6 +90,16 @@ class Transaction {
     };
     transactions.push(newTransaction);
     this.saveTransactions(transactions);
+
+    if (this.eventEmitter) {
+      const eventName = this.eventEmitter.constructor?.EVENTS?.CREATED || 'donation.created';
+      if (typeof this.eventEmitter.emitLifecycleEvent === 'function') {
+        this.eventEmitter.emitLifecycleEvent(eventName, newTransaction);
+      } else if (typeof this.eventEmitter.emit === 'function') {
+        this.eventEmitter.emit(eventName, newTransaction);
+      }
+    }
+
     return newTransaction;
   }
 
@@ -171,7 +181,26 @@ class Transaction {
     }
 
     this.saveTransactions(transactions);
-    return transactions[index];
+    const updatedTransaction = transactions[index];
+
+    if (this.eventEmitter) {
+      const statusEventMap = {
+        [TRANSACTION_STATES.SUBMITTED]: this.eventEmitter.constructor?.EVENTS?.SUBMITTED,
+        [TRANSACTION_STATES.CONFIRMED]: this.eventEmitter.constructor?.EVENTS?.CONFIRMED,
+        [TRANSACTION_STATES.FAILED]: this.eventEmitter.constructor?.EVENTS?.FAILED,
+      };
+      const eventName = statusEventMap[nextStatus];
+
+      if (eventName) {
+        if (typeof this.eventEmitter.emitLifecycleEvent === 'function') {
+          this.eventEmitter.emitLifecycleEvent(eventName, updatedTransaction);
+        } else if (typeof this.eventEmitter.emit === 'function') {
+          this.eventEmitter.emit(eventName, updatedTransaction);
+        }
+      }
+    }
+
+    return updatedTransaction;
   }
 
   /**
