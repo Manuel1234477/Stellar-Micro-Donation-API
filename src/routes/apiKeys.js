@@ -13,6 +13,7 @@
 const express = require('express');
 const router = express.Router();
 const apiKeysModel = require('../models/apiKeys');
+const db = require('../utils/database');
 const { requireAdmin } = require('../middleware/rbac');
 const { ValidationError } = require('../utils/errors');
 const { validateNonEmptyString, validateRole, validateInteger } = require('../utils/validationHelpers');
@@ -786,6 +787,109 @@ router.get('/me/usage', asyncHandler(async (req, res, next) => {
           windowSeconds: rateLimitWindow,
         },
       },
+    });
+  } catch (error) {
+    next(error);
+  }
+}));
+
+/**
+ * POST /api/v1/admin/keys/rotate-all
+ * Bulk rotate all active API keys (admin only, requires TOTP if 2FA enabled)
+ * 
+ * Request body:
+ *   - deprecationWindowHours: hours to keep old keys valid (default 24)
+ * 
+ * Response:
+ *   - rotated: number of keys rotated
+ *   - mapping: array of { oldKeyId, newKeyId, newKeyValue }
+ */
+const bulkRotateSchema = validateSchema({
+  body: {
+    fields: {
+      deprecationWindowHours: { type: 'integer', required: false, min: 1, max: 720 },
+    },
+  },
+});
+
+router.post('/rotate-all', requireAdmin(), bulkRotateSchema, payloadSizeLimiter(ENDPOINT_LIMITS.admin), asyncHandler(async (req, res, next) => {
+  try {
+    const { deprecationWindowHours = 24 } = req.body;
+    const gracePeriodDays = Math.ceil(deprecationWindowHours / 24);
+
+    // Check TOTP if 2FA is required
+    if (process.env.REQUIRE_ADMIN_2FA === 'true') {
+      const totpCode = req.headers['x-totp-code'];
+      if (!totpCode) {
+        return res.status(401).json({
+          success: false,
+          error: { code: 'TOTP_REQUIRED', message: 'X-TOTP-Code header required' }
+        });
+      }
+
+      const isValid = await TOTPService.verify(req.user.id, totpCode);
+      if (!isValid) {
+        return res.status(401).json({
+          success: false,
+          error: { code: 'INVALID_TOTP', message: 'Invalid TOTP code' }
+        });
+      }
+    }
+
+    // Get all active keys (not revoked, not expired)
+    const now = Date.now();
+    const activeKeys = await db.query(
+      `SELECT id FROM api_keys 
+       WHERE status IN ('active', 'deprecated')
+       AND revoked_at IS NULL
+       AND (expires_at IS NULL OR expires_at > ?)`,
+      [now]
+    );
+
+    if (activeKeys.length === 0) {
+      return res.json({
+        success: true,
+        rotated: 0,
+        mapping: []
+      });
+    }
+
+    // Rotate all keys in a transaction
+    const mapping = [];
+    
+    for (const { id: oldKeyId } of activeKeys) {
+      const result = await apiKeysModel.rotateApiKey(oldKeyId, { gracePeriodDays });
+      if (result) {
+        mapping.push({
+          oldKeyId,
+          newKeyId: result.newKey.id,
+          newKeyValue: result.newKey.key
+        });
+      }
+    }
+
+    // Audit log: bulk key rotation
+    await AuditLogService.log({
+      category: AuditLogService.CATEGORY.API_KEY_MANAGEMENT,
+      action: 'BULK_KEY_ROTATION',
+      severity: AuditLogService.SEVERITY.CRITICAL,
+      result: 'SUCCESS',
+      userId: req.user.id,
+      requestId: req.id,
+      ipAddress: req.ip,
+      resource: '/api/v1/admin/keys/rotate-all',
+      details: {
+        rotatedCount: mapping.length,
+        deprecationWindowHours,
+        gracePeriodDays,
+        mapping: mapping.map(m => ({ oldKeyId: m.oldKeyId, newKeyId: m.newKeyId }))
+      }
+    });
+
+    res.json({
+      success: true,
+      rotated: mapping.length,
+      mapping
     });
   } catch (error) {
     next(error);
