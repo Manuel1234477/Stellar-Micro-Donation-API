@@ -40,6 +40,11 @@ All three endpoints support the same pagination parameters:
   - Optional string
   - Allowed values: `next`, `prev`
   - Default: `next`
+- `snapshotAt`
+  - Optional ISO 8601 timestamp (e.g. `2026-05-30T12:00:00.000Z`)
+  - When provided, only records with `timestamp <= snapshotAt` are returned
+  - Repeat the same value on every page request to get a consistent, point-in-time view
+  - See [Consistency Guarantees](#consistency-guarantees) for full details
 
 `GET /admin/audit-logs` also continues to support its existing filters:
 
@@ -179,6 +184,61 @@ Requests fail safely with a `4xx` validation error when:
 - `direction` is not `next` or `prev`
 - `cursor` is malformed
 - `cursor` is validly encoded but does not belong to the current filtered result set
+- `snapshotAt` is present but not a valid ISO 8601 timestamp
+
+## Consistency Guarantees
+
+### The Concurrent-Insert Problem
+
+Cursor pagination uses a composite `(timestamp, id)` position to mark the client's place in the result set. Records are ordered by `timestamp DESC, id DESC`, so each page request fetches records whose position is strictly less than the cursor.
+
+**Known limitation:** If a new record is inserted *between* two page requests with a timestamp that falls *before* the current cursor (i.e. an older record), that record will never appear in any page — the client has already moved past that position. Conversely, a record inserted with a timestamp *after* the cursor may appear on the next page even though it did not exist when the client started paginating.
+
+**Practical impact:** Clients that rely on pagination to process *every* record (e.g. nightly reconciliation jobs, batch exports) may **silently miss records** that were inserted during their pagination session.
+
+### Mitigation — `snapshotAt` Parameter
+
+All three paginated endpoints accept an optional `snapshotAt` query parameter (ISO 8601 timestamp). When provided:
+
+- Only records with `timestamp <= snapshotAt` are returned on every page.
+- The `X-Total-Count` header reflects the count scoped to the same snapshot.
+- The client gets a **consistent, point-in-time view** of the data for the entire pagination session, regardless of concurrent inserts.
+
+**Usage pattern:**
+
+1. Record the current time before starting pagination.
+2. Pass that timestamp as `snapshotAt` on the first request and every subsequent page request.
+
+```bash
+# Step 1 — capture snapshot time
+SNAPSHOT="2026-05-30T12:00:00.000Z"
+
+# Step 2 — first page
+curl -H "x-api-key: test-key" \
+  "http://localhost:3000/donations?snapshotAt=$SNAPSHOT&limit=20"
+
+# Step 3 — subsequent pages (reuse the same snapshotAt)
+curl -H "x-api-key: test-key" \
+  "http://localhost:3000/donations?snapshotAt=$SNAPSHOT&limit=20&cursor=<next_cursor>"
+```
+
+**Without `snapshotAt`** (default behaviour): pagination is fast and suitable for interactive UIs where occasional skips or duplicates caused by concurrent writes are acceptable.
+
+**With `snapshotAt`**: pagination is consistent and suitable for batch processing, reconciliation, or any use case that must process every record exactly once.
+
+### Validation
+
+`snapshotAt` must be a valid ISO 8601 timestamp. An invalid value returns a `400` validation error:
+
+```json
+{
+  "success": false,
+  "error": {
+    "code": "INVALID_REQUEST",
+    "message": "Invalid snapshotAt parameter: must be a valid ISO 8601 timestamp"
+  }
+}
+```
 
 ## Security Considerations
 

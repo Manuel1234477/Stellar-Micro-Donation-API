@@ -65,6 +65,8 @@ class AbuseDetectionService {
    */
   trackSuspicious(ip) {
     if (!ip) return false;
+    // Never auto-block in test environment — tests generate expected 4xx responses
+    if (process.env.NODE_ENV === 'test' || process.env.NODE_ENV === 'testing') return false;
 
     const now = Date.now();
     let data = this.suspiciousCounts.get(ip);

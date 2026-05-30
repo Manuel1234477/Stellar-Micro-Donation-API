@@ -123,7 +123,7 @@ describe('Cursor pagination for list endpoints', () => {
     seedDonations(25);
 
     const response = await request(app)
-      .get('/donations')
+      .get('/api/v1/donations')
       .set('x-api-key', 'test-key');
 
     expect(response.status).toBe(200);
@@ -145,19 +145,19 @@ describe('Cursor pagination for list endpoints', () => {
     seedDonations(9);
 
     const firstPage = await request(app)
-      .get('/donations?limit=3')
+      .get('/api/v1/donations?limit=3')
       .set('x-api-key', 'test-key');
 
     const secondPage = await request(app)
-      .get(`/donations?limit=3&cursor=${encodeURIComponent(firstPage.body.meta.next_cursor)}&direction=next`)
+      .get(`/api/v1/donations?limit=3&cursor=${encodeURIComponent(firstPage.body.meta.next_cursor)}&direction=next`)
       .set('x-api-key', 'test-key');
 
     const previousPage = await request(app)
-      .get(`/donations?limit=3&cursor=${encodeURIComponent(secondPage.body.meta.prev_cursor)}&direction=prev`)
+      .get(`/api/v1/donations?limit=3&cursor=${encodeURIComponent(secondPage.body.meta.prev_cursor)}&direction=prev`)
       .set('x-api-key', 'test-key');
 
     const lastPage = await request(app)
-      .get(`/donations?limit=3&cursor=${encodeURIComponent(secondPage.body.meta.next_cursor)}&direction=next`)
+      .get(`/api/v1/donations?limit=3&cursor=${encodeURIComponent(secondPage.body.meta.next_cursor)}&direction=next`)
       .set('x-api-key', 'test-key');
 
     expect(firstPage.body.data.map((item) => item.id)).toEqual(['9', '8', '7']);
@@ -174,13 +174,13 @@ describe('Cursor pagination for list endpoints', () => {
     seedDonations(5);
 
     const [limitTooHigh, zeroLimit, nonNumericLimit, invalidDirection, malformedCursor, unknownCursor] = await Promise.all([
-      request(app).get('/donations?limit=101').set('x-api-key', 'test-key'),
-      request(app).get('/donations?limit=0').set('x-api-key', 'test-key'),
-      request(app).get('/donations?limit=abc').set('x-api-key', 'test-key'),
-      request(app).get('/donations?direction=forward').set('x-api-key', 'test-key'),
-      request(app).get('/donations?cursor=not-a-valid-cursor').set('x-api-key', 'test-key'),
+      request(app).get('/api/v1/donations?limit=101').set('x-api-key', 'test-key'),
+      request(app).get('/api/v1/donations?limit=0').set('x-api-key', 'test-key'),
+      request(app).get('/api/v1/donations?limit=abc').set('x-api-key', 'test-key'),
+      request(app).get('/api/v1/donations?direction=forward').set('x-api-key', 'test-key'),
+      request(app).get('/api/v1/donations?cursor=not-a-valid-cursor').set('x-api-key', 'test-key'),
       request(app)
-        .get(`/donations?cursor=${encodeURIComponent(encodeCursor({ timestamp: createIsoTimestamp(999), id: '999' }))}`)
+        .get(`/api/v1/donations?cursor=${encodeURIComponent(encodeCursor({ timestamp: createIsoTimestamp(999), id: '999' }))}`)
         .set('x-api-key', 'test-key'),
     ]);
 
@@ -196,13 +196,13 @@ describe('Cursor pagination for list endpoints', () => {
     seedDonations(105);
 
     const limitHundred = await request(app)
-      .get('/donations?limit=100')
+      .get('/api/v1/donations?limit=100')
       .set('x-api-key', 'test-key');
 
     resetJsonFile(tempDonationsPath);
 
     const emptyResponse = await request(app)
-      .get('/donations')
+      .get('/api/v1/donations')
       .set('x-api-key', 'test-key');
 
     expect(limitHundred.status).toBe(200);
@@ -221,15 +221,15 @@ describe('Cursor pagination for list endpoints', () => {
     seedWallets(5);
 
     const firstPage = await request(app)
-      .get('/wallets?limit=2')
+      .get('/api/v1/wallets?limit=2')
       .set('x-api-key', 'test-key');
 
     const middlePage = await request(app)
-      .get(`/wallets?limit=2&cursor=${encodeURIComponent(firstPage.body.meta.next_cursor)}`)
+      .get(`/api/v1/wallets?limit=2&cursor=${encodeURIComponent(firstPage.body.meta.next_cursor)}`)
       .set('x-api-key', 'test-key');
 
     const lastPage = await request(app)
-      .get(`/wallets?limit=2&cursor=${encodeURIComponent(middlePage.body.meta.next_cursor)}`)
+      .get(`/api/v1/wallets?limit=2&cursor=${encodeURIComponent(middlePage.body.meta.next_cursor)}`)
       .set('x-api-key', 'test-key');
 
     expect(firstPage.status).toBe(200);
@@ -249,15 +249,15 @@ describe('Cursor pagination for list endpoints', () => {
 
   test('GET /wallets rejects malformed pagination parameters and supports empty datasets', async () => {
     const invalidDirection = await request(app)
-      .get('/wallets?direction=backward')
+      .get('/api/v1/wallets?direction=backward')
       .set('x-api-key', 'test-key');
 
     const invalidLimit = await request(app)
-      .get('/wallets?limit=101')
+      .get('/api/v1/wallets?limit=101')
       .set('x-api-key', 'test-key');
 
     const emptyResponse = await request(app)
-      .get('/wallets')
+      .get('/api/v1/wallets')
       .set('x-api-key', 'test-key');
 
     expect(invalidDirection.status).toBe(400);

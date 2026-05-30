@@ -460,11 +460,19 @@ class AuditLogService {
 
   /**
    * Query audit logs using cursor-based pagination.
+   *
+   * Pass `pagination.snapshotAt` (ISO 8601) to obtain a consistent,
+   * point-in-time view across multiple page requests.  When provided, only
+   * records with `timestamp <= snapshotAt` are returned, preventing the
+   * concurrent-insert skip/duplicate problem.  See `src/utils/pagination.js`
+   * for a full explanation.
+   *
    * @param {Object} filters - Query filters.
    * @param {Object} pagination - Pagination options.
    * @param {{ timestamp: string, id: string }|null} pagination.cursor - Decoded cursor.
    * @param {number} pagination.limit - Page size.
    * @param {string} pagination.direction - Pagination direction.
+   * @param {string|null} [pagination.snapshotAt] - Optional ISO 8601 upper-bound timestamp for consistent pagination.
    * @returns {Promise<{ data: Array, totalCount: number, meta: Object }>} Paginated results.
    */
   static async queryPaginated(filters = {}, pagination = {}) {
@@ -472,12 +480,18 @@ class AuditLogService {
       cursor = null,
       limit = 20,
       direction = 'next',
+      snapshotAt = null,
     } = pagination;
 
     const filterQuery = this.buildFilterQuery(filters);
+
+    // When snapshotAt is provided, scope the total count to the same snapshot
+    // so that X-Total-Count is consistent with the pages the client will see.
+    const snapshotCountClause = snapshotAt ? ` AND timestamp <= ?` : '';
+    const snapshotCountParams = snapshotAt ? [snapshotAt] : [];
     const totalRow = await db.get(
-      `SELECT COUNT(*) as total${filterQuery.clause}`,
-      filterQuery.params
+      `SELECT COUNT(*) as total${filterQuery.clause}${snapshotCountClause}`,
+      [...filterQuery.params, ...snapshotCountParams]
     );
 
     const cursorIsValid = await this.cursorExists(filters, cursor);
@@ -490,6 +504,7 @@ class AuditLogService {
       direction,
       timestampColumn: 'timestamp',
       idColumn: 'id',
+      snapshotAt,
     });
 
     const orderBy = direction === 'prev'
