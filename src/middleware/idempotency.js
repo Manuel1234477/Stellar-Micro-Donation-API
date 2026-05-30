@@ -23,6 +23,7 @@ const log = require('../utils/log');
  * 3. Query the IdempotencyService to see if this key has a successful cached response.
  * 4. If found: Short-circuit the request and return the cached JSON immediately.
  * 5. If not found: Generate a cryptographic hash of the body to detect "Key Reuse" (same key, different data).
+ * Issue #891: Scope idempotency keys by API key ID to prevent cross-tenant collisions
  */
 async function requireIdempotency(req, res, next) {
   try {
@@ -47,10 +48,13 @@ async function requireIdempotency(req, res, next) {
       );
     }
 
-    const existing = await IdempotencyService.get(idempotencyKey);
+    // Issue #891: Get API key ID for scoping
+    const apiKeyId = req.apiKey?.id || null;
+
+    const existing = await IdempotencyService.get(idempotencyKey, apiKeyId);
 
     if (existing) {
-      log.info('IDEMPOTENCY', 'Returning cached response', { idempotencyKey });
+      log.info('IDEMPOTENCY', 'Returning cached response', { idempotencyKey, apiKeyId });
 
       // Return cached response (idempotent behavior)
       return res.status(200).json({
@@ -62,12 +66,13 @@ async function requireIdempotency(req, res, next) {
 
     const requestHash = IdempotencyService.generateRequestHash(req.body);
 
-    const duplicate = await IdempotencyService.findByHash(requestHash, idempotencyKey);
+    const duplicate = await IdempotencyService.findByHash(requestHash, idempotencyKey, apiKeyId);
 
     if (duplicate) {
       log.warn('IDEMPOTENCY', 'Duplicate request payload detected with different key', {
         originalKey: duplicate.idempotencyKey,
         newKey: idempotencyKey,
+        apiKeyId
       });
 
       req.idempotencyWarning = {
@@ -82,7 +87,8 @@ async function requireIdempotency(req, res, next) {
       ...(req.idempotency || {}),
       key: idempotencyKey,
       hash: requestHash,
-      isNew: true
+      isNew: true,
+      apiKeyId
     };
 
     next();
@@ -95,6 +101,7 @@ async function requireIdempotency(req, res, next) {
  * Cache Storage Utility
  * Intent: Store the successful outcome of an operation so it can be replayed later.
  * Flow: Called by the controller after successful DB/Stellar operations -> Persists result to the idempotency table.
+ * Issue #891: Include apiKeyId in storage for scoping
  */
 async function storeIdempotencyResponse(req, response) {
   if (!req.idempotency || !req.idempotency.isNew) {
@@ -106,7 +113,8 @@ async function storeIdempotencyResponse(req, response) {
       req.idempotency.key,
       req.idempotency.hash,
       response,
-      req.user?.id
+      req.user?.id,
+      req.idempotency.apiKeyId
     );
   } catch (error) {
     log.error('IDEMPOTENCY', 'Failed to store idempotent response', { error: error.message });
@@ -122,10 +130,62 @@ async function optionalIdempotency(req, res, next) {
   const idempotencyKey = req.headers['idempotency-key'] || req.headers['x-idempotency-key'];
 
   if (!idempotencyKey) {
+    req.idempotency = { key: null, isNew: false };
     return next();
   }
 
   return requireIdempotency(req, res, next);
+}
+
+/**
+ * Conditional Idempotency Handler for POST /donations.
+ * When REQUIRE_IDEMPOTENCY_KEY=true, the Idempotency-Key header is required.
+ * When REQUIRE_IDEMPOTENCY_KEY=false (default), it is optional.
+ * The key must be a non-empty string of 1–128 characters.
+ */
+async function conditionalIdempotency(req, res, next) {
+  const required = process.env.REQUIRE_IDEMPOTENCY_KEY === 'true';
+  const idempotencyKey = req.headers['idempotency-key']
+    || req.headers['x-idempotency-key']
+    || req.idempotency?.key;
+
+  if (!idempotencyKey) {
+    if (required) {
+      return next(new ValidationError(
+        'An Idempotency-Key header is required for donation creation',
+        { header: 'Idempotency-Key' },
+        'IDEMPOTENCY_KEY_REQUIRED'
+      ));
+    }
+    req.idempotency = { key: null, isNew: false };
+    return next();
+  }
+
+  if (typeof idempotencyKey !== 'string' || idempotencyKey.length < 1 || idempotencyKey.length > 128) {
+    return next(new ValidationError(
+      'Idempotency-Key must be a non-empty string of 1–128 characters',
+      { idempotencyKey },
+      'INVALID_IDEMPOTENCY_KEY'
+    ));
+  }
+
+  try {
+    const apiKeyId = req.apiKey?.id || null;
+    const existing = await IdempotencyService.get(idempotencyKey, apiKeyId);
+    if (existing) {
+      log.info('IDEMPOTENCY', 'Returning cached response', { idempotencyKey, apiKeyId });
+      return res.status(200).json({
+        ...existing.response,
+        _idempotent: true,
+        _originalTimestamp: existing.createdAt,
+      });
+    }
+    const requestHash = IdempotencyService.generateRequestHash(req.body);
+    req.idempotency = { key: idempotencyKey, hash: requestHash, isNew: true, apiKeyId };
+    next();
+  } catch (error) {
+    next(error);
+  }
 }
 
 /**
@@ -147,6 +207,7 @@ async function cleanupExpiredKeys() {
 module.exports = {
   requireIdempotency,
   optionalIdempotency,
+  conditionalIdempotency,
   storeIdempotencyResponse,
   cleanupExpiredKeys
 };

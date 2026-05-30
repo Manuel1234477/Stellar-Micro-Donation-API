@@ -10,6 +10,7 @@
 
 const suspiciousPatternDetector = require('../utils/suspiciousPatternDetector');
 const log = require('../utils/log');
+const abuseDetectionService = require('../services/AbuseDetectionService');
 
 /**
  * Middleware to detect suspicious patterns in donation requests
@@ -34,11 +35,13 @@ function suspiciousPatternMiddleware(req, res, next) {
             recipient: req.body.receiverId || req.body.recipient
           };
           
-          suspiciousPatternDetector.detectHighVelocity(ip, donationData);
+        suspiciousPatternDetector.detectHighVelocity(ip, donationData);
+        abuseDetectionService.trackSuspicious(ip);
           
           // Detect identical amounts
           if (req.body.amount) {
-            suspiciousPatternDetector.detectIdenticalAmounts(ip, req.body.amount);
+          suspiciousPatternDetector.detectIdenticalAmounts(ip, req.body.amount);
+          abuseDetectionService.trackSuspicious(ip);
           }
           
           // Detect recipient diversity
@@ -58,6 +61,7 @@ function suspiciousPatternMiddleware(req, res, next) {
       if (!data.success || res.statusCode >= 400) {
         const errorType = data.error?.code || 'unknown';
         suspiciousPatternDetector.detectSequentialFailures(ip, errorType);
+        abuseDetectionService.trackSuspicious(ip);
       }
     } catch (error) {
       // Never let pattern detection break the response

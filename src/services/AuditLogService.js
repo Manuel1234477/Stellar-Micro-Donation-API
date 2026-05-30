@@ -64,6 +64,7 @@ const AUDIT_ACTION = {
   API_KEY_LISTED: 'API_KEY_LISTED',
   API_KEY_DEPRECATED: 'API_KEY_DEPRECATED',
   API_KEY_REVOKED: 'API_KEY_REVOKED',
+  API_KEY_EXTENDED: 'API_KEY_EXTENDED',
   
   // Financial Operations
   DONATION_CREATED: 'DONATION_CREATED',
@@ -87,36 +88,75 @@ const AUDIT_ACTION = {
   ABUSE_DETECTED: 'ABUSE_DETECTED',
   IP_FLAGGED: 'IP_FLAGGED',
   REPLAY_DETECTED: 'REPLAY_DETECTED',
+  GEO_REQUEST_BLOCKED: 'GEO_REQUEST_BLOCKED',
+  GEO_RULE_BLOCK_CREATED: 'GEO_RULE_BLOCK_CREATED',
+  GEO_RULE_BLOCK_DELETED: 'GEO_RULE_BLOCK_DELETED',
+  GEO_RULE_ALLOW_CREATED: 'GEO_RULE_ALLOW_CREATED',
+  GEO_RULE_ALLOW_DELETED: 'GEO_RULE_ALLOW_DELETED',
+  GEO_CONFIG_UPDATED: 'GEO_CONFIG_UPDATED',
 
   // Fee Bump Operations
   FEE_BUMP_APPLIED: 'FEE_BUMP_APPLIED',
   FEE_BUMP_FAILED: 'FEE_BUMP_FAILED',
   FEE_BUMP_AUTO_DETECTED: 'FEE_BUMP_AUTO_DETECTED',
+
+  // Wallet Inflation Destination
+  INFLATION_DESTINATION_UPDATED: 'INFLATION_DESTINATION_UPDATED',
+
+  // Wallet Home Domain
+  HOME_DOMAIN_UPDATED: 'HOME_DOMAIN_UPDATED',
+  // Bulk Operations
+  BULK_WALLET_IMPORT: 'BULK_WALLET_IMPORT',
+
+  // Receipt Operations
+  RECEIPT_GENERATED: 'RECEIPT_GENERATED',
 };
+
+let tableInitialized = false;
+let tableInitPromise = null;
+
+/** Tracks audit log write failures for observability */
+const auditLogMetrics = {
+  totalAttempts: 0,
+  totalFailures: 0,
+};
+
+/** In-memory buffer for pending audit log entries */
+const _pendingBuffer = [];
+const BUFFER_FLUSH_THRESHOLD = 20;
+const BUFFER_FLUSH_INTERVAL_MS = 2000;
+let _autoFlushTimer = null;
 
 class AuditLogService {
   /**
-   * Log a non-fatal audit write failure without polluting test output.
-   * Audit logging is best-effort for application flows, so swallowed write
-   * failures in tests should not surface as console errors.
-   *
+   * Return a snapshot of audit log failure metrics.
+   * @returns {{ totalAttempts: number, totalFailures: number, failureRate: number }}
+   */
+  static getMetrics() {
+    const { totalAttempts, totalFailures } = auditLogMetrics;
+    return {
+      totalAttempts,
+      totalFailures,
+      failureRate: totalAttempts === 0 ? 0 : totalFailures / totalAttempts,
+    };
+  }
+
+  /**
+   * Log a non-fatal audit write failure at WARN level and increment failure metric.
    * @param {Error} error - Original failure.
    * @param {string} category - Audit category.
    * @param {string} action - Audit action.
    */
   static logWriteFailure(error, category, action) {
-    const meta = {
-      error: error.message,
-      category,
-      action
-    };
+    auditLogMetrics.totalFailures += 1;
+    const meta = { error: error.message, category, action };
 
     if (process.env.NODE_ENV === 'test') {
       log.debug('AUDIT_SERVICE', 'Audit log write skipped due to database failure in test mode', meta);
       return;
     }
 
-    log.error('AUDIT_SERVICE', 'Failed to create audit log', meta);
+    log.warn('AUDIT_SERVICE', 'Audit log write failed — primary operation unaffected', meta);
   }
 
   /**
@@ -223,7 +263,47 @@ class AuditLogService {
    * @returns {Promise<Object>} Created audit log entry
    */
   static async log(params) {
-    return AuditLogService._log(params);
+    auditLogMetrics.totalAttempts += 1;
+    try {
+      if (!tableInitialized) {
+        if (tableInitPromise) {
+          await tableInitPromise;
+        } else {
+          tableInitPromise = AuditLogService.initializeTable();
+          await tableInitPromise;
+        }
+      }
+      return await AuditLogService._log(params);
+    } catch (error) {
+      this.logWriteFailure(error, params && params.category, params && params.action);
+      return { success: false, error: error.message };
+    }
+  }
+
+  static async initializeTable() {
+    if (tableInitialized) return;
+    try {
+      await db.run(`
+        CREATE TABLE IF NOT EXISTS audit_logs (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          timestamp TEXT NOT NULL,
+          category TEXT NOT NULL,
+          action TEXT NOT NULL,
+          severity TEXT NOT NULL,
+          result TEXT NOT NULL,
+          userId TEXT,
+          requestId TEXT,
+          ipAddress TEXT,
+          resource TEXT,
+          reason TEXT,
+          details TEXT,
+          integrityHash TEXT NOT NULL
+        )
+      `);
+      tableInitialized = true;
+    } finally {
+      tableInitPromise = null;
+    }
   }
 
   static async _log({
@@ -266,68 +346,20 @@ class AuditLogService {
       const hash = this.generateHash(auditEntry);
       auditEntry.integrityHash = hash;
 
-      // Ensure audit_logs table exists
-      await db.run(`
-        CREATE TABLE IF NOT EXISTS audit_logs (
-          id INTEGER PRIMARY KEY AUTOINCREMENT,
-          timestamp TEXT NOT NULL,
-          category TEXT NOT NULL,
-          action TEXT NOT NULL,
-          severity TEXT NOT NULL,
-          result TEXT NOT NULL,
-          userId TEXT,
-          requestId TEXT,
-          ipAddress TEXT,
-          resource TEXT,
-          reason TEXT,
-          details TEXT,
-          integrityHash TEXT NOT NULL
-        )
-      `);
+      // Buffer entry; flush when threshold is reached
+      _pendingBuffer.push(auditEntry);
 
-      // Insert into database (immutable)
-      const dbResult = await db.run(
-        `INSERT INTO audit_logs (
-          timestamp, category, action, severity, result,
-          userId, requestId, ipAddress, resource, reason,
-          details, integrityHash
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-        [
-          auditEntry.timestamp,
-          auditEntry.category,
-          auditEntry.action,
-          auditEntry.severity,
-          auditEntry.result,
-          auditEntry.userId,
-          auditEntry.requestId,
-          auditEntry.ipAddress,
-          auditEntry.resource,
-          auditEntry.reason,
-          auditEntry.details,
-          auditEntry.integrityHash
-        ]
-      );
+      // Log to application logs for real-time monitoring
+      const logLevel = severity === AUDIT_SEVERITY.HIGH ? 'warn' : 'info';
+      log[logLevel]('AUDIT', `${action}: ${result}`, {
+        category, action, severity, result, userId, requestId, ipAddress, resource, reason
+      });
 
-      // Also log to application logs for real-time monitoring
-      if (process.env.NODE_ENV !== 'test') {
-        const logLevel = severity === AUDIT_SEVERITY.HIGH ? 'warn' : 'info';
-        log[logLevel]('AUDIT', `${action}: ${result}`, {
-          category,
-          action,
-          severity,
-          result,
-          userId,
-          requestId,
-          ipAddress,
-          resource,
-          reason
-        });
+      if (_pendingBuffer.length >= BUFFER_FLUSH_THRESHOLD) {
+        AuditLogService.flush().catch(() => {});
       }
 
-      return {
-        id: dbResult.id,
-        ...auditEntry
-      };
+      return { buffered: true, ...auditEntry };
     } catch (error) {
       this.logWriteFailure(error, category, action);
       // Re-throw validation errors, swallow DB errors
@@ -335,6 +367,82 @@ class AuditLogService {
         throw error;
       }
       // Don't re-throw DB errors — audit log failures should never block operations
+    }
+  }
+
+  /**
+   * Write all buffered entries to the database in a single transaction.
+   * Has a 5-second timeout; on timeout the buffered entries are written to stderr and the
+   * buffer is cleared so that shutdown can proceed.
+   * Safe to call multiple times (idempotent).
+   * @returns {Promise<void>}
+   */
+  static async flush() {
+    if (_pendingBuffer.length === 0) return;
+
+    const entries = _pendingBuffer.splice(0, _pendingBuffer.length);
+
+    const writeEntries = async () => {
+      await db.run('BEGIN TRANSACTION');
+      try {
+        for (const entry of entries) {
+          await db.run(
+            `INSERT INTO audit_logs (
+              timestamp, category, action, severity, result,
+              userId, requestId, ipAddress, resource, reason,
+              details, integrityHash
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+            [
+              entry.timestamp, entry.category, entry.action, entry.severity, entry.result,
+              entry.userId, entry.requestId, entry.ipAddress, entry.resource, entry.reason,
+              entry.details, entry.integrityHash
+            ]
+          );
+        }
+        await db.run('COMMIT');
+      } catch (err) {
+        await db.run('ROLLBACK').catch(() => {});
+        throw err;
+      }
+    };
+
+    const FLUSH_TIMEOUT_MS = 5000;
+    try {
+      await Promise.race([
+        writeEntries(),
+        new Promise((_, reject) =>
+          setTimeout(() => reject(new Error('flush timeout')), FLUSH_TIMEOUT_MS)
+        ),
+      ]);
+    } catch (err) {
+      process.stderr.write(
+        JSON.stringify({ event: 'audit_flush_failed', error: err.message, entries }) + '\n'
+      );
+    }
+  }
+
+  /**
+   * Start the periodic auto-flush timer.
+   * @returns {void}
+   */
+  static startAutoFlush() {
+    if (_autoFlushTimer) return;
+    _autoFlushTimer = setInterval(() => {
+      if (_pendingBuffer.length > 0) {
+        AuditLogService.flush().catch(() => {});
+      }
+    }, BUFFER_FLUSH_INTERVAL_MS);
+    if (_autoFlushTimer.unref) _autoFlushTimer.unref();
+  }
+
+  /**
+   * Stop the periodic auto-flush timer.
+   * @returns {void}
+   */
+  static stopAutoFlush() {
+    if (_autoFlushTimer) {
+      clearInterval(_autoFlushTimer);
+      _autoFlushTimer = null;
     }
   }
 
@@ -533,5 +641,6 @@ class AuditLogService {
 AuditLogService.SEVERITY = AUDIT_SEVERITY;
 AuditLogService.CATEGORY = AUDIT_CATEGORY;
 AuditLogService.ACTION = AUDIT_ACTION;
+AuditLogService.metrics = auditLogMetrics;
 
 module.exports = AuditLogService;

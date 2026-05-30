@@ -3,9 +3,12 @@
  *
  * RESPONSIBILITY: Enforce strict CORS policies for all API responses
  * OWNER: Security Team
- * DEPENDENCIES: None (pure Node.js)
+ * DEPENDENCIES: Database (for runtime allowlist), log utility
  *
- * Reads allowed origins from CORS_ALLOWED_ORIGINS env var (comma-separated).
+ * Reads allowed origins from:
+ *   1. Database cors_origins table (runtime, cached 60s TTL)
+ *   2. CORS_ALLOWED_ORIGINS env var (static fallback)
+ *
  * Supports exact matches and wildcard subdomain patterns (e.g. *.example.com).
  * Preflight responses are cached via Access-Control-Max-Age.
  */
@@ -20,6 +23,56 @@ const CORS_DEFAULTS = {
   headers: 'Content-Type,Authorization,X-API-Key,X-Request-ID,X-Idempotency-Key',
   maxAge: 86400, // 24 hours in seconds
 };
+
+/** In-memory cache for DB allowlist */
+const _cache = {
+  origins: null,
+  expiresAt: 0,
+  TTL_MS: 60 * 1000, // 60 seconds
+};
+
+/**
+ * Invalidate the in-memory allowlist cache.
+ * Call this after adding or removing an origin.
+ */
+function invalidateCache() {
+  _cache.origins = null;
+  _cache.expiresAt = 0;
+}
+
+/**
+ * Load allowed origins from the database, using a 60-second TTL cache.
+ *
+ * @returns {Promise<string[]>} Array of origin strings/patterns
+ */
+async function loadDbOrigins() {
+  const now = Date.now();
+  if (_cache.origins !== null && now < _cache.expiresAt) {
+    return _cache.origins;
+  }
+
+  try {
+    const Database = require('../utils/database');
+    // Load from cors_origins (legacy) and cors_rules (active only)
+    const [originsRows, rulesRows] = await Promise.all([
+      Database.query('SELECT origin FROM cors_origins ORDER BY id ASC', []).catch(() => []),
+      Database.query('SELECT origin FROM cors_rules WHERE active = 1 ORDER BY id ASC', []).catch(() => []),
+    ]);
+    const origins = [
+      ...originsRows.map(r => r.origin),
+      ...rulesRows.map(r => r.origin),
+    ];
+    // Deduplicate
+    const unique = [...new Set(origins)];
+    _cache.origins = unique;
+    _cache.expiresAt = now + _cache.TTL_MS;
+    return unique;
+  } catch (err) {
+    // Table may not exist yet during startup — fall back to empty
+    log.warn('CORS', 'Failed to load DB origins, using empty list', { error: err.message });
+    return [];
+  }
+}
 
 /**
  * Parse and validate the CORS_ALLOWED_ORIGINS environment variable.
@@ -46,7 +99,6 @@ function parseAllowedOrigins(raw) {
  */
 function wildcardToRegex(pattern) {
   if (!pattern.startsWith('*.')) return null;
-  // Escape the rest of the domain and anchor the regex
   const escaped = pattern.slice(2).replace(/[.+?^${}()|[\]\\]/g, '\\$&');
   return new RegExp(`^https?://[^.]+\\.${escaped}$`);
 }
@@ -61,9 +113,7 @@ function wildcardToRegex(pattern) {
 function isOriginAllowed(origin, allowedOrigins) {
   if (!origin) return false;
   for (const allowed of allowedOrigins) {
-    // Exact match
     if (allowed === origin) return true;
-    // Wildcard subdomain match
     const regex = wildcardToRegex(allowed);
     if (regex && regex.test(origin)) return true;
   }
@@ -90,23 +140,47 @@ function validateCorsConfig(allowedOrigins) {
 }
 
 /**
+ * Determine whether "allow all origins" wildcard mode is active.
+ *
+ * Wildcard mode is ONLY permitted when BOTH conditions hold:
+ *   1. NODE_ENV === 'development'
+ *   2. CORS_ALLOW_ALL === 'true'
+ *
+ * Using CORS_ALLOW_ALL=true in production is a hard error (startupChecks enforces this).
+ *
+ * @returns {boolean}
+ */
+function isWildcardAllowed() {
+  return (
+    process.env.NODE_ENV === 'development' &&
+    process.env.CORS_ALLOW_ALL === 'true'
+  );
+}
+
+/**
  * Create the CORS middleware.
  *
- * Reads configuration from environment variables:
- *   - CORS_ALLOWED_ORIGINS  Comma-separated list of allowed origins (required for any CORS)
- *   - CORS_ALLOWED_METHODS  Override default allowed HTTP methods
- *   - CORS_ALLOWED_HEADERS  Override default allowed request headers
- *   - CORS_MAX_AGE          Preflight cache duration in seconds (default: 86400)
+ * Reads configuration from:
+ *   - Database cors_origins table (runtime, 60s TTL cache)
+ *   - CORS_ALLOWED_ORIGINS env var (static fallback/supplement)
+ *   - CORS_ALLOWED_METHODS, CORS_ALLOWED_HEADERS, CORS_MAX_AGE env vars
+ *
+ * Wildcard (origin: '*') is only permitted when NODE_ENV=development AND
+ * CORS_ALLOW_ALL=true are both explicitly set.  In all other environments,
+ * CORS_ALLOWED_ORIGINS must be configured or all cross-origin requests are
+ * rejected.
  *
  * @param {Object} [options] - Optional overrides (useful in tests)
- * @param {string[]} [options.allowedOrigins] - Override parsed origins
+ * @param {string[]} [options.allowedOrigins] - Override parsed origins (disables DB lookup)
  * @param {string}   [options.methods]        - Override allowed methods
  * @param {string}   [options.headers]        - Override allowed headers
  * @param {number}   [options.maxAge]         - Override max-age seconds
+ * @param {boolean}  [options.skipDbLookup]   - Skip DB lookup (use only static origins)
+ * @param {boolean}  [options.allowAll]       - Force wildcard mode (tests only)
  * @returns {Function} Express middleware
  */
 function createCorsMiddleware(options = {}) {
-  const allowedOrigins = options.allowedOrigins !== undefined
+  const staticOrigins = options.allowedOrigins !== undefined
     ? options.allowedOrigins
     : parseAllowedOrigins();
 
@@ -122,7 +196,16 @@ function createCorsMiddleware(options = {}) {
     ? options.maxAge
     : parseInt(process.env.CORS_MAX_AGE || String(CORS_DEFAULTS.maxAge), 10);
 
-  validateCorsConfig(allowedOrigins);
+  const skipDbLookup = options.skipDbLookup === true || options.allowedOrigins !== undefined;
+
+  // Wildcard mode: only when explicitly enabled in development
+  const wildcardMode = options.allowAll === true || isWildcardAllowed();
+
+  validateCorsConfig(staticOrigins);
+
+  if (wildcardMode) {
+    log.info('CORS', 'Wildcard mode active (NODE_ENV=development, CORS_ALLOW_ALL=true) — all origins permitted');
+  }
 
   /**
    * CORS middleware function
@@ -135,29 +218,44 @@ function createCorsMiddleware(options = {}) {
     const origin = req.headers.origin;
 
     if (!origin) {
-      // Same-origin or non-browser request — no CORS headers needed
       return next();
     }
 
+    // ── Wildcard mode: allow every origin ───────────────────────────────
+    if (wildcardMode) {
+      res.setHeader('Access-Control-Allow-Origin', '*');
+      res.setHeader('Access-Control-Allow-Methods', methods);
+      res.setHeader('Access-Control-Allow-Headers', headers);
+      // Note: credentials cannot be combined with wildcard origin
+      if (req.method === 'OPTIONS') {
+        res.setHeader('Access-Control-Max-Age', String(maxAge));
+        return res.status(204).end();
+      }
+      return next();
+    }
+
+    // ── Strict allowlist mode ───────────────────────────────────────────
+    // Use cached origins synchronously to avoid blocking
+    let allowedOrigins = staticOrigins;
+    if (!skipDbLookup && _cache.origins !== null) {
+      allowedOrigins = [...new Set([...staticOrigins, ..._cache.origins])];
+    }
+
+    // Load DB origins asynchronously in the background without blocking the request
+    if (!skipDbLookup && (Date.now() >= _cache.expiresAt)) {
+      loadDbOrigins().catch((err) => {
+        log.warn('CORS', 'Failed to refresh DB origins cache', { error: err.message });
+      });
+    }
+
     if (!isOriginAllowed(origin, allowedOrigins)) {
-      log.warn('CORS', 'Rejected request from disallowed origin', {
+      // DEBUG log for every rejected cross-origin request
+      log.debug('CORS', 'Rejected cross-origin request', {
         origin,
         method: req.method,
         path: req.path,
       });
 
-      // For preflight, return 403 immediately
-      if (req.method === 'OPTIONS') {
-        return res.status(403).json({
-          success: false,
-          error: {
-            code: 'CORS_ORIGIN_NOT_ALLOWED',
-            message: 'Origin not allowed by CORS policy',
-          },
-        });
-      }
-
-      // For actual requests from disallowed origins, reject with 403
       return res.status(403).json({
         success: false,
         error: {
@@ -167,14 +265,12 @@ function createCorsMiddleware(options = {}) {
       });
     }
 
-    // Origin is allowed — set CORS headers
     res.setHeader('Access-Control-Allow-Origin', origin);
     res.setHeader('Vary', 'Origin');
     res.setHeader('Access-Control-Allow-Methods', methods);
     res.setHeader('Access-Control-Allow-Headers', headers);
     res.setHeader('Access-Control-Allow-Credentials', 'true');
 
-    // Handle preflight
     if (req.method === 'OPTIONS') {
       res.setHeader('Access-Control-Max-Age', String(maxAge));
       return res.status(204).end();
@@ -188,7 +284,11 @@ module.exports = {
   createCorsMiddleware,
   parseAllowedOrigins,
   isOriginAllowed,
+  isWildcardAllowed,
   wildcardToRegex,
   validateCorsConfig,
+  loadDbOrigins,
+  invalidateCache,
   CORS_DEFAULTS,
+  _cache,
 };

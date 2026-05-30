@@ -214,6 +214,46 @@ Sync transactions from Stellar network for a wallet.
 
 ---
 
+## Admin / Inspection (Admin Only)
+
+### POST /admin/inspect/xdr
+Decode and inspect an arbitrary Stellar XDR envelope. Returns the decoded transaction details without storing them.
+
+**Headers:** `X-API-Key` (Admin), `Content-Type: application/json`
+
+**Body:**
+```json
+{ "xdr": "AAAAAgAAAAD..." }
+```
+
+**Response 200:**
+```json
+{
+  "success": true,
+  "data": {
+    "hash": "abc123...",
+    "source": "GAAZI...",
+    "fee": "100",
+    "sequence": "123456",
+    "operations": [ ... ],
+    "memo": { "type": "none" },
+    "signatures": [ ... ]
+  }
+}
+```
+
+---
+
+### GET /admin/inspect/xdr/:id
+Inspect the XDR envelope of a stored transaction by its ID.
+
+**Headers:** `X-API-Key` (Admin)
+
+**Response 200:**
+Returns the same decoded structure as `POST /admin/inspect/xdr`.
+
+---
+
 ## Health
 
 ### GET /health

@@ -365,6 +365,40 @@ function decryptMemo(envelope, recipientStellarSecret) {
 }
 
 /**
+ * Encrypt a memo with key versioning for AES-256-GCM based encryption.
+ * Each encryption operation associates a keyVersion that will be included in the output.
+ *
+ * @param {string|MemoEnvelope} plaintext - Plaintext memo to encrypt
+ * @param {number} keyVersion - Key version identifier (e.g., 1, 2, 3...)
+ * @param {string} recipientStellarAddress - Recipient's Stellar public key (G...)
+ * @returns {Object} { keyVersion, encryptedEnvelope }
+ */
+function encryptMemoWithVersion(plaintext, keyVersion, recipientStellarAddress) {
+  if (typeof keyVersion !== 'number' || keyVersion < 1) {
+    throw new Error('keyVersion must be a positive number');
+  }
+  const envelope = encryptMemo(plaintext, recipientStellarAddress);
+  return {
+    keyVersion,
+    encryptedEnvelope: envelope,
+    keyVersionPrefix: `v${keyVersion}`,
+  };
+}
+
+/**
+ * Decrypt an envelope assuming the recipient has access to the correct key version.
+ * The recipient uses their Stellar secret key (which never changes) to decrypt,
+ * so key versioning is transparent to the decryption process.
+ *
+ * @param {MemoEnvelope|string} envelope - Encrypted envelope
+ * @param {string} recipientStellarSecret - Recipient's Stellar secret key (S...)
+ * @returns {string} Decrypted plaintext
+ */
+function decryptMemoWithVersion(envelope, recipientStellarSecret) {
+  return decryptMemo(envelope, recipientStellarSecret);
+}
+
+/**
  * Return true if the given value appears to be a valid MemoEnvelope.
  *
  * @param {*} value
@@ -401,6 +435,8 @@ function envelopeToMemoHash(envelope) {
 module.exports = {
   encryptMemo,
   decryptMemo,
+  encryptMemoWithVersion,
+  decryptMemoWithVersion,
   isEncryptedMemoEnvelope,
   envelopeToMemoHash,
   // Exported for unit testing

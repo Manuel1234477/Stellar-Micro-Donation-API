@@ -3,20 +3,26 @@
  * 
  * RESPONSIBILITY: HTTP request handling for API key management operations
  * OWNER: Security Team
- * DEPENDENCIES: API Keys model, middleware (auth, RBAC), validation helpers
+ * DEPENDENCIES: API Keys model, middleware (auth, RBAC), validation helpers, scope validator
  * 
  * Admin-only endpoints for API key lifecycle management including creation, listing,
- * rotation, deprecation, and revocation. Supports zero-downtime key rotation.
+ * rotation, deprecation, and revocation. Supports zero-downtime key rotation and
+ * fine-grained scope-based access control.
  */
 
 const express = require('express');
 const router = express.Router();
 const apiKeysModel = require('../models/apiKeys');
+const db = require('../utils/database');
 const { requireAdmin } = require('../middleware/rbac');
 const { ValidationError } = require('../utils/errors');
 const { validateNonEmptyString, validateRole, validateInteger } = require('../utils/validationHelpers');
+const { validateScopes } = require('../utils/scopeValidator');
 
 const AuditLogService = require('../services/AuditLogService');
+const TOTPService = require('../services/TOTPService');
+const asyncHandler = require('../utils/asyncHandler');
+const { payloadSizeLimiter, ENDPOINT_LIMITS } = require('../middleware/payloadSizeLimiter');
 
 const { validateSchema } = require('../middleware/schemaValidation');
 const { API_KEY_STATUS } = require('../constants');
@@ -64,8 +70,9 @@ const apiKeyCleanupSchema = validateSchema({
 /**
  * POST /api/v1/api-keys
  * Create a new API key (admin only)
+ * Request body can include optional 'scopes' array for fine-grained access control
  */
-router.post('/', requireAdmin(), apiKeyCreateSchema, async (req, res, next) => {
+router.post('/', requireAdmin(), apiKeyCreateSchema, payloadSizeLimiter(ENDPOINT_LIMITS.admin), asyncHandler(async (req, res, next) => {
   try {
     const { name, role = 'user', expiresInDays, metadata, rateLimit, rateLimitWindowSeconds, allowedIps } = req.body;
 
@@ -84,6 +91,12 @@ router.post('/', requireAdmin(), apiKeyCreateSchema, async (req, res, next) => {
       if (!expiresValidation.valid) {
         throw new ValidationError(`Invalid expiresInDays: ${expiresValidation.error}`);
       }
+    }
+
+    // Validate scopes
+    const scopeValidation = validateScopes(scopes);
+    if (!scopeValidation.valid) {
+      throw new ValidationError(`Invalid scopes: ${scopeValidation.errors.join('; ')}`);
     }
 
     const keyInfo = await apiKeysModel.createApiKey({
@@ -111,6 +124,8 @@ router.post('/', requireAdmin(), apiKeyCreateSchema, async (req, res, next) => {
         keyId: keyInfo.id,
         keyName: name.trim(),
         role,
+        scopesCount: scopeValidation.scopes.length,
+        scopes: scopeValidation.scopes,
         expiresInDays,
         createdBy: req.user.id
       }
@@ -124,6 +139,7 @@ router.post('/', requireAdmin(), apiKeyCreateSchema, async (req, res, next) => {
         keyPrefix: keyInfo.keyPrefix,
         name: keyInfo.name,
         role: keyInfo.role,
+        scopes: keyInfo.scopes,
         status: keyInfo.status,
         createdAt: keyInfo.createdAt,
         expiresAt: keyInfo.expiresAt,
@@ -135,13 +151,13 @@ router.post('/', requireAdmin(), apiKeyCreateSchema, async (req, res, next) => {
   } catch (error) {
     next(error);
   }
-});
+}));
 
 /**
  * GET /api/v1/api-keys
  * List all API keys (admin only)
  */
-router.get('/', requireAdmin(), apiKeyListQuerySchema, async (req, res, next) => {
+router.get('/', requireAdmin(), apiKeyListQuerySchema, asyncHandler(async (req, res, next) => {
   try {
     const { status, role } = req.query;
 
@@ -174,7 +190,7 @@ router.get('/', requireAdmin(), apiKeyListQuerySchema, async (req, res, next) =>
   } catch (error) {
     next(error);
   }
-});
+}));
 
 const apiKeyRotateSchema = validateSchema({
   body: {
@@ -188,7 +204,7 @@ const apiKeyRotateSchema = validateSchema({
  * POST /api/v1/api-keys/:id/rotate
  * Atomically rotate an API key: creates a new key and deprecates the old one (admin only)
  */
-router.post('/:id/rotate', requireAdmin(), apiKeyIdParamSchema, apiKeyRotateSchema, async (req, res, next) => {
+router.post('/:id/rotate', requireAdmin(), apiKeyIdParamSchema, apiKeyRotateSchema, payloadSizeLimiter(ENDPOINT_LIMITS.admin), asyncHandler(async (req, res, next) => {
   try {
     const keyIdValidation = validateInteger(req.params.id, { min: 1 });
     if (!keyIdValidation.valid) {
@@ -246,8 +262,8 @@ router.post('/:id/rotate', requireAdmin(), apiKeyIdParamSchema, apiKeyRotateSche
   } catch (error) {
     next(error);
   }
-});
-router.post('/:id/deprecate', requireAdmin(), apiKeyIdParamSchema, async (req, res, next) => {
+}));
+router.post('/:id/deprecate', requireAdmin(), apiKeyIdParamSchema, payloadSizeLimiter(ENDPOINT_LIMITS.admin), asyncHandler(async (req, res, next) => {
   try {
     const keyIdValidation = validateInteger(req.params.id, { min: 1 });
 
@@ -290,13 +306,13 @@ router.post('/:id/deprecate', requireAdmin(), apiKeyIdParamSchema, async (req, r
   } catch (error) {
     next(error);
   }
-});
+}));
 
 /**
  * PATCH /api/v1/api-keys/:id
  * Update mutable fields on an API key, e.g. allowedIps (admin only)
  */
-router.patch('/:id', requireAdmin(), apiKeyIdParamSchema, async (req, res, next) => {
+router.patch('/:id', requireAdmin(), apiKeyIdParamSchema, payloadSizeLimiter(ENDPOINT_LIMITS.admin), asyncHandler(async (req, res, next) => {
   try {
     const keyIdValidation = validateInteger(req.params.id, { min: 1 });
     if (!keyIdValidation.valid) {
@@ -331,13 +347,95 @@ router.patch('/:id', requireAdmin(), apiKeyIdParamSchema, async (req, res, next)
   } catch (error) {
     next(error);
   }
+}));
+
+/**
+ * POST /api/v1/api-keys/:id/extend
+ * Extend an API key's expiration by a given number of days (admin only).
+ * Extension is applied from the current expiresAt, not from today.
+ * Maximum 365 days per request. Revoked keys cannot be extended.
+ */
+const apiKeyExtendSchema = validateSchema({
+  body: {
+    fields: {
+      days: { type: 'integer', required: true, min: 1 },
+    },
+  },
 });
+
+router.post('/:id/extend', requireAdmin(), apiKeyIdParamSchema, apiKeyExtendSchema, payloadSizeLimiter(ENDPOINT_LIMITS.admin), asyncHandler(async (req, res, next) => {
+  try {
+    const keyIdValidation = validateInteger(req.params.id, { min: 1 });
+    if (!keyIdValidation.valid) {
+      throw new ValidationError(`Invalid key ID: ${keyIdValidation.error}`);
+    }
+
+    const { days } = req.body;
+    if (days > 365) {
+      return res.status(400).json({
+        success: false,
+        error: { code: 'EXTENSION_TOO_LONG', message: 'Maximum extension is 365 days per request' },
+      });
+    }
+
+    let result;
+    try {
+      result = await apiKeysModel.extendApiKey(keyIdValidation.value, days);
+    } catch (err) {
+      if (err.code === 'KEY_REVOKED') {
+        return res.status(409).json({
+          success: false,
+          error: { code: 'KEY_REVOKED', message: 'Cannot extend a revoked key' },
+        });
+      }
+      throw err;
+    }
+
+    if (!result) {
+      return res.status(404).json({
+        success: false,
+        error: { code: 'NOT_FOUND', message: 'API key not found' },
+      });
+    }
+
+    await AuditLogService.log({
+      category: AuditLogService.CATEGORY.API_KEY_MANAGEMENT,
+      action: AuditLogService.ACTION.API_KEY_EXTENDED,
+      severity: AuditLogService.SEVERITY.HIGH,
+      result: 'SUCCESS',
+      userId: req.user.id,
+      requestId: req.id,
+      ipAddress: req.ip,
+      resource: `/api/v1/api-keys/${keyIdValidation.value}`,
+      details: {
+        keyId: keyIdValidation.value,
+        days,
+        oldExpiresAt: result.oldExpiresAt,
+        newExpiresAt: result.newExpiresAt,
+        extendedBy: req.user.id,
+      },
+    });
+    await AuditLogService.flush();
+
+    res.json({
+      success: true,
+      data: {
+        keyId: keyIdValidation.value,
+        days,
+        oldExpiresAt: result.oldExpiresAt,
+        newExpiresAt: result.newExpiresAt,
+      },
+    });
+  } catch (error) {
+    next(error);
+  }
+}));
 
 /**
  * DELETE /api/v1/api-keys/:id
  * Revoke an API key (admin only)
  */
-router.delete('/:id', requireAdmin(), apiKeyIdParamSchema, async (req, res, next) => {
+router.delete('/:id', requireAdmin(), apiKeyIdParamSchema, asyncHandler(async (req, res, next) => {
   try {
     const keyIdValidation = validateInteger(req.params.id, { min: 1 });
 
@@ -380,13 +478,13 @@ router.delete('/:id', requireAdmin(), apiKeyIdParamSchema, async (req, res, next
   } catch (error) {
     next(error);
   }
-});
+}));
 
 /**
  * POST /api/v1/api-keys/cleanup
  * Clean up old expired and revoked keys (admin only)
  */
-router.post('/cleanup', requireAdmin(), apiKeyCleanupSchema, async (req, res, next) => {
+router.post('/cleanup', requireAdmin(), apiKeyCleanupSchema, payloadSizeLimiter(ENDPOINT_LIMITS.admin), asyncHandler(async (req, res, next) => {
   try {
     const { retentionDays = 90 } = req.body;
 
@@ -418,6 +516,384 @@ router.post('/cleanup', requireAdmin(), apiKeyCleanupSchema, async (req, res, ne
   } catch (error) {
     next(error);
   }
+}));
+
+// ─── TOTP Routes ──────────────────────────────────────────────────────────────
+
+/**
+ * POST /api-keys/:id/totp/setup
+ * Generate a TOTP secret and QR code for an API key (admin only).
+ * TOTP is not yet active — the admin must call /verify to activate it.
+ */
+router.post('/:id/totp/setup', requireAdmin(), apiKeyIdParamSchema, payloadSizeLimiter(ENDPOINT_LIMITS.admin), asyncHandler(async (req, res, next) => {
+  try {
+    const { value: keyId } = validateInteger(req.params.id, { min: 1 });
+
+    // Fetch key name for the otpauth label
+    const { initializeApiKeysTable } = require('../models/apiKeys');
+    await initializeApiKeysTable();
+    const db = require('../utils/database');
+    const row = await db.get(`SELECT name FROM api_keys WHERE id = ?`, [keyId]);
+    if (!row) {
+      return res.status(404).json({
+        success: false,
+        error: { code: 'NOT_FOUND', message: 'API key not found' },
+      });
+    }
+
+    const result = await TOTPService.generateSecret(keyId, row.name);
+
+    await AuditLogService.log({
+      category: AuditLogService.CATEGORY.API_KEY_MANAGEMENT,
+      action: 'TOTP_SETUP_INITIATED',
+      severity: AuditLogService.SEVERITY.HIGH,
+      result: 'SUCCESS',
+      userId: req.user.id,
+      requestId: req.id,
+      ipAddress: req.ip,
+      resource: `/api/v1/api-keys/${keyId}/totp/setup`,
+      details: { keyId, initiatedBy: req.user.id },
+    });
+
+    res.status(200).json({
+      success: true,
+      data: {
+        secret: result.secret,
+        qrCodeDataUrl: result.qrCodeDataUrl,
+        otpauthUrl: result.otpauthUrl,
+        backupCodes: result.backupCodes,
+        warning: 'Store backup codes securely. They will not be shown again.',
+        instructions: 'Scan the QR code with your authenticator app, then call POST /totp/verify with a valid code to activate TOTP.',
+      },
+    });
+  } catch (error) {
+    next(error);
+  }
+}));
+
+/**
+ * POST /api-keys/:id/totp/verify
+ * Verify a TOTP code and activate TOTP for the API key (admin only).
+ * Also accepts a backup code to authenticate when TOTP is already enabled.
+ */
+router.post('/:id/totp/verify', requireAdmin(), apiKeyIdParamSchema, payloadSizeLimiter(ENDPOINT_LIMITS.admin), asyncHandler(async (req, res, next) => {
+  try {
+    const { value: keyId } = validateInteger(req.params.id, { min: 1 });
+    const { code } = req.body;
+
+    if (!code) {
+      return res.status(400).json({
+        success: false,
+        error: { code: 'VALIDATION_ERROR', message: 'code is required' },
+      });
+    }
+
+    // If TOTP is already enabled, this endpoint just verifies the code
+    const alreadyEnabled = await TOTPService.isTotpEnabled(keyId);
+    if (alreadyEnabled) {
+      const totpValid = await TOTPService.verify(keyId, String(code));
+      const backupValid = !totpValid && await TOTPService.verifyBackupCode(keyId, String(code));
+      const valid = totpValid || backupValid;
+
+      res.setHeader('X-TOTP-Required', 'true');
+      if (!valid) {
+        return res.status(401).json({
+          success: false,
+          error: { code: 'INVALID_TOTP', message: 'Invalid or expired TOTP code' },
+        });
+      }
+      return res.status(200).json({ success: true, data: { verified: true, usedBackupCode: backupValid } });
+    }
+
+    // First-time activation
+    const result = await TOTPService.enable(keyId, String(code));
+    if (!result.enabled) {
+      res.setHeader('X-TOTP-Required', 'true');
+      return res.status(401).json({
+        success: false,
+        error: { code: 'INVALID_TOTP', message: result.reason || 'Invalid TOTP code' },
+      });
+    }
+
+    await AuditLogService.log({
+      category: AuditLogService.CATEGORY.API_KEY_MANAGEMENT,
+      action: 'TOTP_ENABLED',
+      severity: AuditLogService.SEVERITY.HIGH,
+      result: 'SUCCESS',
+      userId: req.user.id,
+      requestId: req.id,
+      ipAddress: req.ip,
+      resource: `/api/v1/api-keys/${keyId}/totp/verify`,
+      details: { keyId, enabledBy: req.user.id },
+    });
+
+    res.status(200).json({ success: true, data: { enabled: true } });
+  } catch (error) {
+    next(error);
+  }
+}));
+
+/**
+ * DELETE /api-keys/:id/totp
+ * Disable TOTP for an API key (admin only). Requires a valid TOTP or backup code.
+ */
+router.delete('/:id/totp', requireAdmin(), apiKeyIdParamSchema, asyncHandler(async (req, res, next) => {
+  try {
+    const { value: keyId } = validateInteger(req.params.id, { min: 1 });
+    const { code } = req.body;
+
+    if (!code) {
+      return res.status(400).json({
+        success: false,
+        error: { code: 'VALIDATION_ERROR', message: 'code is required to disable TOTP' },
+      });
+    }
+
+    const result = await TOTPService.disable(keyId, String(code));
+    if (!result.disabled) {
+      res.setHeader('X-TOTP-Required', 'true');
+      return res.status(401).json({
+        success: false,
+        error: { code: 'INVALID_TOTP', message: result.reason || 'Invalid code' },
+      });
+    }
+
+    await AuditLogService.log({
+      category: AuditLogService.CATEGORY.API_KEY_MANAGEMENT,
+      action: 'TOTP_DISABLED',
+      severity: AuditLogService.SEVERITY.HIGH,
+      result: 'SUCCESS',
+      userId: req.user.id,
+      requestId: req.id,
+      ipAddress: req.ip,
+      resource: `/api/v1/api-keys/${keyId}/totp`,
+      details: { keyId, disabledBy: req.user.id },
+    });
+
+    res.status(200).json({ success: true, data: { disabled: true } });
+  } catch (error) {
+    next(error);
+  }
+}));
+
+// ─── Expiration Notices ───────────────────────────────────────────────────────
+
+/**
+ * GET /api-keys/:id/expiration-notices
+ * List all expiration notifications sent for a given API key (admin only).
+ */
+router.get('/:id/expiration-notices', requireAdmin(), apiKeyIdParamSchema, asyncHandler(async (req, res, next) => {
+  try {
+    const { value: keyId } = validateInteger(req.params.id, { min: 1 });
+    const { getExpirationNotices } = require('../models/apiKeys');
+    const notices = await getExpirationNotices(keyId);
+    res.json({ success: true, data: { keyId, notices } });
+  } catch (error) {
+    next(error);
+  }
+}));
+
+// ─── Anomaly Detection ────────────────────────────────────────────────────────
+
+const anomalyDetectionService = require('../services/AnomalyDetectionService');
+
+/**
+ * GET /api-keys/:id/anomalies
+ * Returns anomaly history for the given API key (admin only).
+ */
+router.get('/:id/anomalies', requireAdmin, apiKeyIdParamSchema, asyncHandler(async (req, res, next) => {
+  try {
+    const keyId = String(req.params.id);
+    const anomalies = anomalyDetectionService.getAnomalies(keyId);
+    res.status(200).json({ success: true, data: { keyId, anomalies } });
+  } catch (error) {
+    next(error);
+  }
+}));
+
+/**
+ * GET /api-keys/:id/tier
+ * Returns the subscription tier for the given API key (admin only).
+ */
+router.get('/:id/tier', requireAdmin(), apiKeyIdParamSchema, asyncHandler(async (req, res, next) => {
+  try {
+    const Database = require('../utils/database');
+    const keyId = parseInt(req.params.id, 10);
+    const row = await Database.get(
+      'SELECT id, name, tier FROM api_keys WHERE id = ? AND status != ?',
+      [keyId, 'revoked']
+    );
+    if (!row) {
+      return res.status(404).json({ success: false, error: { code: 'NOT_FOUND', message: 'API key not found' } });
+    }
+    res.json({ success: true, data: { id: row.id, name: row.name, tier: row.tier || 'free' } });
+  } catch (error) {
+    next(error);
+  }
+}));
+
+/**
+ * GET /api-keys/me/usage
+ * Returns usage statistics for the currently authenticated API key.
+ * Accessible with any valid API key (not admin-only).
+ */
+router.get('/me/usage', asyncHandler(async (req, res, next) => {
+  try {
+    const apiKey = req.apiKey;
+    if (!apiKey) {
+      return res.status(401).json({ success: false, error: 'API key authentication required' });
+    }
+
+    const ApiKeyUsageService = require('../services/ApiKeyUsageService');
+    const usageService = ApiKeyUsageService.instance;
+
+    const now = Date.now();
+    const startOfDay   = new Date(); startOfDay.setUTCHours(0, 0, 0, 0);
+    const startOfMonth = new Date(); startOfMonth.setUTCDate(1); startOfMonth.setUTCHours(0, 0, 0, 0);
+
+    const keyIdentifier = String(apiKey.id || apiKey.key || apiKey.keyHash || 'unknown');
+
+    let requestsToday = 0;
+    let requestsThisMonth = 0;
+    try {
+      const todaySeries   = usageService.getTimeSeries(keyIdentifier, 'day',   { from: startOfDay.getTime(),   to: now });
+      const monthSeries   = usageService.getTimeSeries(keyIdentifier, 'day',   { from: startOfMonth.getTime(), to: now });
+      requestsToday       = todaySeries.reduce((s, b) => s + b.requests, 0);
+      requestsThisMonth   = monthSeries.reduce((s, b) => s + b.requests, 0);
+    } catch (_) {
+      // Key has no recorded usage yet — counts stay 0
+    }
+
+    const quotaLimit     = apiKey.quotaLimit     ?? null;
+    const quotaUsed      = apiKey.quotaUsed      ?? null;
+    const quotaRemaining = quotaLimit !== null && quotaUsed !== null ? Math.max(0, quotaLimit - quotaUsed) : null;
+
+    const rateLimitMax    = apiKey.rateLimit       ?? null;
+    const rateLimitWindow = apiKey.rateLimitWindowSeconds ?? null;
+
+    res.json({
+      success: true,
+      data: {
+        keyId: apiKey.id,
+        requestsToday,
+        requestsThisMonth,
+        quota: {
+          limit: quotaLimit,
+          used: quotaUsed,
+          remaining: quotaRemaining,
+        },
+        rateLimit: {
+          requestsPerWindow: rateLimitMax,
+          windowSeconds: rateLimitWindow,
+        },
+      },
+    });
+  } catch (error) {
+    next(error);
+  }
+}));
+
+/**
+ * POST /api/v1/admin/keys/rotate-all
+ * Bulk rotate all active API keys (admin only, requires TOTP if 2FA enabled)
+ * 
+ * Request body:
+ *   - deprecationWindowHours: hours to keep old keys valid (default 24)
+ * 
+ * Response:
+ *   - rotated: number of keys rotated
+ *   - mapping: array of { oldKeyId, newKeyId, newKeyValue }
+ */
+const bulkRotateSchema = validateSchema({
+  body: {
+    fields: {
+      deprecationWindowHours: { type: 'integer', required: false, min: 1, max: 720 },
+    },
+  },
 });
+
+router.post('/rotate-all', requireAdmin(), bulkRotateSchema, payloadSizeLimiter(ENDPOINT_LIMITS.admin), asyncHandler(async (req, res, next) => {
+  try {
+    const { deprecationWindowHours = 24 } = req.body;
+    const gracePeriodDays = Math.ceil(deprecationWindowHours / 24);
+
+    // Check TOTP if 2FA is required
+    if (process.env.REQUIRE_ADMIN_2FA === 'true') {
+      const totpCode = req.headers['x-totp-code'];
+      if (!totpCode) {
+        return res.status(401).json({
+          success: false,
+          error: { code: 'TOTP_REQUIRED', message: 'X-TOTP-Code header required' }
+        });
+      }
+
+      const isValid = await TOTPService.verify(req.user.id, totpCode);
+      if (!isValid) {
+        return res.status(401).json({
+          success: false,
+          error: { code: 'INVALID_TOTP', message: 'Invalid TOTP code' }
+        });
+      }
+    }
+
+    // Get all active keys (not revoked, not expired)
+    const now = Date.now();
+    const activeKeys = await db.query(
+      `SELECT id FROM api_keys 
+       WHERE status IN ('active', 'deprecated')
+       AND revoked_at IS NULL
+       AND (expires_at IS NULL OR expires_at > ?)`,
+      [now]
+    );
+
+    if (activeKeys.length === 0) {
+      return res.json({
+        success: true,
+        rotated: 0,
+        mapping: []
+      });
+    }
+
+    // Rotate all keys in a transaction
+    const mapping = [];
+    
+    for (const { id: oldKeyId } of activeKeys) {
+      const result = await apiKeysModel.rotateApiKey(oldKeyId, { gracePeriodDays });
+      if (result) {
+        mapping.push({
+          oldKeyId,
+          newKeyId: result.newKey.id,
+          newKeyValue: result.newKey.key
+        });
+      }
+    }
+
+    // Audit log: bulk key rotation
+    await AuditLogService.log({
+      category: AuditLogService.CATEGORY.API_KEY_MANAGEMENT,
+      action: 'BULK_KEY_ROTATION',
+      severity: AuditLogService.SEVERITY.CRITICAL,
+      result: 'SUCCESS',
+      userId: req.user.id,
+      requestId: req.id,
+      ipAddress: req.ip,
+      resource: '/api/v1/admin/keys/rotate-all',
+      details: {
+        rotatedCount: mapping.length,
+        deprecationWindowHours,
+        gracePeriodDays,
+        mapping: mapping.map(m => ({ oldKeyId: m.oldKeyId, newKeyId: m.newKeyId }))
+      }
+    });
+
+    res.json({
+      success: true,
+      rotated: mapping.length,
+      mapping
+    });
+  } catch (error) {
+    next(error);
+  }
+}));
 
 module.exports = router;

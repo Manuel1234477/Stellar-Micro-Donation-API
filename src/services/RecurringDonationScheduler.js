@@ -17,27 +17,45 @@
 
 const Database = require('../utils/database');
 const WebhookService = require('./WebhookService');
-const { SCHEDULE_STATUS, DONATION_FREQUENCIES } = require('../constants');
-const Database = require('../utils/database');
+const ApiKeyExpirationNotifier = require('./ApiKeyExpirationNotifier');
+const { SCHEDULE_STATUS, DONATION_FREQUENCIES, STROOPS_PER_XLM } = require('../constants');
 const log = require('../utils/log');
 const { revokeExpiredDeprecatedKeys } = require('../models/apiKeys');
+const {
+  recurringDonationsDueTotal,
+  recurringDonationsExecutedTotal,
+  recurringDonationsExecutionDuration,
+  recurringDonationsSuspendedTotal,
+  recurringDonationsActiveCount,
+  recurringDonationsSkippedTotal,
+} = require('../utils/metrics');
 const {
   withBackgroundContext,
   withAsyncContext,
   getCorrelationSummary,
 } = require('../utils/correlation');
+const { withSpanInContext, extractTraceContext, injectTraceHeaders, getCurrentTraceparent } = require('../utils/tracing');
 
 class RecurringDonationScheduler {
   /**
    * @param {Object} stellarService - StellarService or MockStellarService instance
+   * @param {Object} [networkStatusService] - Optional NetworkStatusService for health checks
    */
-  constructor(stellarService) {
-    this.stellarService = stellarService || null;
+  constructor(stellarService, networkStatusService = null) {
+    if (!stellarService) {
+      throw new Error('stellarService is required');
+    }
+    this.stellarService = stellarService;
+    this.networkStatusService = networkStatusService;
     this.intervalId = null;
     this.isRunning = false;
 
     /** How often the scheduler polls for due donations (ms) */
     this.checkInterval = 60_000; // 1 minute
+
+    // Backup configuration (default: daily)
+    this.backupInterval = parseInt(process.env.BACKUP_INTERVAL_MS, 10) || 24 * 60 * 60 * 1000;
+    this.lastBackupAt = 0;
 
     // Retry configuration
     this.maxRetries = 3;
@@ -47,6 +65,15 @@ class RecurringDonationScheduler {
 
     /** In-progress schedule IDs – prevents concurrent duplicate execution */
     this.executingSchedules = new Set();
+
+    /** Timestamp of the last completed tick (ISO string or null) */
+    this.lastTickAt = null;
+
+    /** Duration of the last tick in milliseconds */
+    this.lastTickDurationMs = null;
+
+    /** Count of schedules that failed in the last tick */
+    this.lastTickFailedSchedules = 0;
   }
 
   // ─────────────────────────────────────────────────────────────────────────
@@ -66,16 +93,72 @@ class RecurringDonationScheduler {
     this.processSchedules();
     this.intervalId = setInterval(() => this.processSchedules(), this.checkInterval);
 
-    this.intervalId = setInterval(() => {
-      this.processSchedules();
-    }, this.checkInterval);
-
     const correlation = getCorrelationSummary();
     log.info("RECURRING_SCHEDULER", "Scheduler started", {
       checkIntervalSeconds: this.checkInterval / 1000,
       correlationId: correlation.correlationId,
       traceId: correlation.traceId,
     });
+  }
+
+  /**
+   * Pause the scheduler (stops executing ticks) without stopping the server process.
+   * @returns {void}
+   */
+  pause() {
+    if (!this.isRunning) return;
+    
+    if (this.intervalId) {
+      clearInterval(this.intervalId);
+      this.intervalId = null;
+    }
+
+    const { correlationId, traceId } = getCorrelationSummary();
+    log.info('RECURRING_SCHEDULER', 'Scheduler paused', { correlationId, traceId });
+  }
+
+  /**
+   * Resume a paused scheduler.
+   * @returns {void}
+   */
+  resume() {
+    if (!this.isRunning || this.intervalId) return;
+    
+    this.processSchedules();
+    this.intervalId = setInterval(() => this.processSchedules(), this.checkInterval);
+
+    const { correlationId, traceId } = getCorrelationSummary();
+    log.info('RECURRING_SCHEDULER', 'Scheduler resumed', { correlationId, traceId });
+  }
+
+  /**
+   * Check if the scheduler is paused.
+   * @returns {boolean}
+   */
+  isPaused() {
+    return this.isRunning && !this.intervalId;
+  }
+
+  /**
+   * Get detailed scheduler status.
+   * @returns {Object}
+   */
+  getDetailedStatus() {
+    const { correlationId, traceId } = getCorrelationSummary();
+    return {
+      isRunning: this.isRunning,
+      isPaused: this.isPaused(),
+      lastTickAt: this.lastTickAt,
+      lastTickDurationMs: this.lastTickDurationMs,
+      lastTickFailedSchedules: this.lastTickFailedSchedules,
+      activeScheduleCount: this.executingSchedules.size,
+      nextTickAt: this.isRunning && this.intervalId 
+        ? new Date(Date.now() + this.checkInterval).toISOString()
+        : null,
+      checkIntervalMs: this.checkInterval,
+      correlationId,
+      traceId,
+    };
   }
 
   /**
@@ -96,6 +179,94 @@ class RecurringDonationScheduler {
     });
   }
 
+  /**
+   * Gracefully stop the scheduler, waiting for any in-progress executions to complete.
+   *
+   * - Clears the polling interval immediately so no new executions are started.
+   * - Waits up to `timeoutMs` for all in-progress executions to finish.
+   * - Any executions still running after the timeout are logged as interrupted and
+   *   marked with status 'interrupted' in the DB for manual review.
+   *
+   * @param {number} [timeoutMs=30000] - Max wait time in ms (default 30 s)
+   * @returns {Promise<{waited: number, interrupted: number}>}
+   */
+  async stopGracefully(timeoutMs = 30000) {
+    if (!this.isRunning) return { waited: 0, interrupted: 0 };
+
+    clearInterval(this.intervalId);
+    this.intervalId = null;
+    this.isRunning = false;
+
+    const { correlationId, traceId } = getCorrelationSummary();
+    const inProgressCount = this.executingSchedules.size;
+
+    if (inProgressCount === 0) {
+      log.info('RECURRING_SCHEDULER', 'Scheduler stopped gracefully', {
+        waited: 0,
+        interrupted: 0,
+        correlationId,
+        traceId,
+      });
+      return { waited: 0, interrupted: 0 };
+    }
+
+    log.info('RECURRING_SCHEDULER', 'Waiting for in-progress executions to complete', {
+      inProgress: inProgressCount,
+      timeoutMs,
+      correlationId,
+      traceId,
+    });
+
+    const deadline = Date.now() + timeoutMs;
+    await new Promise((resolve) => {
+      const check = setInterval(() => {
+        if (this.executingSchedules.size === 0 || Date.now() >= deadline) {
+          clearInterval(check);
+          resolve();
+        }
+      }, 100);
+    });
+
+    const interrupted = this.executingSchedules.size;
+    const waited = inProgressCount - interrupted;
+
+    if (interrupted > 0) {
+      const interruptedIds = [...this.executingSchedules];
+      log.error('RECURRING_SCHEDULER', 'Shutdown timeout reached — executions interrupted', {
+        interrupted,
+        interruptedScheduleIds: interruptedIds,
+        correlationId,
+        traceId,
+      });
+
+      // Mark interrupted executions for manual review
+      for (const scheduleId of interruptedIds) {
+        try {
+          await Database.run(
+            `INSERT INTO recurring_donation_logs
+               (scheduleId, status, errorMessage, timestamp)
+             VALUES (?, 'interrupted', 'Execution interrupted by server shutdown', ?)`,
+            [scheduleId, new Date().toISOString()]
+          );
+        } catch (dbErr) {
+          log.error('RECURRING_SCHEDULER', 'Failed to mark interrupted execution', {
+            scheduleId,
+            error: dbErr.message,
+          });
+        }
+      }
+    }
+
+    log.info('RECURRING_SCHEDULER', 'Scheduler stopped gracefully', {
+      waited,
+      interrupted,
+      correlationId,
+      traceId,
+    });
+
+    return { waited, interrupted };
+  }
+
   // ─────────────────────────────────────────────────────────────────────────
   // Core processing
   // ─────────────────────────────────────────────────────────────────────────
@@ -105,50 +276,42 @@ class RecurringDonationScheduler {
    * @returns {Promise<void>}
    */
   async processSchedules() {
-    if (!this.isRunning) return;
-
-    return withBackgroundContext('process_schedules', async () => {
-      const { correlationId, traceId } = getCorrelationSummary();
-      try {
-        const now = new Date().toISOString();
-
-        const dueSchedules = await Database.query(
-          `SELECT
-            rd.id,
-            rd.donorId,
-            rd.recipientId,
-            rd.amount,
-            rd.frequency,
-            rd.customIntervalDays,
-            rd.maxExecutions,
-            rd.webhookUrl,
-            rd.failureCount,
-            rd.nextExecutionDate,
-            rd.executionCount,
-            rd.lastExecutionDate,
-            donor.publicKey  AS donorPublicKey,
-            recipient.publicKey AS recipientPublicKey
-           FROM recurring_donations rd
-           JOIN users donor     ON rd.donorId    = donor.id
-           JOIN users recipient ON rd.recipientId = recipient.id
-           WHERE rd.status = ?
-             AND rd.nextExecutionDate <= ?`,
-          [SCHEDULE_STATUS.ACTIVE, now]
-        );
-
-        if (dueSchedules.length > 0) {
-          log.info('RECURRING_SCHEDULER', 'Found due schedules', {
-            count: dueSchedules.length,
-            correlationId,
-            traceId,
-          });
     if (!this.isRunning) {
       return;
     }
 
-    const correlation = getCorrelationSummary();
+    // Skip tick when Stellar network is degraded
+    if (this.networkStatusService && !this.networkStatusService.isHealthy()) {
+      log.warn('RECURRING_SCHEDULER', 'Scheduler tick skipped: Stellar network is degraded. due donations will be retried on next tick.');
+      recurringDonationsSkippedTotal.inc({ reason: 'network_degraded' }, 1);
+      return;
+    }
+
+    const { correlationId, traceId } = getCorrelationSummary();
+    const _tickStart = Date.now();
+    let _tickFailedSchedules = 0;
 
     try {
+      // Detect clock jumps (e.g., NTP correction, DST transition)
+      if (this.lastTickAt) {
+        const lastTickTime = new Date(this.lastTickAt).getTime();
+        const timeSinceLastTick = _tickStart - lastTickTime;
+        const expectedInterval = this.checkInterval;
+        const deviation = Math.abs(timeSinceLastTick - expectedInterval);
+        
+        // If deviation > 90 seconds, log a warning
+        if (deviation > 90000) {
+          log.warn('RECURRING_SCHEDULER', 'Clock jump detected', {
+            expectedIntervalMs: expectedInterval,
+            actualIntervalMs: timeSinceLastTick,
+            deviationMs: deviation,
+            correlationId,
+            traceId,
+          });
+        }
+      }
+      this.lastTickAt = new Date(_tickStart).toISOString();
+
       const now = new Date().toISOString();
 
       const dueSchedules = await Database.query(
@@ -161,6 +324,10 @@ class RecurringDonationScheduler {
           rd.nextExecutionDate,
           rd.executionCount,
           rd.lastExecutionDate,
+          rd.maxExecutions,
+          rd.customIntervalDays,
+          rd.webhookUrl,
+          rd.failureCount,
           donor.publicKey as donorPublicKey,
           recipient.publicKey as recipientPublicKey
          FROM recurring_donations rd
@@ -174,18 +341,44 @@ class RecurringDonationScheduler {
       if (dueSchedules.length > 0) {
         log.info("RECURRING_SCHEDULER", "Found due schedules for execution", {
           count: dueSchedules.length,
-          correlationId: correlation.correlationId,
-          traceId: correlation.traceId,
+          correlationId,
+          traceId,
         });
+
+        // Track how many schedules are due this tick
+        recurringDonationsDueTotal.inc(dueSchedules.length);
+
+        // Separate schedules already in-flight (duplicate-execution guard)
+        const toExecute = dueSchedules.filter(s => !this.executingSchedules.has(s.id));
+        const skippedCount = dueSchedules.length - toExecute.length;
+        if (skippedCount > 0) {
+          recurringDonationsSkippedTotal.inc({ reason: 'in_progress' }, skippedCount);
+          log.warn('RECURRING_SCHEDULER', 'Skipped in-progress schedules', {
+            skippedCount,
+            correlationId,
+            traceId,
+          });
+        }
+
+        const promises = toExecute
+          .map((schedule) => this.executeScheduleWithRetry(schedule));
+
+        const results = await Promise.allSettled(promises);
+        _tickFailedSchedules = results.filter(r => r.status === 'rejected').length;
       }
 
-      const promises = dueSchedules
-        .filter((schedule) => !this.executingSchedules.has(schedule.id))
-        .map((schedule) => this.executeScheduleWithRetry(schedule));
+      // 1. Update active schedule gauge
+      try {
+        const activeResult = await Database.get(
+          `SELECT COUNT(*) AS count FROM recurring_donations WHERE status = ?`,
+          [SCHEDULE_STATUS.ACTIVE]
+        );
+        recurringDonationsActiveCount.set(activeResult ? activeResult.count : 0);
+      } catch (_gaugeErr) {
+        // non-critical — don't let gauge failure break the scheduler
+      }
 
-      await Promise.allSettled(promises);
-
-      // Auto-revoke deprecated API keys whose grace period has elapsed
+      // 2. Auto-revoke deprecated API keys whose grace period has elapsed
       try {
         const revokedCount = await revokeExpiredDeprecatedKeys();
         if (revokedCount > 0) {
@@ -195,24 +388,53 @@ class RecurringDonationScheduler {
         log.error('RECURRING_SCHEDULER', 'Failed to auto-revoke expired API keys', { error: revokeError.message });
       }
 
-      // Run data retention job once per cleanupInterval
-      const now2 = Date.now();
-      if (now2 - this.lastCleanupAt >= this.cleanupInterval) {
-        this.lastCleanupAt = now2;
+      // 3. Send expiry notifications for keys approaching or past their expiration date
+      try {
+        await ApiKeyExpirationNotifier.run();
+      } catch (notifyError) {
+        log.error('RECURRING_SCHEDULER', 'API key expiry notification job failed', { error: notifyError.message });
+      }
+
+      // 4. Run data retention job once per cleanupInterval
+      const nowTs = Date.now();
+      if (!this.lastCleanupAt || nowTs - this.lastCleanupAt >= (this.cleanupInterval || 24 * 60 * 60 * 1000)) {
+        this.lastCleanupAt = nowTs;
         try {
           const retentionService = require('./RetentionService');
-          await retentionService.runAll();
+          if (retentionService && retentionService.runAll) {
+            await retentionService.runAll();
+          }
         } catch (retentionError) {
-          log.error('RECURRING_SCHEDULER', 'Retention job failed', { error: retentionError.message });
+          // Retention service might not exist yet or fail - log and continue
+          log.debug('RECURRING_SCHEDULER', 'Retention job skipped or failed', { error: retentionError.message });
         }
       }
-    } catch (error) {
-      log.error("RECURRING_SCHEDULER", "Error processing schedules", {
-        error: error.message,
-        correlationId: correlation.correlationId,
-        traceId: correlation.traceId,
+
+      // 5. Run scheduled database backup once per backupInterval
+      if (nowTs - this.lastBackupAt >= this.backupInterval) {
+        this.lastBackupAt = nowTs;
+        try {
+          const BackupService = require('./BackupService');
+          if (BackupService) {
+            const backupService = new BackupService();
+            const result = await backupService.backup();
+            log.info('RECURRING_SCHEDULER', 'Scheduled backup completed', { backupId: result.backupId });
+          }
+        } catch (backupError) {
+          log.debug('RECURRING_SCHEDULER', 'Scheduled backup skipped or failed', { error: backupError.message });
+        }
+      }
+
+    } catch (outerError) {
+      log.error('RECURRING_SCHEDULER', 'Unexpected error in processSchedules', {
+        error: outerError.message,
+        correlationId,
+        traceId,
       });
-      this.logFailure("PROCESS_SCHEDULES", null, error.message);
+    } finally {
+      this.lastTickAt = new Date().toISOString();
+      this.lastTickDurationMs = Date.now() - _tickStart;
+      this.lastTickFailedSchedules = _tickFailedSchedules;
     }
   }
 
@@ -251,14 +473,41 @@ class RecurringDonationScheduler {
               });
 
               if (attempt < this.maxRetries) {
-                await this.sleep(this.calculateBackoff(attempt));
+                const delay = this.calculateBackoff(attempt);
+                log.debug('RECURRING_SCHEDULER', `Retrying schedule in ${delay}ms (attempt ${attempt}/${this.maxRetries})`, {
+                  scheduleId: schedule.id,
+                });
+                await this.sleep(delay);
               }
             }
           }
 
-          await this.handleFailedExecution(schedule, lastError);
+          await this.handlePersistentFailure(schedule, lastError);
         } finally {
           this.executingSchedules.delete(schedule.id);
+
+          // Apply deferred cancellation (#778): if the schedule was cancelled while in-flight,
+          // finalize the cancellation now that execution has completed.
+          try {
+            const current = await Database.get(
+              'SELECT status FROM recurring_donations WHERE id = ?',
+              [schedule.id]
+            );
+            if (current && current.status === 'pending_cancellation') {
+              await Database.run(
+                'UPDATE recurring_donations SET status = ? WHERE id = ?',
+                ['cancelled', schedule.id]
+              );
+              log.info('RECURRING_SCHEDULER', 'Deferred cancellation applied after execution', {
+                scheduleId: schedule.id,
+              });
+            }
+          } catch (cancelErr) {
+            log.error('RECURRING_SCHEDULER', 'Failed to apply deferred cancellation', {
+              scheduleId: schedule.id,
+              error: cancelErr.message,
+            });
+          }
         }
       },
       { scheduleId: schedule.id }
@@ -284,35 +533,52 @@ class RecurringDonationScheduler {
   async executeSchedule(schedule) {
     return withAsyncContext('execute_schedule', async () => {
       const { correlationId, traceId } = getCorrelationSummary();
+      const endTimer = recurringDonationsExecutionDuration.startTimer();
 
       try {
-        // 1. Send payment
-        const txResult = await this.stellarService.sendPayment(
-          schedule.donorPublicKey,
-          schedule.recipientPublicKey,
-          schedule.amount,
-          `Recurring donation (Schedule #${schedule.id})`
+        // 1. Generate deterministic idempotency key for this execution cycle
+        const executionDate = schedule.nextExecutionDate
+          ? new Date(schedule.nextExecutionDate).toISOString().split('T')[0]
+          : new Date().toISOString().split('T')[0];
+        const idempotencyKey = `recurring-${schedule.id}-${executionDate}`;
+
+        // Check if this execution was already submitted (idempotency guard)
+        const existing = await Database.get(
+          `SELECT id FROM transactions WHERE memo = ? AND senderId = ? AND receiverId = ?`,
+          [idempotencyKey, schedule.donorId, schedule.recipientId]
         );
 
-        // 2. Record transaction
-        await Database.run(
-          `INSERT INTO transactrId, receiverId, amount, memo, timestamp)
-           VALUES (?, ?, ?, ?, ?)`,
-          [
-            schedule.donorId,
-            schedule.recipientId,
-    return withAsyncContext(
-      "execute_schedule",
-      async () => {
-        try {
-          const transactionResult = await this.stellarService.sendPayment(
+        let txResult;
+        if (existing) {
+          log.info('RECURRING_SCHEDULER', 'Idempotency key already used — skipping Stellar payment', {
+            scheduleId: schedule.id,
+            idempotencyKey,
+            correlationId,
+            traceId,
+          });
+          txResult = { hash: null };
+        } else {
+          // 2. Send payment
+          txResult = await this.stellarService.sendPayment(
             schedule.donorPublicKey,
             schedule.recipientPublicKey,
             schedule.amount,
-            `Recurring donation (Schedule #${schedule.id})`,
-            new Date().toISOString(),
-          ]
-        );
+            `Recurring donation (Schedule #${schedule.id})`
+          );
+
+          // 3. Record transaction with idempotency key as memo — amount stored as integer stroops
+          await Database.run(
+            `INSERT INTO transactions (senderId, receiverId, amount, memo, timestamp)
+             VALUES (?, ?, ?, ?, ?)`,
+            [
+              schedule.donorId,
+              schedule.recipientId,
+              Math.round(parseFloat(schedule.amount) * STROOPS_PER_XLM),
+              idempotencyKey,
+              new Date().toISOString(),
+            ]
+          );
+        }
 
         // 3. Calculate next execution date
         const nextDate = this.calculateNextExecutionDate(
@@ -354,8 +620,25 @@ class RecurringDonationScheduler {
           traceId,
         });
 
+        recurringDonationsExecutedTotal.inc({ status: 'success' });
+        endTimer();
+
+        // Publish GraphQL subscription event
+        const pubsub = require('../graphql/pubsub');
+        pubsub.publish(pubsub.TOPICS.RECURRING_DONATION_EXECUTED, {
+          scheduleId: schedule.id,
+          donor: schedule.donorPublicKey,
+          recipient: schedule.recipientPublicKey,
+          amount: schedule.amount,
+          txHash: txResult.hash,
+          executionCount: newCount,
+          timestamp: new Date().toISOString(),
+        });
+
         await this.logExecution(schedule.id, 'SUCCESS', txResult.hash, null, 1);
       } catch (error) {
+        recurringDonationsExecutedTotal.inc({ status: 'failure' });
+        endTimer();
         await this.logExecution(schedule.id, 'FAILED', null, error.message, 1);
         throw error;
       }
@@ -386,6 +669,8 @@ class RecurringDonationScheduler {
         correlationId,
         traceId,
       });
+
+      recurringDonationsSuspendedTotal.inc();
 
       // Persist failure info
       try {
@@ -493,38 +778,63 @@ class RecurringDonationScheduler {
 
   /**
    * Calculate the next execution date based on frequency.
+   * Uses UTC arithmetic to avoid DST issues.
+   * For monthly schedules, uses calendar-aware date addition.
    *
    * @param {Date}   currentDate        - Reference date (usually now)
    * @param {string} frequency          - 'daily' | 'weekly' | 'monthly' | 'custom'
    * @param {number} [customIntervalDays] - Required when frequency === 'custom'
-   * @returns {Date}
+   * @returns {Date} Next execution date in UTC
    * @throws {Error} for unknown frequency or missing customIntervalDays
    */
   calculateNextExecutionDate(currentDate, frequency, customIntervalDays) {
-    const next = new Date(currentDate);
+    // Convert to UTC to avoid DST issues
+    const utcDate = new Date(currentDate.toISOString());
+    const year = utcDate.getUTCFullYear();
+    const month = utcDate.getUTCMonth();
+    const day = utcDate.getUTCDate();
+    const hours = utcDate.getUTCHours();
+    const minutes = utcDate.getUTCMinutes();
+    const seconds = utcDate.getUTCSeconds();
+    const ms = utcDate.getUTCMilliseconds();
+
+    let nextYear = year;
+    let nextMonth = month;
+    let nextDay = day;
 
     switch ((frequency || '').toLowerCase()) {
       case DONATION_FREQUENCIES.DAILY:
-        next.setDate(next.getDate() + 1);
+        nextDay += 1;
         break;
       case DONATION_FREQUENCIES.WEEKLY:
-        next.setDate(next.getDate() + 7);
+        nextDay += 7;
         break;
-      case DONATION_FREQUENCIES.MONTHLY:
-        next.setMonth(next.getMonth() + 1);
+      case DONATION_FREQUENCIES.MONTHLY: {
+        // Calendar-aware month addition: if current day doesn't exist in next month, use last day
+        nextMonth += 1;
+        if (nextMonth > 11) {
+          nextMonth = 0;
+          nextYear += 1;
+        }
+        // Get last day of target month
+        const lastDayOfMonth = new Date(Date.UTC(nextYear, nextMonth + 1, 0)).getUTCDate();
+        nextDay = Math.min(day, lastDayOfMonth);
         break;
+      }
       case DONATION_FREQUENCIES.CUSTOM: {
         const days = parseInt(customIntervalDays, 10);
         if (!days || days < 1) {
           throw new Error('customIntervalDays must be a positive integer for custom frequency');
         }
-        next.setDate(next.getDate() + days);
+        nextDay += days;
         break;
       }
       default:
         throw new Error(`Invalid frequency: ${frequency}`);
     }
 
+    // Create new UTC date with calculated values
+    const next = new Date(Date.UTC(nextYear, nextMonth, nextDay, hours, minutes, seconds, ms));
     return next;
   }
 
@@ -542,7 +852,8 @@ class RecurringDonationScheduler {
       this.initialBackoffMs * Math.pow(this.backoffMultiplier, attempt - 1),
       this.maxBackoffMs
     );
-    const jitter = Math.random() * 0.3 * base;
+    // ±10% jitter to prevent thundering herd
+    const jitter = base * (Math.random() * 0.2 - 0.1);
     return Math.floor(base + jitter);
   }
 
@@ -581,6 +892,34 @@ class RecurringDonationScheduler {
       executingSchedules: Array.from(this.executingSchedules),
       correlationId,
       traceId,
+    };
+  }
+
+  /**
+   * Return scheduler health for the /health endpoint.
+   * Status is 'unhealthy' if the scheduler has not ticked in more than 2x checkInterval.
+   * @returns {Object}
+   */
+  getSchedulerHealth() {
+    const staleThresholdMs = this.checkInterval * 2;
+    let status = 'healthy';
+
+    if (!this.isRunning) {
+      status = 'unhealthy';
+    } else if (this.lastTickAt) {
+      const msSinceLastTick = Date.now() - new Date(this.lastTickAt).getTime();
+      if (msSinceLastTick > staleThresholdMs) {
+        status = 'unhealthy';
+      }
+    }
+
+    return {
+      status,
+      isRunning: this.isRunning,
+      lastTickAt: this.lastTickAt,
+      lastTickDurationMs: this.lastTickDurationMs,
+      pendingSchedules: this.executingSchedules.size,
+      failedSchedules: this.lastTickFailedSchedules,
     };
   }
 
@@ -632,7 +971,10 @@ class RecurringDonationScheduler {
 
 // Export class for use with `new`, but also export a default instance
 // so tests that expect `require(...)` to return an object work
-const _instance = new RecurringDonationScheduler(null);
+// Create a dummy stellar service for the default instance
+const _dummyStellarService = { sendPayment: async () => {} };
+const _instance = new RecurringDonationScheduler(_dummyStellarService);
 _instance.Class = RecurringDonationScheduler;
 module.exports = _instance;
 module.exports.Class = RecurringDonationScheduler;
+module.exports.RecurringDonationScheduler = RecurringDonationScheduler;

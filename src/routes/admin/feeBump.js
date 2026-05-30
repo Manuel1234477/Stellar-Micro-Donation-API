@@ -7,6 +7,8 @@
  */
 
 const express = require('express');
+const asyncHandler = require('../../utils/asyncHandler');
+const { payloadSizeLimiter, ENDPOINT_LIMITS } = require('../../middleware/payloadSizeLimiter');
 const { checkPermission } = require('../../middleware/rbac');
 const { PERMISSIONS } = require('../../utils/permissions');
 
@@ -26,7 +28,7 @@ function createFeeBumpRouter(feeBumpService) {
    * @param {number} [req.body.fee] - Fee in stroops (optional; uses network estimate if omitted)
    * @returns {{ success: boolean, data: { transactionId, originalFee, newFee, feeBumpCount, hash } }}
    */
-  router.post('/:id/fee-bump', checkPermission(PERMISSIONS.ADMIN_ALL), async (req, res, next) => {
+  router.post('/:id/fee-bump', checkPermission(PERMISSIONS.ADMIN_ALL), payloadSizeLimiter(ENDPOINT_LIMITS.admin), asyncHandler(async (req, res, next) => {
     try {
       const { id } = req.params;
       const fee = req.body.fee !== undefined ? Number(req.body.fee) : null;
@@ -40,7 +42,7 @@ function createFeeBumpRouter(feeBumpService) {
     } catch (error) {
       next(error);
     }
-  });
+  }));
 
   return router;
 }

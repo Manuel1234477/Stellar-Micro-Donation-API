@@ -19,7 +19,9 @@ const client = require('prom-client');
 const registry = new client.Registry();
 
 // Collect default Node.js / process metrics (memory, CPU, event loop lag, etc.)
-client.collectDefaultMetrics({ register: registry });
+if (process.env.NODE_ENV !== 'test' && process.env.NODE_ENV !== 'testing') {
+  client.collectDefaultMetrics({ register: registry });
+}
 
 /**
  * Histogram tracking HTTP request duration.
@@ -43,6 +45,83 @@ const stellarDonationsTotal = new client.Counter({
   name: 'stellar_donations_total',
   help: 'Total number of Stellar donation operations',
   labelNames: ['status'],
+  registers: [registry],
+});
+
+// ─── Recurring Donation Scheduler Metrics ────────────────────────────────────
+
+/**
+ * Counter: total schedules found due on each scheduler tick.
+ * @type {client.Counter}
+ */
+const recurringDonationsDueTotal = new client.Counter({
+  name: 'stellar_recurring_donations_due_total',
+  help: 'Total number of recurring donation schedules found due for execution',
+  registers: [registry],
+});
+
+/**
+ * Counter: total schedules executed, labelled by outcome.
+ * Labels: status (success|failure)
+ * @type {client.Counter}
+ */
+const recurringDonationsExecutedTotal = new client.Counter({
+  name: 'stellar_recurring_donations_executed_total',
+  help: 'Total number of recurring donation schedules executed',
+  labelNames: ['status'],
+  registers: [registry],
+});
+
+/**
+ * Histogram: wall-clock duration of a single schedule execution (seconds).
+ * @type {client.Histogram}
+ */
+const recurringDonationsExecutionDuration = new client.Histogram({
+  name: 'stellar_recurring_donations_execution_duration_seconds',
+  help: 'Duration of individual recurring donation schedule executions in seconds',
+  buckets: [0.1, 0.5, 1, 2.5, 5, 10, 30, 60],
+  registers: [registry],
+});
+
+/**
+ * Counter: total schedules suspended (all retries exhausted → persistent failure).
+ * @type {client.Counter}
+ */
+const recurringDonationsSuspendedTotal = new client.Counter({
+  name: 'stellar_recurring_donations_suspended_total',
+  help: 'Total number of recurring donation schedules suspended after persistent failure',
+  registers: [registry],
+});
+
+/**
+ * Gauge: current number of active (non-suspended, non-completed) schedules.
+ * Updated on each scheduler tick.
+ * @type {client.Gauge}
+ */
+const recurringDonationsActiveCount = new client.Gauge({
+  name: 'stellar_recurring_donations_active_count',
+  help: 'Current number of active recurring donation schedules',
+  registers: [registry],
+});
+
+/**
+ * Counter: total schedules skipped on a scheduler tick, labelled by reason.
+ *
+ * Labels:
+ *   reason — why the schedule was skipped:
+ *     "in_progress"      — schedule already being executed (duplicate-execution guard)
+ *     "network_degraded" — skipped due to detected Stellar network degradation
+ *     "scheduler_paused" — skipped because the scheduler is in a paused state
+ *
+ * A growing rate on this counter is an early-warning sign that the scheduler
+ * cannot process all due donations within its tick interval.
+ *
+ * @type {client.Counter}
+ */
+const recurringDonationsSkippedTotal = new client.Counter({
+  name: 'recurring_donations_skipped_total',
+  help: 'Total number of recurring donation schedules skipped on a scheduler tick',
+  labelNames: ['reason'],
   registers: [registry],
 });
 
@@ -89,4 +168,11 @@ module.exports = {
   metricsMiddleware,
   normaliseRoute,
   recordDonation,
+  // Recurring scheduler metrics
+  recurringDonationsDueTotal,
+  recurringDonationsExecutedTotal,
+  recurringDonationsExecutionDuration,
+  recurringDonationsSuspendedTotal,
+  recurringDonationsActiveCount,
+  recurringDonationsSkippedTotal,
 };

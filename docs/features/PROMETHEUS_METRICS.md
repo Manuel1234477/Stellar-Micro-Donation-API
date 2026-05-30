@@ -31,6 +31,38 @@ Cumulative count of Stellar donation operations.
 Labels:
 - `status` — `sent` | `failed` | `pending`
 
+### `stellar_recurring_donations_due_total` (counter)
+Total recurring donation schedules found due for execution on each scheduler tick.
+
+### `stellar_recurring_donations_executed_total` (counter)
+Total recurring donation schedule executions.
+
+Labels:
+- `status` — `success` | `failure`
+
+### `stellar_recurring_donations_execution_duration_seconds` (histogram)
+Wall-clock duration (seconds) of individual schedule executions.
+
+Buckets: `0.1, 0.5, 1, 2.5, 5, 10, 30, 60` seconds
+
+### `stellar_recurring_donations_suspended_total` (counter)
+Schedules suspended after all retry attempts are exhausted.
+
+### `stellar_recurring_donations_active_count` (gauge)
+Current number of active (non-suspended, non-completed) recurring donation schedules.
+Updated on each scheduler tick.
+
+### `recurring_donations_skipped_total` (counter)
+Schedules skipped on a scheduler tick without being executed.
+A rising rate on this metric is an early warning that the scheduler cannot process
+all due donations within its tick interval.
+
+Labels:
+- `reason` — why the schedule was skipped:
+  - `in_progress` — already executing (duplicate-execution prevention)
+  - `network_degraded` — Stellar network degradation detected
+  - `scheduler_paused` — scheduler is in a paused state
+
 ### Default Node.js metrics
 `prom-client`'s `collectDefaultMetrics` adds process and Node.js runtime metrics: memory usage, CPU time, event loop lag, active handles, GC stats, etc.
 

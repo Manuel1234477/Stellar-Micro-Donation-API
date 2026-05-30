@@ -33,6 +33,12 @@ const AuditLogService = require('../services/AuditLogService');
 const donationRateLimiter = rateLimit({
   windowMs: 60 * 1000,
   max: 10,
+  keyGenerator: (req) => {
+    if (req.apiKey && req.apiKey.id && !req.apiKey.isLegacy) {
+      return `key:${req.apiKey.id}`;
+    }
+    return `ip:${req.ip}`;
+  },
   message: {
     success: false,
     error: {
@@ -41,7 +47,8 @@ const donationRateLimiter = rateLimit({
     }
   },
   standardHeaders: true,
-  legacyHeaders: false,
+  legacyHeaders: true,
+  validate: false,
   handler: (req, res) => {
     // Audit log: Rate limit exceeded
     AuditLogService.log({
@@ -84,15 +91,24 @@ const donationRateLimiter = rateLimit({
  * Verification Endpoint Limiter (Moderate)
  * Intent: Prevent excessive polling of the Stellar Horizon API through our verify endpoint.
  * Scope: Targeted at POST /donations/verify.
- * * Flow & Configuration:
- * 1. Threshold: Higher limit (30 req/min) to accommodate legitimate verification polling
- * while still preventing denial-of-service attempts.
- * 2. Header Injection: Returns standard RateLimit headers so frontend clients can implement
- * proactive throttling.
+ *
+ * Flow & Configuration:
+ * 1. Key: API key identity when available, falling back to IP (fixes shared-IP / NAT fairness).
+ * 2. Threshold: Higher limit (30 req/min) to accommodate legitimate verification polling
+ *    while still preventing denial-of-service attempts.
+ * 3. Header Injection: Returns standard RateLimit headers plus X-RateLimit-Identifier
+ *    so clients know whether the limit is per-key or per-IP.
  */
 const verificationRateLimiter = rateLimit({
   windowMs: 60 * 1000,
   max: 30,
+  // Use API key ID when present; fall back to IP for unauthenticated requests
+  keyGenerator: (req) => {
+    if (req.apiKey && req.apiKey.id && !req.apiKey.isLegacy) {
+      return `key:${req.apiKey.id}`;
+    }
+    return `ip:${req.ip}`;
+  },
   message: {
     success: false,
     error: {
@@ -101,8 +117,11 @@ const verificationRateLimiter = rateLimit({
     }
   },
   standardHeaders: true,
-  legacyHeaders: false,
+  legacyHeaders: true,
+  validate: false,
   handler: (req, res) => {
+    const isKeyBased = req.apiKey && req.apiKey.id && !req.apiKey.isLegacy;
+
     // Audit log: Verification rate limit exceeded
     AuditLogService.log({
       category: AuditLogService.CATEGORY.RATE_LIMITING,
@@ -116,21 +135,32 @@ const verificationRateLimiter = rateLimit({
       details: {
         limit: 30,
         window: '60s',
+        limitedBy: isKeyBased ? 'api-key' : 'ip',
         resetTime: req.rateLimit.resetTime
       }
     }).catch(err => {
       console.error('Audit log failed:', err);
     });
 
+    res.set('X-RateLimit-Identifier', isKeyBased ? 'api-key' : 'ip');
     res.status(429).json({
       success: false,
       error: {
         code: 'RATE_LIMIT_EXCEEDED',
-        message: 'Too many verification requests from this IP. Please try again later.',
-        retryAfter: req.rateLimit.resetTime
+        message: isKeyBased
+          ? 'Too many verification requests for this API key. Please try again later.'
+          : 'Too many verification requests from this IP. Please try again later.',
+        retryAfter: req.rateLimit.resetTime,
+        limitedBy: isKeyBased ? 'api-key' : 'ip',
       }
     });
-  }
+  },
+  // Attach identifier header on every response (not just 429s)
+  skip: (req, res) => {
+    const isKeyBased = req.apiKey && req.apiKey.id && !req.apiKey.isLegacy;
+    res.set('X-RateLimit-Identifier', isKeyBased ? 'api-key' : 'ip');
+    return false;
+  },
 });
 
 /**
@@ -139,10 +169,13 @@ const verificationRateLimiter = rateLimit({
  */
 const batchRateLimiter = rateLimit({
   windowMs: 60 * 1000,
-  max: 10,
+  max: 1,
+  keyGenerator: (req) => req.apiKey?.id || req.ip,
   standardHeaders: true,
-  legacyHeaders: false,
+  legacyHeaders: true,
+  validate: false,
   handler: (req, res) => {
+    const identifier = req.apiKey?.id ? `api-key:${req.apiKey.id}` : `ip:${req.ip}`;
     AuditLogService.log({
       category: AuditLogService.CATEGORY.RATE_LIMITING,
       action: AuditLogService.ACTION.RATE_LIMIT_EXCEEDED,
@@ -152,15 +185,50 @@ const batchRateLimiter = rateLimit({
       ipAddress: req.ip,
       resource: req.path,
       reason: 'Batch donation rate limit exceeded',
-      details: { limit: 10, window: '60s', resetTime: req.rateLimit.resetTime }
+      details: { limit: 1, window: '60s', identifier, resetTime: req.rateLimit.resetTime }
     }).catch(err => console.error('Audit log failed:', err));
 
     res.status(429).json({
       success: false,
       error: {
         code: 'RATE_LIMIT_EXCEEDED',
-        message: 'Too many batch requests from this IP. Please try again later.',
-        retryAfter: req.rateLimit.resetTime
+        message: 'Too many batch donation requests. Please try again later.',
+        retryAfter: req.rateLimit.resetTime,
+        limitedBy: req.apiKey?.id ? 'api-key' : 'ip'
+      }
+    });
+  }
+});
+
+/**
+ * Bulk Wallet Import Limiter
+ * Intent: Protect the bulk import endpoint from abuse; limit per authenticated client.
+ * Scope: POST /wallets/bulk-import
+ *
+ * Flow & Configuration:
+ * 1. Window: 60-second sliding window.
+ * 2. Threshold: Max 10 requests per authenticated client (keyed by API key ID, fallback to IP).
+ * 3. Exhaustion: Responds with HTTP 429 and includes Retry-After header.
+ */
+const bulkImportRateLimiter = rateLimit({
+  windowMs: 60 * 1000,
+  max: 10,
+  keyGenerator: (req) => req.apiKey?.id || req.ip,
+  standardHeaders: true,
+  legacyHeaders: true,
+  validate: false,
+  handler: (req, res) => {
+    const retryAfter = req.rateLimit?.resetTime
+      ? Math.ceil((new Date(req.rateLimit.resetTime) - Date.now()) / 1000)
+      : 60;
+
+    res.set('Retry-After', String(retryAfter));
+    res.status(429).json({
+      success: false,
+      error: {
+        code: 'RATE_LIMIT_EXCEEDED',
+        message: 'Too many bulk import requests. Please try again later.',
+        retryAfter
       }
     });
   }
@@ -178,6 +246,7 @@ function createRateLimiter(options = {}) {
     max: limit,
     standardHeaders: false, // Disable standard headers for tests
     legacyHeaders: true, // Use X-RateLimit-* headers for tests
+    validate: false,
     handler: (req, res) => {
       res.status(429).json({
         success: false,
@@ -193,9 +262,227 @@ function createRateLimiter(options = {}) {
   });
 }
 
+/**
+ * Auth Token Limiter
+ * Intent: Prevent brute force attacks on POST /auth/token endpoint
+ * Scope: POST /auth/token
+ * 
+ * Flow & Configuration:
+ * 1. Window: 60-second sliding window
+ * 2. Threshold: Max 10 requests per IP
+ * 3. Headers: X-RateLimit-Limit, X-RateLimit-Remaining, X-RateLimit-Reset
+ * 4. Exhaustion: Responds with HTTP 429 and Retry-After header
+ */
+const authTokenRateLimiter = rateLimit({
+  windowMs: 60 * 1000,
+  max: parseInt(process.env.AUTH_TOKEN_RATE_LIMIT || '10'),
+  keyGenerator: (req) => req.ip,
+  standardHeaders: true,
+  legacyHeaders: true,
+  validate: false,
+  handler: (req, res) => {
+    const retryAfter = req.rateLimit?.resetTime
+      ? Math.ceil((new Date(req.rateLimit.resetTime) - Date.now()) / 1000)
+      : 60;
+
+    AuditLogService.log({
+      category: AuditLogService.CATEGORY.RATE_LIMITING,
+      action: AuditLogService.ACTION.RATE_LIMIT_EXCEEDED,
+      severity: AuditLogService.SEVERITY.HIGH,
+      result: 'FAILURE',
+      requestId: req.id,
+      ipAddress: req.ip,
+      resource: req.path,
+      reason: 'Auth token rate limit exceeded',
+      details: {
+        limit: parseInt(process.env.AUTH_TOKEN_RATE_LIMIT || '10'),
+        window: '60s',
+        resetTime: req.rateLimit.resetTime
+      }
+    }).catch(err => console.error('Audit log failed:', err));
+
+    res.set('Retry-After', String(retryAfter));
+    res.status(429).json({
+      success: false,
+      error: {
+        code: 'RATE_LIMIT_EXCEEDED',
+        message: 'Too many authentication requests from this IP. Please try again later.',
+        retryAfter
+      }
+    });
+  }
+});
+
+/**
+ * Auth Refresh Limiter
+ * Intent: Prevent refresh token exhaustion attacks on POST /auth/refresh
+ * Scope: POST /auth/refresh
+ * 
+ * Flow & Configuration:
+ * 1. Window: 60-second sliding window
+ * 2. Threshold: Max 20 requests per IP (higher than token endpoint)
+ * 3. Headers: X-RateLimit-Limit, X-RateLimit-Remaining, X-RateLimit-Reset
+ * 4. Exhaustion: Responds with HTTP 429 and Retry-After header
+ */
+const authRefreshRateLimiter = rateLimit({
+  windowMs: 60 * 1000,
+  max: parseInt(process.env.AUTH_REFRESH_RATE_LIMIT || '20'),
+  keyGenerator: (req) => req.ip,
+  standardHeaders: true,
+  legacyHeaders: true,
+  validate: false,
+  handler: (req, res) => {
+    const retryAfter = req.rateLimit?.resetTime
+      ? Math.ceil((new Date(req.rateLimit.resetTime) - Date.now()) / 1000)
+      : 60;
+
+    AuditLogService.log({
+      category: AuditLogService.CATEGORY.RATE_LIMITING,
+      action: AuditLogService.ACTION.RATE_LIMIT_EXCEEDED,
+      severity: AuditLogService.SEVERITY.HIGH,
+      result: 'FAILURE',
+      requestId: req.id,
+      ipAddress: req.ip,
+      resource: req.path,
+      reason: 'Auth refresh rate limit exceeded',
+      details: {
+        limit: parseInt(process.env.AUTH_REFRESH_RATE_LIMIT || '20'),
+        window: '60s',
+        resetTime: req.rateLimit.resetTime
+      }
+    }).catch(err => console.error('Audit log failed:', err));
+
+    res.set('Retry-After', String(retryAfter));
+    res.status(429).json({
+      success: false,
+      error: {
+        code: 'RATE_LIMIT_EXCEEDED',
+        message: 'Too many refresh requests from this IP. Please try again later.',
+        retryAfter
+      }
+    });
+  }
+});
+
+/**
+ * Health Check Limiter (Issue #889)
+ * Intent: Prevent reconnaissance attacks via continuous health endpoint polling
+ * Scope: GET /health, GET /api/v1/health
+ * 
+ * Flow & Configuration:
+ * 1. Window: 60-second sliding window
+ * 2. Threshold: Max 60 requests per IP (1 per second)
+ * 3. Headers: X-RateLimit-Limit, X-RateLimit-Remaining, X-RateLimit-Reset
+ * 4. Exhaustion: Responds with HTTP 429
+ */
+const healthCheckRateLimiter = rateLimit({
+  windowMs: 60 * 1000,
+  max: 60,
+  keyGenerator: (req) => req.ip,
+  standardHeaders: true,
+  legacyHeaders: true,
+  validate: false,
+  handler: (req, res) => {
+    const retryAfter = req.rateLimit?.resetTime
+      ? Math.ceil((new Date(req.rateLimit.resetTime) - Date.now()) / 1000)
+      : 60;
+
+    res.set('Retry-After', String(retryAfter));
+    res.status(429).json({
+      status: 'degraded',
+      timestamp: new Date().toISOString()
+    });
+  }
+});
+
 module.exports = {
   donationRateLimiter,
   verificationRateLimiter,
   batchRateLimiter,
+  bulkImportRateLimiter,
+  authTokenRateLimiter,
+  authRefreshRateLimiter,
+  healthCheckRateLimiter,
   createRateLimiter,
+  friendbotRateLimiter: rateLimit({
+    windowMs: 60 * 1000,
+    max: 5,
+    keyGenerator: (req) => req.apiKey?.id || req.ip,
+    standardHeaders: true,
+    legacyHeaders: true,
+    validate: false,
+    handler: (req, res) => {
+      res.status(429).json({
+        success: false,
+        error: {
+          code: 'RATE_LIMIT_EXCEEDED',
+          message: 'Too many Friendbot funding requests. Please try again later.',
+          retryAfter: req.rateLimit?.resetTime,
+        }
+      });
+    }
+  }),
+  statsRateLimiter: rateLimit({
+    windowMs: 60 * 1000,
+    max: 30,
+    keyGenerator: (req) => {
+      const identifier = (req.apiKey && req.apiKey.id && !req.apiKey.isLegacy)
+        ? `key:${req.apiKey.id}`
+        : `ip:${req.ip}`;
+      return `rate_limit:${identifier}:stats`;
+    },
+    message: {
+      success: false,
+      error: {
+        code: 'RATE_LIMIT_EXCEEDED',
+        message: 'Too many stats requests. Please try again later.',
+      }
+    },
+    standardHeaders: true,
+    legacyHeaders: true,
+    validate: false,
+    handler: (req, res) => {
+      const isKeyBased = req.apiKey && req.apiKey.id && !req.apiKey.isLegacy;
+      const retryAfter = Math.ceil((new Date(req.rateLimit.resetTime) - Date.now()) / 1000);
+
+      AuditLogService.log({
+        category: AuditLogService.CATEGORY.RATE_LIMITING,
+        action: AuditLogService.ACTION.RATE_LIMIT_EXCEEDED,
+        severity: AuditLogService.SEVERITY.MEDIUM,
+        result: 'FAILURE',
+        requestId: req.id,
+        ipAddress: req.ip,
+        resource: req.path,
+        reason: 'Stats rate limit exceeded',
+        details: {
+          limit: 30,
+          window: '60s',
+          limitedBy: isKeyBased ? 'api-key' : 'ip',
+          resetTime: req.rateLimit.resetTime
+        }
+      }).catch(err => {
+        console.error('Audit log failed:', err);
+      });
+
+      res.set('X-RateLimit-Identifier', isKeyBased ? 'api-key' : 'ip');
+      res.set('Retry-After', String(retryAfter));
+      res.status(429).json({
+        success: false,
+        error: {
+          code: 'RATE_LIMIT_EXCEEDED',
+          message: isKeyBased
+            ? 'Too many stats requests for this API key. Please try again later.'
+            : 'Too many stats requests from this IP. Please try again later.',
+          retryAfter,
+          limitedBy: isKeyBased ? 'api-key' : 'ip',
+        }
+      });
+    },
+    skip: (req, res) => {
+      const isKeyBased = req.apiKey && req.apiKey.id && !req.apiKey.isLegacy;
+      res.set('X-RateLimit-Identifier', isKeyBased ? 'api-key' : 'ip');
+      return false;
+    },
+  }),
 };
+

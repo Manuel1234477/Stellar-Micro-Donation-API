@@ -5,11 +5,15 @@
  * Accept-Encoding header. Responses below the size threshold or with
  * already-compressed content types are passed through unmodified.
  *
+ * Configuration:
+ *   - COMPRESSION_THRESHOLD_BYTES: min response size to compress (default 512)
+ *   - COMPRESSION_LEVEL: compression level 1-9 for gzip, 0-11 for brotli (default 6)
+ *
  * Flow:
  * 1. Check Accept-Encoding header to select algorithm (br > gzip)
  * 2. Intercept res.json() to capture the serialized body
  * 3. If body exceeds threshold, compress and set Content-Encoding header
- * 4. Skip compression for already-compressed content types
+ * 4. Skip compression for already-compressed content types and SSE/WebSocket
  */
 
 const zlib = require('zlib');
@@ -28,11 +32,14 @@ const SKIP_CONTENT_TYPES = [
 
 /**
  * Determine whether the response content type should be skipped.
+ * Skips SSE (text/event-stream) and already-compressed types.
  * @param {string} contentType - Value of the Content-Type header
  * @returns {boolean}
  */
 function shouldSkip(contentType) {
   if (!contentType) return false;
+  // Never compress SSE responses (breaks streaming)
+  if (contentType.includes('text/event-stream')) return true;
   return SKIP_CONTENT_TYPES.some(prefix => contentType.includes(prefix));
 }
 
@@ -68,15 +75,25 @@ function compress(buffer, encoding, level) {
 /**
  * Create compression middleware.
  * @param {object} [options]
- * @param {number} [options.threshold=1024]  - Min response size in bytes to compress
- * @param {number} [options.level=6]         - Compression level (1–9 gzip / 0–11 brotli)
+ * @param {number} [options.threshold]  - Min response size in bytes to compress (default from env or 512)
+ * @param {number} [options.level]      - Compression level (default from env or 6)
  * @returns {import('express').RequestHandler}
  */
 function createCompressionMiddleware(options = {}) {
-  const threshold = options.threshold ?? 1024;
-  const level = options.level ?? 6;
+  const threshold = options.threshold ?? parseInt(process.env.COMPRESSION_THRESHOLD_BYTES, 10) ?? 512;
+  const level = options.level ?? parseInt(process.env.COMPRESSION_LEVEL, 10) ?? 6;
+
+  // Validate compression level
+  if (level < 1 || level > 9) {
+    throw new Error(`COMPRESSION_LEVEL must be between 1 and 9, got ${level}`);
+  }
 
   return function compressionMiddleware(req, res, next) {
+    // Skip compression for WebSocket upgrade requests
+    if (req.headers.upgrade === 'websocket') {
+      return next();
+    }
+
     const acceptEncoding = req.headers['accept-encoding'] || '';
     const encoding = selectEncoding(acceptEncoding);
 
@@ -89,7 +106,7 @@ function createCompressionMiddleware(options = {}) {
     res.json = function (body) {
       const contentType = res.getHeader('Content-Type') || 'application/json';
 
-      // Skip already-compressed content types
+      // Skip already-compressed content types and SSE
       if (shouldSkip(String(contentType))) {
         return originalJson(body);
       }
