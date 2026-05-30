@@ -8,6 +8,11 @@ const abuseDetectionService = require('../services/AbuseDetectionService');
 const log = require('../utils/log');
 
 function blockCheck(req, res, next) {
+  // Skip IP blocking in test environment — tests generate expected 4xx responses
+  if (process.env.NODE_ENV === 'test' || process.env.NODE_ENV === 'testing') {
+    return next();
+  }
+
   const ip = req.ip || req.get('X-Forwarded-For')?.split(',')[0]?.trim() || req.connection.remoteAddress || 'unknown';
 
   if (abuseDetectionService.isBlocked(ip)) {
