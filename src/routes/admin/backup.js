@@ -15,6 +15,7 @@ const { checkPermission } = require('../../middleware/rbac');
 const { PERMISSIONS } = require('../../utils/permissions');
 const BackupService = require('../../services/BackupService');
 const requestCounter = require('../../utils/requestCounter');
+const asyncHandler = require('../../utils/asyncHandler');
 
 const router = express.Router();
 const backupService = new BackupService();
@@ -43,7 +44,7 @@ router.post('/backup', checkPermission(PERMISSIONS.ADMIN_ALL), async (req, res, 
   } catch (err) {
     next(err);
   }
-}));
+});
 
 /**
  * GET /admin/backup/status
@@ -142,7 +143,7 @@ router.post('/backup/restore/:backupId/confirm', checkPermission(PERMISSIONS.ADM
   } catch (err) {
     next(err);
   }
-}));
+});
 
 /**
  * POST /backup/restore/:backupId
@@ -201,6 +202,6 @@ router.post('/backup/restore/:backupId', checkPermission(PERMISSIONS.ADMIN_ALL),
     }
     next(err);
   }
-}));
+});
 
 module.exports = router;
