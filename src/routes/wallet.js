@@ -1443,7 +1443,7 @@ const trustlineUpdateSchema = validateSchema({
  * @body {string|null} [limit]      - Optional trust limit (positive numeric string,
  *   max "922337203685.4775807"). Omit for unlimited.
  */
-router.post('/:id/trustlines', checkPermission(PERMISSIONS.WALLETS_UPDATE), trustlineCreateSchema, payloadSizeLimiter(ENDPOINT_LIMITS.wallet), asyncHandler(async (req, res, next) => {
+async function handleTrustlineCreate(req, res, next) {
   try {
     const { secretKey, assetCode, issuerPublic, limit } = req.body;
 
@@ -1463,7 +1463,7 @@ router.post('/:id/trustlines', checkPermission(PERMISSIONS.WALLETS_UPDATE), trus
       userId: req.user && req.user.id,
       requestId: req.id,
       ipAddress: req.ip,
-      resource: `/wallets/${req.params.id}/trustlines`,
+      resource: req.originalUrl,
       details: { walletId: req.params.id, assetCode, issuerPublic, limit: result.limit, txHash: result.hash },
     });
 
@@ -1471,7 +1471,10 @@ router.post('/:id/trustlines', checkPermission(PERMISSIONS.WALLETS_UPDATE), trus
   } catch (error) {
     next(error);
   }
-}));
+}
+
+router.post('/:id/trustlines', checkPermission(PERMISSIONS.WALLETS_UPDATE), trustlineCreateSchema, payloadSizeLimiter(ENDPOINT_LIMITS.wallet), asyncHandler(handleTrustlineCreate));
+router.post('/:id/trustline', checkPermission(PERMISSIONS.WALLETS_UPDATE), trustlineCreateSchema, payloadSizeLimiter(ENDPOINT_LIMITS.wallet), asyncHandler(handleTrustlineCreate));
 
 /**
  * PATCH /wallets/:id/trustlines/:asset
@@ -1483,7 +1486,7 @@ router.post('/:id/trustlines', checkPermission(PERMISSIONS.WALLETS_UPDATE), trus
  * @body {string} limit          - New trust limit (positive numeric string,
  *   max "922337203685.4775807")
  */
-router.patch('/:id/trustlines/:asset', checkPermission(PERMISSIONS.WALLETS_UPDATE), trustlineUpdateSchema, payloadSizeLimiter(ENDPOINT_LIMITS.wallet), asyncHandler(async (req, res, next) => {
+async function handleTrustlineUpdate(req, res, next) {
   try {
     const { asset } = req.params;
     const { secretKey, issuerPublic, limit } = req.body;
@@ -1502,7 +1505,7 @@ router.patch('/:id/trustlines/:asset', checkPermission(PERMISSIONS.WALLETS_UPDAT
       userId: req.user && req.user.id,
       requestId: req.id,
       ipAddress: req.ip,
-      resource: `/wallets/${req.params.id}/trustlines/${asset}`,
+      resource: req.originalUrl,
       details: { walletId: req.params.id, assetCode: asset, issuerPublic, limit: result.limit, txHash: result.hash },
     });
 
@@ -1510,7 +1513,10 @@ router.patch('/:id/trustlines/:asset', checkPermission(PERMISSIONS.WALLETS_UPDAT
   } catch (error) {
     next(error);
   }
-}));
+}
+
+router.patch('/:id/trustlines/:asset', checkPermission(PERMISSIONS.WALLETS_UPDATE), trustlineUpdateSchema, payloadSizeLimiter(ENDPOINT_LIMITS.wallet), asyncHandler(handleTrustlineUpdate));
+router.patch('/:id/trustline/:asset', checkPermission(PERMISSIONS.WALLETS_UPDATE), trustlineUpdateSchema, payloadSizeLimiter(ENDPOINT_LIMITS.wallet), asyncHandler(handleTrustlineUpdate));
 
 // ─── Account Set Options ──────────────────────────────────────────────────────
 
@@ -1599,7 +1605,7 @@ const trustlineListSchema = validateSchema({
  * @body {string} secretKey    - Secret key of the wallet account
  * @body {string} issuerPublic - Public key of the asset issuer
  */
-router.delete('/:id/trustlines/:asset', checkPermission(PERMISSIONS.WALLETS_UPDATE), trustlineDeleteSchema, asyncHandler(async (req, res, next) => {
+async function handleTrustlineDelete(req, res, next) {
   try {
     const { asset } = req.params;
     const { secretKey, issuerPublic } = req.body;
@@ -1615,7 +1621,7 @@ router.delete('/:id/trustlines/:asset', checkPermission(PERMISSIONS.WALLETS_UPDA
       userId: req.user && req.user.id,
       requestId: req.id,
       ipAddress: req.ip,
-      resource: `/wallets/${req.params.id}/trustlines/${asset}`,
+      resource: req.originalUrl,
       details: { walletId: req.params.id, assetCode: asset, issuerPublic, txHash: result.hash },
     });
 
@@ -1623,7 +1629,10 @@ router.delete('/:id/trustlines/:asset', checkPermission(PERMISSIONS.WALLETS_UPDA
   } catch (error) {
     next(error);
   }
-}));
+}
+
+router.delete('/:id/trustlines/:asset', checkPermission(PERMISSIONS.WALLETS_UPDATE), trustlineDeleteSchema, asyncHandler(handleTrustlineDelete));
+router.delete('/:id/trustline/:asset', checkPermission(PERMISSIONS.WALLETS_UPDATE), trustlineDeleteSchema, asyncHandler(handleTrustlineDelete));
 
 /**
  * GET /wallets/:id/trustlines

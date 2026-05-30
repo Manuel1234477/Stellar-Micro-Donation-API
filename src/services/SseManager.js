@@ -1,7 +1,8 @@
 /**
  * SseManager
  * Manages SSE connections for the transactions channel.
- * Supports filtering by walletAddress / campaignId, heartbeats, and per-key connection limits.
+ * Supports filtering by walletAddress / campaignId / window, heartbeats,
+ * and per-key connection limits.
  */
 
 const MAX_CONNECTIONS_PER_KEY = 5;
@@ -13,6 +14,8 @@ class SseManager {
     this._clients = new Map();
     /** @type {NodeJS.Timeout|null} */
     this._heartbeatTimer = null;
+    this.MAX_CONNECTIONS_PER_KEY = MAX_CONNECTIONS_PER_KEY;
+    this.HEARTBEAT_INTERVAL_MS = HEARTBEAT_INTERVAL_MS;
   }
 
   /**
@@ -37,8 +40,8 @@ class SseManager {
    * Add a new SSE client.
    * @param {string} apiKey
    * @param {object} res - Express response object
-   * @param {{walletAddress?: string, campaignId?: string}} filters
-   * @returns {{ added: boolean, limitExceeded: boolean }}
+   * @param {object} filters
+   * @returns {{ added: boolean, limitExceeded: boolean, client?: object }}
    */
   addClient(apiKey, res, filters = {}) {
     const existing = this._clients.get(apiKey) || new Set();
@@ -52,7 +55,7 @@ class SseManager {
 
     res.on('close', () => this.removeClient(apiKey, client));
 
-    return { added: true, limitExceeded: false };
+    return { added: true, limitExceeded: false, client };
   }
 
   /**
@@ -68,18 +71,27 @@ class SseManager {
   }
 
   /**
+   * Broadcast a generic SSE event to all matching clients.
+   * @param {string} event
+   * @param {object} data
+   */
+  broadcast(event, data) {
+    const payload = this._formatSse(event, data);
+    for (const clients of this._clients.values()) {
+      for (const client of clients) {
+        if (this._matches(client.filters, data)) {
+          try { client.res.write(payload); } catch (_) { /* client gone */ }
+        }
+      }
+    }
+  }
+
+  /**
    * Broadcast a confirmed transaction to all matching clients.
    * @param {object} transaction
    */
   broadcastTransaction(transaction) {
-    const event = `data: ${JSON.stringify({ type: 'transaction.confirmed', data: transaction })}\n\n`;
-    for (const clients of this._clients.values()) {
-      for (const client of clients) {
-        if (this._matches(client.filters, transaction)) {
-          try { client.res.write(event); } catch (_) { /* client gone */ }
-        }
-      }
-    }
+    this.broadcast('transaction.confirmed', transaction);
   }
 
   /**
@@ -92,11 +104,70 @@ class SseManager {
   }
 
   /**
+   * Return total number of connected clients for a specific API key.
+   * @param {string} apiKey
+   */
+  connectionCount(apiKey) {
+    return this.connectionCountForKey(apiKey);
+  }
+
+  /**
    * Return connection count for a specific API key.
    * @param {string} apiKey
    */
   connectionCountForKey(apiKey) {
     return (this._clients.get(apiKey) || new Set()).size;
+  }
+
+  /**
+   * Return stats for all active SSE connections.
+   */
+  getStats() {
+    const byKey = {};
+    for (const [key, clients] of this._clients.entries()) {
+      byKey[key] = clients.size;
+    }
+
+    return {
+      totalClients: this.connectionCount,
+      activeKeys: Object.keys(byKey).length,
+      clientsByKey: byKey,
+    };
+  }
+
+  /**
+   * Write a plain SSE event to a response.
+   * @param {object} res
+   * @param {string} id
+   * @param {string} event
+   * @param {object} data
+   */
+  writeSseEvent(res, id, event, data) {
+    const payload = this._formatSse(event, data, id);
+    try {
+      res.write(payload);
+    } catch (_) {
+      // ignore broken pipe
+    }
+  }
+
+  /**
+   * Return missed events since a given Last-Event-ID.
+   * NOTE: This is not supported in the current implementation.
+   * @param {string} lastEventId
+   * @returns {Array}
+   */
+  getMissedEvents(_lastEventId) {
+    return [];
+  }
+
+  /**
+   * Check if the given data passes the client filters.
+   * @param {object} data
+   * @param {object} filters
+   */
+  matchesFilter(data, filters) {
+    return this._matches(filters, data);
   }
 
   // ---------------------------------------------------------------------------
@@ -109,17 +180,57 @@ class SseManager {
     }
   }
 
-  _matches(filters, transaction) {
-    if (filters.walletAddress &&
-        transaction.donor !== filters.walletAddress &&
-        transaction.recipient !== filters.walletAddress) {
+  _formatSse(event, data, id) {
+    let lines = '';
+    if (id !== undefined && id !== null) {
+      lines += `id: ${id}\n`;
+    }
+    if (event) {
+      lines += `event: ${event}\n`;
+    }
+    lines += `data: ${JSON.stringify(data)}\n\n`;
+    return lines;
+  }
+
+  _matches(filters, data) {
+    if (!filters || Object.keys(filters).length === 0) {
+      return true;
+    }
+
+    if (filters.walletAddress) {
+      const walletAddress = filters.walletAddress;
+      if (data.donor !== walletAddress && data.recipient !== walletAddress) {
+        return false;
+      }
+    }
+
+    if (filters.campaignId && data.campaignId !== filters.campaignId) {
       return false;
     }
-    if (filters.campaignId && transaction.campaignId !== filters.campaignId) {
+
+    if (filters.status && data.status !== filters.status) {
       return false;
     }
+
+    if (typeof filters.minAmount === 'number' && typeof data.amount === 'string') {
+      if (parseFloat(data.amount) < filters.minAmount) {
+        return false;
+      }
+    }
+
+    if (typeof filters.maxAmount === 'number' && typeof data.amount === 'string') {
+      if (parseFloat(data.amount) > filters.maxAmount) {
+        return false;
+      }
+    }
+
+    if (filters.window && data.window !== filters.window) {
+      return false;
+    }
+
     return true;
   }
+
   /** Reset all state — for use in tests only. */
   _reset() {
     this.stop();
