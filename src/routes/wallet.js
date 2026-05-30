@@ -420,6 +420,173 @@ router.get('/:id/balance', checkPermission(PERMISSIONS.WALLETS_READ), walletIdSc
 }));
 
 /**
+ * GET /wallets/:id/history
+ * Returns transaction history for a wallet.
+ * Query params:
+ *   - source: 'db' (default) — local DB query; 'live' — fetch from Horizon and persist
+ *   - cursor: opaque pagination cursor
+ *   - limit: page size (default 20, max 100)
+ * source=live is rate-limited to 10 req/min per API key.
+ * Requires wallets:read permission.
+ */
+const { liveHistoryRateLimiter } = require('../middleware/rateLimiter');
+const TransactionSyncService = require('../services/TransactionSyncService');
+
+router.get('/:id/history', checkPermission(PERMISSIONS.WALLETS_READ), walletIdSchema, asyncHandler(async (req, res, next) => {
+  const source = req.query.source || 'db';
+
+  if (source !== 'db' && source !== 'live') {
+    return res.status(400).json({
+      success: false,
+      error: { code: 'INVALID_SOURCE', message: "source must be 'db' or 'live'" },
+    });
+  }
+
+  // Apply live rate limiter inline when source=live
+  if (source === 'live') {
+    await new Promise((resolve, reject) => {
+      liveHistoryRateLimiter(req, res, (err) => {
+        if (err) return reject(err);
+        resolve();
+      });
+    });
+    if (res.headersSent) return; // rate limiter already responded
+  }
+
+  // Validate limit
+  let limit = 20;
+  if (req.query.limit !== undefined) {
+    const parsed = parseInt(req.query.limit, 10);
+    if (!Number.isFinite(parsed) || parsed < 1 || parsed > 100) {
+      return res.status(400).json({
+        success: false,
+        error: { code: 'INVALID_LIMIT', message: 'limit must be an integer between 1 and 100' },
+      });
+    }
+    limit = parsed;
+  }
+
+  // Look up wallet by numeric id
+  const wallet = await Database.get(
+    'SELECT id, publicKey FROM users WHERE id = ?',
+    [req.params.id]
+  );
+  if (!wallet) {
+    return res.status(404).json({ success: false, error: 'Wallet not found' });
+  }
+
+  if (source === 'live') {
+    // Decode cursor (Horizon paging_token)
+    let horizonCursor;
+    if (req.query.cursor) {
+      try {
+        horizonCursor = Buffer.from(req.query.cursor, 'base64').toString('utf8');
+      } catch {
+        return res.status(400).json({
+          success: false,
+          error: { code: 'INVALID_CURSOR', message: 'Invalid cursor parameter' },
+        });
+      }
+    }
+
+    const syncService = new TransactionSyncService(getStellarService());
+    const horizonTxs = await syncService._fetchHorizonTransactions(
+      wallet.publicKey,
+      limit,
+      horizonCursor,
+      1 // single page
+    );
+
+    // Persist new transactions to DB
+    const Transaction = require('./models/transaction');
+    for (const tx of horizonTxs) {
+      if (!Transaction.getByStellarTxId(tx.id)) {
+        Transaction.create({
+          stellarTxId: tx.id,
+          status: 'confirmed',
+          amount: tx.operations?.[0]?.amount || '0',
+          memo: tx.memo,
+          timestamp: tx.created_at,
+        });
+      }
+    }
+
+    const hasMore = horizonTxs.length === limit;
+    const lastTx = horizonTxs[horizonTxs.length - 1];
+    const nextCursor = hasMore && lastTx
+      ? Buffer.from(String(lastTx.paging_token)).toString('base64')
+      : null;
+
+    return res.json({
+      success: true,
+      source: 'live',
+      data: horizonTxs.map(tx => ({
+        stellarTxId: tx.id,
+        amount: tx.operations?.[0]?.amount || '0',
+        memo: tx.memo || null,
+        timestamp: tx.created_at,
+        pagingToken: tx.paging_token,
+      })),
+      pagination: { nextCursor, hasMore },
+    });
+  }
+
+  // source=db: cursor-based query from local DB
+  let cursorId = null;
+  if (req.query.cursor) {
+    try {
+      const decoded = Buffer.from(req.query.cursor, 'base64').toString('utf8');
+      const parsed = parseInt(decoded, 10);
+      if (!Number.isFinite(parsed)) throw new Error('invalid');
+      cursorId = parsed;
+    } catch {
+      return res.status(400).json({
+        success: false,
+        error: { code: 'INVALID_CURSOR', message: 'Invalid cursor parameter' },
+      });
+    }
+  }
+
+  const params = [wallet.id, wallet.id];
+  let query = `SELECT t.id, t.senderId, t.receiverId, t.amount, t.memo, t.timestamp,
+      sender.publicKey as senderPublicKey, receiver.publicKey as receiverPublicKey
+    FROM transactions t
+    LEFT JOIN users sender ON t.senderId = sender.id
+    LEFT JOIN users receiver ON t.receiverId = receiver.id
+    WHERE (t.senderId = ? OR t.receiverId = ?)`;
+
+  if (cursorId !== null) {
+    query += ' AND t.id > ?';
+    params.push(cursorId);
+  }
+  query += ' ORDER BY t.id ASC LIMIT ?';
+  params.push(limit + 1);
+
+  const rows = await Database.query(query, params);
+  const hasMore = rows.length > limit;
+  const transactions = hasMore ? rows.slice(0, limit) : rows;
+
+  const lastRow = transactions[transactions.length - 1];
+  const nextCursor = hasMore && lastRow
+    ? Buffer.from(String(lastRow.id)).toString('base64')
+    : null;
+
+  return res.json({
+    success: true,
+    source: 'db',
+    data: transactions.map(tx => ({
+      id: tx.id,
+      sender: tx.senderPublicKey,
+      receiver: tx.receiverPublicKey,
+      amount: (tx.amount / STROOPS_PER_XLM).toFixed(7),
+      memo: tx.memo,
+      timestamp: tx.timestamp,
+    })),
+    pagination: { nextCursor, hasMore },
+  });
+}));
+
+/**
  * GET /wallets/:id
  * Get a specific wallet. Excludes soft-deleted wallets by default.
  */

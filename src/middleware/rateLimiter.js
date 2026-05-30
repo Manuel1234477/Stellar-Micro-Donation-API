@@ -395,6 +395,36 @@ const healthCheckRateLimiter = rateLimit({
   }
 });
 
+/**
+ * Live Wallet History Limiter
+ * Intent: Prevent Horizon API abuse via source=live queries.
+ * Scope: GET /wallets/:id/history?source=live
+ *
+ * Flow & Configuration:
+ * 1. Window: 60-second sliding window.
+ * 2. Threshold: Max 10 requests per authenticated client (keyed by API key ID, fallback to IP).
+ * 3. Exhaustion: Responds with HTTP 429.
+ */
+const liveHistoryRateLimiter = rateLimit({
+  windowMs: 60 * 1000,
+  max: 10,
+  keyGenerator: (req) => req.apiKey?.id || req.ip,
+  standardHeaders: true,
+  legacyHeaders: true,
+  validate: false,
+  skip: () => process.env.NODE_ENV === 'test',
+  handler: (req, res) => {
+    res.status(429).json({
+      success: false,
+      error: {
+        code: 'RATE_LIMIT_EXCEEDED',
+        message: 'Too many live history requests. Please try again later.',
+        retryAfter: req.rateLimit?.resetTime,
+      }
+    });
+  }
+});
+
 module.exports = {
   donationRateLimiter,
   verificationRateLimiter,
@@ -403,6 +433,7 @@ module.exports = {
   authTokenRateLimiter,
   authRefreshRateLimiter,
   healthCheckRateLimiter,
+  liveHistoryRateLimiter,
   createRateLimiter,
   friendbotRateLimiter: rateLimit({
     windowMs: 60 * 1000,
