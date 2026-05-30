@@ -25,6 +25,7 @@ const RoutingDecisionRepository = require('../services/RoutingDecisionRepository
 const DonationTotalsRepository = require('../services/DonationTotalsRepository');
 const DonationRouter = require('../services/DonationRouter');
 const RoutingConfigRepository = require('../services/RoutingConfigRepository');
+const { PaymentChannelService } = require('../services/PaymentChannelService');
 
 class ServiceContainer {
   constructor(config = {}) {
@@ -81,6 +82,9 @@ class ServiceContainer {
       roundRobinStateRepo: this.roundRobinStateRepo,
       donationTotalsRepo: this.donationTotalsRepo,
     });
+
+    // Initialize Payment Channel Service
+    this.paymentChannelService = new PaymentChannelService(this.stellarService);
   }
 
   getStellarService() {
@@ -137,6 +141,10 @@ class ServiceContainer {
 
   getDonationRouter() {
     return this.donationRouter;
+  }
+
+  getPaymentChannelService() {
+    return this.paymentChannelService;
   }
 }
 
