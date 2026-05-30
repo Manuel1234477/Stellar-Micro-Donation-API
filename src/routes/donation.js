@@ -489,7 +489,11 @@ const createDonationSchema = validateSchema({
  */
 router.post('/', payloadSizeLimiter(ENDPOINT_LIMITS.singleDonation), donationRateLimiter, perKeyRateLimit, requireApiKey, requireIdempotency, createDonationSchema, async (req, res, next) => {
   try {
+<<<<<<< fix/donation-created-webhook
+    const { amount, currency, donor, recipient, memo, memoType, notes, tags, encryptMemo, anonymous, sourceAsset, sourceAmount } = req.body;
+=======
     const { amount, currency, donor, recipient, memo, memoType, notes, tags, sourceAsset, sourceAmount } = req.body;
+>>>>>>> main
 
     // Basic validation
     if (!amount || !recipient) {
