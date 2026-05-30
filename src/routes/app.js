@@ -595,6 +595,9 @@ app.post('/admin/sync', require('../middleware/rbac').requireAdmin(), payloadSiz
   }
 }));
 
+// Security scan admin endpoints (issue: security-scan-api)
+app.use('/admin/security/scan', requireApiKey, require('./admin/securityScan'));
+
 // Orphaned transactions stats (admin only)
 app.get('/admin/orphaned-transactions', require('../middleware/rbac').requireAdmin(), asyncHandler(async (req, res, next) => {
   try {
