@@ -2594,5 +2594,74 @@ router.get('/stats/by-tag', checkPermission(PERMISSIONS.STATS_READ), statsByTagQ
   }
 }));
 
+// ─── Donation Tags (Issue #65) ────────────────────────────────────────────────
+
+const { validateTag } = require('../constants/tags');
+
+/**
+ * GET /donations/:id/tags
+ * Returns the current list of tags for a donation.
+ * Requires donations:read permission.
+ */
+router.get('/:id/tags', requireApiKey, checkPermission(PERMISSIONS.DONATIONS_READ), donationIdParamSchema, asyncHandler(async (req, res) => {
+  const tx = Transaction.getById(req.params.id);
+  if (!tx) return res.status(404).json({ success: false, error: { code: 'NOT_FOUND', message: 'Donation not found' } });
+  return res.json({ success: true, data: { tags: tx.tags || [] } });
+}));
+
+/**
+ * POST /donations/:id/tags
+ * Add tags to a donation (idempotent — duplicates are ignored).
+ * Body: { tags: string[] }
+ * Requires donations:write (DONATIONS_UPDATE) permission.
+ */
+router.post('/:id/tags', requireApiKey, checkPermission(PERMISSIONS.DONATIONS_UPDATE), donationIdParamSchema, asyncHandler(async (req, res) => {
+  const tx = Transaction.getById(req.params.id);
+  if (!tx) return res.status(404).json({ success: false, error: { code: 'NOT_FOUND', message: 'Donation not found' } });
+
+  const { tags } = req.body || {};
+  if (!Array.isArray(tags) || tags.length === 0) {
+    return res.status(400).json({ success: false, error: { code: 'VALIDATION_ERROR', message: "'tags' must be a non-empty array" } });
+  }
+
+  for (const tag of tags) {
+    const result = validateTag(tag);
+    if (!result.valid) {
+      return res.status(400).json({ success: false, error: { code: 'INVALID_TAG', message: result.reason, tag } });
+    }
+  }
+
+  const existing = new Set(tx.tags || []);
+  for (const tag of tags) existing.add(tag);
+  const updated = Array.from(existing);
+
+  const transactions = Transaction.loadTransactions();
+  const idx = transactions.findIndex(t => t.id === tx.id);
+  transactions[idx].tags = updated;
+  Transaction.saveTransactions(transactions);
+
+  return res.json({ success: true, data: { tags: updated } });
+}));
+
+/**
+ * DELETE /donations/:id/tags/:tag
+ * Remove a specific tag from a donation.
+ * Requires donations:write (DONATIONS_UPDATE) permission.
+ */
+router.delete('/:id/tags/:tag', requireApiKey, checkPermission(PERMISSIONS.DONATIONS_UPDATE), asyncHandler(async (req, res) => {
+  const tx = Transaction.getById(req.params.id);
+  if (!tx) return res.status(404).json({ success: false, error: { code: 'NOT_FOUND', message: 'Donation not found' } });
+
+  const { tag } = req.params;
+  const updated = (tx.tags || []).filter(t => t !== tag);
+
+  const transactions = Transaction.loadTransactions();
+  const idx = transactions.findIndex(t => t.id === tx.id);
+  transactions[idx].tags = updated;
+  Transaction.saveTransactions(transactions);
+
+  return res.json({ success: true, data: { tags: updated } });
+}));
+
 module.exports = router;
 

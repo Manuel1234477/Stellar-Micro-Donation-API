@@ -101,10 +101,10 @@ router.post('/refresh', authRefreshRateLimiter, payloadSizeLimiter(ENDPOINT_LIMI
       },
     });
   } catch (err) {
-    if (err.code === 'TOKEN_FAMILY_REVOKED') {
+    if (err.code === 'TOKEN_REUSE_DETECTED' || err.code === 'TOKEN_FAMILY_REVOKED') {
       return res.status(401).json({
         success: false,
-        error: { code: 'TOKEN_FAMILY_REVOKED', message: 'Refresh token reuse detected. All sessions have been revoked.' },
+        error: { code: 'TOKEN_REUSE_DETECTED', message: 'Refresh token reuse detected. All sessions have been revoked.' },
       });
     }
     if (err.code === 'TOKEN_REVOKED') {

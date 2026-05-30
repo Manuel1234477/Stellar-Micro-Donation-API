@@ -215,6 +215,10 @@ app.use(require('../middleware/suspiciousPatternDetection'));
 // Attach user role from authentication (must be before routes)
 app.use(attachUserRole());
 
+// Request signing enforcement (Issue #66) — runs after auth so req.apiKey is populated
+const { createRequestSigningMiddleware } = require('../middleware/requestSigning');
+app.use(createRequestSigningMiddleware());
+
 // Track API quota usage (must be after authentication)
 app.use(trackQuotaUsage);
 
