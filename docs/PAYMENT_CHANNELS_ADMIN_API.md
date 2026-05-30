@@ -1,23 +1,29 @@
 # Payment Channels Admin API
 
+**Issue #122**: Add GET /admin/payment-channels and channel management endpoints
+
 ## Overview
 
-This document describes the admin endpoints for managing Stellar payment channels, implemented as part of Issue #122.
-
-Payment channels are off-chain payment mechanisms that allow multiple payments to be batched and settled on-chain in a single transaction. They are particularly useful for high-frequency micro-donations where the Stellar base fee per transaction would be prohibitive.
+The Payment Channels Admin API provides operators with visibility and control over Stellar payment channels. Payment channels are off-chain payment mechanisms that allow multiple payments to be batched and settled on-chain in a single transaction, reducing transaction fees for high-frequency micro-donations.
 
 ## Endpoints
 
-### GET /admin/payment-channels
+### 1. List Payment Channels
 
-Lists all payment channels with optional filtering and pagination.
+**GET** `/admin/payment-channels`
 
-**Query Parameters:**
-- `status` (optional): Filter by channel status (`open`, `closing`, `closed`, `settled`, `disputed`)
-- `limit` (optional, default: 50): Number of results per page
-- `offset` (optional, default: 0): Pagination offset
+Lists all active payment channels with pagination support.
 
-**Response:**
+#### Query Parameters
+
+| Parameter | Type | Required | Default | Description |
+|-----------|------|----------|---------|-------------|
+| `status` | string | No | - | Filter by status: `open`, `closing`, `closed`, `settled`, `disputed` |
+| `limit` | integer | No | 50 | Number of results per page |
+| `offset` | integer | No | 0 | Pagination offset |
+
+#### Response
+
 ```json
 {
   "success": true,
@@ -27,67 +33,96 @@ Lists all payment channels with optional filtering and pagination.
       "senderPublicKey": "GXXX...",
       "recipientPublicKey": "GYYY...",
       "capacity": 100.0,
-      "used": 30.0,
-      "remaining": 70.0,
+      "used": 30.5,
+      "remaining": 69.5,
       "status": "open",
-      "openedAt": "2024-01-01T00:00:00.000Z",
-      "expiresAt": "2024-01-08T00:00:00.000Z"
+      "openedAt": "2026-05-31T10:00:00.000Z",
+      "expiresAt": "2026-06-07T10:00:00.000Z"
     }
   ],
   "pagination": {
     "limit": 50,
     "offset": 0,
-    "total": 100,
+    "total": 150,
     "hasMore": true
   }
 }
 ```
 
-**Authorization:** Requires admin role
+#### Example
+
+```bash
+# List all open channels
+curl -X GET "https://api.example.com/admin/payment-channels?status=open" \
+  -H "X-API-Key: your-admin-key"
+
+# Get second page with 25 results per page
+curl -X GET "https://api.example.com/admin/payment-channels?limit=25&offset=25" \
+  -H "X-API-Key: your-admin-key"
+```
 
 ---
 
-### GET /admin/payment-channels/stats
+### 2. Get Channel Statistics
+
+**GET** `/admin/payment-channels/stats`
 
 Returns aggregate statistics for all payment channels.
 
-**Response:**
+#### Response
+
 ```json
 {
   "success": true,
   "data": {
     "activeChannels": 42,
-    "totalCapacityXLM": "10000.0000000",
-    "totalUsedXLM": "3500.0000000",
+    "totalCapacityXLM": "4200.0000000",
+    "totalUsedXLM": "1250.5000000",
     "channelsExpiringSoon": 5,
-    "totalChannels": 50,
+    "totalChannels": 150,
     "byStatus": {
       "open": 42,
-      "closing": 2,
-      "closed": 3,
-      "settled": 2,
-      "disputed": 1
+      "closing": 3,
+      "closed": 80,
+      "settled": 20,
+      "disputed": 5
     }
   }
 }
 ```
 
-**Notes:**
-- `channelsExpiringSoon` counts channels expiring within 24 hours
-- `totalCapacityXLM` and `totalUsedXLM` only include active (open) channels
+#### Fields
 
-**Authorization:** Requires admin role
+- `activeChannels`: Number of channels with status `open`
+- `totalCapacityXLM`: Total capacity across all active channels
+- `totalUsedXLM`: Total amount used across all active channels
+- `channelsExpiringSoon`: Channels expiring within 24 hours
+- `totalChannels`: Total number of channels (all statuses)
+- `byStatus`: Breakdown of channels by status
+
+#### Example
+
+```bash
+curl -X GET "https://api.example.com/admin/payment-channels/stats" \
+  -H "X-API-Key: your-admin-key"
+```
 
 ---
 
-### GET /admin/payment-channels/:id
+### 3. Get Channel Details
+
+**GET** `/admin/payment-channels/:id`
 
 Returns full details for a specific payment channel, including transaction history.
 
-**Path Parameters:**
-- `id`: Channel UUID
+#### Path Parameters
 
-**Response:**
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `id` | string | Yes | Channel UUID |
+
+#### Response
+
 ```json
 {
   "success": true,
@@ -96,70 +131,158 @@ Returns full details for a specific payment channel, including transaction histo
     "senderPublicKey": "GXXX...",
     "recipientPublicKey": "GYYY...",
     "capacity": 100.0,
-    "balance": 30.0,
+    "balance": 30.5,
     "sequence": 5,
     "status": "open",
-    "openedAt": "2024-01-01T00:00:00.000Z",
-    "updatedAt": "2024-01-05T12:00:00.000Z",
+    "openedAt": "2026-05-31T10:00:00.000Z",
+    "updatedAt": "2026-05-31T12:30:00.000Z",
     "settledAt": null,
     "closedAt": null,
     "disputedAt": null,
     "disputeSequence": null,
     "metadata": {
       "note": "High-frequency donor channel",
-      "expiresAt": "2024-01-08T00:00:00.000Z"
+      "expiresAt": "2026-06-07T10:00:00.000Z"
     },
     "transactionHistory": [
       {
         "sequence": 1,
         "senderSig": "abc123...",
         "receiverSig": "def456...",
-        "timestamp": "2024-01-02T10:00:00.000Z"
+        "timestamp": "2026-05-31T10:15:00.000Z"
+      },
+      {
+        "sequence": 2,
+        "senderSig": "ghi789...",
+        "receiverSig": "jkl012...",
+        "timestamp": "2026-05-31T11:00:00.000Z"
       }
     ]
   }
 }
 ```
 
-**Authorization:** Requires admin role
+#### Example
+
+```bash
+curl -X GET "https://api.example.com/admin/payment-channels/550e8400-e29b-41d4-a716-446655440000" \
+  -H "X-API-Key: your-admin-key"
+```
 
 ---
 
-### POST /admin/payment-channels/:id/close
+### 4. Close Payment Channel
+
+**POST** `/admin/payment-channels/:id/close`
 
 Initiates a cooperative channel closure, settling the final balance on-chain.
 
-**Path Parameters:**
-- `id`: Channel UUID
+#### Path Parameters
 
-**Request Body:**
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `id` | string | Yes | Channel UUID |
+
+#### Request Body
+
 ```json
 {
   "senderSecret": "SXXX..."
 }
 ```
 
-**Response:**
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `senderSecret` | string | Yes | Sender's Stellar secret key to authorize settlement |
+
+#### Response
+
 ```json
 {
   "success": true,
   "data": {
     "id": "uuid",
     "status": "settled",
-    "settledAt": "2024-01-05T15:30:00.000Z",
-    "balanceSettled": 30.0,
+    "settledAt": "2026-05-31T13:00:00.000Z",
+    "balanceSettled": 30.5,
     "stellarTxId": "abc123..."
   },
   "message": "Payment channel closed successfully"
 }
 ```
 
-**Notes:**
-- The channel must be in `open` or `disputed` status
-- If the channel has a non-zero balance, it will be settled on-chain
-- The operation is idempotent - attempting to close an already closed channel returns a 409 Conflict error
+#### Example
 
-**Authorization:** Requires admin role
+```bash
+curl -X POST "https://api.example.com/admin/payment-channels/550e8400-e29b-41d4-a716-446655440000/close" \
+  -H "X-API-Key: your-admin-key" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "senderSecret": "SXXX..."
+  }'
+```
+
+---
+
+## Authorization
+
+All endpoints require **admin role**. Requests without admin privileges will receive a `403 Forbidden` response.
+
+```json
+{
+  "success": false,
+  "error": {
+    "code": "FORBIDDEN",
+    "message": "Insufficient permissions"
+  }
+}
+```
+
+---
+
+## Error Responses
+
+### 400 Bad Request
+
+Invalid request parameters or validation errors.
+
+```json
+{
+  "success": false,
+  "error": {
+    "code": "VALIDATION_ERROR",
+    "message": "Invalid status. Must be one of: open, closing, closed, settled, disputed"
+  }
+}
+```
+
+### 404 Not Found
+
+Channel does not exist.
+
+```json
+{
+  "success": false,
+  "error": {
+    "code": "NOT_FOUND",
+    "message": "Payment channel 550e8400-e29b-41d4-a716-446655440000 not found"
+  }
+}
+```
+
+### 409 Conflict
+
+Channel is already closed or in an invalid state for the requested operation.
+
+```json
+{
+  "success": false,
+  "error": {
+    "code": "CONFLICT",
+    "message": "Channel is already settled"
+  }
+}
+```
 
 ---
 
@@ -170,56 +293,141 @@ Payment channels follow this lifecycle:
 1. **open** - Active channel accepting off-chain payments
 2. **closing** - Cooperative close initiated (optional intermediate state)
 3. **settled** - Final balance settled on-chain via cooperative close
-4. **closed** - Channel force-closed (timeout or dispute resolution)
+4. **closed** - Force-closed due to timeout or dispute resolution
 5. **disputed** - Dispute raised, awaiting resolution
+
+### State Transitions
+
+```
+open → settled (cooperative close)
+open → disputed (dispute raised)
+open → closed (force close after timeout)
+disputed → closed (dispute resolved)
+```
+
+---
+
+## Use Cases
+
+### Monitor Active Channels
+
+```bash
+# Get overview of all active channels
+curl -X GET "https://api.example.com/admin/payment-channels/stats" \
+  -H "X-API-Key: admin-key"
+
+# List channels expiring soon
+curl -X GET "https://api.example.com/admin/payment-channels?status=open" \
+  -H "X-API-Key: admin-key" | jq '.data[] | select(.expiresAt < "2026-06-01")'
+```
+
+### Investigate Channel Activity
+
+```bash
+# Get full details and transaction history
+curl -X GET "https://api.example.com/admin/payment-channels/550e8400-e29b-41d4-a716-446655440000" \
+  -H "X-API-Key: admin-key"
+```
+
+### Close Inactive Channels
+
+```bash
+# Close a channel that's no longer needed
+curl -X POST "https://api.example.com/admin/payment-channels/550e8400-e29b-41d4-a716-446655440000/close" \
+  -H "X-API-Key: admin-key" \
+  -H "Content-Type: application/json" \
+  -d '{"senderSecret": "SXXX..."}'
+```
+
+---
 
 ## Implementation Details
 
-### Files Created/Modified
+### Files
 
-1. **src/routes/admin/paymentChannels.js** - Admin route handlers
-2. **src/config/serviceContainer.js** - Added PaymentChannelService to DI container
-3. **src/routes/app.js** - Registered payment channels admin routes
-4. **tests/admin/payment-channels.test.js** - Comprehensive test suite
+- **Route Handler**: `src/routes/admin/paymentChannels.js`
+- **Service Layer**: `src/services/PaymentChannelService.js`
+- **Tests**: `tests/admin/payment-channels.test.js`
 
-### Service Integration
+### Dependencies
 
-The endpoints use the existing `PaymentChannelService` from `src/services/PaymentChannelService.js`, which implements:
-- Channel opening and funding
-- Off-chain state updates with dual signatures
-- On-chain settlement
-- Dispute handling
-- Force closure for timed-out channels
+- `PaymentChannelService` - Core payment channel logic
+- `StellarService` - On-chain settlement operations
+- `AuditLogService` - Audit logging for channel closures
+- `serviceContainer` - Dependency injection
 
-### Security
+### Audit Logging
 
-- All endpoints require admin role via `checkPermission(PERMISSIONS.ADMIN_ALL)`
-- Audit logging for channel closure operations
-- Input validation for status filters and required fields
-- Proper error handling with appropriate HTTP status codes
+Channel closure operations are automatically logged to the audit log:
+
+```json
+{
+  "category": "SYSTEM",
+  "action": "PAYMENT_CHANNEL_CLOSED",
+  "severity": "MEDIUM",
+  "result": "SUCCESS",
+  "details": {
+    "channelId": "uuid",
+    "balanceSettled": 30.5,
+    "senderKey": "GXXX...",
+    "receiverKey": "GYYY...",
+    "stellarTxId": "abc123..."
+  }
+}
+```
+
+---
 
 ## Testing
 
-The test suite covers:
-- ✅ Listing channels with pagination
-- ✅ Filtering channels by status
-- ✅ Aggregate statistics calculation
-- ✅ Channel detail retrieval with transaction history
-- ✅ Cooperative channel closure
-- ✅ Authorization checks
-- ✅ Error cases (invalid status, non-existent channels, duplicate closes)
+Comprehensive test coverage is provided in `tests/admin/payment-channels.test.js`:
 
-Run tests with:
+- ✅ List all payment channels
+- ✅ Filter channels by status
+- ✅ Paginate results
+- ✅ Validate status filter
+- ✅ Return aggregate statistics
+- ✅ Count channels expiring soon
+- ✅ Handle empty channel list
+- ✅ Return full channel details
+- ✅ Include transaction history
+- ✅ Handle non-existent channels
+- ✅ Close channel and settle balance
+- ✅ Close channel with zero balance
+- ✅ Reject closing without senderSecret
+- ✅ Reject closing already closed channel
+- ✅ Require admin role for all endpoints
+
+Run tests:
+
 ```bash
 npm test tests/admin/payment-channels.test.js
 ```
 
-## Future Enhancements
+---
 
-Potential improvements for future iterations:
+## Performance Considerations
 
-1. **Batch Operations** - Close multiple channels in a single request
-2. **Channel Monitoring** - Automated alerts for channels nearing capacity or expiration
-3. **Analytics Dashboard** - Visualizations of channel usage patterns
-4. **Channel Templates** - Pre-configured channel settings for common use cases
-5. **Dispute Resolution UI** - Admin interface for reviewing and resolving disputes
+- **Pagination**: Default limit of 50 channels per request to prevent large response payloads
+- **Filtering**: Status filtering is performed at the database level for efficiency
+- **Caching**: Consider implementing caching for the `/stats` endpoint if called frequently
+- **Indexing**: Ensure database indexes on `status` and `createdAt` columns for optimal query performance
+
+---
+
+## Security
+
+- **Admin-only access**: All endpoints require admin role
+- **Secret key handling**: Sender secrets are never logged or stored
+- **Audit trail**: All channel closures are logged for compliance
+- **Input validation**: All parameters are validated before processing
+- **Rate limiting**: Standard rate limits apply to prevent abuse
+
+---
+
+## Related Documentation
+
+- [Payment Channels Service](../src/services/PaymentChannelService.js)
+- [API Authentication](./authentication.md)
+- [RBAC Permissions](./RBAC.md)
+- [Audit Logging](./AUDIT_LOGGING.md)
