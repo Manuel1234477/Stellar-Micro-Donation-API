@@ -1,7 +1,8 @@
 /**
  * Donation Receipt Routes
  *
- * POST /donations/:id/receipt  - Generate and return a PDF receipt (optionally email it)
+ * GET  /donations/:id/receipt        - Download a PDF receipt (or JSON with ?format=json)
+ * POST /donations/:id/receipt        - Generate and return a PDF receipt (optionally email it)
  * GET  /donations/:id/receipt/status - Check if a receipt has been generated
  */
 
@@ -10,7 +11,7 @@ const router = express.Router({ mergeParams: true });
 const requireApiKey = require('../middleware/apiKey');
 const { checkPermission } = require('../middleware/rbac');
 const { PERMISSIONS } = require('../utils/permissions');
-const { ValidationError, NotFoundError, ERROR_CODES } = require('../utils/errors');
+const { NotFoundError, ERROR_CODES } = require('../utils/errors');
 const { TRANSACTION_STATES } = require('../utils/transactionStateMachine');
 const AuditLogService = require('../services/AuditLogService');
 const ReceiptService = require('../services/ReceiptService');
@@ -18,9 +19,120 @@ const Transaction = require('./models/transaction');
 const asyncHandler = require('../utils/asyncHandler');
 const { payloadSizeLimiter, ENDPOINT_LIMITS } = require('../middleware/payloadSizeLimiter');
 
+// ── Sequential receipt counter ────────────────────────────────────────────────
+let _receiptSequence = 0;
+
+/**
+ * Generate a unique, sequential receipt number.
+ * @param {string|number} donationId
+ * @returns {string} e.g. "RCP-000042"
+ */
+function _nextReceiptNumber(donationId) {
+  _receiptSequence += 1;
+  return `RCP-${String(_receiptSequence).padStart(6, '0')}-${donationId}`;
+}
+
+/**
+ * Attempt to look up the current XLM/USD rate.
+ * Returns null silently when the price oracle is unavailable.
+ *
+ * @returns {Promise<number|null>}
+ */
+async function _getUsdRate() {
+  try {
+    const priceOracle = require('../services/PriceOracleService');
+    const rates = await priceOracle.getRates();
+    return (rates && rates.usd) ? Number(rates.usd) : null;
+  } catch (_err) {
+    return null;
+  }
+}
+
 // In-memory receipt generation log (keyed by donation ID)
 // Stores { generatedAt: ISO string, emailedTo: string|null }
 const receiptLog = new Map();
+
+/**
+ * GET /donations/:id/receipt
+ * Download a PDF receipt for a donation.
+ *
+ * Query parameters:
+ *   format=json  - Return receipt data as JSON instead of a PDF file
+ *   fullKey=true - Include unmasked public keys (default: masked)
+ *
+ * Behaviour for unconfirmed donations:
+ *   The receipt is generated but watermarked "PENDING CONFIRMATION".
+ *
+ * Requires: donations:read permission.
+ */
+router.get('/:id/receipt', requireApiKey, checkPermission(PERMISSIONS.DONATIONS_READ), asyncHandler(async (req, res, next) => {
+  try {
+    const { id } = req.params;
+    const format = (req.query.format || '').toLowerCase();
+    const maskKeys = req.query.fullKey !== 'true';
+
+    const donation = Transaction.getById(id);
+    if (!donation) {
+      throw new NotFoundError('Donation not found', ERROR_CODES.DONATION_NOT_FOUND);
+    }
+
+    const isPending = donation.status !== TRANSACTION_STATES.CONFIRMED;
+    const receiptNumber = _nextReceiptNumber(id);
+    const usdRate = await _getUsdRate();
+    const usdAmount = (usdRate != null && donation.amount != null)
+      ? Number((Number(donation.amount) * usdRate).toFixed(2))
+      : null;
+
+    const explorerUrl = donation.stellarTxId
+      ? `${process.env.STELLAR_EXPLORER_URL || 'https://stellar.expert/explorer/testnet/tx'}/${donation.stellarTxId}`
+      : null;
+
+    const maskedDonor = maskKeys
+      ? ReceiptService.maskPublicKey(donation.donor)
+      : (donation.donor || 'Anonymous');
+    const maskedRecipient = maskKeys
+      ? ReceiptService.maskPublicKey(donation.recipient)
+      : (donation.recipient || 'N/A');
+
+    // ── JSON format ────────────────────────────────────────────────────────
+    if (format === 'json') {
+      return res.json({
+        success: true,
+        data: {
+          receiptNumber,
+          donationDate: donation.timestamp,
+          amountXLM: donation.amount,
+          amountUSD: usdAmount,
+          donorPublicKey: maskedDonor,
+          recipientPublicKey: maskedRecipient,
+          transactionHash: donation.stellarTxId || null,
+          confirmationStatus: isPending ? 'PENDING CONFIRMATION' : 'CONFIRMED',
+          explorerUrl,
+        },
+      });
+    }
+
+    // ── PDF format ─────────────────────────────────────────────────────────
+    const pdfBuffer = await ReceiptService.generatePDF(donation, {
+      maskKeys,
+      isPending,
+      receiptNumber,
+      usdAmount,
+    });
+
+    receiptLog.set(id, { generatedAt: new Date().toISOString(), emailedTo: null });
+
+    res.set({
+      'Content-Type': 'application/pdf',
+      'Content-Disposition': `attachment; filename="receipt-${id}.pdf"`,
+      'Content-Length': pdfBuffer.length,
+    });
+
+    return res.send(pdfBuffer);
+  } catch (err) {
+    next(err);
+  }
+}));
 
 /**
  * POST /donations/:id/receipt

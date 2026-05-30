@@ -20,6 +20,7 @@ This checklist ensures the Stellar Micro-Donation API is production-ready before
 - [ ] `LOG_TO_FILE` - Set to `true` for production logging
 - [ ] `LOG_DIR` - Configured if file logging is enabled
 - [ ] `LOG_VERBOSE` - Set to `false` for production
+- [ ] `REQUIRE_IDEMPOTENCY_KEY` - **Recommended: set to `true` in production** to prevent duplicate donations from network retries. Defaults to `false` for backward compatibility.
 
 ### Environment Validation
 - [ ] Run environment validation: Ensure all required variables pass validation

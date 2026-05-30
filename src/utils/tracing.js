@@ -471,6 +471,41 @@ function _clearTraceStore() {
   _traceQueue.length = 0;
 }
 
+/**
+ * Return summaries for all stored traces, optionally filtered.
+ * Each summary contains: traceId, spanId (root span), operation, durationMs,
+ * status ("ok"|"error"), timestamp, spanCount.
+ *
+ * @param {object} [filters]
+ * @param {string} [filters.status] - "ok" or "error"
+ * @param {string} [filters.operation] - exact operation name match
+ * @returns {Array<object>}
+ */
+function getTraces(filters = {}) {
+  const results = [];
+  for (const trace of _traceStore.values()) {
+    const rootSpan = trace.spans[0] || null;
+    const operation = rootSpan ? rootSpan.name : null;
+    const hasError = trace.spans.some(s => s.status === 'error');
+    const status = hasError ? 'error' : 'ok';
+    const spanId = rootSpan ? rootSpan.spanId : null;
+
+    if (filters.status && filters.status !== status) continue;
+    if (filters.operation && filters.operation !== operation) continue;
+
+    results.push({
+      traceId: trace.traceId,
+      spanId,
+      operation,
+      durationMs: null,
+      status,
+      timestamp: trace.startedAt,
+      spanCount: trace.spans.length,
+    });
+  }
+  return results;
+}
+
 // ─── Context-propagating span wrapper (issue #632) ────────────────────────────
 
 /**
@@ -544,6 +579,7 @@ module.exports = {
   // In-memory trace store (issue #632)
   recordSpan,
   getTrace,
+  getTraces,
   getTraceCount,
   _clearTraceStore,
 

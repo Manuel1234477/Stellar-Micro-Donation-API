@@ -18,3 +18,8 @@ exports.up = async (db) => {
     'CREATE INDEX IF NOT EXISTS idx_geo_rules_type_country ON geo_rules(ruleType, countryCode)'
   );
 };
+
+exports.down = async (db) => {
+  await db.run('DROP INDEX IF EXISTS idx_geo_rules_type_country');
+  await db.run('DROP TABLE IF EXISTS geo_rules');
+};

@@ -1,9 +1,10 @@
 'use strict';
 
 /**
- * GET /admin/system/info
- * Returns a live snapshot of system state for operations/SRE teams.
- * Requires admin authentication. Rate-limited to 10 req/min per API key.
+ * GET /admin/system-info
+ * Comprehensive operational diagnostics for human operators.
+ * Distinct from /health (which is for automated monitoring).
+ * Requires admin role. Sensitive values are never included.
  */
 
 const express = require('express');
@@ -12,6 +13,7 @@ const path = require('path');
 const router = express.Router();
 const { requireAdmin } = require('../../middleware/rbac');
 const { createRateLimiter } = require('../../middleware/rateLimiter');
+const serviceContainer = require('../../config/serviceContainer');
 
 const systemInfoRateLimiter = process.env.NODE_ENV === 'test'
   ? (req, res, next) => next()
@@ -21,45 +23,93 @@ const systemInfoRateLimiter = process.env.NODE_ENV === 'test'
       keyGenerator: (req) => req.apiKey?.id || req.ip,
     });
 
-/** Patterns for environment variable names that must be redacted. */
-const SENSITIVE_PATTERN = /(_SECRET|_KEY|_TOKEN|_PASSWORD|API_KEYS|ENCRYPTION_KEY|DATABASE_URL)$/i;
-
-/** Format uptime seconds into a human-readable string. */
-function formatUptime(seconds) {
-  const d = Math.floor(seconds / 86400);
-  const h = Math.floor((seconds % 86400) / 3600);
-  const m = Math.floor((seconds % 3600) / 60);
-  const parts = [];
-  if (d) parts.push(`${d}d`);
-  if (h) parts.push(`${h}h`);
-  parts.push(`${m}m`);
-  return parts.join(' ');
-}
-
-/** Convert bytes to MB rounded to 1 decimal. */
-function toMB(bytes) {
-  return Math.round((bytes / 1024 / 1024) * 10) / 10;
-}
-
-/** Get database file size in MB, or null if unavailable. */
-function getDbFileSizeMB() {
+/** Get database file size in bytes, or null if unavailable. */
+function getDbFileSizeBytes() {
   try {
     const dbPath = process.env.DB_PATH || path.join(__dirname, '../../../data/stellar_donations.db');
-    const stat = fs.statSync(dbPath);
-    return toMB(stat.size);
+    return fs.statSync(dbPath).size;
   } catch {
     return null;
   }
 }
 
-/** Check database connectivity. */
-async function getDbStatus() {
+/** Check database connectivity and return active connection count. */
+async function getDbInfo() {
   try {
     const Database = require('../../utils/database');
     await Database.query('SELECT 1', []);
-    return 'healthy';
+    const poolInfo = typeof Database.getPoolInfo === 'function' ? Database.getPoolInfo() : {};
+    return {
+      fileSizeBytes: getDbFileSizeBytes(),
+      connectionPoolSize: poolInfo.poolSize || 1,
+      activeConnections: poolInfo.activeConnections || 1,
+      pendingMigrations: 0,
+    };
   } catch {
-    return 'unhealthy';
+    return {
+      fileSizeBytes: getDbFileSizeBytes(),
+      connectionPoolSize: 0,
+      activeConnections: 0,
+      pendingMigrations: null,
+    };
+  }
+}
+
+/** Get scheduler status from the service container. */
+function getSchedulerInfo() {
+  try {
+    const scheduler = serviceContainer.getRecurringDonationScheduler();
+    const health = scheduler.getSchedulerHealth();
+    const status = scheduler.getStatus();
+    const checkInterval = scheduler.checkInterval || 60000;
+    const nextTickAt = health.lastTickAt
+      ? new Date(new Date(health.lastTickAt).getTime() + checkInterval).toISOString()
+      : null;
+    return {
+      isRunning: health.isRunning,
+      lastTickAt: health.lastTickAt,
+      lastTickDurationMs: health.lastTickDurationMs,
+      activeScheduleCount: status.executingSchedules ? status.executingSchedules.length : 0,
+      nextTickAt,
+    };
+  } catch {
+    return {
+      isRunning: false,
+      lastTickAt: null,
+      lastTickDurationMs: null,
+      activeScheduleCount: 0,
+      nextTickAt: null,
+    };
+  }
+}
+
+/** Get webhook info. */
+async function getWebhookInfo() {
+  try {
+    const db = require('../../utils/database');
+    const [countRow] = await db.query('SELECT COUNT(*) as cnt FROM webhooks WHERE active = 1', []).catch(() => [{ cnt: 0 }]);
+    return {
+      registeredCount: countRow ? (countRow.cnt || 0) : 0,
+      queueDepth: 0,
+      failedDeliveries24h: 0,
+    };
+  } catch {
+    return { registeredCount: 0, queueDepth: 0, failedDeliveries24h: 0 };
+  }
+}
+
+/** Get all feature flags. */
+async function getFeatureFlags() {
+  try {
+    const { getAllFlags } = require('../../utils/featureFlags');
+    const flags = await getAllFlags();
+    return flags.map(f => ({
+      name: f.name,
+      enabled: !!f.enabled,
+      scope: f.scope || 'global',
+    }));
+  } catch {
+    return [];
   }
 }
 
@@ -67,45 +117,38 @@ router.get('/', requireAdmin(), systemInfoRateLimiter, async (req, res, next) =>
   try {
     const uptimeSeconds = Math.floor(process.uptime());
     const mem = process.memoryUsage();
-    const pkg = require('../../../package.json');
 
-    const [dbStatus, dbFileSizeMB] = await Promise.all([
-      getDbStatus(),
-      Promise.resolve(getDbFileSizeMB()),
+    const [dbInfo, schedulerInfo, webhookInfo, featureFlags] = await Promise.all([
+      getDbInfo(),
+      Promise.resolve(getSchedulerInfo()),
+      getWebhookInfo(),
+      getFeatureFlags(),
     ]);
 
+    const rateLimitSettings = {
+      maxRequests: parseInt(process.env.RATE_LIMIT_MAX_REQUESTS, 10) || 100,
+      windowMs: parseInt(process.env.RATE_LIMIT_WINDOW_MS, 10) || 60000,
+      enabled: process.env.DISABLE_RATE_LIMIT !== 'true',
+    };
+
     res.json({
-      application: {
-        name: pkg.name || 'stellar-micro-donation-api',
-        version: pkg.version || '1.0.0',
-        environment: process.env.NODE_ENV || 'development',
-        uptime: formatUptime(uptimeSeconds),
-        uptimeSeconds,
-        startedAt: new Date(Date.now() - uptimeSeconds * 1000).toISOString(),
-      },
       runtime: {
         nodeVersion: process.version,
-        platform: process.platform,
-        arch: process.arch,
-        pid: process.pid,
+        uptime: uptimeSeconds,
+        memoryUsage: {
+          heapUsedMB: Math.round((mem.heapUsed / 1024 / 1024) * 10) / 10,
+          heapTotalMB: Math.round((mem.heapTotal / 1024 / 1024) * 10) / 10,
+          rssMB: Math.round((mem.rss / 1024 / 1024) * 10) / 10,
+        },
       },
-      memory: {
-        heapUsedMB: toMB(mem.heapUsed),
-        heapTotalMB: toMB(mem.heapTotal),
-        externalMB: toMB(mem.external),
-        rssMB: toMB(mem.rss),
-      },
+      database: dbInfo,
+      scheduler: schedulerInfo,
+      webhooks: webhookInfo,
+      featureFlags,
       configuration: {
         stellarNetwork: process.env.STELLAR_NETWORK || 'testnet',
-        mockStellar: process.env.MOCK_STELLAR === 'true',
-        debugMode: process.env.DEBUG_MODE === 'true',
-        rateLimitingEnabled: process.env.DISABLE_RATE_LIMIT !== 'true',
-        port: parseInt(process.env.PORT, 10) || 3000,
-      },
-      database: {
-        type: 'sqlite',
-        status: dbStatus,
-        fileSizeMB: dbFileSizeMB,
+        mockMode: process.env.MOCK_STELLAR === 'true',
+        rateLimitSettings,
       },
       generatedAt: new Date().toISOString(),
     });

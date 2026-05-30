@@ -1,25 +1,50 @@
 /**
  * Stats Service - Analytics and Reporting Layer
- * 
+ *
  * RESPONSIBILITY: Donation statistics aggregation and analytics calculations
  * OWNER: Analytics Team
  * DEPENDENCIES: Transaction model, Database
- * 
+ *
  * Provides statistical analysis of donation data including daily/weekly aggregations,
  * donor/recipient analytics, and summary reports for business intelligence.
  */
 
 const Transaction = require('../routes/models/transaction');
+const log = require('../utils/log');
 
 class StatsService {
+  /**
+   * Determine if a public key should be anonymized for the current caller.
+   * Admin callers always see full public keys. Non-admin callers see pseudonymous IDs
+   * for donors who opted for anonymous donations.
+   * 
+   * @param {string} publicKey - The public key to potentially anonymize
+   * @param {boolean} isAnonymous - Whether the donation was marked as anonymous
+   * @param {boolean} isAdmin - Whether the caller has admin role
+   * @returns {string} The public key (if admin or not anonymous) or pseudonymous ID
+   */
+  static getDisplayKey(publicKey, isAnonymous, isAdmin) {
+    // Admin always sees full keys
+    if (isAdmin) return publicKey;
+    
+    // Non-admin sees pseudonymous ID for anonymous donations
+    if (isAnonymous && publicKey && !isPseudonymousId(publicKey)) {
+      return generatePseudonymousId(publicKey);
+    }
+    
+    // Non-anonymous donations show full key to everyone
+    return publicKey;
+  }
+
   /**
    * Get daily aggregated stats
    * @param {Date} startDate - Start date for aggregation
    * @param {Date} endDate - End date for aggregation
    * @param {string} [timezone='UTC'] - IANA timezone string
+   * @param {boolean} [isAdmin=false] - Whether caller is admin (for anonymization)
    * @returns {Array} Array of daily stats with date and total volume
    */
-  static getDailyStats(startDate, endDate, timezone = 'UTC') {
+  static getDailyStats(startDate, endDate, timezone = 'UTC', isAdmin = false) {
     const transactions = Transaction.getByDateRange(startDate, endDate);
     const dailyMap = new Map();
 
@@ -42,8 +67,8 @@ class StatsService {
       dayStats.transactions.push({
         id: tx.id,
         amount: tx.amount,
-        donor: tx.donor,
-        recipient: tx.recipient,
+        donor: this.getDisplayKey(tx.donor, tx.anonymous, isAdmin),
+        recipient: this.getDisplayKey(tx.recipient, false, isAdmin),
         timestamp: tx.timestamp
       });
     });
@@ -57,9 +82,10 @@ class StatsService {
    * Get weekly aggregated stats
    * @param {Date} startDate - Start date for aggregation
    * @param {Date} endDate - End date for aggregation
+   * @param {boolean} [isAdmin=false] - Whether caller is admin (for anonymization)
    * @returns {Array} Array of weekly stats with week number and total volume
    */
-  static getWeeklyStats(startDate, endDate) {
+  static getWeeklyStats(startDate, endDate, isAdmin = false) {
     const transactions = Transaction.getByDateRange(startDate, endDate);
     const weeklyMap = new Map();
 
@@ -86,8 +112,8 @@ class StatsService {
       weekStats.transactions.push({
         id: tx.id,
         amount: tx.amount,
-        donor: tx.donor,
-        recipient: tx.recipient,
+        donor: this.getDisplayKey(tx.donor, tx.anonymous, isAdmin),
+        recipient: this.getDisplayKey(tx.recipient, false, isAdmin),
         timestamp: tx.timestamp
       });
     });
@@ -142,9 +168,10 @@ class StatsService {
    * public donor rankings or leaderboards.
    * @param {Date} startDate - Start date for aggregation
    * @param {Date} endDate - End date for aggregation
+   * @param {boolean} [isAdmin=false] - Whether caller is admin (for anonymization)
    * @returns {Array} Array of donor stats sorted by total volume
    */
-  static getDonorStats(startDate, endDate) {
+  static getDonorStats(startDate, endDate, isAdmin = false) {
     const transactions = Transaction.getByDateRange(startDate, endDate);
     const donorMap = new Map();
 
@@ -167,7 +194,7 @@ class StatsService {
       donorStats.donations.push({
         id: tx.id,
         amount: tx.amount,
-        recipient: tx.recipient,
+        recipient: this.getDisplayKey(tx.recipient, false, isAdmin),
         timestamp: tx.timestamp
       });
     });
@@ -181,9 +208,10 @@ class StatsService {
    * Get stats by recipient
    * @param {Date} startDate - Start date for aggregation
    * @param {Date} endDate - End date for aggregation
+   * @param {boolean} [isAdmin=false] - Whether caller is admin (for anonymization)
    * @returns {Array} Array of recipient stats sorted by total received
    */
-  static getRecipientStats(startDate, endDate) {
+  static getRecipientStats(startDate, endDate, isAdmin = false) {
     const transactions = Transaction.getByDateRange(startDate, endDate);
     const recipientMap = new Map();
 
@@ -205,7 +233,7 @@ class StatsService {
       recipientStats.donations.push({
         id: tx.id,
         amount: tx.amount,
-        donor: tx.donor,
+        donor: this.getDisplayKey(tx.donor, tx.anonymous, isAdmin),
         timestamp: tx.timestamp
       });
     });
@@ -345,9 +373,10 @@ class StatsService {
    * @param {string} walletAddress - Wallet address (donor or recipient name)
    * @param {Date} startDate - Optional start date for filtering
    * @param {Date} endDate - Optional end date for filtering
+   * @param {boolean} [isAdmin=false] - Whether caller is admin (for anonymization)
    * @returns {Object} Wallet analytics with totals sent, received, and donation count
    */
-  static getWalletAnalytics(walletAddress, startDate = null, endDate = null) {
+  static getWalletAnalytics(walletAddress, startDate = null, endDate = null, isAdmin = false) {
     let transactions;
 
     if (startDate && endDate) {
@@ -386,7 +415,7 @@ class StatsService {
         analytics.sentTransactions.push({
           id: tx.id,
           amount: tx.amount,
-          recipient: tx.recipient,
+          recipient: this.getDisplayKey(tx.recipient, false, isAdmin),
           timestamp: tx.timestamp,
           status: tx.status
         });
@@ -399,7 +428,7 @@ class StatsService {
         analytics.receivedTransactions.push({
           id: tx.id,
           amount: tx.amount,
-          donor: tx.donor,
+          donor: this.getDisplayKey(tx.donor, tx.anonymous, isAdmin),
           timestamp: tx.timestamp,
           status: tx.status
         });
@@ -562,7 +591,7 @@ class StatsService {
         lastUpdated
       };
     } catch (error) {
-      console.error('Aggregation failed:', error);
+      log.error('STATS_SERVICE', 'Aggregation failed', { error: error.message });
       throw error;
     }
   }
@@ -661,12 +690,13 @@ class StatsService {
    * @param {string} [options.granularity]        - Override: hourly|daily|weekly|monthly.
    * @param {number} [options.topN=10]            - Top donors/recipients count.
    * @param {number} [options.movingAvgWindow=3]  - Moving average window size.
+   * @param {boolean} [options.isAdmin=false]     - Whether caller is admin (for anonymization).
    * @returns {object} Dashboard data payload.
    */
-  static getDashboardData({ period = '30d', granularity: granularityOverride, topN = 10, movingAvgWindow = 3 } = {}) {
+  static getDashboardData({ period = '30d', granularity: granularityOverride, topN = 10, movingAvgWindow = 3, isAdmin = false } = {}) {
     const Cache = require('../utils/cache');
     const CACHE_TTL_MS = 5 * 60 * 1000;
-    const cacheKey = `dashboard:${period}:${granularityOverride || 'auto'}:${topN}:${movingAvgWindow}`;
+    const cacheKey = `dashboard:${period}:${granularityOverride || 'auto'}:${topN}:${movingAvgWindow}:${isAdmin ? 'admin' : 'user'}`;
 
     const cached = Cache.get(cacheKey);
     if (cached) return { ...cached, cached: true };

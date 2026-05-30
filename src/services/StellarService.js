@@ -20,6 +20,7 @@ const StellarErrorHandler = require('../utils/stellarErrorHandler');
 const log = require('../utils/log');
 const { withTimeout, TIMEOUT_DEFAULTS, TimeoutError } = require('../utils/timeoutHandler');
 const { CircuitBreaker } = require('../utils/circuitBreaker');
+const HorizonPool = require('./HorizonPool');
 const {
   toStellarSdkAsset,
   normalizeHorizonAsset,
@@ -165,15 +166,29 @@ class StellarService extends StellarServiceInterface {
     this.horizonUrl = config.horizonUrl || HORIZON_URLS.TESTNET;
     this.serviceSecretKey = config.serviceSecretKey;
     this.environment = config.environment;
-    
+    this.correlationId = config.correlationId;
+
     // Default to SDK definitions if environment config is missing
     this.baseFee = this.environment?.baseFee || StellarSdk.BASE_FEE;
-    this.networkPassphrase = this.environment?.networkPassphrase || 
-      (this.network === 'mainnet' || this.network === 'public' 
+    this.networkPassphrase = this.environment?.networkPassphrase ||
+      (this.network === 'mainnet' || this.network === 'public'
         ? StellarSdk.Networks.PUBLIC : StellarSdk.Networks.TESTNET);
 
-    this.server = new StellarSdk.Horizon.Server(this.horizonUrl);
-    
+    // Horizon connection pool — HORIZON_POOL_SIZE members, max 10, default 3
+    const poolSize = Math.min(
+      parseInt(process.env.HORIZON_POOL_SIZE || config.horizonPoolSize || '3', 10),
+      10
+    );
+    const poolCooldownMs = parseInt(
+      process.env.HORIZON_POOL_COOLDOWN_MS || config.horizonPoolCooldownMs || '30000',
+      10
+    );
+    this._pool = new HorizonPool(this.horizonUrl, {
+      size: poolSize,
+      cooldownMs: poolCooldownMs,
+      createHttpClient: () => this._createHttpClient(),
+    });
+
     // Timeout configuration
     this.timeouts = {
       api: config.apiTimeout || TIMEOUT_DEFAULTS.STELLAR_API,
@@ -188,6 +203,63 @@ class StellarService extends StellarServiceInterface {
       cooldownMs: config.circuitBreakerCooldownMs ?? 30_000,
       name: 'horizon',
     });
+  }
+
+  /**
+   * The active Horizon server for this request, drawn from the pool.
+   * Callers that previously accessed `this.server` continue to work transparently.
+   */
+  get server() {
+    return this._pool.getServer();
+  }
+
+  /**
+   * Return pool health stats for the /health?verbose=true endpoint.
+   * @returns {{ size: number, healthy: number, unhealthy: number }}
+   */
+  getPoolStatus() {
+    return this._pool.getStatus();
+  }
+
+  /**
+   * Create HTTP client with correlation ID headers
+   * @private
+   * @returns {Object} HTTP client with correlation headers
+   */
+  _createHttpClient() {
+    const { generateCorrelationHeaders } = require('../utils/correlation');
+    const fetch = require('node-fetch');
+    
+    return {
+      async request(method, url, data, headers = {}) {
+        const correlationHeaders = generateCorrelationHeaders();
+        const mergedHeaders = {
+          ...headers,
+          ...correlationHeaders,
+          'X-Request-ID': this.correlationId || correlationHeaders['X-Correlation-ID'],
+        };
+        
+        const response = await fetch(url, {
+          method,
+          headers: mergedHeaders,
+          body: data ? JSON.stringify(data) : undefined,
+        });
+        
+        if (!response.ok) {
+          throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+        }
+        
+        return response.json();
+      }
+    };
+  }
+
+  /**
+   * Set correlation ID for this service instance
+   * @param {string} correlationId - Correlation ID to use for Stellar API calls
+   */
+  setCorrelationId(correlationId) {
+    this.correlationId = correlationId;
   }
 
   getNetwork() {
@@ -306,6 +378,10 @@ class StellarService extends StellarServiceInterface {
     let lastError = null;
 
     for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+      // Capture the specific server used for this attempt so we can mark it
+      // unhealthy if it fails (pool may rotate on the next getServer() call).
+      const activeServer = this._pool.getServer();
+
       try {
         // Each attempt goes through the circuit breaker so that failures are
         // counted and the circuit can open mid-retry if the threshold is hit.
@@ -328,6 +404,12 @@ class StellarService extends StellarServiceInterface {
             maxAttempts,
             timeoutMs
           });
+        }
+
+        // Mark the pool member that failed as unhealthy so subsequent requests
+        // are routed to a different instance during the cooldown period.
+        if (this._isTransientNetworkError(error)) {
+          this._pool.markUnhealthy(activeServer);
         }
 
         if (!this._isTransientNetworkError(error) || attempt === maxAttempts) {
@@ -1163,14 +1245,76 @@ class StellarService extends StellarServiceInterface {
   }
 
   /**
+   * Remove a trustline for a custom Stellar asset.
+   * The account must have a zero balance for the asset.
+   *
+   * @param {string} accountSecret - Secret key of the account removing the trustline
+   * @param {string} assetCode     - Asset code (1-12 alphanumeric characters)
+   * @param {string} issuerPublic  - Public key of the asset issuer
+   * @returns {Promise<{hash: string, ledger: number, assetCode: string, issuerPublic: string}>}
+   */
+  async removeTrustline(accountSecret, assetCode, issuerPublic) {
+    return StellarErrorHandler.wrap(async () => {
+      const { ValidationError } = require('../utils/errors');
+
+      if (!assetCode || !/^[A-Za-z0-9]{1,12}$/.test(assetCode)) {
+        throw new ValidationError('Asset code must be 1-12 alphanumeric characters');
+      }
+      if (!issuerPublic || typeof issuerPublic !== 'string') {
+        throw new ValidationError('issuerPublic is required');
+      }
+
+      const keypair = StellarSdk.Keypair.fromSecret(accountSecret);
+      const asset = new StellarSdk.Asset(assetCode, issuerPublic);
+      const account = await this._executeWithRetry(() =>
+        this.server.loadAccount(keypair.publicKey())
+      );
+
+      const balanceLine = account.balances.find((b) => (
+        b.asset_type !== 'native' &&
+        b.asset_code === assetCode &&
+        b.asset_issuer === issuerPublic
+      ));
+
+      if (!balanceLine) {
+        throw new ValidationError('Trustline not found for the requested asset');
+      }
+
+      const balance = parseFloat(balanceLine.balance || '0');
+      if (balance > 0) {
+        throw new ValidationError('Cannot remove a trustline with a non-zero balance');
+      }
+
+      const transaction = new StellarSdk.TransactionBuilder(account, {
+        fee: StellarSdk.BASE_FEE,
+        networkPassphrase: this._getNetworkPassphrase(),
+      })
+        .addOperation(StellarSdk.Operation.changeTrust({
+          asset,
+          limit: '0',
+        }))
+        .setTimeout(30)
+        .build();
+
+      transaction.sign(keypair);
+      const result = await this._submitTransactionWithNetworkSafety(transaction);
+
+      log.info('STELLAR_SERVICE', 'Trustline removed', {
+        assetCode,
+        issuerPublic,
+        hash: result.hash,
+      });
+
+      return { hash: result.hash, ledger: result.ledger, assetCode, issuerPublic };
+    }, 'removeTrustline');
+  }
+
+  /**
    * Issue a custom Stellar asset to a recipient.
    *
    * Flow:
    *  1. Recipient must have an existing trustline for the asset (changeTrust op).
    *  2. Issuer sends a payment of the custom asset to the recipient.
-   *
-   * @param {string} issuerSecret   - Secret key of the asset issuer account
-   * @param {string} assetCode      - Asset code (1-12 alphanumeric characters)
    * @param {string} amount         - Amount to issue (string, 7 decimal places)
    * @param {string} recipientPublic - Public key of the recipient
    * @returns {Promise<{hash: string, ledger: number, assetCode: string, issuerPublic: string, amount: string}>}

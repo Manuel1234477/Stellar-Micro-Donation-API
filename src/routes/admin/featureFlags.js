@@ -85,7 +85,9 @@ router.get('/', checkPermission(PERMISSIONS.ADMIN_ALL), asyncHandler(async (req,
       description: f.description,
       created_at: f.created_at,
       updated_at: f.updated_at,
-      updated_by: f.updated_by
+      updated_by: f.updated_by,
+      lastModifiedAt: f.updated_at,
+      lastModifiedBy: f.updated_by,
     }));
 
     if (req.accepts(['html', 'json']) === 'html') {
@@ -230,7 +232,9 @@ router.get('/:name', checkPermission(PERMISSIONS.ADMIN_ALL), asyncHandler(async 
           description: f.description,
           created_at: f.created_at,
           updated_at: f.updated_at,
-          updated_by: f.updated_by
+          updated_by: f.updated_by,
+          lastModifiedAt: f.updated_at,
+          lastModifiedBy: f.updated_by,
         }))
       }
     });
@@ -366,12 +370,8 @@ router.patch('/:name', checkPermission(PERMISSIONS.ADMIN_ALL), updateFlagSchema,
     }
 
     const { name } = req.params;
-    const { scope, scope_value } = req.query;
+    const { scope = 'global', scope_value } = req.query;
     const { enabled, description } = req.body;
-
-    if (!scope) {
-      throw new ValidationError('scope query parameter is required', { field: 'scope' });
-    }
 
     // Get existing flag
     const existing = await featureFlagsUtil.getFlag(name, scope, scope_value);
@@ -423,7 +423,9 @@ router.patch('/:name', checkPermission(PERMISSIONS.ADMIN_ALL), updateFlagSchema,
         scope_value: flag.scope_value,
         description: flag.description,
         created_at: flag.created_at,
-        updated_at: flag.updated_at
+        updated_at: flag.updated_at,
+        lastModifiedAt: flag.updated_at,
+        lastModifiedBy: flag.updated_by,
       }
     });
   } catch (error) {

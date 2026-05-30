@@ -65,4 +65,6 @@ DonationEvents.EVENTS = {
 };
 
 // Export singleton instance
-module.exports = new DonationEvents();
+const instance = new DonationEvents();
+instance.EVENTS = DonationEvents.EVENTS;
+module.exports = instance;

@@ -78,46 +78,61 @@ const asyncHandler = require('../utils/asyncHandler');
 const { cacheMiddleware } = require('../middleware/caching');
 const Cache = require('../utils/cache');
 const { isValidStellarPublicKey } = require('../utils/validators');
+const { statsRateLimiter } = require('../middleware/rateLimiter');
+const donationEvents = require('../events/donationEvents');
 
 // Stats cache TTL in milliseconds — configurable via STATS_CACHE_TTL_SECONDS env var (default: 60s)
 const STATS_CACHE_TTL_MS = parseInt(process.env.STATS_CACHE_TTL_SECONDS || '60', 10) * 1000;
 
+// Summary cache TTL — configurable via STATS_SUMMARY_CACHE_TTL_SECONDS (default: 60s)
+const SUMMARY_CACHE_TTL_MS = parseInt(process.env.STATS_SUMMARY_CACHE_TTL_SECONDS || '60', 10) * 1000;
+const SUMMARY_CACHE_PREFIX = 'stats:summary:';
+
+// Invalidate all summary cache entries when a new donation is created
+donationEvents.on(donationEvents.EVENTS.CREATED, () => {
+  Cache.clearPrefix(SUMMARY_CACHE_PREFIX);
+});
+
 /**
- * Wrap a stats handler with server-side in-memory caching.
- * Sets X-Cache-Age header and uses Cache.get/set with the given prefix + cache key.
- *
- * @param {string} prefix - Cache key prefix (e.g. 'stats:daily')
- * @param {Function} dataFn - Function that returns the response body object
- * @returns {import('express').RequestHandler}
+ * Global stats caching middleware.
+ * Caches responses per API key, endpoint, and query parameters.
  */
-function withStatsCache(prefix, dataFn) {
-  return (req, res, next) => {
-    try {
-      const cacheKey = `${prefix}:${JSON.stringify(req.query)}`;
-      const cached = Cache.get(cacheKey);
+function globalStatsCache(req, res, next) {
+  if (req.method !== 'GET') {
+    return next();
+  }
 
-      if (cached) {
-        const ageSeconds = Math.floor((Date.now() - cached.cachedAt) / 1000);
-        res.setHeader('X-Cache-Age', String(ageSeconds));
-        return res.json(cached.body);
-      }
+  try {
+    const apiKeyId = (req.apiKey && req.apiKey.id) ? req.apiKey.id : req.ip;
+    const endpoint = req.path;
+    const cacheKey = `stats_cache:${apiKeyId}:${endpoint}:${JSON.stringify(req.query)}`;
+    const cached = Cache.get(cacheKey);
 
-      // Intercept res.json to store result in cache
-      const originalJson = res.json.bind(res);
-      res.json = function (body) {
-        if (res.statusCode >= 200 && res.statusCode < 300) {
-          Cache.set(cacheKey, { body, cachedAt: Date.now() }, STATS_CACHE_TTL_MS);
-          res.setHeader('X-Cache-Age', '0');
-        }
-        return originalJson(body);
-      };
-
-      dataFn(req, res, next);
-    } catch (error) {
-      next(error);
+    if (cached) {
+      const ageSeconds = Math.floor((Date.now() - cached.cachedAt) / 1000);
+      res.setHeader('X-Cache-Age', String(ageSeconds));
+      return res.json(cached.body);
     }
-  };
+
+    // Intercept res.json to store result in cache
+    const originalJson = res.json.bind(res);
+    res.json = function (body) {
+      if (res.statusCode >= 200 && res.statusCode < 300) {
+        Cache.set(cacheKey, { body, cachedAt: Date.now() }, STATS_CACHE_TTL_MS);
+        res.setHeader('X-Cache-Age', '0');
+      }
+      return originalJson(body);
+    };
+
+    next();
+  } catch (error) {
+    next(error);
+  }
 }
+
+// Apply globally to all stats routes
+router.use(statsRateLimiter);
+router.use(globalStatsCache);
 
 /** Fire-and-forget audit log for stats data access */
 function auditStatsAccess(req, res, next) {
@@ -215,13 +230,14 @@ router.get('/tags', checkPermission(PERMISSIONS.STATS_READ), auditStatsAccess, s
  * Get daily aggregated donation volume
  * Query params: startDate, endDate (ISO format)
  */
-router.get('/daily', checkPermission(PERMISSIONS.STATS_READ), auditStatsAccess, cacheMiddleware('stats', 'private'), strictDateRangeQuerySchema, validateDateRange, withStatsCache('stats:daily', (req, res, next) => {
+router.get('/daily', checkPermission(PERMISSIONS.STATS_READ), auditStatsAccess, cacheMiddleware('stats', 'private'), strictDateRangeQuerySchema, validateDateRange, (req, res, next) => {
   try {
     const { startDate, endDate } = req.query;
     const start = new Date(startDate);
     const end = new Date(endDate);
+    const isAdmin = req.user && req.user.role === 'admin';
 
-    const stats = StatsService.getDailyStats(start, end);
+    const stats = StatsService.getDailyStats(start, end, 'UTC', isAdmin);
 
     AuditLogService.log({
       category: AuditLogService.CATEGORY.DATA_ACCESS,
@@ -250,7 +266,7 @@ router.get('/daily', checkPermission(PERMISSIONS.STATS_READ), auditStatsAccess, 
   } catch (error) {
     next(error);
   }
-}));
+});
 
 /**
  * GET /stats/weekly
@@ -264,13 +280,14 @@ router.get(
   cacheMiddleware('stats', 'private'),
   strictDateRangeQuerySchema,
   validateDateRange,
-  withStatsCache('stats:weekly', (req, res, next) => {
+  (req, res, next) => {
     try {
       const { startDate, endDate } = req.query;
       const start = new Date(startDate);
       const end = new Date(endDate);
+      const isAdmin = req.user && req.user.role === 'admin';
 
-      const stats = StatsService.getWeeklyStats(start, end);
+      const stats = StatsService.getWeeklyStats(start, end, isAdmin);
 
       res.json({
         success: true,
@@ -287,21 +304,25 @@ router.get(
     } catch (error) {
       next(error);
     }
-  }),
+  }
 );
 
 /**
  * GET /stats/summary
  * Get overall summary statistics
  * Query params: startDate/endDate or from/to (all optional, ISO format)
+ *
+ * Cached with TTL (STATS_SUMMARY_CACHE_TTL_SECONDS, default 60s).
+ * Cache key includes query parameters so different filter combinations are independent.
+ * Responds with X-Cache: HIT or X-Cache: MISS header.
+ * Cache is invalidated on donation.created events.
  */
 router.get(
   "/summary",
   checkPermission(PERMISSIONS.STATS_READ),
   auditStatsAccess,
-  cacheMiddleware('stats', 'private'),
   optionalDateRangeQuerySchema,
-  withStatsCache('stats:summary', (req, res, next) => {
+  (req, res, next) => {
     try {
       const fromParam = req.query.from || req.query.startDate;
       const toParam = req.query.to || req.query.endDate;
@@ -326,16 +347,26 @@ router.get(
         end = new Date();
       }
 
-      const stats = StatsService.getSummaryStats(start, end);
+      // Build a stable cache key from query params
+      const cacheKey = `${SUMMARY_CACHE_PREFIX}${JSON.stringify(req.query)}`;
+      const cached = Cache.get(cacheKey);
 
-      res.json({
-        success: true,
-        data: stats,
-      });
+      if (cached) {
+        res.setHeader('X-Cache', 'HIT');
+        return res.json(cached);
+      }
+
+      const stats = StatsService.getSummaryStats(start, end);
+      const body = { success: true, data: stats };
+
+      Cache.set(cacheKey, body, SUMMARY_CACHE_TTL_MS);
+      res.setHeader('X-Cache', 'MISS');
+
+      res.json(body);
     } catch (error) {
       next(error);
     }
-  }),
+  }
 );
 
 /**
@@ -354,8 +385,9 @@ router.get(
       const { startDate, endDate } = req.query;
       const start = new Date(startDate);
       const end = new Date(endDate);
+      const isAdmin = req.user && req.user.role === 'admin';
 
-      const stats = StatsService.getDonorStats(start, end);
+      const stats = StatsService.getDonorStats(start, end, isAdmin);
 
       res.json({
         success: true,
@@ -390,8 +422,9 @@ router.get(
       const { startDate, endDate } = req.query;
       const start = new Date(startDate);
       const end = new Date(endDate);
+      const isAdmin = req.user && req.user.role === 'admin';
 
-      const stats = StatsService.getRecipientStats(start, end);
+      const stats = StatsService.getRecipientStats(start, end, isAdmin);
 
       res.json({
         success: true,
@@ -444,6 +477,7 @@ router.get('/wallet/:walletAddress/analytics', checkPermission(PERMISSIONS.STATS
   try {
     const { walletAddress } = req.params;
     const { startDate, endDate } = req.query;
+    const isAdmin = req.user && req.user.role === 'admin';
 
     let start = null;
     let end = null;
@@ -465,7 +499,7 @@ router.get('/wallet/:walletAddress/analytics', checkPermission(PERMISSIONS.STATS
       }
     }
 
-    const analytics = StatsService.getWalletAnalytics(walletAddress, start, end);
+    const analytics = StatsService.getWalletAnalytics(walletAddress, start, end, isAdmin);
 
     if (analytics.donationCount === 0) {
       return res.status(404).json({
@@ -591,6 +625,7 @@ router.get('/orphaned-transactions', checkPermission(PERMISSIONS.STATS_READ), as
 router.get('/dashboard', checkPermission(PERMISSIONS.STATS_READ), (req, res, next) => {
   try {
     const { period = '30d', granularity, topN, movingAvgWindow } = req.query;
+    const isAdmin = req.user && req.user.role === 'admin';
 
     const topNParsed = topN !== undefined ? parseInt(topN, 10) : 10;
     const windowParsed = movingAvgWindow !== undefined ? parseInt(movingAvgWindow, 10) : 3;
@@ -602,7 +637,7 @@ router.get('/dashboard', checkPermission(PERMISSIONS.STATS_READ), (req, res, nex
       return res.status(400).json({ success: false, error: { code: 'INVALID_PARAM', message: 'granularity must be hourly, daily, weekly, or monthly' } });
     }
 
-    const data = StatsService.getDashboardData({ period, granularity, topN: topNParsed, movingAvgWindow: windowParsed });
+    const data = StatsService.getDashboardData({ period, granularity, topN: topNParsed, movingAvgWindow: windowParsed, isAdmin });
 
     res.json({ success: true, data });
   } catch (error) {
@@ -646,6 +681,7 @@ router.get('/anonymous-breakdown', checkPermission(PERMISSIONS.STATS_READ), (req
  */
 router.post('/cache/invalidate', checkPermission(PERMISSIONS.STATS_ADMIN), (req, res) => {
   Cache.clearPrefix('stats:');
+  Cache.clearPrefix('stats_cache:');
   Cache.clearPrefix('dashboard:');
   res.json({ success: true, message: 'Stats cache invalidated' });
 });

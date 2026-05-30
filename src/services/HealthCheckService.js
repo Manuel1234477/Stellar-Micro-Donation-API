@@ -123,9 +123,10 @@ async function checkNetworkStatus(networkStatusService) {
  * @param {Object} stellarService - StellarService or MockStellarService instance
  * @param {Object} [networkStatusService] - Optional NetworkStatusService instance
  * @param {Object} [scheduler] - Optional RecurringDonationScheduler instance
- * @returns {Promise<{status: string, dependencies: Object, timestamp: string}>}
+ * @param {boolean} [verbose=false] - Include detailed dependency info (admin only)
+ * @returns {Promise<{status: string, dependencies?: Object, timestamp: string}>}
  */
-async function getFullHealth(stellarService, networkStatusService, scheduler) {
+async function getFullHealth(stellarService, networkStatusService, scheduler, verbose = false) {
   // Call through module.exports so Jest spies can intercept individual checks
   const self = module.exports;
   const checks = [
@@ -164,7 +165,19 @@ async function getFullHealth(stellarService, networkStatusService, scheduler) {
     status = 'healthy';
   }
 
-  return { status, dependencies, timestamp: new Date().toISOString() };
+  const response = { status, timestamp: new Date().toISOString() };
+
+  // Only include detailed dependencies if verbose mode is enabled
+  if (verbose) {
+    response.dependencies = dependencies;
+
+    // Expose Horizon connection pool health when verbose
+    if (stellarService && typeof stellarService.getPoolStatus === 'function') {
+      response.horizonPool = stellarService.getPoolStatus();
+    }
+  }
+
+  return response;
 }
 
 /**

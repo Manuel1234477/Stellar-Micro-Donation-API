@@ -28,36 +28,46 @@ class IdempotencyService {
   }
 
   /**
-   * Store idempotency record
+   * Store idempotency record (Issue #891: scoped by apiKeyId)
    * @param {string} idempotencyKey - Client-provided unique key
    * @param {string} requestHash - Hash of request data
    * @param {Object} response - Response to cache
    * @param {number} userId - User ID making the request
+   * @param {number} apiKeyId - API key ID (for scoping, Issue #891)
    * @returns {Promise<void>}
    */
-  async store(idempotencyKey, requestHash, response, userId = null) {
+  async store(idempotencyKey, requestHash, response, userId = null, apiKeyId = null) {
     const expiresAt = new Date(Date.now() + this.DEFAULT_TTL).toISOString();
 
     await Database.run(
       `INSERT INTO idempotency_keys
-       (idempotencyKey, requestHash, response, userId, createdAt, expiresAt)
-       VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP, ?)`,
-      [idempotencyKey, requestHash, JSON.stringify(response), userId, expiresAt]
+       (apiKeyId, idempotencyKey, requestHash, response, userId, createdAt, expiresAt)
+       VALUES (?, ?, ?, ?, ?, CURRENT_TIMESTAMP, ?)`,
+      [apiKeyId, idempotencyKey, requestHash, JSON.stringify(response), userId, expiresAt]
     );
   }
 
   /**
-   * Check if idempotency key exists and return cached response
+   * Check if idempotency key exists and return cached response (Issue #891: scoped by apiKeyId)
    * @param {string} idempotencyKey - Client-provided unique key
+   * @param {number} apiKeyId - API key ID (for scoping, Issue #891)
    * @returns {Promise<Object|null>} Cached response or null if not found
    */
-  async get(idempotencyKey) {
-    const record = await Database.get(
-      `SELECT * FROM idempotency_keys
+  async get(idempotencyKey, apiKeyId = null) {
+    let query = `SELECT * FROM idempotency_keys
        WHERE idempotencyKey = ?
-       AND datetime(expiresAt) > datetime('now')`,
-      [idempotencyKey]
-    );
+       AND datetime(expiresAt) > datetime('now')`;
+    const params = [idempotencyKey];
+
+    // Issue #891: Scope by apiKeyId if provided
+    if (apiKeyId !== null) {
+      query += ' AND apiKeyId = ?';
+      params.push(apiKeyId);
+    } else {
+      query += ' AND apiKeyId IS NULL';
+    }
+
+    const record = await Database.get(query, params);
 
     if (!record) {
       return null;
@@ -73,15 +83,25 @@ class IdempotencyService {
 
   /**
    * Check if request hash matches stored hash (detect duplicate with different key)
+   * Issue #891: Scoped by apiKeyId to prevent cross-tenant collisions
    * @param {string} requestHash - Hash of current request
    * @param {string} excludeKey - Idempotency key to exclude from search
+   * @param {number} apiKeyId - API key ID (for scoping, Issue #891)
    * @returns {Promise<Object|null>} Matching record or null
    */
-  async findByHash(requestHash, excludeKey = null) {
+  async findByHash(requestHash, excludeKey = null, apiKeyId = null) {
     let query = `SELECT * FROM idempotency_keys
                  WHERE requestHash = ?
                  AND datetime(expiresAt) > datetime('now')`;
     const params = [requestHash];
+
+    // Issue #891: Scope by apiKeyId
+    if (apiKeyId !== null) {
+      query += ' AND apiKeyId = ?';
+      params.push(apiKeyId);
+    } else {
+      query += ' AND apiKeyId IS NULL';
+    }
 
     if (excludeKey) {
       query += ' AND idempotencyKey != ?';

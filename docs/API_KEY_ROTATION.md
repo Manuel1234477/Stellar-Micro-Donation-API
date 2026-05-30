@@ -329,6 +329,86 @@ Keys are stored as SHA-256 hashes for security. Only the prefix (first 8 charact
 - **Admin-only**: Key management requires admin role
 - **Automatic cleanup**: Expired keys can be automatically removed
 
+## Memo Encryption Key Rotation
+
+Transaction memos are encrypted using ECDH-X25519-AES256GCM with a versioned key store at
+`data/memo-keys/keys.json`. Each encrypted memo is stored as a versioned ciphertext string:
+
+```
+v<version>:<base64-encoded-json-envelope>
+```
+
+For example: `v1:eyJ2IjoxLCJhbGciOiJFQ0RIL...`
+
+### Key Store Schema
+
+```json
+{
+  "activeVersion": 2,
+  "keys": [
+    {
+      "version": 1,
+      "key": "<64-char hex>",
+      "createdAt": "2026-01-01T00:00:00.000Z",
+      "retiredAt": "2026-04-01T00:00:00.000Z"
+    },
+    {
+      "version": 2,
+      "key": "<64-char hex>",
+      "createdAt": "2026-04-01T00:00:00.000Z",
+      "retiredAt": null
+    }
+  ]
+}
+```
+
+### Rotating Memo Encryption Keys
+
+**Step 1: Rotate the key** (creates a new active version, retires old ones)
+
+```bash
+node -e "require('./src/utils/memoKeyManager').rotateKey()"
+```
+
+**Step 2: Re-encrypt all existing memos** to the new key version
+
+```bash
+# Provide recipient secrets as a JSON map for decryption
+RECIPIENT_SECRETS='{"GABC...":"SABC..."}' npm run migrate:reencrypt
+
+# Preview changes without writing (dry run)
+DRY_RUN=true RECIPIENT_SECRETS='{"GABC...":"SABC..."}' npm run migrate:reencrypt
+```
+
+**Step 3: Verify** no memos remain at old key versions
+
+```bash
+DRY_RUN=true npm run migrate:reencrypt
+```
+
+**Step 4: Remove retired keys** from the key store (optional, after confirming all memos migrated)
+
+> ⚠️ **Warning**: Only remove retired keys after verifying ALL memos have been re-encrypted.
+> Removing a key while memos still use that version will make those memos permanently unreadable.
+
+### How Decryption Selects the Correct Key
+
+When decrypting a versioned memo (`v1:...`), `MemoEncryptionService.decrypt()`:
+
+1. Parses the version prefix from the stored value
+2. Validates the version exists in `data/memo-keys/keys.json`
+3. Throws `Unknown key version <n>` if the key no longer exists
+4. Decrypts using the recipient's Stellar secret key (ECDH — no server-side key material needed)
+
+Old key versions remain in the key store after rotation so existing memos continue to decrypt
+correctly until re-encryption is complete.
+
+### Rotation Schedule
+
+- Rotate memo encryption keys on the same schedule as API keys (every 90–180 days)
+- After rotation, run `npm run migrate:reencrypt` to bring all memos to the current version
+- Retain old key versions in the store until migration is confirmed complete
+
 ## Support
 
 For issues or questions about API key rotation:

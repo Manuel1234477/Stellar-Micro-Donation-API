@@ -35,3 +35,9 @@ exports.up = async (db) => {
   await db.run(`CREATE INDEX IF NOT EXISTS idx_refresh_tokens_family_id ON refresh_tokens(family_id)`);
   await db.run(`CREATE INDEX IF NOT EXISTS idx_refresh_tokens_api_key_id ON refresh_tokens(api_key_id)`);
 };
+
+exports.down = async (db) => {
+  await db.run('DROP INDEX IF EXISTS idx_refresh_tokens_family_id');
+  await db.run('DROP INDEX IF EXISTS idx_refresh_tokens_api_key_id');
+  await db.run('DROP TABLE IF EXISTS refresh_tokens');
+};

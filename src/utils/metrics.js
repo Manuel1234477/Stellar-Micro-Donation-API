@@ -105,6 +105,27 @@ const recurringDonationsActiveCount = new client.Gauge({
 });
 
 /**
+ * Counter: total schedules skipped on a scheduler tick, labelled by reason.
+ *
+ * Labels:
+ *   reason — why the schedule was skipped:
+ *     "in_progress"      — schedule already being executed (duplicate-execution guard)
+ *     "network_degraded" — skipped due to detected Stellar network degradation
+ *     "scheduler_paused" — skipped because the scheduler is in a paused state
+ *
+ * A growing rate on this counter is an early-warning sign that the scheduler
+ * cannot process all due donations within its tick interval.
+ *
+ * @type {client.Counter}
+ */
+const recurringDonationsSkippedTotal = new client.Counter({
+  name: 'recurring_donations_skipped_total',
+  help: 'Total number of recurring donation schedules skipped on a scheduler tick',
+  labelNames: ['reason'],
+  registers: [registry],
+});
+
+/**
  * Express middleware that records request duration for every response.
  * Normalises dynamic path segments (e.g. /donations/123 → /donations/:id)
  * to keep cardinality bounded.
@@ -153,4 +174,5 @@ module.exports = {
   recurringDonationsExecutionDuration,
   recurringDonationsSuspendedTotal,
   recurringDonationsActiveCount,
+  recurringDonationsSkippedTotal,
 };

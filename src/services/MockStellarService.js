@@ -673,9 +673,56 @@ class MockStellarService extends StellarServiceInterface {
   }
 
   async _simulateNetworkDelay() {
-    if (this.config.networkDelay > 0) {
+    const latency = MockStellarService._getLatencyMs();
+    if (latency > 0) {
+      await new Promise((resolve) => setTimeout(resolve, latency));
+    } else if (this.config.networkDelay > 0) {
       await new Promise((resolve) => setTimeout(resolve, this.config.networkDelay));
     }
+  }
+
+  /**
+   * Compute the effective latency in ms from static config.
+   * @returns {number}
+   * @private
+   */
+  static _getLatencyMs() {
+    if (MockStellarService._latencyRange) {
+      const { min, max } = MockStellarService._latencyRange;
+      return Math.floor(Math.random() * (max - min + 1)) + min;
+    }
+    if (MockStellarService._latencyMs !== undefined) {
+      return MockStellarService._latencyMs;
+    }
+    const envMs = parseInt(process.env.MOCK_STELLAR_LATENCY_MS, 10);
+    return Number.isFinite(envMs) && envMs > 0 ? envMs : 0;
+  }
+
+  /**
+   * Set a fixed simulated latency for all async methods.
+   * @param {number} ms - Latency in milliseconds (0 disables).
+   */
+  static setLatency(ms) {
+    MockStellarService._latencyMs = ms;
+    MockStellarService._latencyRange = null;
+  }
+
+  /**
+   * Set a random latency range for all async methods.
+   * @param {number} minMs - Minimum latency in milliseconds.
+   * @param {number} maxMs - Maximum latency in milliseconds.
+   */
+  static setLatencyRange(minMs, maxMs) {
+    MockStellarService._latencyRange = { min: minMs, max: maxMs };
+    MockStellarService._latencyMs = undefined;
+  }
+
+  /**
+   * Reset latency configuration to defaults (reads from env or 0).
+   */
+  static resetLatency() {
+    MockStellarService._latencyMs = undefined;
+    MockStellarService._latencyRange = null;
   }
 
   _checkRateLimit() {

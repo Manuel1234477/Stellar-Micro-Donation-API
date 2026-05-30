@@ -15,6 +15,7 @@ const { PERMISSIONS } = require('../utils/permissions');
 const { validateSchema } = require('../middleware/schemaValidation');
 const { validateFloat } = require('../utils/validationHelpers');
 const { cacheMiddleware } = require('../middleware/caching');
+const { STROOPS_PER_XLM } = require('../constants');
 
 const createCampaignSchema = validateSchema({
   body: {
@@ -185,7 +186,11 @@ router.get('/:id/donations', asyncHandler(async (req, res, next) => {
       [id]
     );
 
-    res.status(200).json({ success: true, count: transactions.length, data: transactions });
+    const txData = transactions.map(tx => ({
+      ...tx,
+      amount: (tx.amount / STROOPS_PER_XLM).toFixed(7),
+    }));
+    res.status(200).json({ success: true, count: txData.length, data: txData });
   } catch (error) {
     next(error);
   }
@@ -544,7 +549,8 @@ router.post('/admin/:id/milestones/:milestoneId/verify', requireApiKey, checkPer
 /**
  * GET /campaigns/:id/progress
  * Returns real-time funding progress for a campaign (#779).
- * Response is cached for 30 seconds.
+ * raised is computed from SUM(amount) of confirmed donations linked to the campaign.
+ * Response is cached for 10 seconds.
  */
 router.get('/:id/progress', requireApiKey, cacheMiddleware('campaign-progress', 'public'), asyncHandler(async (req, res, next) => {
   try {
@@ -555,29 +561,39 @@ router.get('/:id/progress', requireApiKey, cacheMiddleware('campaign-progress', 
       return res.status(404).json({ success: false, error: 'Campaign not found' });
     }
 
-    const milestones = await Database.query(
-      'SELECT * FROM campaign_milestones WHERE campaign_id = ? ORDER BY target_amount ASC',
+    // Compute raised from SUM of confirmed donations (not current_amount)
+    const raisedRow = await Database.get(
+      `SELECT COALESCE(SUM(amount), 0) AS raised, MAX(timestamp) AS lastDonationAt
+       FROM transactions
+       WHERE campaign_id = ? AND status = 'completed' AND deleted_at IS NULL`,
       [campaignId]
     );
+    const raised = raisedRow ? Number(raisedRow.raised) : 0;
+    const lastDonationAt = raisedRow && raisedRow.lastDonationAt ? raisedRow.lastDonationAt : null;
 
-    const totalMilestones = milestones.length;
-    const verifiedMilestones = milestones.filter(m => m.status === 'verified').length;
-    const totalReleased = milestones
-      .filter(m => m.status === 'verified')
-      .reduce((sum, m) => sum + m.target_amount, 0);
-
-    const progressPct = campaign.goal_amount > 0
-      ? Math.min(100, Math.round((campaign.current_amount / campaign.goal_amount) * 100))
-      : 0;
-
-    // Count unique donors for this campaign
+    // Count unique donors (confirmed donations only)
     const donorCountRow = await Database.get(
       `SELECT COUNT(DISTINCT senderId) AS donorCount
        FROM transactions
-       WHERE campaign_id = ? AND deleted_at IS NULL`,
+       WHERE campaign_id = ? AND status = 'completed' AND deleted_at IS NULL`,
       [campaignId]
     );
     const donorCount = donorCountRow ? donorCountRow.donorCount : 0;
+
+    const goal = campaign.goal_amount;
+    const percentComplete = goal > 0
+      ? Math.min(100, parseFloat(((raised / goal) * 100).toFixed(4)))
+      : 0;
+
+    // Compute status: completed if raised >= goal; expired if past end date; else active
+    let status;
+    if (raised >= goal) {
+      status = 'completed';
+    } else if (campaign.end_date && new Date(campaign.end_date) < new Date()) {
+      status = 'expired';
+    } else {
+      status = 'active';
+    }
 
     // Calculate days remaining (null if no end_date or already ended)
     let daysRemaining = null;
@@ -590,21 +606,17 @@ router.get('/:id/progress', requireApiKey, cacheMiddleware('campaign-progress', 
       success: true,
       data: {
         campaignId,
-        name: campaign.name,
-        goalAmount: campaign.goal_amount,
-        raisedAmount: campaign.current_amount,
-        remaining: Math.max(0, campaign.goal_amount - campaign.current_amount),
-        percentage: progressPct,
+        goal: goal.toFixed(7),
+        raised: raised.toFixed(7),
+        percentComplete,
         donorCount,
         daysRemaining,
-        status: campaign.status,
-        milestones: {
-          total: totalMilestones,
-          verified: verifiedMilestones,
-          pending: totalMilestones - verifiedMilestones,
-          totalReleased,
-          items: milestones,
-        },
+        status,
+        lastDonationAt,
+        // backward-compatible aliases
+        goalAmount: goal,
+        raisedAmount: raised,
+        percentage: Math.round(percentComplete),
       },
     });
   } catch (error) {

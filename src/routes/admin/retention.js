@@ -14,6 +14,20 @@ const asyncHandler = require('../../utils/asyncHandler');
 const { payloadSizeLimiter, ENDPOINT_LIMITS } = require('../../middleware/payloadSizeLimiter');
 
 /**
+ * GET /admin/retention/preview
+ * Preview what would be purged without actually deleting.
+ * Returns counts and date ranges for each data type.
+ */
+router.get('/preview', checkPermission(PERMISSIONS.ADMIN_ALL), asyncHandler(async (req, res, next) => {
+  try {
+    const preview = await retentionService.preview();
+    res.json({ success: true, data: preview });
+  } catch (err) {
+    next(err);
+  }
+}));
+
+/**
  * GET /admin/retention/status
  * Returns current retention configuration and record counts per data type.
  */

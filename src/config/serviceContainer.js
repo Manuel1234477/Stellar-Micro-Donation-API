@@ -39,8 +39,12 @@ class ServiceContainer {
     // Initialize other services with their dependencies
     this.idempotencyService = IdempotencyService;
 
+    // Initialize Network Status Service early so scheduler can use it for health checks
+    this.networkStatusService = new NetworkStatusService(this.stellarService);
+
     this.recurringDonationScheduler = new RecurringDonationScheduler.Class(
-      this.stellarService
+      this.stellarService,
+      this.networkStatusService
     );
 
     this.transactionReconciliationService = new TransactionReconciliationService(
@@ -63,8 +67,7 @@ class ServiceContainer {
       this.stellarService
     );
 
-    // Initialize Network Status Service
-    this.networkStatusService = new NetworkStatusService(this.stellarService);
+    // networkStatusService was initialized earlier (before the scheduler)
 
     // Initialize routing repositories and DonationRouter
     this.recipientPoolRepo = new RecipientPoolRepository();

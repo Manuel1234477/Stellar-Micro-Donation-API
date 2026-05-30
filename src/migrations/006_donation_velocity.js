@@ -35,3 +35,9 @@ exports.up = async (db) => {
     )
   `);
 };
+
+exports.down = async (db) => {
+  await db.run('DROP INDEX IF EXISTS idx_velocity_donor_recipient_window');
+  await db.run('DROP TABLE IF EXISTS recipient_velocity_limits');
+  await db.run('DROP TABLE IF EXISTS donation_velocity');
+};

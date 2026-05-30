@@ -31,16 +31,12 @@ exports.up = async (db) => {
   // Add notes column if missing
   try {
     await db.run(`ALTER TABLE refunds ADD COLUMN notes TEXT`);
-  } catch (err) {
-    if (!err.message.includes('duplicate column name')) throw err;
-  }
+  } catch (_) { /* column already exists */ }
 
   // Add idempotency_key column if missing
   try {
     await db.run(`ALTER TABLE refunds ADD COLUMN idempotency_key TEXT`);
-  } catch (err) {
-    if (!err.message.includes('duplicate column name')) throw err;
-  }
+  } catch (_) { /* column already exists */ }
 
   await db.run(`CREATE INDEX IF NOT EXISTS idx_refunds_original_donation_id ON refunds(original_donation_id)`);
   await db.run(`CREATE INDEX IF NOT EXISTS idx_refunds_idempotency_key ON refunds(idempotency_key)`);

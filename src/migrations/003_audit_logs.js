@@ -29,3 +29,13 @@ exports.up = async (db) => {
   await db.run(`CREATE INDEX IF NOT EXISTS idx_audit_logs_userId ON audit_logs(userId)`);
   await db.run(`CREATE INDEX IF NOT EXISTS idx_audit_logs_requestId ON audit_logs(requestId)`);
 };
+
+exports.down = async (db) => {
+  await db.run('DROP INDEX IF EXISTS idx_audit_logs_timestamp');
+  await db.run('DROP INDEX IF EXISTS idx_audit_logs_category');
+  await db.run('DROP INDEX IF EXISTS idx_audit_logs_action');
+  await db.run('DROP INDEX IF EXISTS idx_audit_logs_severity');
+  await db.run('DROP INDEX IF EXISTS idx_audit_logs_userId');
+  await db.run('DROP INDEX IF EXISTS idx_audit_logs_requestId');
+  await db.run('DROP TABLE IF EXISTS audit_logs');
+};

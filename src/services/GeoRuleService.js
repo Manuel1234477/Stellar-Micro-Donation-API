@@ -77,6 +77,8 @@ async function ensureTable() {
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         countryCode TEXT NOT NULL,
         ruleType TEXT NOT NULL CHECK(ruleType IN ('allow', 'block')),
+        active INTEGER NOT NULL DEFAULT 1,
+        description TEXT,
         createdAt DATETIME DEFAULT CURRENT_TIMESTAMP,
         createdBy TEXT,
         UNIQUE(countryCode, ruleType)
@@ -86,6 +88,18 @@ async function ensureTable() {
     await Database.run(
       'CREATE INDEX IF NOT EXISTS idx_geo_rules_type_country ON geo_rules(ruleType, countryCode)'
     );
+
+    // Add active and description columns to existing tables created before this migration
+    for (const col of [
+      'ALTER TABLE geo_rules ADD COLUMN active INTEGER NOT NULL DEFAULT 1',
+      'ALTER TABLE geo_rules ADD COLUMN description TEXT',
+    ]) {
+      try {
+        await Database.run(col);
+      } catch (_) {
+        // Column already exists — ignore
+      }
+    }
   })();
 
   try {
@@ -122,7 +136,7 @@ async function loadRules(options = {}) {
   try {
     await ensureTable();
     const rows = await Database.query(
-      `SELECT id, countryCode, ruleType, createdAt, createdBy
+      `SELECT id, countryCode, ruleType, active, description, createdAt, createdBy
        FROM geo_rules
        ORDER BY countryCode ASC, ruleType ASC, id ASC`,
       []
@@ -132,6 +146,7 @@ async function loadRules(options = {}) {
       ...row,
       countryCode: normalizeCountryCode(row.countryCode),
       ruleType: row.ruleType,
+      active: row.active !== 0,
       source: 'database',
     }));
 
@@ -229,7 +244,7 @@ async function listActiveRules(options = {}) {
  * @param {string|null} [createdBy=null] - Actor creating the rule.
  * @returns {Promise<Object>} Created rule row.
  */
-async function addRule(ruleType, countryCode, createdBy = null) {
+async function addRule(ruleType, countryCode, createdBy = null, description = null) {
   const normalizedType = String(ruleType || '').trim().toLowerCase();
   const normalizedCountryCode = normalizeCountryCode(countryCode);
 
@@ -244,14 +259,14 @@ async function addRule(ruleType, countryCode, createdBy = null) {
   await ensureTable();
 
   const result = await Database.run(
-    'INSERT INTO geo_rules (countryCode, ruleType, createdBy) VALUES (?, ?, ?)',
-    [normalizedCountryCode, normalizedType, createdBy]
+    'INSERT INTO geo_rules (countryCode, ruleType, createdBy, description) VALUES (?, ?, ?, ?)',
+    [normalizedCountryCode, normalizedType, createdBy, description || null]
   );
 
   invalidateCache();
 
   const row = await Database.get(
-    `SELECT id, countryCode, ruleType, createdAt, createdBy
+    `SELECT id, countryCode, ruleType, active, description, createdAt, createdBy
      FROM geo_rules
      WHERE id = ?`,
     [result.id]
@@ -260,8 +275,85 @@ async function addRule(ruleType, countryCode, createdBy = null) {
   return {
     ...row,
     countryCode: normalizeCountryCode(row.countryCode),
+    active: row.active !== 0,
     source: 'database',
   };
+}
+
+/**
+ * Fetch a single geo rule by its primary key.
+ *
+ * @param {number} id - Rule ID.
+ * @returns {Promise<Object|null>} Rule row or null.
+ */
+async function getById(id) {
+  await ensureTable();
+  const row = await Database.get(
+    `SELECT id, countryCode, ruleType, active, description, createdAt, createdBy
+     FROM geo_rules WHERE id = ?`,
+    [id]
+  );
+  if (!row) return null;
+  return {
+    ...row,
+    countryCode: normalizeCountryCode(row.countryCode),
+    active: row.active !== 0,
+    source: 'database',
+  };
+}
+
+/**
+ * Update a geo rule by ID (supports toggling active and changing description).
+ *
+ * @param {number} id - Rule ID.
+ * @param {{ active?: boolean, description?: string }} updates - Fields to update.
+ * @returns {Promise<Object|null>} Updated rule or null if not found.
+ */
+async function updateById(id, updates = {}) {
+  await ensureTable();
+
+  const setClauses = [];
+  const params = [];
+
+  if (typeof updates.active === 'boolean') {
+    setClauses.push('active = ?');
+    params.push(updates.active ? 1 : 0);
+  }
+
+  if (Object.prototype.hasOwnProperty.call(updates, 'description')) {
+    setClauses.push('description = ?');
+    params.push(updates.description !== undefined ? updates.description : null);
+  }
+
+  if (setClauses.length === 0) {
+    return getById(id);
+  }
+
+  params.push(id);
+  const result = await Database.run(
+    `UPDATE geo_rules SET ${setClauses.join(', ')} WHERE id = ?`,
+    params
+  );
+
+  if (!result.changes) return null;
+
+  invalidateCache();
+  return getById(id);
+}
+
+/**
+ * Delete a geo rule by its primary key.
+ *
+ * @param {number} id - Rule ID.
+ * @returns {Promise<number>} Number of deleted rows.
+ */
+async function removeById(id) {
+  await ensureTable();
+  const result = await Database.run('DELETE FROM geo_rules WHERE id = ?', [id]);
+  if (result.changes) {
+    invalidateCache();
+  }
+  return result.changes || 0;
 }
 
 /**
@@ -302,11 +394,14 @@ module.exports = {
   addRule,
   ensureTable,
   getCachedRules,
+  getById,
   getRuleSets,
   invalidateCache,
   isValidCountryCode,
   listActiveRules,
   loadRules,
   normalizeCountryCode,
+  removeById,
   removeRule,
+  updateById,
 };

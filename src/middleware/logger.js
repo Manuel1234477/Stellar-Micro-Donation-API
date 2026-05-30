@@ -5,6 +5,7 @@ const path = require('path');
 // Internal modules
 const log = require('../utils/log');
 const config = require('../config');
+const { maskSensitiveData } = require('../utils/dataMasker');
 
 /**
  * Request/Response Auditing Middleware
@@ -15,13 +16,6 @@ class Logger {
   constructor(options = {}) {
     this.logToFile = options.logToFile || false;
     this.logDir = options.logDir || path.join(__dirname, '../../logs');
-
-    // List of fields to be redacted during the sanitization process
-    this.sensitiveFields = options.sensitiveFields || [
-      'password', 'secretKey', 'secret', 'token', 'authorization',
-      'apiKey', 'api_key', 'api-key', 'privateKey', 'private_key',
-      'creditCard', 'credit_card', 'ssn', 'social_security'
-    ];
 
     if (this.logToFile) {
       this.ensureLogDirectory();
@@ -40,38 +34,10 @@ class Logger {
 
   /**
    * Intent: Prevent sensitive data (like Stellar Private Keys) from leaking into logs.
-   * Flow:
-   * 1. Recursively traverses objects and arrays.
-   * 2. Matches keys against the 'sensitiveFields' blacklist (case-insensitive).
-   * 3. Replaces matched values with '[REDACTED]'.
+   * Flow: Uses the canonical dataMasker utility for consistent masking across all loggers.
    */
   sanitize(obj) {
-    if (!obj || typeof obj !== 'object') {
-      return obj;
-    }
-
-    if (Array.isArray(obj)) {
-      return obj.map(item => this.sanitize(item));
-    }
-
-    const sanitized = {};
-    for (const [key, value] of Object.entries(obj)) {
-      const lowerKey = key.toLowerCase();
-
-      const isSensitive = this.sensitiveFields.some(field =>
-        lowerKey.includes(field.toLowerCase())
-      );
-
-      if (isSensitive) {
-        sanitized[key] = '[REDACTED]';
-      } else if (typeof value === 'object' && value !== null) {
-        sanitized[key] = this.sanitize(value);
-      } else {
-        sanitized[key] = value;
-      }
-    }
-
-    return sanitized;
+    return maskSensitiveData(obj);
   }
 
   /**
@@ -196,7 +162,14 @@ class Logger {
    * 6. Output: Dispatches the aggregated data to the console and file system.
    */
   middleware() {
+    const PROBE_PATHS = ['/health/live', '/health/ready'];
     return (req, res, next) => {
+      // Exclude Kubernetes liveness/readiness probes from request logging
+      const path = req.path || req.url;
+      if (PROBE_PATHS.some(p => path === p || path.startsWith(p + '/'))) {
+        return next();
+      }
+
       const startTime = Date.now();
       const timestamp = new Date().toISOString();
       const requestId = req.id;

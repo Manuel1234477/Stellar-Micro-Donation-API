@@ -207,6 +207,62 @@ describe('Support for Donation Notes and Tags', () => {
       const customStats = data.find(s => s.tag === 'custom1');
       expect(customStats.totalDonated).toBeCloseTo(100);
     });
+
+    test('GET /donations/stats/by-tag returns aggregated stats by tag', async () => {
+      const d = new Date();
+      const startDate = new Date(d.setMonth(d.getMonth() - 1)).toISOString();
+      const endDate = new Date(d.setMonth(d.getMonth() + 2)).toISOString();
+
+      const response = await request(app)
+        .get(`/donations/stats/by-tag?startDate=${startDate}&endDate=${endDate}`)
+        .set('X-API-Key', 'test-key-1');
+
+      expect(response.status).toBe(200);
+      const data = response.body.data;
+      
+      const educationStats = data.find(s => s.tag === 'education');
+      expect(educationStats.totalDonated).toBeCloseTo(150);
+      expect(educationStats.donationCount).toBe(2);
+
+      const healthStats = data.find(s => s.tag === 'health');
+      expect(healthStats.totalDonated).toBeCloseTo(30);
+
+      const customStats = data.find(s => s.tag === 'custom1');
+      expect(customStats.totalDonated).toBeCloseTo(100);
+    });
+
+    test('GET /donations/stats/by-tag aggregates transaction tags directly', async () => {
+      Transaction._clearAllData();
+      const now = new Date();
+      const timestamp = now.toISOString();
+      Transaction.create({ id: 'tx1', amount: '50', donor: 'donor-a', recipient: 'recipient-a', status: 'pending', tags: ['education'], timestamp });
+      Transaction.create({ id: 'tx2', amount: '100', donor: 'donor-b', recipient: 'recipient-a', status: 'pending', tags: ['education', 'custom1'], timestamp });
+      Transaction.create({ id: 'tx3', amount: '30', donor: 'donor-c', recipient: 'recipient-a', status: 'pending', tags: ['health'], timestamp });
+
+      const startDate = new Date(now.getTime() - 60000).toISOString();
+      const endDate = new Date(now.getTime() + 60000).toISOString();
+
+      const response = await request(app)
+        .get(`/donations/stats/by-tag?startDate=${startDate}&endDate=${endDate}`)
+        .set('X-API-Key', 'test-key-1');
+
+      expect(response.status).toBe(200);
+      const data = response.body.data;
+      expect(data).toEqual(expect.any(Array));
+
+      const educationStats = data.find(s => s.tag === 'education');
+      expect(educationStats).toBeDefined();
+      expect(educationStats.totalDonated).toBeCloseTo(150);
+      expect(educationStats.donationCount).toBe(2);
+
+      const healthStats = data.find(s => s.tag === 'health');
+      expect(healthStats).toBeDefined();
+      expect(healthStats.totalDonated).toBeCloseTo(30);
+
+      const customStats = data.find(s => s.tag === 'custom1');
+      expect(customStats).toBeDefined();
+      expect(customStats.totalDonated).toBeCloseTo(100);
+    });
   });
 
   describe('GET /tags Endpoint', () => {

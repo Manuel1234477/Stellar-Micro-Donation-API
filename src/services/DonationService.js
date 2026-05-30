@@ -12,6 +12,7 @@
 const Database = require('../utils/database');
 const Transaction = require('../routes/models/transaction');
 const encryption = require('../utils/encryption');
+const { STROOPS_PER_XLM } = require('../constants');
 const donationValidator = require('../utils/donationValidator');
 const memoValidator = require('../utils/memoValidator');
 const { calculateAnalyticsFee } = require('../utils/feeCalculator');
@@ -19,7 +20,6 @@ const { sanitizeIdentifier, sanitizeMemo } = require('../utils/sanitizer');
 const { generatePseudonymousId } = require('../utils/anonymization');
 const { TRANSACTION_STATES } = require('../utils/transactionStateMachine');
 const { ValidationError, NotFoundError, BusinessLogicError, ERROR_CODES } = require('../utils/errors');
-const { withTimeout } = require('../utils/timeoutHandler');
 const { PREDEFINED_TAGS } = require('../constants/tags');
 const { paginateCollection } = require('../utils/pagination');
 const { checkConfirmations } = require('../utils/confirmationChecker');
@@ -46,9 +46,50 @@ const DEFAULT_DESTINATION_ASSET = {
   issuer: null,
 };
 
+const RECIPIENT_ACCOUNT_CACHE_TTL_MS = 60 * 1000;
+const _recipientAccountCache = new Map();
+
 class DonationService {
   constructor(stellarService) {
     this.stellarService = stellarService;
+  }
+
+  /**
+   * Pre-flight check: verify the recipient Stellar account exists.
+   * Result is cached for 60 s per public key.
+   * Skipped when MOCK_STELLAR=true.
+   *
+   * @param {string} publicKey - Stellar public key (G…)
+   * @throws {BusinessLogicError} When account does not exist on the network.
+   */
+  async checkRecipientAccountExists(publicKey) {
+    if (process.env.MOCK_STELLAR === 'true') {
+      return;
+    }
+
+    const now = Date.now();
+    const cached = _recipientAccountCache.get(publicKey);
+    if (cached && now < cached.expiresAt) {
+      if (!cached.exists) {
+        throw new BusinessLogicError(
+          ERROR_CODES.RECIPIENT_ACCOUNT_NOT_FOUND,
+          'Recipient account does not exist on the Stellar network. The recipient must fund their account with at least 1 XLM before receiving donations.'
+        );
+      }
+      return;
+    }
+
+    const info = await this.stellarService.getAccountInfo(publicKey);
+    const exists = !info.notFound && !info.error;
+
+    _recipientAccountCache.set(publicKey, { exists, expiresAt: now + RECIPIENT_ACCOUNT_CACHE_TTL_MS });
+
+    if (!exists) {
+      throw new BusinessLogicError(
+        ERROR_CODES.RECIPIENT_ACCOUNT_NOT_FOUND,
+        'Recipient account does not exist on the Stellar network. The recipient must fund their account with at least 1 XLM before receiving donations.'
+      );
+    }
   }
 
   /**
@@ -56,9 +97,64 @@ class DonationService {
    * @param {string} transactionHash - Stellar transaction hash
    * @returns {Promise<Object>} Verification result
    */
-  async verifyTransaction(transactionHash) {
+  async verifyTransaction(transactionHash, donationId) {
     if (!transactionHash) {
       throw new ValidationError('Transaction hash is required', null, ERROR_CODES.INVALID_REQUEST);
+    }
+
+    // When a donationId is supplied, cross-check before hitting the network
+    if (donationId) {
+      const donation = this.getDonationById(donationId);
+
+      // 1. Compare the submitted hash against the stored hash
+      const storedHash = donation.stellarTxId || donation.transactionHash || null;
+      if (storedHash && storedHash !== transactionHash) {
+        throw new ValidationError(
+          'Transaction hash does not match the donation record',
+          { donationId, storedHash, submittedHash: transactionHash },
+          'VERIFICATION_FAILED'
+        );
+      }
+
+      // 2. Fetch on-chain data and compare amount / parties
+      const result = await this.stellarService.verifyTransaction(transactionHash);
+      const onChain = result.transaction;
+
+      if (onChain) {
+        // Compare amount (tolerant of string/number and rounding to 7 decimals)
+        const onChainAmount = parseFloat(onChain.amount);
+        const donationAmount = parseFloat(donation.amount);
+        if (!isNaN(onChainAmount) && !isNaN(donationAmount)) {
+          const diff = Math.abs(onChainAmount - donationAmount);
+          if (diff > 0.0000001) {
+            throw new ValidationError(
+              `Transaction amount mismatch: on-chain ${onChainAmount}, donation record ${donationAmount}`,
+              { donationId, onChainAmount, donationAmount },
+              'VERIFICATION_FAILED'
+            );
+          }
+        }
+
+        // Compare sender (source)
+        if (onChain.source && donation.donor && onChain.source !== donation.donor) {
+          throw new ValidationError(
+            `Transaction sender mismatch: on-chain ${onChain.source}, donation record ${donation.donor}`,
+            { donationId, onChainSource: onChain.source, donationDonor: donation.donor },
+            'VERIFICATION_FAILED'
+          );
+        }
+
+        // Compare recipient (destination)
+        if (onChain.destination && donation.recipient && onChain.destination !== donation.recipient) {
+          throw new ValidationError(
+            `Transaction recipient mismatch: on-chain ${onChain.destination}, donation record ${donation.recipient}`,
+            { donationId, onChainDestination: onChain.destination, donationRecipient: donation.recipient },
+            'VERIFICATION_FAILED'
+          );
+        }
+      }
+
+      return result;
     }
 
     return await this.stellarService.verifyTransaction(transactionHash);
@@ -183,10 +279,11 @@ class DonationService {
       ledger: stellarResult.ledger
     });
 
-    // Record in database with sanitized memo
+    // Record in database with sanitized memo — amount stored as integer stroops
+    const amountStroops = Math.round(parseFloat(amount) * STROOPS_PER_XLM);
     const dbResult = await Database.run(
       'INSERT INTO transactions (senderId, receiverId, amount, memo, notes, tags, timestamp, idempotencyKey, stellar_tx_id) VALUES (?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, ?, ?)',
-      [senderId, receiverId, amount, sanitizedMemo, notes || null, JSON.stringify(tags || []), idempotencyKey, stellarResult.transactionId]
+      [senderId, receiverId, amountStroops, sanitizedMemo, notes || null, JSON.stringify(tags || []), idempotencyKey, stellarResult.transactionId]
     );
 
     // Emit donation.created to trigger cache invalidation and other listeners (non-blocking)
@@ -559,6 +656,7 @@ class DonationService {
     memoEnvelope = null,
     encryptionMetadata = null,
     sdgCategories = [],
+    correlationId = null,
   }) {
     // Sanitize identifiers
     const rawDonor = donor ? sanitizeIdentifier(donor) : 'Anonymous';
@@ -657,7 +755,13 @@ class DonationService {
     let conversionRate = null;
 
     if (sourceSecret && sanitizedRecipient) {
+      await this.checkRecipientAccountExists(sanitizedRecipient);
       if (!sourceAssetProvided) {
+        // Set correlation ID on StellarService for this request
+        if (correlationId) {
+          this.stellarService.setCorrelationId(correlationId);
+        }
+        
         stellarResult = await this.stellarService.sendDonation({
           sourceSecret,
           destinationPublic: sanitizedRecipient,
@@ -669,6 +773,11 @@ class DonationService {
         });
         paymentMethod = 'direct';
       } else {
+        // Set correlation ID on StellarService for this request
+        if (correlationId) {
+          this.stellarService.setCorrelationId(correlationId);
+        }
+        
         const estimate = await this.stellarService.discoverBestPath({
           sourceAsset: normalizedSourceAsset,
           sourceAmount: normalizedSourceAmount.toString(),
@@ -1252,8 +1361,14 @@ class DonationService {
     const sortBy = filters.sortBy || 'timestamp';
     const order = filters.order || 'desc';
     const useCustomSort = sortBy !== 'timestamp' || order !== 'desc';
+    
+    // Get all transactions and apply filters
     const filteredTransactions = this.applyFilters(Transaction.getAll(), filters);
+    
+    // Get total count before pagination
+    const totalCount = filteredTransactions.length;
 
+    // Use cursor-based pagination with proper database semantics
     let result = paginateCollection(filteredTransactions, {
       ...pagination,
       timestampField: 'timestamp',
@@ -1276,6 +1391,7 @@ class DonationService {
 
     return {
       ...result,
+      totalCount,
       appliedFilters,
       resultCount: result.totalCount,
     };
@@ -1492,9 +1608,10 @@ class DonationService {
    * @throws {BusinessLogicError} If refund fails
    */
   async refundDonation(donationId, { reason, notes, idempotencyKey, recipientSecret, requestId }) {
-    const { BusinessLogicError, DuplicateError } = require('../utils/errors');
-    const config = require('../config');
+    const StellarSdk = require('stellar-sdk');
+    const { BusinessLogicError, DuplicateError, ValidationError } = require('../utils/errors');
     const AuditLogService = require('./AuditLogService');
+    const WebhookService = require('./WebhookService');
 
     log.debug('DONATION_SERVICE', 'Processing refund request', {
       requestId,
@@ -1525,7 +1642,7 @@ class DonationService {
       }
     }
 
-    // Check if donation is already refunded
+    // Double-refund prevention: check if donation is already refunded
     if (donation.status === 'refunded') {
       throw new DuplicateError(
         'Donation has already been refunded',
@@ -1542,31 +1659,40 @@ class DonationService {
       );
     }
 
-    // Check refund eligibility window
-    const donationTimestamp = new Date(donation.timestamp);
-    const now = new Date();
-    const daysSinceDonation = (now - donationTimestamp) / (1000 * 60 * 60 * 24);
-    const eligibilityWindowDays = config.donations.refundEligibilityWindowDays;
+    // Recipient verification: derive public key from recipientSecret and compare to donation.recipient
+    if (recipientSecret) {
+      let derivedPublicKey;
+      try {
+        derivedPublicKey = StellarSdk.Keypair.fromSecret(recipientSecret).publicKey();
+      } catch {
+        throw new ValidationError('recipientSecret is not a valid Stellar secret key');
+      }
+      if (derivedPublicKey !== donation.recipient) {
+        throw new ValidationError('recipientSecret does not match the original donation recipient');
+      }
+    }
 
-    if (daysSinceDonation > eligibilityWindowDays) {
+    // Check refund eligibility window (hours-based, default 24)
+    const refundWindowHours = parseInt(process.env.REFUND_WINDOW_HOURS || '24', 10);
+    const donationTimestamp = new Date(donation.timestamp);
+    const hoursSinceDonation = (Date.now() - donationTimestamp.getTime()) / (1000 * 60 * 60);
+
+    if (hoursSinceDonation > refundWindowHours) {
       throw new BusinessLogicError(
-        ERROR_CODES.TRANSACTION_FAILED,
-        `Refund window has expired. Donations can only be refunded within ${eligibilityWindowDays} days of creation.`,
+        'REFUND_WINDOW_EXPIRED',
+        `Refund window has expired. Donations can only be refunded within ${refundWindowHours} hours of creation.`,
         {
           donationId,
           donationDate: donation.timestamp,
-          daysSinceDonation: Math.floor(daysSinceDonation),
-          eligibilityWindowDays
+          hoursSinceDonation: Math.floor(hoursSinceDonation),
+          refundWindowHours
         }
       );
     }
 
     // Determine the secret key to use for signing the refund transaction.
-    // If the caller provides recipientSecret (over HTTPS), use it directly and never log it.
-    // Otherwise fall back to the encrypted secret stored in the DB.
     let secret;
     if (recipientSecret) {
-      // Use caller-provided key in-memory only — never log this value
       secret = recipientSecret;
     } else {
       const sender = await this.getUserById(donation.senderId || 1, 'Sender');
@@ -1579,18 +1705,44 @@ class DonationService {
       donationId,
       amount: donation.amount,
       originalTxId: donation.stellarTxId
-      // NOTE: secret key is intentionally NOT logged
     });
 
-    // Create reverse Stellar transaction
-    const reverseResult = await this.stellarService.sendDonation({
-      sourceSecret: secret,
-      destinationPublic: donation.donor,
-      amount: donation.amount,
-      memo: `REFUND:${donationId}`
-    });
+    // Record refund as pending before submitting to Stellar
+    const pendingRecord = await Database.run(
+      `INSERT INTO refunds (
+        original_donation_id, reverse_transaction_id, amount, reason, notes,
+        idempotency_key, refunded_at, stellar_ledger, status
+      ) VALUES (?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, ?, ?)`,
+      [
+        donationId,
+        `pending_${Date.now()}`,
+        donation.amount,
+        reason || null,
+        notes || null,
+        idempotencyKey || null,
+        null,
+        'pending'
+      ]
+    );
 
-    // Immediately discard the secret from local scope
+    // Update status to processing
+    await Database.run(`UPDATE refunds SET status = 'processing' WHERE id = ?`, [pendingRecord.id]);
+
+    let reverseResult;
+    try {
+      reverseResult = await this.stellarService.sendDonation({
+        sourceSecret: secret,
+        destinationPublic: donation.donor,
+        amount: donation.amount,
+        memo: `REFUND:${donationId}`
+      });
+    } catch (stellarErr) {
+      await Database.run(`UPDATE refunds SET status = 'failed' WHERE id = ?`, [pendingRecord.id]);
+      secret = null;
+      throw stellarErr;
+    }
+
+    // Immediately discard the secret
     secret = null;
 
     log.debug('DONATION_SERVICE', 'Reverse transaction successful', {
@@ -1599,45 +1751,42 @@ class DonationService {
       ledger: reverseResult.ledger
     });
 
-    // Record refund in database
-    const refundRecord = await Database.run(
-      `INSERT INTO refunds (
-        original_donation_id, reverse_transaction_id, amount, reason, notes,
-        idempotency_key, refunded_at, stellar_ledger, status
-      ) VALUES (?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, ?, ?)`,
-      [
-        donationId,
-        reverseResult.transactionId,
-        donation.amount,
-        reason || 'No reason provided',
-        notes || null,
-        idempotencyKey || null,
-        reverseResult.ledger,
-        'completed'
-      ]
+    // Update refund record to completed
+    await Database.run(
+      `UPDATE refunds SET reverse_transaction_id = ?, stellar_ledger = ?, status = 'completed' WHERE id = ?`,
+      [reverseResult.transactionId, reverseResult.ledger, pendingRecord.id]
     );
 
     // Update original donation status to refunded
     Transaction.updateStatus(donationId, 'refunded', {
-      refundId: refundRecord.id,
+      refundId: pendingRecord.id,
       reverseTxId: reverseResult.transactionId,
       reverseLedger: reverseResult.ledger,
       refundedAt: new Date().toISOString()
     });
 
+    // Emit donation.refunded webhook event
+    WebhookService.deliver('donation.refunded', {
+      donationId,
+      refundId: pendingRecord.id,
+      amount: donation.amount,
+      reverseTxId: reverseResult.transactionId,
+      reason: reason || null,
+      refundedAt: new Date().toISOString(),
+    }).catch(() => {});
+
     // Log refund in audit trail
     await AuditLogService.log({
       category: AuditLogService.CATEGORY.FINANCIAL_OPERATION,
-      action: AuditLogService.ACTION.DONATION_CREATED, // Reusing for refund tracking
+      action: AuditLogService.ACTION.DONATION_CREATED,
       severity: AuditLogService.SEVERITY.MEDIUM,
       result: 'SUCCESS',
-      userId: sender.id,
       requestId,
       resource: `donation:${donationId}`,
       details: {
         operation: 'refund',
         originalDonationId: donationId,
-        refundId: refundRecord.id,
+        refundId: pendingRecord.id,
         amount: donation.amount,
         reason,
         reverseTxId: reverseResult.transactionId,
@@ -1648,12 +1797,12 @@ class DonationService {
     log.info('DONATION_SERVICE', 'Refund processed successfully', {
       requestId,
       donationId,
-      refundId: refundRecord.id,
+      refundId: pendingRecord.id,
       reverseTxId: reverseResult.transactionId
     });
 
     return {
-      refundId: refundRecord.id,
+      refundId: pendingRecord.id,
       originalDonationId: donationId,
       reverseTxId: reverseResult.transactionId,
       reverseLedger: reverseResult.ledger,

@@ -7,10 +7,18 @@ const {
   maskSensitiveData,
   maskError,
   maskValue,
+  maskStellarSecretsInString,
   isSensitiveKey,
   isSensitiveValue,
   addSensitivePatterns,
+  STELLAR_SECRET_REDACTED,
 } = require('../../src/utils/dataMasker');
+
+// 56-char StrKey (S + 55 base32 chars); matches /S[A-Z2-7]{55}/g from issue #938
+const STELLAR_SECRET_EXAMPLE =
+  'SBZVMB3SEPB2ENHQVEQ5MJQXB2QZUQPQQ6QQZQPQQ6QQZQPQQ6QQZQPQ';
+const STELLAR_PUBLIC_EXAMPLE =
+  'GBZVMB3SEPB2ENHQVEQ5MJQXB2QZUQPQQ6QQZQPQQ6QQZQPQQ6QQZQPQ';
 
 describe('Data Masker', () => {
   describe('isSensitiveKey', () => {
@@ -138,14 +146,72 @@ describe('Data Masker', () => {
 
     it('should mask Stellar secret keys in values', () => {
       const data = {
-        publicKey: 'GBZVMB3SEPB2ENHQVEQ5MJQXB2QZUQPQQ6QQZQPQQ6QQZQPQQ6QQZQPQ',
+        publicKey: STELLAR_PUBLIC_EXAMPLE,
         secretKey: 'SBZVMB3SEPB2ENHQVEQ5MJQXB2QZUQPQQ6QQZQPQQ6QQZQPQQ6QQZQPQ',
+        memo: `key is ${STELLAR_SECRET_EXAMPLE} here`,
       };
 
       const masked = maskSensitiveData(data);
 
-      expect(masked.publicKey).toBe('GBZVMB3SEPB2ENHQVEQ5MJQXB2QZUQPQQ6QQZQPQQ6QQZQPQQ6QQZQPQ');
+      expect(masked.publicKey).toBe(STELLAR_PUBLIC_EXAMPLE);
       expect(masked.secretKey).toBe('[REDACTED]');
+      expect(masked.memo).not.toContain(STELLAR_SECRET_EXAMPLE);
+      expect(masked.memo).toContain(STELLAR_SECRET_REDACTED);
+    });
+
+    it('should mask Stellar secrets in deeply nested non-sensitive fields (#938)', () => {
+      const data = {
+        payload: {
+          nested: {
+            memo: `key is ${STELLAR_SECRET_EXAMPLE} here`,
+          },
+        },
+      };
+
+      const masked = maskSensitiveData(data);
+
+      expect(masked.payload.nested.memo).not.toContain(STELLAR_SECRET_EXAMPLE);
+      expect(masked.payload.nested.memo).toContain(STELLAR_SECRET_REDACTED);
+    });
+
+    it('should not mask Stellar public keys (G…) in string values', () => {
+      const data = {
+        label: `pay ${STELLAR_PUBLIC_EXAMPLE}`,
+        nested: [{ destination: STELLAR_PUBLIC_EXAMPLE }],
+      };
+
+      const masked = maskSensitiveData(data);
+
+      expect(masked.label).toBe(`pay ${STELLAR_PUBLIC_EXAMPLE}`);
+      expect(masked.nested[0].destination).toBe(STELLAR_PUBLIC_EXAMPLE);
+    });
+
+    it('should use [STELLAR_SECRET_REDACTED] for pattern-based full-string secrets', () => {
+      const masked = maskSensitiveData({
+        note: STELLAR_SECRET_EXAMPLE,
+      });
+      expect(masked.note).toBe(STELLAR_SECRET_REDACTED);
+    });
+
+    it('maskStellarSecretsInString masks embedded secrets only', () => {
+      const input = `test with key ${STELLAR_SECRET_EXAMPLE} end`;
+      const out = maskStellarSecretsInString(input);
+      expect(out).toBe(`test with key ${STELLAR_SECRET_REDACTED} end`);
+    });
+
+    it('masks large objects within performance budget (#938)', () => {
+      const data = {};
+      for (let i = 0; i < 1000; i += 1) {
+        data[`field_${i}`] = `memo ${i} ${STELLAR_SECRET_EXAMPLE}`;
+      }
+
+      const start = performance.now();
+      const masked = maskSensitiveData(data);
+      const elapsed = performance.now() - start;
+
+      expect(masked.field_0).not.toContain(STELLAR_SECRET_EXAMPLE);
+      expect(masked.field_999).toContain(STELLAR_SECRET_REDACTED);
+      expect(elapsed).toBeLessThan(10);
     });
 
     it('should handle request objects when headers', () => {
@@ -229,7 +295,7 @@ describe('Data Masker', () => {
       const masked = maskError(error);
 
       expect(masked.stack).not.toContain('SBZVMB3SEPB2ENHQVEQ5MJQXB2QZUQPQQ6QQZQPQQ6QQZQPQQ6QQZQPQ');
-      expect(masked.stack).toContain('[REDACTED]');
+      expect(masked.stack).toContain(STELLAR_SECRET_REDACTED);
     });
   });
 
@@ -246,7 +312,7 @@ describe('Data Masker', () => {
     it('should mask donation request when secret key', () => {
       const donationRequest = {
         amount: '100.50',
-        destination: 'GBZVMB3SEPB2ENHQVEQ5MJQXB2QZUQPQQ6QQZQPQQ6QQZQPQQ6QQZQPQ',
+        destination: STELLAR_PUBLIC_EXAMPLE,
         senderSecret: 'SBZVMB3SEPB2ENHQVEQ5MJQXB2QZUQPQQ6QQZQPQQ6QQZQPQQ6QQZQPQ',
         memo: 'Donation for charity',
       };
@@ -254,9 +320,22 @@ describe('Data Masker', () => {
       const masked = maskSensitiveData(donationRequest);
 
       expect(masked.amount).toBe('100.50');
-      expect(masked.destination).toBe('GBZVMB3SEPB2ENHQVEQ5MJQXB2QZUQPQQ6QQZQPQQ6QQZQPQQ6QQZQPQ');
+      expect(masked.destination).toBe(STELLAR_PUBLIC_EXAMPLE);
       expect(masked.senderSecret).toBe('[REDACTED]');
       expect(masked.memo).toBe('Donation for charity');
+    });
+
+    it('should mask secret embedded in memo on donation request (#938)', () => {
+      const donationRequest = {
+        amount: '100.50',
+        destination: STELLAR_PUBLIC_EXAMPLE,
+        memo: `test with key ${STELLAR_SECRET_EXAMPLE}`,
+      };
+
+      const masked = maskSensitiveData(donationRequest);
+
+      expect(masked.memo).not.toContain(STELLAR_SECRET_EXAMPLE);
+      expect(masked.memo).toContain(STELLAR_SECRET_REDACTED);
     });
 
     it('should mask API authentication headers', () => {

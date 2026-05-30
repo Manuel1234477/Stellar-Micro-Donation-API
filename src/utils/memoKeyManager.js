@@ -88,19 +88,40 @@ function initializeKeyStorage() {
 
   if (!index) {
     log.info('MEMO_KEY_MANAGER', 'Initializing key storage with version 1');
-    const keyMaterial = crypto.randomBytes(32).toString('hex');
+    const key = crypto.randomBytes(32).toString('hex');
     index = {
       activeVersion: 1,
       keys: [
         {
           version: 1,
-          keyMaterial,
+          key,
           createdAt: new Date().toISOString(),
-          status: 'active',
+          retiredAt: null,
         },
       ],
     };
     saveKeysIndex(index);
+  } else {
+    // Migrate legacy format: rename keyMaterial → key, status → retiredAt
+    let migrated = false;
+    index.keys = index.keys.map(k => {
+      const updated = { ...k };
+      if ('keyMaterial' in updated && !('key' in updated)) {
+        updated.key = updated.keyMaterial;
+        delete updated.keyMaterial;
+        migrated = true;
+      }
+      if ('status' in updated && !('retiredAt' in updated)) {
+        updated.retiredAt = updated.status === 'retired' ? (updated.retiredAt || new Date().toISOString()) : null;
+        delete updated.status;
+        migrated = true;
+      }
+      return updated;
+    });
+    if (migrated) {
+      saveKeysIndex(index);
+      log.info('MEMO_KEY_MANAGER', 'Migrated key store to new schema (key/retiredAt format)');
+    }
   }
 
   return index;
@@ -131,7 +152,9 @@ function getKeyMaterial(version) {
     throw new Error(`Key version ${version} not found`);
   }
 
-  return Buffer.from(keyEntry.keyMaterial, 'hex');
+  // Support both legacy 'keyMaterial' and new 'key' field names
+  const rawKey = keyEntry.key || keyEntry.keyMaterial;
+  return Buffer.from(rawKey, 'hex');
 }
 
 /**
@@ -146,14 +169,14 @@ function getActiveKeyMaterial() {
 /**
  * Retrieve all key versions (including retired ones).
  * Useful for rotation status and diagnostics.
- * @returns {Array} Array of { version, createdAt, status }
+ * @returns {Array} Array of { version, createdAt, retiredAt }
  */
 function getAllKeyVersions() {
   const index = loadKeysIndex() || initializeKeyStorage();
   return index.keys.map(k => ({
     version: k.version,
     createdAt: k.createdAt,
-    status: k.status,
+    retiredAt: k.retiredAt !== undefined ? k.retiredAt : null,
   }));
 }
 
@@ -161,7 +184,7 @@ function getAllKeyVersions() {
 
 /**
  * Create a new key version and make it active.
- * Existing versions become 'retired' but remain usable for decryption.
+ * Existing versions have their retiredAt set but remain usable for decryption.
  * @returns {number} The new active version number
  */
 function rotateKey() {
@@ -170,21 +193,22 @@ function rotateKey() {
   // Find highest existing version
   const maxVersion = Math.max(...index.keys.map(k => k.version));
   const newVersion = maxVersion + 1;
+  const retiredAt = new Date().toISOString();
 
-  // Mark all existing keys as retired
+  // Mark all currently active keys as retired
   index.keys.forEach(k => {
-    if (k.status === 'active') {
-      k.status = 'retired';
+    if (!k.retiredAt) {
+      k.retiredAt = retiredAt;
     }
   });
 
   // Create new active key
-  const keyMaterial = crypto.randomBytes(32).toString('hex');
+  const key = crypto.randomBytes(32).toString('hex');
   index.keys.push({
     version: newVersion,
-    keyMaterial,
+    key,
     createdAt: new Date().toISOString(),
-    status: 'active',
+    retiredAt: null,
   });
 
   // Update active version pointer

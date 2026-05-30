@@ -73,6 +73,17 @@ class NetworkStatusService extends EventEmitter {
   }
 
   /**
+   * Return true when the network is healthy (not degraded).
+   * Before the first poll completes the network is assumed healthy so the
+   * scheduler is not blocked on startup.
+   * @returns {boolean}
+   */
+  isHealthy() {
+    if (!this._initialized) return true;
+    return !this.currentStatus.degraded;
+  }
+
+  /**
    * Return status snapshots from the last 24 hours.
    * @returns {object[]}
    */

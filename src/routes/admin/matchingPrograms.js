@@ -9,6 +9,7 @@
 const express = require('express');
 const router = express.Router();
 const MatchingProgramService = require('../../services/MatchingProgramService');
+const Database = require('../../utils/database');
 const requireApiKey = require('../../middleware/apiKey');
 const { requireAdmin } = require('../../middleware/rbac');
 const { validateSchema } = require('../../middleware/schemaValidation');
@@ -31,6 +32,16 @@ const updateStatusSchema = validateSchema({
   body: {
     fields: {
       status: { type: 'string', required: true, enum: ['active', 'paused', 'exhausted'] }
+    }
+  }
+});
+
+const updateProgramSchema = validateSchema({
+  body: {
+    fields: {
+      match_ratio: { type: 'number', required: false, min: 0.01, max: 10 },
+      max_match_amount: { type: 'number', required: false, min: 0.0000001 },
+      end_date: { type: 'string', required: false, nullable: true }
     }
   }
 });
@@ -111,6 +122,87 @@ router.patch('/:id/status', requireApiKey, requireAdmin(), updateStatusSchema, p
       req.body.status
     );
     res.json({ success: true, data: program });
+  } catch (error) {
+    next(error);
+  }
+}));
+
+/**
+ * PATCH /admin/matching-programs/:id
+ * Update matching program details (match_ratio, max_match_amount, end_date).
+ */
+router.patch('/:id', requireApiKey, requireAdmin(), updateProgramSchema, payloadSizeLimiter(ENDPOINT_LIMITS.admin), asyncHandler(async (req, res, next) => {
+  try {
+    const id = parseInt(req.params.id, 10);
+    const { match_ratio, max_match_amount, end_date } = req.body;
+
+    // Verify program exists
+    const program = await MatchingProgramService.getById(id);
+
+    // Build update query
+    const updates = [];
+    const params = [];
+
+    if (match_ratio !== undefined) {
+      updates.push('match_ratio = ?');
+      params.push(match_ratio);
+    }
+    if (max_match_amount !== undefined) {
+      updates.push('max_match_amount = ?');
+      params.push(max_match_amount);
+    }
+    if (end_date !== undefined) {
+      updates.push('end_date = ?');
+      params.push(end_date);
+    }
+
+    if (updates.length === 0) {
+      return res.status(400).json({ success: false, error: { code: 'VALIDATION_ERROR', message: 'No fields to update' } });
+    }
+
+    updates.push('updated_at = CURRENT_TIMESTAMP');
+    params.push(id);
+
+    await Database.run(
+      `UPDATE matching_programs SET ${updates.join(', ')} WHERE id = ?`,
+      params
+    );
+
+    const updated = await MatchingProgramService.getById(id);
+
+    log.info('MATCHING_PROGRAM', 'Updated matching program', {
+      id,
+      match_ratio,
+      max_match_amount,
+      end_date
+    });
+
+    res.json({ success: true, data: updated });
+  } catch (error) {
+    next(error);
+  }
+}));
+
+/**
+ * DELETE /admin/matching-programs/:id
+ * Deactivate a matching program (sets status to 'inactive').
+ */
+router.delete('/:id', requireApiKey, requireAdmin(), asyncHandler(async (req, res, next) => {
+  try {
+    const id = parseInt(req.params.id, 10);
+
+    // Verify program exists
+    await MatchingProgramService.getById(id);
+
+    // Set status to inactive
+    await Database.run(
+      `UPDATE matching_programs SET status = 'inactive', updated_at = CURRENT_TIMESTAMP WHERE id = ?`,
+      [id]
+    );
+
+    log.info('MATCHING_PROGRAM', 'Deactivated matching program', { id });
+
+    res.json({ success: true, message: 'Matching program deactivated' });
   } catch (error) {
     next(error);
   }

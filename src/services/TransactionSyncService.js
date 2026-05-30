@@ -46,7 +46,7 @@ class TransactionSyncService {
   async syncWalletTransactions(publicKey, options = {}) {
     // Support legacy numeric argument
     if (typeof options === 'number') options = { maxTransactions: options };
-    const { maxTransactions = 500, maxPages = 50, cursor: cursorOverride } = options;
+    const { maxTransactions = 500, maxPages, cursor: cursorOverride } = options;
 
     const startTime = Date.now();
     const wallet = Wallet.getByAddress(publicKey);
@@ -102,13 +102,22 @@ class TransactionSyncService {
    * @param {string} publicKey
    * @param {number} maxTransactions
    * @param {string|undefined} cursor - Starting cursor for incremental sync
-   * @param {number} maxPages - Maximum number of pages to fetch
+   * @param {number} [maxPages] - Maximum pages to follow (default: SYNC_MAX_PAGES env, capped at 1000)
    */
-  async _fetchHorizonTransactions(publicKey, maxTransactions = 500, cursor = undefined, maxPages = 50) {
+  async _fetchHorizonTransactions(publicKey, maxTransactions = 500, cursor = undefined, maxPages) {
+    // Read SYNC_MAX_PAGES from env (default 100, max 1000)
+    const envMaxPages = parseInt(process.env.SYNC_MAX_PAGES, 10);
+    const resolvedMaxPages = Math.min(
+      Number.isFinite(envMaxPages) && envMaxPages > 0 ? envMaxPages : 100,
+      1000
+    );
+    const effectiveMaxPages = maxPages !== undefined ? maxPages : resolvedMaxPages;
+
     try {
       let transactions = [];
       const pageSize = Math.min(200, maxTransactions);
       let pagesFetched = 0;
+      let truncated = false;
 
       let callBuilder = this.server.transactions()
         .forAccount(publicKey)
@@ -122,7 +131,7 @@ class TransactionSyncService {
 
       let response = await callBuilder.call();
 
-      while (response.records && response.records.length > 0 && transactions.length < maxTransactions && pagesFetched < maxPages) {
+      while (response.records && response.records.length > 0 && transactions.length < maxTransactions && pagesFetched < effectiveMaxPages) {
         for (const record of response.records) {
           if (transactions.length < maxTransactions) {
             transactions.push(record);
@@ -132,17 +141,28 @@ class TransactionSyncService {
         }
 
         pagesFetched++;
-        log.info('TX_SYNC', `Fetched page ${pagesFetched}`, {
+        log.debug('TX_SYNC', `Synced page ${pagesFetched}, fetched ${response.records.length} transactions, total so far: ${transactions.length}`, {
           publicKey,
-          pageRecords: response.records.length,
-          totalFetched: transactions.length,
         });
 
-        if (transactions.length >= maxTransactions || pagesFetched >= maxPages) {
+        if (transactions.length >= maxTransactions) {
+          break;
+        }
+
+        if (pagesFetched >= effectiveMaxPages) {
+          truncated = true;
           break;
         }
 
         response = await response.next();
+      }
+
+      if (truncated) {
+        log.warn('TX_SYNC', `Sync truncated at page limit for wallet ${publicKey}. Some historical transactions may be missing.`, {
+          publicKey,
+          pageLimit: effectiveMaxPages,
+          totalFetched: transactions.length,
+        });
       }
 
       if (!cursor) {
