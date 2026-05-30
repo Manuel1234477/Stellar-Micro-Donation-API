@@ -1,183 +1,137 @@
 /**
- * Network Status Routes - API Endpoint Layer
- *
- * RESPONSIBILITY: HTTP request handling for network status operations
- * OWNER: Backend Team
- * DEPENDENCIES: NetworkStatusService, middleware (auth, RBAC)
- *
- * Provides endpoints for monitoring Stellar network health and managing
- * transaction queues during network outages.
+ * Network status routes
+ * GET /network/status         - current Horizon health snapshot
+ * GET /network/status/history - last 24 hours of snapshots
+ * GET /network/fees           - current fee statistics
+ * GET /network/ledger         - latest ledger info
+ * GET /network/metrics        - Prometheus-style metrics
  */
 
 const express = require('express');
 const router = express.Router();
-const { requireAdmin } = require('../middleware/rbac');
-const { ValidationError, ERROR_CODES } = require('../utils/errors');
-const log = require('../utils/log');
+
+let _service = null;
+
+const VALID_PATHS = ['/status', '/status/history', '/fees', '/ledger', '/metrics'];
+
+/**
+ * Inject the NetworkStatusService instance.
+ * @param {import('../services/NetworkStatusService')} service
+ */
+function setService(service) {
+  _service = service;
+}
 
 /**
  * GET /network/status
- * Get current Stellar network status and metrics
- * 
- * @returns {Object} Network status with metrics
+ * Returns current network health. Publicly accessible, cached 30 seconds.
  */
-router.get('/status', async (req, res, next) => {
-  try {
-    const networkStatusService = require('../config/serviceContainer').getNetworkStatusService();
-    
-    if (!networkStatusService) {
-      return res.status(503).json({
-        success: false,
-        error: {
-          code: 'NETWORK_STATUS_UNAVAILABLE',
-          message: 'Network status service not initialized',
-        },
-      });
-    }
+router.get('/status', (req, res) => {
+  if (!_service) return res.status(503).json({ success: false, error: 'NetworkStatusService not initialised' });
 
-    const status = networkStatusService.getStatus();
+  const raw = _service.getStatus();
+  const status = !raw.connected ? 'down' : raw.degraded ? 'degraded' : 'healthy';
 
-    res.json({
-      success: true,
-      data: {
-        status: status.status,
-        isHealthy: status.isHealthy,
-        isDegraded: status.isDegraded,
-        isOutage: status.isOutage,
-        metrics: status.metrics,
-        lastCheckTime: status.lastCheckTime,
-        consecutiveFailures: status.consecutiveFailures,
-        feeMultiplier: networkStatusService.getFeeMultiplier(),
-      },
-      timestamp: new Date().toISOString(),
-    });
-  } catch (err) {
-    log.error('NETWORK_ROUTES', 'Failed to get network status', {
-      error: err.message,
-      requestId: req.id,
-    });
-    next(err);
-  }
+  res.set('Cache-Control', 'public, max-age=30');
+  res.json({
+    success: true,
+    data: {
+      status,
+      lastLedgerCloseTime: raw.ledgerCloseTimeS,
+      baseFee: raw.feeStroops,
+      capacityUsage: raw.feeSurgeMultiplier,
+      timestamp: raw.timestamp,
+    },
+  });
 });
 
 /**
- * GET /network/queue
- * Get queued transactions (admin only)
- * 
- * @query {string} [status] - Optional status filter (pending, submitted, failed)
- * @returns {Array} Queued transactions
+ * GET /network/status/history
+ * Returns status snapshots from the last 24 hours.
  */
-router.get('/queue', requireAdmin(), async (req, res, next) => {
-  try {
-    const { status } = req.query;
-
-    // Validate status if provided
-    if (status && !['pending', 'submitted', 'failed'].includes(status)) {
-      throw new ValidationError('Invalid status filter', {
-        code: ERROR_CODES.INVALID_REQUEST,
-        field: 'status',
-        value: status,
-      });
-    }
-
-    const networkStatusService = require('../config/serviceContainer').getNetworkStatusService();
-    
-    if (!networkStatusService) {
-      return res.status(503).json({
-        success: false,
-        error: {
-          code: 'NETWORK_STATUS_UNAVAILABLE',
-          message: 'Network status service not initialized',
-        },
-      });
-    }
-
-    const queuedTransactions = await networkStatusService.getQueuedTransactions(status);
-
-    res.json({
-      success: true,
-      data: {
-        count: queuedTransactions.length,
-        transactions: queuedTransactions,
-      },
-      timestamp: new Date().toISOString(),
-    });
-  } catch (err) {
-    log.error('NETWORK_ROUTES', 'Failed to get queued transactions', {
-      error: err.message,
-      requestId: req.id,
-    });
-    next(err);
-  }
+router.get('/status/history', (req, res) => {
+  if (!_service) return res.status(503).json({ error: 'NetworkStatusService not initialised' });
+  res.json({ history: _service.getHistory() });
 });
 
 /**
- * POST /network/queue/:queueId/retry
- * Retry a queued transaction (admin only)
- * 
- * @param {string} queueId - Queue ID
- * @returns {Object} Updated transaction
+ * GET /network/fees
+ * Returns current fee statistics from NetworkStatusService.
  */
-router.post('/queue/:queueId/retry', requireAdmin(), async (req, res, next) => {
-  try {
-    const { queueId } = req.params;
+router.get('/fees', (req, res) => {
+  if (!_service) return res.status(503).json({ success: false, error: 'NetworkStatusService not initialised' });
 
-    if (!queueId || typeof queueId !== 'string' || queueId.trim().length === 0) {
-      throw new ValidationError('Invalid queue ID', {
-        code: ERROR_CODES.INVALID_REQUEST,
-        field: 'queueId',
-      });
-    }
+  const raw = _service.getStatus();
 
-    const networkStatusService = require('../config/serviceContainer').getNetworkStatusService();
-    
-    if (!networkStatusService) {
-      return res.status(503).json({
-        success: false,
-        error: {
-          code: 'NETWORK_STATUS_UNAVAILABLE',
-          message: 'Network status service not initialized',
-        },
-      });
-    }
-
-    // Get the queued transaction
-    const queuedTransactions = await networkStatusService.getQueuedTransactions();
-    const transaction = queuedTransactions.find(t => t.queue_id === queueId);
-
-    if (!transaction) {
-      throw new ValidationError('Queued transaction not found', {
-        code: ERROR_CODES.NOT_FOUND,
-        field: 'queueId',
-        value: queueId,
-      });
-    }
-
-    // Update status to submitted
-    await networkStatusService.updateQueuedTransactionStatus(queueId, 'submitted');
-
-    log.info('NETWORK_ROUTES', 'Queued transaction retry initiated', {
-      queueId,
-      requestId: req.id,
-    });
-
-    res.json({
-      success: true,
-      data: {
-        queueId,
-        status: 'submitted',
-        message: 'Transaction retry initiated',
-      },
-      timestamp: new Date().toISOString(),
-    });
-  } catch (err) {
-    log.error('NETWORK_ROUTES', 'Failed to retry queued transaction', {
-      error: err.message,
-      queueId: req.params.queueId,
-      requestId: req.id,
-    });
-    next(err);
-  }
+  res.set('Cache-Control', 'public, max-age=30');
+  res.json({
+    success: true,
+    data: {
+      baseFeeStroops: raw.feeStroops,
+      feeLevel: raw.feeLevel,
+      feeSurgeMultiplier: raw.feeSurgeMultiplier,
+      timestamp: raw.timestamp,
+    },
+  });
 });
 
-module.exports = router;
+/**
+ * GET /network/ledger
+ * Returns latest ledger info derived from NetworkStatusService.
+ */
+router.get('/ledger', (req, res) => {
+  if (!_service) return res.status(503).json({ success: false, error: 'NetworkStatusService not initialised' });
+
+  const raw = _service.getStatus();
+
+  res.set('Cache-Control', 'public, max-age=30');
+  res.json({
+    success: true,
+    data: {
+      connected: raw.connected,
+      ledgerCloseTimeSeconds: raw.ledgerCloseTimeS,
+      latencyMs: raw.latencyMs,
+      timestamp: raw.timestamp,
+    },
+  });
+});
+
+/**
+ * GET /network/metrics
+ * Returns Prometheus-style metrics derived from NetworkStatusService.
+ */
+router.get('/metrics', (req, res) => {
+  if (!_service) return res.status(503).json({ success: false, error: 'NetworkStatusService not initialised' });
+
+  const raw = _service.getStatus();
+
+  res.set('Cache-Control', 'no-store');
+  res.json({
+    success: true,
+    data: {
+      network_connected: raw.connected ? 1 : 0,
+      network_degraded: raw.degraded ? 1 : 0,
+      network_latency_ms: raw.latencyMs,
+      network_fee_stroops: raw.feeStroops,
+      network_fee_surge_multiplier: raw.feeSurgeMultiplier,
+      network_error_rate_percent: raw.errorRatePercent,
+      timestamp: raw.timestamp,
+    },
+  });
+});
+
+/**
+ * Catch-all: unknown /network/* paths return 404 with a hint listing valid sub-paths.
+ */
+router.use((req, res) => {
+  res.status(404).json({
+    success: false,
+    error: {
+      code: 'ROUTE_NOT_FOUND',
+      message: `No network route matches ${req.method} /network${req.path}`,
+      hint: `Valid sub-paths: ${VALID_PATHS.join(', ')}`,
+    },
+  });
+});
+
+module.exports = { router, setService };

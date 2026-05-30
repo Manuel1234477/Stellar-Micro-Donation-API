@@ -1,0 +1,62 @@
+name: Bug Report
+description: Report a bug or unexpected behaviour
+title: "[Bug]: "
+labels: ["bug", "needs-triage"]
+body:
+  - type: textarea
+    id: description
+    attributes:
+      label: Description
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to Reproduce
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected Behaviour
+    validations:
+      required: true
+  - type: textarea
+    id: actual
+    attributes:
+      label: Actual Behaviour
+    validations:
+      required: true
+  - type: input
+    id: node_version
+    attributes:
+      label: Node.js Version
+      placeholder: "e.g. 20.11.0"
+    validations:
+      required: true
+  - type: input
+    id: os
+    attributes:
+      label: Operating System
+      placeholder: "e.g. Ubuntu 22.04, Windows 11"
+    validations:
+      required: true
+  - type: dropdown
+    id: stellar_mode
+    attributes:
+      label: Stellar Mode
+      options:
+        - MOCK_STELLAR=true
+        - MOCK_STELLAR=false (testnet)
+        - MOCK_STELLAR=false (mainnet)
+    validations:
+      required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: Relevant Logs
+      render: shell
+  - type: textarea
+    id: additional
+    attributes:
+      label: Additional Context

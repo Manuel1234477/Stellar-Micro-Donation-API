@@ -22,7 +22,7 @@
 const crypto = require('crypto');
 const Database = require('../utils/database');
 const log = require('../utils/log');
-const { ValidationError, NotFoundError, BusinessLogicError, ERROR_CODES } = require('../utils/errors');
+const { ValidationError, NotFoundError, BusinessLogicError, ConflictError, ERROR_CODES } = require('../utils/errors');
 
 /** Dispute window: 24 hours in milliseconds */
 const DISPUTE_WINDOW_MS = 24 * 60 * 60 * 1000;
@@ -139,14 +139,15 @@ class PaymentChannelService {
    * an optional `fundingTxId` to record that reference.
    *
    * @param {object} params
-   * @param {string} params.senderKey    - Sender's Stellar public key
-   * @param {string} params.receiverKey  - Receiver's Stellar public key
-   * @param {number} params.capacity     - Maximum XLM the channel can hold
-   * @param {string} [params.fundingTxId] - On-chain escrow funding transaction ID
-   * @param {object} [params.metadata]   - Optional caller metadata
+   * @param {string} params.senderKey     - Sender's Stellar public key
+   * @param {string} params.receiverKey   - Receiver's Stellar public key
+   * @param {number} params.capacity      - Maximum XLM the channel can hold
+   * @param {string} [params.sourceSecret] - Optional source account secret to fund escrow on-chain
+   * @param {string} [params.fundingTxId]  - On-chain escrow funding transaction ID
+   * @param {object} [params.metadata]    - Optional caller metadata
    * @returns {Promise<object>} Created channel record
    */
-  async openChannel({ senderKey, receiverKey, capacity, fundingTxId = null, metadata = null }) {
+  async openChannel({ senderKey, receiverKey, capacity, sourceSecret = null, fundingTxId = null, metadata = null }) {
     if (!senderKey || typeof senderKey !== 'string') {
       throw new ValidationError('senderKey is required', null, ERROR_CODES.MISSING_REQUIRED_FIELD);
     }
@@ -161,13 +162,29 @@ class PaymentChannelService {
     }
 
     const id = crypto.randomUUID();
+    let escrowMeta = null;
+    if (sourceSecret) {
+      const escrowResult = await this.stellarService.openChannel(sourceSecret, receiverKey, String(capacity));
+      fundingTxId = fundingTxId || escrowResult.transactionId || null;
+      escrowMeta = {
+        escrowPublicKey: escrowResult.escrowPublicKey,
+        escrowSecret: escrowResult.escrowSecret,
+        fundingTxId: fundingTxId,
+        ledger: escrowResult.ledger,
+      };
+    }
+
     const now = new Date().toISOString();
+    const channelMetadata = {
+      ...metadata,
+      ...(escrowMeta ? { channelEscrow: escrowMeta } : {}),
+    };
 
     await Database.run(
       `INSERT INTO payment_channels
          (id, senderKey, receiverKey, capacity, balance, sequence, status, signatures, metadata, createdAt, updatedAt)
        VALUES (?, ?, ?, ?, 0, 0, 'open', '[]', ?, ?, ?)`,
-      [id, senderKey, receiverKey, capacity, metadata ? JSON.stringify(metadata) : null, now, now]
+      [id, senderKey, receiverKey, capacity, channelMetadata ? JSON.stringify(channelMetadata) : null, now, now]
     );
 
     log.info('CHANNEL', 'Payment channel opened', { id, senderKey, receiverKey, capacity, fundingTxId });
@@ -257,6 +274,14 @@ class PaymentChannelService {
       { sequence: newSequence, senderSig, receiverSig, timestamp: new Date().toISOString() },
     ];
 
+    const updateResult = await this.stellarService.updateChannel
+      ? await this.stellarService.updateChannel(channelId, newBalance)
+      : null;
+
+    if (updateResult && updateResult.updated === false) {
+      throw new BusinessLogicError(ERROR_CODES.TRANSACTION_FAILED, 'Off-chain channel update failed');
+    }
+
     await Database.run(
       `UPDATE payment_channels
           SET balance = ?, sequence = ?, signatures = ?, updatedAt = ?
@@ -281,29 +306,43 @@ class PaymentChannelService {
    * @param {string} params.senderSecret - Sender's secret key (funds the on-chain payment)
    * @returns {Promise<object>} Settled channel record with stellarTxId
    */
-  async settleChannel({ channelId, senderSecret }) {
+  async closeChannel({ channelId, senderSecret }) {
     if (!channelId) throw new ValidationError('channelId is required', null, ERROR_CODES.MISSING_REQUIRED_FIELD);
     if (!senderSecret) throw new ValidationError('senderSecret is required', null, ERROR_CODES.MISSING_REQUIRED_FIELD);
 
     const channel = await this.getChannel(channelId);
 
+    if (channel.status === 'closed' || channel.status === 'settled') {
+      throw new ConflictError(`Channel is already ${channel.status}`);
+    }
+
     if (!['open', 'disputed'].includes(channel.status)) {
       throw new BusinessLogicError(
         ERROR_CODES.TRANSACTION_FAILED,
-        `Channel is already ${channel.status}`
+        `Channel is ${channel.status}, only open or disputed channels can be closed`
       );
     }
 
     let stellarTxId = null;
-
     if (channel.balance > 0) {
-      const result = await this.stellarService.sendPayment(
-        channel.senderKey,
-        channel.receiverKey,
-        String(channel.balance),
-        `channel-settle:${channelId}`
-      );
-      stellarTxId = result.transactionId || result.hash || null;
+      if (channel.metadata && channel.metadata.channelEscrow && channel.metadata.channelEscrow.escrowSecret) {
+        const escrowSecret = channel.metadata.channelEscrow.escrowSecret;
+        const result = await this.stellarService.closeChannel(
+          channelId,
+          escrowSecret,
+          channel.receiverKey,
+          String(channel.balance)
+        );
+        stellarTxId = result.transactionId || result.hash || null;
+      } else {
+        const result = await this.stellarService.sendPayment(
+          channel.senderKey,
+          channel.receiverKey,
+          String(channel.balance),
+          `channel-settle:${channelId}`
+        );
+        stellarTxId = result.transactionId || result.hash || null;
+      }
     }
 
     const now = new Date().toISOString();
@@ -398,7 +437,7 @@ class PaymentChannelService {
    * @param {string} params.senderSecret - Sender's secret key
    * @returns {Promise<object>} Closed channel record
    */
-  async closeChannel({ channelId, senderSecret }) {
+  async forceCloseChannel({ channelId, senderSecret }) {
     if (!channelId) throw new ValidationError('channelId is required', null, ERROR_CODES.MISSING_REQUIRED_FIELD);
     if (!senderSecret) throw new ValidationError('senderSecret is required', null, ERROR_CODES.MISSING_REQUIRED_FIELD);
 
@@ -414,7 +453,7 @@ class PaymentChannelService {
     if (channel.status === 'open' && !timedOut) {
       throw new BusinessLogicError(
         ERROR_CODES.TRANSACTION_FAILED,
-        'Channel has not timed out yet. Use settleChannel to close an active channel.'
+        'Channel has not timed out yet. Use closeChannel to close an active channel.'
       );
     }
 

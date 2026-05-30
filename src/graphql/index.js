@@ -12,9 +12,9 @@
  */
 
 const { createHandler } = require('graphql-http/lib/use/express');
-const { useServer } = require('graphql-ws/lib/use/ws');
+const { useServer } = require('graphql-ws/use/ws');
 const { WebSocketServer } = require('ws');
-const { parse, validate, execute, subscribe } = require('graphql');
+const { validate } = require('graphql');
 const { buildSchema } = require('./schema');
 const pubsub = require('./pubsub');
 const requireApiKey = require('../middleware/apiKey');

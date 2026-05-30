@@ -49,7 +49,8 @@ function loadRolesConfig() {
             'stream:delete',
             'stats:read',
             'transactions:read',
-            'transactions:sync'
+            'transactions:sync',
+            'transactions:simulate'
           ]
         },
         {

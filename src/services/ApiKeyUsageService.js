@@ -7,6 +7,9 @@
  * Also provides anomaly detection for unusual request-rate spikes.
  */
 
+const DAY_MS = 24 * 60 * 60 * 1000;
+const RETENTION_MS = 30 * DAY_MS;
+
 class ApiKeyUsageService {
   constructor() {
     /**
@@ -50,6 +53,8 @@ class ApiKeyUsageService {
       path,
       method,
     });
+
+    this._purgeKey(apiKey);
   }
 
   // ─── Summary ───────────────────────────────────────────────────────────────
@@ -57,12 +62,162 @@ class ApiKeyUsageService {
   /**
    * Get overall usage summary for an API key.
    * @param {string} apiKey
+   * @param {object} [options]
+   * @param {number} [options.from] - Start timestamp (ms)
+   * @param {number} [options.to]   - End timestamp (ms)
    * @returns {{ apiKey: string, totalRequests: number, errorCount: number, errorRate: number, avgLatencyMs: number }}
    */
-  getSummary(apiKey) {
+  getSummary(apiKey, { from = 0, to = Date.now() } = {}) {
     this._assertKey(apiKey);
-    const records = this._records.get(apiKey) || [];
+    const records = this._filterRecords(apiKey, from, to);
     return this._summarise(apiKey, records);
+  }
+
+  /**
+   * Get per-endpoint analytics for an API key over the last 30 days.
+   * @param {string} apiKey
+   * @param {object} [options]
+   * @param {number} [options.from] - Start timestamp (ms)
+   * @param {number} [options.to]   - End timestamp (ms)
+   * @returns {{ apiKey: string, from: number, to: number, endpoints: Array<object> }}
+   */
+  getAnalytics(apiKey, { from = Date.now() - RETENTION_MS, to = Date.now() } = {}) {
+    this._assertKey(apiKey);
+    const records = this._filterRecords(apiKey, from, to);
+
+    const endpoints = new Map();
+    for (const record of records) {
+      const key = `${record.method} ${record.path}`;
+      if (!endpoints.has(key)) {
+        endpoints.set(key, {
+          path: record.path,
+          method: record.method,
+          totalCalls: 0,
+          errorCount: 0,
+          statusCodes: {},
+          latencies: [],
+          daily: new Map(),
+        });
+      }
+
+      const endpoint = endpoints.get(key);
+      endpoint.totalCalls += 1;
+      if (record.statusCode >= 400) endpoint.errorCount += 1;
+      endpoint.statusCodes[record.statusCode] = (endpoint.statusCodes[record.statusCode] || 0) + 1;
+      endpoint.latencies.push(record.latencyMs);
+
+      const bucket = this._bucketKey(record.timestamp, 'day');
+      if (!endpoint.daily.has(bucket)) {
+        endpoint.daily.set(bucket, { date: bucket, calls: 0, errors: 0, latencies: [] });
+      }
+      const day = endpoint.daily.get(bucket);
+      day.calls += 1;
+      if (record.statusCode >= 400) day.errors += 1;
+      day.latencies.push(record.latencyMs);
+    }
+
+    const sortedEndpoints = Array.from(endpoints.values())
+      .map(endpoint => {
+        const daily = Array.from(endpoint.daily.entries())
+          .sort(([a], [b]) => a.localeCompare(b))
+          .map(([, bucket]) => ({
+            date: bucket.date,
+            calls: bucket.calls,
+            errors: bucket.errors,
+            errorRate: bucket.calls ? Math.round((bucket.errors / bucket.calls) * 10000) / 100 : 0,
+            avgLatencyMs: bucket.calls
+              ? Math.round(bucket.latencies.reduce((sum, l) => sum + l, 0) / bucket.latencies.length)
+              : 0,
+          }));
+
+        const totalCalls = endpoint.totalCalls;
+        const errorRate = totalCalls
+          ? Math.round((endpoint.errorCount / totalCalls) * 10000) / 100
+          : 0;
+
+        return {
+          path: endpoint.path,
+          method: endpoint.method,
+          totalCalls,
+          errorCount: endpoint.errorCount,
+          errorRate,
+          statusCodes: endpoint.statusCodes,
+          avgLatencyMs: endpoint.latencies.length
+            ? Math.round(endpoint.latencies.reduce((sum, l) => sum + l, 0) / endpoint.latencies.length)
+            : 0,
+          daily,
+        };
+      })
+      .sort((a, b) => b.totalCalls - a.totalCalls);
+
+    return { apiKey, from, to, endpoints: sortedEndpoints };
+  }
+
+  /**
+   * Get a latency summary for an API key over the last 30 days.
+   * @param {string} apiKey
+   * @param {object} [options]
+   * @param {number} [options.from] - Start timestamp (ms)
+   * @param {number} [options.to]   - End timestamp (ms)
+   * @returns {{ apiKey: string, totalCalls: number, errorCount: number, errorRate: number, p50: number, p95: number, p99: number }}
+   */
+  getAnalyticsSummary(apiKey, { from = Date.now() - RETENTION_MS, to = Date.now() } = {}) {
+    this._assertKey(apiKey);
+    const records = this._filterRecords(apiKey, from, to);
+    const totalCalls = records.length;
+    const errorCount = records.filter(r => r.statusCode >= 400).length;
+    const latencies = records
+      .map(r => r.latencyMs)
+      .sort((a, b) => a - b);
+
+    return {
+      apiKey,
+      totalCalls,
+      errorCount,
+      errorRate: totalCalls ? Math.round((errorCount / totalCalls) * 10000) / 100 : 0,
+      p50: this._percentile(latencies, 50),
+      p95: this._percentile(latencies, 95),
+      p99: this._percentile(latencies, 99),
+    };
+  }
+
+  /**
+   * Get the top endpoints across all API keys.
+   * @param {object} [options]
+   * @param {number} [options.from] - Start timestamp (ms)
+   * @param {number} [options.to]   - End timestamp (ms)
+   * @param {number} [options.limit] - Number of endpoints to return
+   * @returns {Array<{path:string,method:string,totalCalls:number,errorCount:number,statusCodes:object}>}
+   */
+  getTopEndpoints({ from = Date.now() - RETENTION_MS, to = Date.now(), limit = 10 } = {}) {
+    this._purgeOldRecords();
+    const endpoints = new Map();
+
+    for (const records of this._records.values()) {
+      for (const record of records) {
+        if (record.timestamp < from || record.timestamp > to) continue;
+
+        const key = `${record.method} ${record.path}`;
+        if (!endpoints.has(key)) {
+          endpoints.set(key, {
+            path: record.path,
+            method: record.method,
+            totalCalls: 0,
+            errorCount: 0,
+            statusCodes: {},
+          });
+        }
+
+        const endpoint = endpoints.get(key);
+        endpoint.totalCalls += 1;
+        if (record.statusCode >= 400) endpoint.errorCount += 1;
+        endpoint.statusCodes[record.statusCode] = (endpoint.statusCodes[record.statusCode] || 0) + 1;
+      }
+    }
+
+    return Array.from(endpoints.values())
+      .sort((a, b) => b.totalCalls - a.totalCalls)
+      .slice(0, limit);
   }
 
   // ─── Time-series ───────────────────────────────────────────────────────────
@@ -84,9 +239,7 @@ class ApiKeyUsageService {
       throw new Error(`Invalid granularity: ${granularity}. Must be one of: ${validGranularities.join(', ')}`);
     }
 
-    const records = (this._records.get(apiKey) || []).filter(
-      r => r.timestamp >= from && r.timestamp <= to
-    );
+    const records = this._filterRecords(apiKey, from, to);
 
     // Group records into buckets
     const buckets = new Map(); // bucketKey -> records[]
@@ -195,6 +348,59 @@ class ApiKeyUsageService {
       errorRate: totalRequests ? Math.round((errorCount / totalRequests) * 10000) / 100 : 0,
       avgLatencyMs,
     };
+  }
+
+  /**
+   * Remove expired records from the in-memory store.
+   * @private
+   */
+  _purgeOldRecords() {
+    const cutoff = Date.now() - RETENTION_MS;
+    for (const [apiKey, records] of this._records.entries()) {
+      const filtered = records.filter(record => record.timestamp >= cutoff);
+      if (filtered.length === 0) {
+        this._records.delete(apiKey);
+      } else if (filtered.length !== records.length) {
+        this._records.set(apiKey, filtered);
+      }
+    }
+  }
+
+  /**
+   * Remove expired records for a single API key.
+   * @private
+   */
+  _purgeKey(apiKey) {
+    const cutoff = Date.now() - RETENTION_MS;
+    const records = this._records.get(apiKey);
+    if (!records) return;
+
+    const filtered = records.filter(record => record.timestamp >= cutoff);
+    if (filtered.length === 0) {
+      this._records.delete(apiKey);
+    } else if (filtered.length !== records.length) {
+      this._records.set(apiKey, filtered);
+    }
+  }
+
+  /**
+   * Filter records for a key within a date range and purge expired data.
+   * @private
+   */
+  _filterRecords(apiKey, from = 0, to = Date.now()) {
+    this._purgeOldRecords();
+    const records = this._records.get(apiKey) || [];
+    return records.filter(record => record.timestamp >= from && record.timestamp <= to);
+  }
+
+  /**
+   * Calculate a percentile on a sorted latency array.
+   * @private
+   */
+  _percentile(sortedValues, percentile) {
+    if (!sortedValues.length) return 0;
+    const index = Math.ceil((percentile / 100) * sortedValues.length) - 1;
+    return sortedValues[Math.max(0, Math.min(sortedValues.length - 1, index))];
   }
 
   /**

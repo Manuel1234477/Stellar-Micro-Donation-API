@@ -10,10 +10,10 @@ const path = require('path');
 
 const COVERAGE_FILE = path.join(__dirname, '../coverage/coverage-summary.json');
 const THRESHOLDS = {
-  branches: 30,
-  functions: 30,
-  lines: 30,
-  statements: 30
+  branches: 60,
+  functions: 60,
+  lines: 60,
+  statements: 60
 };
 
 function checkCoverage() {

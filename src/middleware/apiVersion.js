@@ -1,104 +1,34 @@
 /**
- * Version routing middleware
+ * Schema Version Middleware
  * 
- * RESPONSIBILITY: Version detection, header injection, and dispatching to correct router
+ * RESPONSIBILITY: Parse X-Schema-Version header and attach schema version info to request
+ * OWNER: Backend Team
+ * 
+ * This middleware extracts the X-Schema-Version header from incoming requests and stores it
+ * on the request object for use by schema validation middleware. If no header is provided,
+ * defaults to version 1.
  */
-
-const API_VERSIONS = {
-  '1': {
-    deprecated: false,
-    sunsetDate: null
-  },
-  '0': { // Deprecated test version
-    deprecated: true,
-    sunsetDate: '2026-12-31'
-  }
-};
-
-const DEFAULT_VERSION = '1';
 
 /**
- * Determine the API version from request
- * @param {Express.Request} req 
- * @returns {string} The requested version
+ * Schema version middleware factory
+ * Parses X-Schema-Version header (defaults to 1 if not provided)
+ * @returns {Function} Express middleware
  */
-function determineVersion(req) {
-  // 1. Check URL path (e.g., /api/v1/wallets)
-  const urlMatch = req.url.match(/^\/api\/v(\d+)(\/|$)/i);
-  if (urlMatch) {
-    return urlMatch[1];
+function apiVersionMiddleware(req, res, next) {
+  // Parse X-Schema-Version header, default to '1'
+  const schemaVersion = req.get('X-Schema-Version') || '1';
+  
+  // Validate that it's a positive integer
+  const parsedVersion = parseInt(schemaVersion, 10);
+  if (isNaN(parsedVersion) || parsedVersion < 1) {
+    // Invalid version format, but let schemaValidation middleware handle the error
+    // Store as-is for validation middleware to reject
+    req.schemaVersion = schemaVersion;
+  } else {
+    req.schemaVersion = String(parsedVersion);
   }
-
-  // 2. Check Accept header (e.g., application/json; version=1 or application/vnd.company.v1+json)
-  const acceptHeader = req.headers.accept;
-  if (acceptHeader) {
-    const acceptVersionMatch = acceptHeader.match(/version\s*=\s*(\d+)/i) || acceptHeader.match(/v=(\d+)/i);
-    if (acceptVersionMatch) {
-      return acceptVersionMatch[1];
-    }
-    const vendorVersionMatch = acceptHeader.match(/vnd\.[^.]+\.v(\d+)\+/i) || acceptHeader.match(/vnd\.v(\d+)\+/i);
-    if (vendorVersionMatch) {
-      return vendorVersionMatch[1];
-    }
-  }
-
-  // Default
-  return DEFAULT_VERSION;
-}
-
-/**
- * Version routing middleware
- * @param {Object} routers Map of version numbers to Express routers
- */
-function apiVersionMiddleware(routers) {
-  return (req, res, next) => {
-    // Determine version
-    const version = determineVersion(req);
-
-    const versionInfo = API_VERSIONS[version];
-    if (!versionInfo) {
-      return res.status(404).json({
-        error: 'Unsupported API version',
-        requestedVersion: version
-      });
-    }
-
-    // Inject required headers
-    res.setHeader('X-API-Version', version);
-    if (versionInfo.deprecated) {
-      res.setHeader('X-API-Deprecated', 'true');
-      if (versionInfo.sunsetDate) {
-        res.setHeader('Sunset', versionInfo.sunsetDate);
-        res.setHeader('Warning', `199 - "API version ${version} is deprecated and will be removed on ${versionInfo.sunsetDate}"`);
-      }
-    }
-
-    req.apiVersion = version;
-
-    // Dispatch to the mapped router
-    const router = routers[version];
-    if (router) {
-      const prefix = `/api/v${version}`;
-      if (req.url.toLowerCase().startsWith(prefix)) {
-        // Strip the prefix so the inner router can match correctly
-        const originalUrl = req.url;
-        req.url = req.url.slice(prefix.length) || '/';
-        
-        router(req, res, (err) => {
-          // Restore on fallback to next
-          req.url = originalUrl;
-          next(err);
-        });
-      } else {
-        // Assume path is already matching inner routes (e.g., fallback original URLs without prefix)
-        router(req, res, next);
-      }
-    } else {
-      next();
-    }
-  };
+  
+  next();
 }
 
 module.exports = apiVersionMiddleware;
-module.exports.determineVersion = determineVersion;
-module.exports.API_VERSIONS = API_VERSIONS;

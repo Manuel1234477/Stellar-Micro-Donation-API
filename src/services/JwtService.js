@@ -29,6 +29,8 @@ const CREATE_TABLE_SQL = `
     expires_at INTEGER NOT NULL,
     used_at INTEGER,
     revoked INTEGER NOT NULL DEFAULT 0,
+    revoked_at INTEGER,
+    revoke_reason TEXT,
     created_at INTEGER NOT NULL
   )
 `;
@@ -151,13 +153,34 @@ async function rotateRefreshToken(rawRefreshToken) {
       familyId: row.family_id,
       apiKeyId: row.api_key_id,
     });
-    await revokeTokenFamily(row.family_id);
+    await revokeTokenFamily(row.family_id, 'REFRESH_TOKEN_REUSE_DETECTED');
+
+    // Audit log for security monitoring
+    try {
+      const AuditLogService = require('./AuditLogService');
+      await AuditLogService.log({
+        category: 'AUTHENTICATION',
+        action: 'REFRESH_TOKEN_REUSE_DETECTED',
+        severity: 'HIGH',
+        result: 'FAILURE',
+        userId: String(row.api_key_id),
+        details: { familyId: row.family_id, tokenId: row.id },
+        reason: 'Refresh token reuse detected; entire token family revoked',
+      });
+    } catch (_) { /* audit log failure must not block the security response */ }
+
     const err = new Error('Refresh token reuse detected; token family revoked');
     err.code = 'TOKEN_FAMILY_REVOKED';
     throw err;
   }
 
-  if (row.revoked || row.expires_at < Date.now()) return null;
+  if (row.revoked) {
+    const err = new Error('Refresh token has been revoked');
+    err.code = 'TOKEN_REVOKED';
+    throw err;
+  }
+
+  if (row.expires_at < Date.now()) return null;
 
   // Mark old token as used
   await db.run(
@@ -175,12 +198,14 @@ async function rotateRefreshToken(rawRefreshToken) {
 /**
  * Revokes all refresh tokens belonging to a token family.
  * @param {string} familyId
+ * @param {string} [reason] - Optional reason for revocation
  * @returns {Promise<void>}
  */
-async function revokeTokenFamily(familyId) {
+async function revokeTokenFamily(familyId, reason) {
+  const now = Date.now();
   await db.run(
-    `UPDATE refresh_tokens SET revoked = 1 WHERE family_id = ?`,
-    [familyId]
+    `UPDATE refresh_tokens SET revoked = 1, revoked_at = ?, revoke_reason = ? WHERE family_id = ?`,
+    [now, reason || null, familyId]
   );
 }
 

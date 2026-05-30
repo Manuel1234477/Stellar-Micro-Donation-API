@@ -17,7 +17,7 @@ const log = require('../utils/log');
  * Apply the appropriate constant directly on the route.
  */
 const TIMEOUTS = {
-  health: 5_000,      //  5 s — health / liveness probes
+  health: 500,        // 500ms — health endpoints must respond fast for load balancers
   balance: 10_000,    // 10 s — wallet balance lookups
   default: 15_000,    // 15 s — general fallback
   donation: 30_000,   // 30 s — Stellar transaction submission

@@ -27,6 +27,8 @@ const {
 } = require('../utils/validationHelpers');
 const log = require('../utils/log');
 const serviceContainer = require('../config/serviceContainer');
+const asyncHandler = require('../utils/asyncHandler');
+const { payloadSizeLimiter, ENDPOINT_LIMITS } = require('../middleware/payloadSizeLimiter');
 
 // ─────────────────────────────────────────────────────────────────────────────
 // POST /donations/recurring
@@ -46,7 +48,7 @@ const serviceContainer = require('../config/serviceContainer');
  * @body {string}  [webhookUrl]        - URL to POST on persistent failure
  * @body {string}  [startDate]         - ISO date for first execution (default: now + 1 interval)
  */
-router.post('/', checkPermission(PERMISSIONS.STREAM_CREATE), async (req, res, next) => {
+router.post('/', checkPermission(PERMISSIONS.STREAM_CREATE), payloadSizeLimiter(ENDPOINT_LIMITS.singleDonation), asyncHandler(async (req, res, next) => {
   try {
     const {
       donorPublicKey,
@@ -137,6 +139,9 @@ router.post('/', checkPermission(PERMISSIONS.STREAM_CREATE), async (req, res, ne
       if (isNaN(firstExecution.getTime())) {
         return res.status(400).json({ success: false, error: 'Invalid startDate format' });
       }
+      if (firstExecution.getTime() < Date.now() + 60000) {
+        return res.status(400).json({ success: false, error: 'Start date must be in the future' });
+      }
     } else {
       firstExecution = scheduler.calculateNextExecutionDate(
         new Date(),
@@ -191,7 +196,7 @@ router.post('/', checkPermission(PERMISSIONS.STREAM_CREATE), async (req, res, ne
   } catch (error) {
     next(error);
   }
-});
+}));
 
 // ─────────────────────────────────────────────────────────────────────────────
 // GET /donations/recurring
@@ -203,7 +208,7 @@ router.post('/', checkPermission(PERMISSIONS.STREAM_CREATE), async (req, res, ne
  * @access  stream:read
  * @query   {string} [status] - Filter by status (active|paused|cancelled|completed)
  */
-router.get('/', checkPermission(PERMISSIONS.STREAM_READ), async (req, res, next) => {
+router.get('/', checkPermission(PERMISSIONS.STREAM_READ), asyncHandler(async (req, res, next) => {
   try {
     const { status } = req.query;
 
@@ -244,7 +249,7 @@ router.get('/', checkPermission(PERMISSIONS.STREAM_READ), async (req, res, next)
   } catch (error) {
     next(error);
   }
-});
+}));
 
 // ─────────────────────────────────────────────────────────────────────────────
 // GET /donations/recurring/:id
@@ -255,7 +260,7 @@ router.get('/', checkPermission(PERMISSIONS.STREAM_READ), async (req, res, next)
  * @desc    Get a specific recurring donation schedule
  * @access  stream:read
  */
-router.get('/:id', checkPermission(PERMISSIONS.STREAM_READ), async (req, res, next) => {
+router.get('/:id', checkPermission(PERMISSIONS.STREAM_READ), asyncHandler(async (req, res, next) => {
   try {
     const schedule = await Database.get(
       `SELECT rd.id, rd.amount, rd.frequency, rd.customIntervalDays,
@@ -279,7 +284,7 @@ router.get('/:id', checkPermission(PERMISSIONS.STREAM_READ), async (req, res, ne
   } catch (error) {
     next(error);
   }
-});
+}));
 
 // ─────────────────────────────────────────────────────────────────────────────
 // DELETE /donations/recurring/:id
@@ -290,7 +295,7 @@ router.get('/:id', checkPermission(PERMISSIONS.STREAM_READ), async (req, res, ne
  * @desc    Cancel a recurring donation schedule
  * @access  stream:delete
  */
-router.delete('/:id', checkPermission(PERMISSIONS.STREAM_DELETE), async (req, res, next) => {
+router.delete('/:id', checkPermission(PERMISSIONS.STREAM_DELETE), asyncHandler(async (req, res, next) => {
   try {
     const schedule = await Database.get(
       'SELECT id, status FROM recurring_donations WHERE id = ?',
@@ -319,7 +324,7 @@ router.delete('/:id', checkPermission(PERMISSIONS.STREAM_DELETE), async (req, re
   } catch (error) {
     next(error);
   }
-});
+}));
 
 // ─────────────────────────────────────────────────────────────────────────────
 // GET /donations/recurring/:id/history
@@ -332,7 +337,7 @@ router.delete('/:id', checkPermission(PERMISSIONS.STREAM_DELETE), async (req, re
  * @query   {number} [limit=20]  - Max records to return (1-100)
  * @query   {number} [offset=0]  - Pagination offset
  */
-router.get('/:id/history', checkPermission(PERMISSIONS.STREAM_READ), async (req, res, next) => {
+router.get('/:id/history', checkPermission(PERMISSIONS.STREAM_READ), asyncHandler(async (req, res, next) => {
   try {
     // Verify schedule exists
     const schedule = await Database.get(
@@ -376,7 +381,7 @@ router.get('/:id/history', checkPermission(PERMISSIONS.STREAM_READ), async (req,
   } catch (error) {
     next(error);
   }
-});
+}));
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Helpers

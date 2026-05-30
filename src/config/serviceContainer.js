@@ -15,9 +15,16 @@ const RecurringDonationScheduler = require('../services/RecurringDonationSchedul
 const TransactionReconciliationService = require('../services/TransactionReconciliationService');
 const IdempotencyService = require('../services/IdempotencyService');
 const TransactionSyncService = require('../services/TransactionSyncService');
+const TransactionSyncScheduler = require('../services/TransactionSyncScheduler');
 const NetworkStatusService = require('../services/NetworkStatusService');
 const FeeBumpService = require('../services/FeeBumpService');
 const AuditLogService = require('../services/AuditLogService');
+const RecipientPoolRepository = require('../services/RecipientPoolRepository');
+const RoundRobinStateRepository = require('../services/RoundRobinStateRepository');
+const RoutingDecisionRepository = require('../services/RoutingDecisionRepository');
+const DonationTotalsRepository = require('../services/DonationTotalsRepository');
+const DonationRouter = require('../services/DonationRouter');
+const RoutingConfigRepository = require('../services/RoutingConfigRepository');
 
 class ServiceContainer {
   constructor(config = {}) {
@@ -32,8 +39,12 @@ class ServiceContainer {
     // Initialize other services with their dependencies
     this.idempotencyService = IdempotencyService;
 
+    // Initialize Network Status Service early so scheduler can use it for health checks
+    this.networkStatusService = new NetworkStatusService(this.stellarService);
+
     this.recurringDonationScheduler = new RecurringDonationScheduler.Class(
-      this.stellarService
+      this.stellarService,
+      this.networkStatusService
     );
 
     this.transactionReconciliationService = new TransactionReconciliationService(
@@ -52,8 +63,24 @@ class ServiceContainer {
       this.stellarService
     );
 
-    // Initialize Network Status Service
-    this.networkStatusService = new NetworkStatusService(this.stellarService);
+    this.transactionSyncScheduler = new TransactionSyncScheduler(
+      this.stellarService
+    );
+
+    // networkStatusService was initialized earlier (before the scheduler)
+
+    // Initialize routing repositories and DonationRouter
+    this.recipientPoolRepo = new RecipientPoolRepository();
+    this.roundRobinStateRepo = new RoundRobinStateRepository();
+    this.routingDecisionRepo = new RoutingDecisionRepository();
+    this.donationTotalsRepo = new DonationTotalsRepository();
+    this.routingConfigRepo = new RoutingConfigRepository();
+    this.donationRouter = new DonationRouter({
+      recipientPoolRepo: this.recipientPoolRepo,
+      routingDecisionRepo: this.routingDecisionRepo,
+      roundRobinStateRepo: this.roundRobinStateRepo,
+      donationTotalsRepo: this.donationTotalsRepo,
+    });
   }
 
   getStellarService() {
@@ -76,12 +103,40 @@ class ServiceContainer {
     return this.transactionSyncService;
   }
 
+  getTransactionSyncScheduler() {
+    return this.transactionSyncScheduler;
+  }
+
   getNetworkStatusService() {
     return this.networkStatusService;
   }
 
   getFeeBumpService() {
     return this.feeBumpService;
+  }
+
+  getRecipientPoolRepo() {
+    return this.recipientPoolRepo;
+  }
+
+  getRoundRobinStateRepo() {
+    return this.roundRobinStateRepo;
+  }
+
+  getRoutingDecisionRepo() {
+    return this.routingDecisionRepo;
+  }
+
+  getDonationTotalsRepo() {
+    return this.donationTotalsRepo;
+  }
+
+  getRoutingConfigRepo() {
+    return this.routingConfigRepo;
+  }
+
+  getDonationRouter() {
+    return this.donationRouter;
   }
 }
 

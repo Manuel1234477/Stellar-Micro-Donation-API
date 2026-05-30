@@ -20,6 +20,12 @@ const ENDPOINT_LIMITS = {
   stream: 10 * 1024,            // 10 KB for POST /stream/create
   transaction: 50 * 1024,       // 50 KB for POST /transactions/sync
   stats: 10 * 1024,             // 10 KB for stats endpoints
+  auth: 1 * 1024,               // 1 KB for auth endpoints (token, refresh)
+  admin: 10 * 1024,             // 10 KB for admin management endpoints
+  bulk: 1 * 1024 * 1024,        // 1 MB for bulk import endpoints
+  webhook: 20 * 1024,           // 20 KB for webhook payloads
+  asset: 50 * 1024,             // 50 KB for asset operations
+  campaign: 20 * 1024,          // 20 KB for campaign management
 };
 
 /**

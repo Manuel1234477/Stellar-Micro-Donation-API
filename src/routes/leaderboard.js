@@ -18,6 +18,7 @@ const { checkPermission } = require('../middleware/rbac');
 const { PERMISSIONS } = require('../utils/permissions');
 const AuditLogService = require('../services/AuditLogService');
 const SseManager = require('../services/SseManager');
+const LeaderboardSSE = require('../services/LeaderboardSSE');
 const { v4: uuidv4 } = require('uuid');
 
 /** Valid time periods for leaderboard queries */
@@ -174,9 +175,16 @@ router.get('/stream', checkPermission(PERMISSIONS.STATS_READ), (req, res, next) 
     
     // Register SSE client
     const client = SseManager.addClient(clientId, keyId, filter, res);
+
+    // Keepalive pings
+    const keepaliveMs = parseInt(process.env.LEADERBOARD_KEEPALIVE_MS || '15000', 10);
+    const pingInterval = setInterval(() => {
+      res.write(': ping\n\n');
+    }, keepaliveMs);
     
     // Handle client disconnect
     req.on('close', () => {
+      clearInterval(pingInterval);
       SseManager.removeClient(clientId);
       console.log(`[Leaderboard SSE] Client disconnected: ${clientId}`);
     });
@@ -219,6 +227,84 @@ router.get('/stream', checkPermission(PERMISSIONS.STATS_READ), (req, res, next) 
   } catch (error) {
     console.error('[Leaderboard SSE] Error:', error.message);
     next(error);
+  }
+});
+
+/**
+ * GET /leaderboard/snapshot
+ * Return current rankings for a given time window (no streaming).
+ * Query params:
+ *   - window: 'daily' | 'weekly' | 'all-time' (default: 'all-time')
+ *   - limit: 1–100 (default: 10)
+ */
+router.get('/snapshot', checkPermission(PERMISSIONS.STATS_READ), auditLeaderboardAccess, (req, res, next) => {
+  try {
+    const window = req.query.window || 'all-time';
+    let limit = parseInt(req.query.limit, 10) || DEFAULT_LIMIT;
+    if (!LeaderboardSSE.WINDOWS.includes(window)) {
+      return res.status(400).json({
+        success: false,
+        error: { code: 'INVALID_PARAMETER', message: `window must be one of: ${LeaderboardSSE.WINDOWS.join(', ')}` },
+      });
+    }
+    if (isNaN(limit) || limit < 1 || limit > MAX_LIMIT) limit = DEFAULT_LIMIT;
+    const snapshot = LeaderboardSSE.getSnapshot(window, limit);
+    res.json({ success: true, data: snapshot });
+  } catch (err) {
+    next(err);
+  }
+});
+
+/**
+ * GET /leaderboard/stream
+ * SSE endpoint pushing rank change events for a given time window.
+ * Query params:
+ *   - window: 'daily' | 'weekly' | 'all-time' (default: 'all-time')
+ *
+ * Sends an initial snapshot immediately on connect, then pushes
+ * 'leaderboard.update' events whenever donations are confirmed.
+ */
+router.get('/stream', checkPermission(PERMISSIONS.STATS_READ), (req, res, next) => {
+  try {
+    const window = req.query.window || 'all-time';
+    if (!LeaderboardSSE.WINDOWS.includes(window)) {
+      return res.status(400).json({
+        success: false,
+        error: { code: 'INVALID_PARAMETER', message: `window must be one of: ${LeaderboardSSE.WINDOWS.join(', ')}` },
+      });
+    }
+
+    res.setHeader('Content-Type', 'text/event-stream');
+    res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
+    res.setHeader('Connection', 'keep-alive');
+    res.setHeader('X-Accel-Buffering', 'no');
+
+    const clientId = uuidv4();
+    const keyId = req.apiKey ? req.apiKey.id : 'anonymous';
+    SseManager.addClient(clientId, keyId, { window }, res);
+
+    // Keepalive pings
+    const keepaliveMs = parseInt(process.env.LEADERBOARD_KEEPALIVE_MS || '15000', 10);
+    const pingInterval = setInterval(() => {
+      res.write(': ping\n\n');
+    }, keepaliveMs);
+
+    req.on('close', () => {
+      clearInterval(pingInterval);
+      SseManager.removeClient(clientId);
+    });
+
+    // Send initial snapshot
+    const snapshot = LeaderboardSSE.getSnapshot(window);
+    SseManager.writeSseEvent(res, '1', LeaderboardSSE.LEADERBOARD_EVENT, {
+      type: 'rank_change',
+      window,
+      timestamp: snapshot.generatedAt,
+      donors: snapshot.donors,
+      recipients: snapshot.recipients,
+    });
+  } catch (err) {
+    next(err);
   }
 });
 
