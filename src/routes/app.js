@@ -513,6 +513,10 @@ app.use('/admin/retention', retentionAdminRoutes);
 // Scheduler admin endpoints (admin only)
 app.use('/admin/scheduler', schedulerAdminRoutes);
 
+// Pledge management admin endpoints (admin only)
+const pledgeAdminRoutes = require('./admin/pledges');
+app.use('/admin/pledges', pledgeAdminRoutes);
+
 // Disputes admin endpoints (admin only)
 app.use('/admin/disputes', disputesRoutes);
 
