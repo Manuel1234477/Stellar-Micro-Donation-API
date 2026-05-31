@@ -1634,10 +1634,108 @@ router.get('/:id/status', requireApiKey, donationIdParamSchema, asyncHandler(asy
 }));
 
 /**
- * GET /donations/export
+ * POST /donations/export
+ * Queue async donation export job. Requires admin role.
+ * Supports filters: format, startDate, endDate, status, senderPublicKey, recipientPublicKey
+ * Issue #123
+ */
+router.post('/export', requireApiKey, checkPermission(PERMISSIONS.ADMIN_ALL), asyncHandler(async (req, res, next) => {
+  try {
+    const DonationExportService = require('../services/DonationExportService');
+    const { format = 'csv', startDate, endDate, status, senderPublicKey, recipientPublicKey } = req.body;
+
+    const result = await DonationExportService.queueExportJob(req.apiKey.id, {
+      format,
+      startDate,
+      endDate,
+      status,
+      senderPublicKey,
+      recipientPublicKey,
+    });
+
+    return res.status(202).json({
+      success: true,
+      data: result,
+    });
+  } catch (error) {
+    next(error);
+  }
+}));
+
+/**
+ * GET /donations/export/:jobId
+ * Get status of an export job. Requires admin role.
+ * Issue #123
+ */
+router.get('/export/:jobId', requireApiKey, checkPermission(PERMISSIONS.ADMIN_ALL), asyncHandler(async (req, res, next) => {
+  try {
+    const DonationExportService = require('../services/DonationExportService');
+    const status = await DonationExportService.getJobStatus(req.params.jobId);
+
+    return res.json({
+      success: true,
+      data: status,
+    });
+  } catch (error) {
+    next(error);
+  }
+}));
+
+/**
+ * GET /donations/export/:jobId/download
+ * Download completed export file. Requires admin role and valid signed URL.
+ * Issue #123
+ */
+router.get('/export/:jobId/download', requireApiKey, checkPermission(PERMISSIONS.ADMIN_ALL), asyncHandler(async (req, res, next) => {
+  try {
+    const DonationExportService = require('../services/DonationExportService');
+    const { token, expires } = req.query;
+
+    if (!token || !expires) {
+      return res.status(400).json({
+        success: false,
+        error: { code: 'MISSING_PARAMS', message: 'token and expires parameters are required' },
+      });
+    }
+
+    const { filePath, format } = await DonationExportService.verifyAndGetDownload(
+      req.params.jobId,
+      token,
+      expires
+    );
+
+    const fs = require('fs');
+    const path = require('path');
+
+    // Check if file exists
+    if (!fs.existsSync(filePath)) {
+      return res.status(404).json({
+        success: false,
+        error: { code: 'FILE_NOT_FOUND', message: 'Export file not found' },
+      });
+    }
+
+    // Set appropriate headers
+    const contentType = format === 'csv' ? 'text/csv' : 'application/json';
+    const fileName = `donations-${req.params.jobId}.${format}`;
+
+    res.setHeader('Content-Type', contentType);
+    res.setHeader('Content-Disposition', `attachment; filename="${fileName}"`);
+
+    // Stream file to response
+    const fileStream = fs.createReadStream(filePath);
+    fileStream.pipe(res);
+  } catch (error) {
+    next(error);
+  }
+}));
+
+/**
+ * GET /donations/export (DEPRECATED - use POST /donations/export instead)
  * Stream donations as CSV or JSON. Requires admin role.
  * Supports filters: format, startDate, endDate, status, senderPublicKey, recipientPublicKey
  * Issue #919
+ * @deprecated Use POST /donations/export for async export instead
  */
 router.get('/export', requireApiKey, checkPermission(PERMISSIONS.ADMIN_ALL), asyncHandler(async (req, res) => {
   const { format = 'csv', startDate, endDate, status, senderPublicKey, recipientPublicKey } = req.query;
