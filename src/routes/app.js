@@ -92,6 +92,7 @@ const { parseCursorPaginationQuery } = require('../utils/pagination');
 const AuditLogService = require('../services/AuditLogService');
 const auditLogRetentionService = require('../services/AuditLogRetentionService');
 const { runCleanup } = require('../jobs/cleanupJob');
+const DonationExportService = require('../services/DonationExportService');
 const { requireAdmin } = require('../middleware/rbac');
 const requireApiKey = require('../middleware/apiKey');
 const encryptionRoutes = require('./encryption');
@@ -778,6 +779,9 @@ async function startServer() {
 
         await WebhookService.WebhookService.initTable();
         await validateRBAC();
+
+        // Initialize donation export service (Issue #123)
+        await DonationExportService.initialize();
 
         // Start audit log auto-flush timer
         AuditLogService.startAutoFlush();
