@@ -44,6 +44,7 @@ const geoRulesAdminRoutes = require('./admin/geoRules');
 const encryptionAdminRoutes = require('./admin/encryption');
 const matchingProgramsAdminRoutes = require('./admin/matchingPrograms');
 const corporateMatchingAdminRoutes = require('./admin/corporateMatching');
+const crowdfundingAdminRoutes = require('./admin/crowdfunding');
 const { router: corporateMatchingRoutes } = require('./corporateMatching');
 const routingAdminRoutes = require('./admin/routing');
 const impactMetricsAdminRoutes = require('./admin/impactMetrics');
@@ -499,6 +500,9 @@ app.get('/suspicious-patterns', require('../middleware/rbac').requireAdmin(), (r
     timestamp: new Date().toISOString()
   });
 });
+
+// Crowdfunding campaign management (admin only)
+app.use('/admin/crowdfunding', crowdfundingAdminRoutes);
 
 // CORS allowlist management (admin only) — Issue #979
 const corsRulesAdminRoutes = require('./admin/corsRules');
