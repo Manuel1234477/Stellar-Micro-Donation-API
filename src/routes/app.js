@@ -52,6 +52,7 @@ const impactRoutes = require('./impact');
 const adminAnalyticsRoutes = require('./admin/analytics');
 const adminInspectRoutes = require('./admin/inspect');
 const reconciliationAdminRoutes = require('./admin/reconciliation');
+const paymentChannelsAdminRoutes = require('./admin/paymentChannels');
 const webhooksRoutes = require('./webhooks');
 const campaignsRoutes = require('./campaigns');
 const tiersRoutes = require('./tiers');
@@ -526,6 +527,9 @@ app.use('/admin/disputes', disputesRoutes);
 
 // Geo-rules management (admin only)
 app.use('/admin/geo-rules', geoRulesAdminRoutes);
+
+// Payment channels management (admin only) — Issue #122
+app.use('/admin/payment-channels', paymentChannelsAdminRoutes);
 
 // System info endpoint (admin only) — Issue #64
 app.use('/admin/system-info', systemInfoRoutes);
