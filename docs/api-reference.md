@@ -6,6 +6,69 @@ All requests require `X-API-Key` header. See [Authentication Guide](./authentica
 
 ---
 
+## Pagination
+
+List endpoints support **cursor-based pagination** for efficient data retrieval and consistency.
+
+### Query Parameters
+
+| Parameter | Type | Default | Max | Description |
+|-----------|------|---------|-----|-------------|
+| `limit` | integer | 20 | 100 | Number of records per page |
+| `cursor` | string | null | N/A | Opaque cursor for pagination position (from `next_cursor` or `prev_cursor`) |
+| `direction` | string | `next` | N/A | Pagination direction: `next` or `prev` |
+| `snapshotAt` | string | null | N/A | **Optional:** ISO-8601 timestamp for consistent snapshot pagination (see below) |
+
+### Response Metadata
+
+All paginated endpoints return:
+
+```json
+{
+  "success": true,
+  "data": [ /* records */ ],
+  "pagination": {
+    "next_cursor": "eyJ0aW1lc3RhbXAiOiIyMDI2LTAz...",
+    "prev_cursor": null,
+    "limit": 20,
+    "direction": "next",
+    "snapshotAt": "2026-03-26T05:00:00.000Z"
+  }
+}
+```
+
+### Known Limitation: Concurrent Inserts
+
+Cursor pagination assumes the underlying dataset is immutable between requests. **With concurrent inserts:**
+
+- Records inserted before the cursor position may be permanently missed
+- Records inserted after the cursor position may appear unexpectedly on the next page
+
+**This primarily affects batch processing and reconciliation use cases.**
+
+### Solution: Snapshot-Based Pagination
+
+Use the optional `snapshotAt` parameter to paginate a consistent snapshot. Records with `timestamp < snapshotAt` are guaranteed to appear exactly once across all pages.
+
+#### Example: Batch Processing
+
+```bash
+# Start pagination session with snapshot
+GET /api/v1/donations?limit=50&snapshotAt=2026-03-26T05:00:00Z
+
+# All subsequent requests use the same snapshotAt
+GET /api/v1/donations?limit=50&cursor=<next_cursor>&snapshotAt=2026-03-26T05:00:00Z
+
+# To process new records, start a new session with current timestamp
+GET /api/v1/donations?limit=50&snapshotAt=2026-03-26T05:30:00Z
+```
+
+**For more details, see [Cursor Pagination Stability](./PAGINATION_CURSOR_STABILITY.md).**
+
+---
+
+---
+
 ## Donations
 
 ### POST /donations
@@ -43,14 +106,25 @@ Create a new donation.
 ### GET /donations
 List all donations (paginated).
 
-**Query params:** `limit` (default 20), `cursor`, `status`
+**Query params:** 
+- `limit` (1–100, default 20)
+- `cursor` (opaque pagination cursor)
+- `direction` (`next` or `prev`)
+- `snapshotAt` (optional ISO-8601 timestamp for consistent pagination)
+- `status` (filter by status)
 
 **Response 200:**
 ```json
 {
   "success": true,
-  "data": [ { "id": 1, "amount": "10.00", "status": "completed", ... } ],
-  "pagination": { "nextCursor": "...", "hasMore": false }
+  "data": [ { "id": 1, "amount": "10.00", "status": "completed", "createdAt": "2026-03-26T05:00:00Z", ... } ],
+  "pagination": { 
+    "next_cursor": "...", 
+    "prev_cursor": null,
+    "limit": 20,
+    "direction": "next",
+    "snapshotAt": "2026-03-26T05:00:00Z"
+  }
 }
 ```
 

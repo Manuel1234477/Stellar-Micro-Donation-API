@@ -1453,6 +1453,273 @@ All error responses follow a consistent format:
 
 ---
 
+## Pagination Examples
+
+### Cursor-Based Pagination Overview
+
+List endpoints use cursor-based pagination for efficient data retrieval. All pagination examples apply to any list endpoint (`/donations`, `/wallets`, `/transactions`, etc.).
+
+### Basic Pagination: First Page
+
+**Endpoint:** `GET /donations?limit=20`
+
+**Response:**
+```json
+{
+  "success": true,
+  "data": [
+    {
+      "id": 1,
+      "amount": 10.5,
+      "donor": "GDONOR123...",
+      "recipient": "GRECIPIENT456...",
+      "timestamp": "2026-03-26T10:30:00.000Z",
+      "status": "confirmed"
+    },
+    {
+      "id": 2,
+      "amount": 5.25,
+      "donor": "GDONOR456...",
+      "recipient": "GRECIPIENT789...",
+      "timestamp": "2026-03-26T10:29:00.000Z",
+      "status": "confirmed"
+    }
+  ],
+  "pagination": {
+    "next_cursor": "eyJ0aW1lc3RhbXAiOiIyMDI2LTAzLTI2VDEwOjI5OjAwLjAwMFoiLCJpZCI6IjIifQ",
+    "prev_cursor": null,
+    "limit": 20,
+    "direction": "next",
+    "snapshotAt": null
+  }
+}
+```
+
+**cURL Example:**
+```bash
+curl -X GET "http://localhost:3000/api/v1/donations?limit=20" \
+  -H "X-API-Key: your-api-key-here"
+```
+
+### Pagination: Next Page
+
+Use the `next_cursor` from the previous response to fetch the next page.
+
+**Endpoint:** `GET /donations?limit=20&cursor=<next_cursor>`
+
+**cURL Example:**
+```bash
+curl -X GET "http://localhost:3000/api/v1/donations?limit=20&cursor=eyJ0aW1lc3RhbXAiOiIyMDI2LTAzLTI2VDEwOjI5OjAwLjAwMFoiLCJpZCI6IjIifQ" \
+  -H "X-API-Key: your-api-key-here"
+```
+
+**Response:**
+```json
+{
+  "success": true,
+  "data": [ /* next 20 records */ ],
+  "pagination": {
+    "next_cursor": "eyJ0aW1lc3RhbXAiOiIyMDI2LTAzLTI2VDEwOjI4OjAwLjAwMFoiLCJpZCI6IjQwIn0",
+    "prev_cursor": "eyJ0aW1lc3RhbXAiOiIyMDI2LTAzLTI2VDEwOjMwOjAwLjAwMFoiLCJpZCI6IjEifQ",
+    "limit": 20,
+    "direction": "next",
+    "snapshotAt": null
+  }
+}
+```
+
+### Pagination: Backward Navigation
+
+Use `direction=prev` with `prev_cursor` to go back to the previous page.
+
+**Endpoint:** `GET /donations?limit=20&cursor=<prev_cursor>&direction=prev`
+
+**cURL Example:**
+```bash
+curl -X GET "http://localhost:3000/api/v1/donations?limit=20&cursor=eyJ0aW1lc3RhbXAiOiIyMDI2LTAzLTI2VDEwOjMwOjAwLjAwMFoiLCJpZCI6IjEifQ&direction=prev" \
+  -H "X-API-Key: your-api-key-here"
+```
+
+### Snapshot Pagination: Consistent Batch Processing
+
+Use `snapshotAt` to paginate a consistent snapshot of records (ideal for batch processing, reconciliation, backups).
+
+#### Problem Scenario
+
+Without `snapshotAt`, records inserted during pagination may be missed or duplicated:
+
+```bash
+# T0: Client fetches first page
+GET /donations?limit=20
+# Result: records A, B, C, D, E (created at T-1)
+
+# T0.5: New record F is inserted (created at T0.2)
+
+# T1: Client fetches second page with cursor
+GET /donations?limit=20&cursor=<cursor_to_E>
+# Result: records G, H, I, J, K (created at T0.5)
+# Problem: Record F was inserted between the two requests!
+# - If F was inserted with timestamp < E, it's NEVER returned (missed)
+# - If F was inserted with timestamp > E, it may appear on next page
+```
+
+#### Solution: Use snapshotAt
+
+```bash
+# T0: Record current time and start pagination
+SNAPSHOT_TIME="2026-03-26T10:00:00.000Z"
+GET /donations?limit=20&snapshotAt=${SNAPSHOT_TIME}
+# Result: All records with timestamp < 2026-03-26T10:00:00Z
+
+# T1: Use same snapshot for all subsequent requests
+GET /donations?limit=20&cursor=<cursor>&snapshotAt=${SNAPSHOT_TIME}
+# Result: Still filtered to records with timestamp < 2026-03-26T10:00:00Z
+# Records inserted after SNAPSHOT_TIME are guaranteed not to appear
+```
+
+#### Complete Batch Processing Example
+
+**JavaScript/Node.js:**
+```javascript
+const apiKey = process.env.API_KEY;
+const snapshotAt = new Date().toISOString(); // Capture time once
+
+async function processDonations() {
+  const allDonations = [];
+  let cursor = null;
+  let page = 0;
+
+  while (true) {
+    page++;
+    const params = new URLSearchParams({
+      limit: 50,
+      snapshotAt,
+    });
+
+    if (cursor) {
+      params.append('cursor', cursor);
+    }
+
+    console.log(`Fetching page ${page}...`);
+    const response = await fetch(
+      `http://localhost:3000/api/v1/donations?${params}`,
+      { headers: { 'X-API-Key': apiKey } }
+    );
+
+    if (!response.ok) {
+      throw new Error(`API error: ${response.statusText}`);
+    }
+
+    const { data, pagination } = await response.json();
+
+    console.log(`Page ${page}: ${data.length} records`);
+    console.log(`Snapshot: ${pagination.snapshotAt}`);
+
+    // Process each record
+    for (const donation of data) {
+      console.log(`Processing donation ${donation.id}: $${donation.amount}`);
+      allDonations.push(donation);
+      // Your batch processing logic here
+    }
+
+    // Check if there are more pages
+    if (!pagination.next_cursor) {
+      console.log('All pages processed!');
+      break;
+    }
+
+    cursor = pagination.next_cursor;
+  }
+
+  console.log(`Total donations processed: ${allDonations.length}`);
+  return allDonations;
+}
+
+// Usage
+processDonations().catch(console.error);
+```
+
+**Bash/cURL:**
+```bash
+#!/bin/bash
+
+API_KEY="your-api-key"
+SNAPSHOT_TIME=$(date -u +"%Y-%m-%dT%H:%M:%S.000Z")
+CURSOR=""
+PAGE=1
+
+echo "Starting batch processing with snapshot: $SNAPSHOT_TIME"
+
+while true; do
+  echo "Fetching page $PAGE..."
+
+  # Build query parameters
+  if [ -z "$CURSOR" ]; then
+    QUERY="limit=50&snapshotAt=$SNAPSHOT_TIME"
+  else
+    QUERY="limit=50&cursor=$CURSOR&snapshotAt=$SNAPSHOT_TIME"
+  fi
+
+  # Fetch page
+  RESPONSE=$(curl -s "http://localhost:3000/api/v1/donations?$QUERY" \
+    -H "X-API-Key: $API_KEY")
+
+  # Extract data and pagination info
+  NEXT_CURSOR=$(echo "$RESPONSE" | jq -r '.pagination.next_cursor // empty')
+  RECORD_COUNT=$(echo "$RESPONSE" | jq '.data | length')
+
+  echo "Page $PAGE: $RECORD_COUNT records"
+
+  # Process records (example: save to file)
+  echo "$RESPONSE" | jq '.data[]' >> donations_backup.jsonl
+
+  # Check for more pages
+  if [ -z "$NEXT_CURSOR" ]; then
+    echo "All pages processed!"
+    break
+  fi
+
+  CURSOR="$NEXT_CURSOR"
+  PAGE=$((PAGE + 1))
+  sleep 1  # Rate limiting
+done
+
+echo "Batch processing complete!"
+```
+
+### Processing New Records After Snapshot
+
+To process records that arrived after a previous snapshot:
+
+```bash
+# After completing first snapshot (T0 = 2026-03-26T10:00:00Z)
+# Start a new snapshot with current time
+
+NEW_SNAPSHOT_TIME=$(date -u +"%Y-%m-%dT%H:%M:%S.000Z")
+echo "Starting new snapshot: $NEW_SNAPSHOT_TIME"
+
+# This fetches only records created between the two snapshots
+curl -X GET "http://localhost:3000/api/v1/donations?limit=50&snapshotAt=$NEW_SNAPSHOT_TIME" \
+  -H "X-API-Key: your-api-key-here"
+```
+
+### Error Handling: Invalid Snapshot
+
+**Endpoint:** `GET /donations?snapshotAt=invalid-timestamp`
+
+**Error Response (400 Bad Request):**
+```json
+{
+  "success": false,
+  "error": {
+    "code": "INVALID_REQUEST",
+    "message": "Invalid snapshotAt parameter: must be a valid ISO-8601 timestamp"
+  }
+}
+```
+
+---
+
 ## Tips for Integration
 
 ### Best Practices
