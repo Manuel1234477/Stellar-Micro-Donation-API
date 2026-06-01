@@ -11,11 +11,29 @@ const express = require('express');
 const router = express.Router();
 const { checkPermission } = require('../../middleware/rbac');
 const { PERMISSIONS } = require('../../utils/permissions');
-const { getTrace, getTraceCount } = require('../../utils/tracing');
+const { getTrace, getTraces, getTraceCount } = require('../../utils/tracing');
+
+/**
+ * GET /admin/traces
+ * Return summaries for all stored traces.
+ * Supports ?status=error and ?operation=<name> filters.
+ */
+router.get('/', checkPermission(PERMISSIONS.ADMIN_ALL), (req, res, next) => {
+  try {
+    const filters = {};
+    if (req.query.status) filters.status = req.query.status;
+    if (req.query.operation) filters.operation = req.query.operation;
+
+    const traces = getTraces(filters);
+    res.json({ success: true, data: traces, count: traces.length, total: getTraceCount() });
+  } catch (err) {
+    next(err);
+  }
+});
 
 /**
  * GET /admin/traces/:traceId
- * Retrieve a stored trace by its W3C trace ID.
+ * Retrieve the full span tree for a stored trace by its W3C trace ID.
  */
 router.get('/:traceId', checkPermission(PERMISSIONS.ADMIN_ALL), (req, res, next) => {
   try {
@@ -33,14 +51,6 @@ router.get('/:traceId', checkPermission(PERMISSIONS.ADMIN_ALL), (req, res, next)
   } catch (err) {
     next(err);
   }
-});
-
-/**
- * GET /admin/traces
- * Return the number of traces currently stored.
- */
-router.get('/', checkPermission(PERMISSIONS.ADMIN_ALL), (req, res) => {
-  res.json({ success: true, data: { count: getTraceCount() } });
 });
 
 module.exports = router;

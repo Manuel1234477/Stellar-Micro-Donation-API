@@ -40,3 +40,9 @@ exports.up = async (db) => {
     CREATE INDEX IF NOT EXISTS idx_api_keys_status ON api_keys(status)
   `);
 };
+
+exports.down = async (db) => {
+  await db.run('DROP INDEX IF EXISTS idx_api_keys_key_hash');
+  await db.run('DROP INDEX IF EXISTS idx_api_keys_status');
+  await db.run('DROP TABLE IF EXISTS api_keys');
+};

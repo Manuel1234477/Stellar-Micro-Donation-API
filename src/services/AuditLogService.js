@@ -64,6 +64,7 @@ const AUDIT_ACTION = {
   API_KEY_LISTED: 'API_KEY_LISTED',
   API_KEY_DEPRECATED: 'API_KEY_DEPRECATED',
   API_KEY_REVOKED: 'API_KEY_REVOKED',
+  API_KEY_EXTENDED: 'API_KEY_EXTENDED',
   
   // Financial Operations
   DONATION_CREATED: 'DONATION_CREATED',
@@ -119,6 +120,12 @@ const auditLogMetrics = {
   totalAttempts: 0,
   totalFailures: 0,
 };
+
+/** In-memory buffer for pending audit log entries */
+const _pendingBuffer = [];
+const BUFFER_FLUSH_THRESHOLD = 20;
+const BUFFER_FLUSH_INTERVAL_MS = 2000;
+let _autoFlushTimer = null;
 
 class AuditLogService {
   /**
@@ -258,10 +265,6 @@ class AuditLogService {
   static async log(params) {
     auditLogMetrics.totalAttempts += 1;
     try {
-      if (process.env.NODE_ENV === 'test') {
-        return { success: true, skipped: true };
-      }
-
       if (!tableInitialized) {
         if (tableInitPromise) {
           await tableInitPromise;
@@ -315,10 +318,6 @@ class AuditLogService {
     resource = null,
     reason = null
   }) {
-    if (process.env.NODE_ENV === 'test') {
-      return { id: 'test-log-id', ...params };
-    }
-
     try {
       // Validate required fields
       if (!category || !action || !severity || !result) {
@@ -347,50 +346,20 @@ class AuditLogService {
       const hash = this.generateHash(auditEntry);
       auditEntry.integrityHash = hash;
 
-      // Integrity hash is already checked, proceed to insert
-      // Insert into database (immutable)
-      const dbResult = await db.run(
-        `INSERT INTO audit_logs (
-          timestamp, category, action, severity, result,
-          userId, requestId, ipAddress, resource, reason,
-          details, integrityHash
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-        [
-          auditEntry.timestamp,
-          auditEntry.category,
-          auditEntry.action,
-          auditEntry.severity,
-          auditEntry.result,
-          auditEntry.userId,
-          auditEntry.requestId,
-          auditEntry.ipAddress,
-          auditEntry.resource,
-          auditEntry.reason,
-          auditEntry.details,
-          auditEntry.integrityHash
-        ]
-      );
+      // Buffer entry; flush when threshold is reached
+      _pendingBuffer.push(auditEntry);
 
-      // Also log to application logs for real-time monitoring
-      if (process.env.NODE_ENV !== 'test') {
-        const logLevel = severity === AUDIT_SEVERITY.HIGH ? 'warn' : 'info';
-        log[logLevel]('AUDIT', `${action}: ${result}`, {
-          category,
-          action,
-          severity,
-          result,
-          userId,
-          requestId,
-          ipAddress,
-          resource,
-          reason
-        });
+      // Log to application logs for real-time monitoring
+      const logLevel = severity === AUDIT_SEVERITY.HIGH ? 'warn' : 'info';
+      log[logLevel]('AUDIT', `${action}: ${result}`, {
+        category, action, severity, result, userId, requestId, ipAddress, resource, reason
+      });
+
+      if (_pendingBuffer.length >= BUFFER_FLUSH_THRESHOLD) {
+        AuditLogService.flush().catch(() => {});
       }
 
-      return {
-        id: dbResult.id,
-        ...auditEntry
-      };
+      return { buffered: true, ...auditEntry };
     } catch (error) {
       this.logWriteFailure(error, category, action);
       // Re-throw validation errors, swallow DB errors
@@ -398,6 +367,82 @@ class AuditLogService {
         throw error;
       }
       // Don't re-throw DB errors — audit log failures should never block operations
+    }
+  }
+
+  /**
+   * Write all buffered entries to the database in a single transaction.
+   * Has a 5-second timeout; on timeout the buffered entries are written to stderr and the
+   * buffer is cleared so that shutdown can proceed.
+   * Safe to call multiple times (idempotent).
+   * @returns {Promise<void>}
+   */
+  static async flush() {
+    if (_pendingBuffer.length === 0) return;
+
+    const entries = _pendingBuffer.splice(0, _pendingBuffer.length);
+
+    const writeEntries = async () => {
+      await db.run('BEGIN TRANSACTION');
+      try {
+        for (const entry of entries) {
+          await db.run(
+            `INSERT INTO audit_logs (
+              timestamp, category, action, severity, result,
+              userId, requestId, ipAddress, resource, reason,
+              details, integrityHash
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+            [
+              entry.timestamp, entry.category, entry.action, entry.severity, entry.result,
+              entry.userId, entry.requestId, entry.ipAddress, entry.resource, entry.reason,
+              entry.details, entry.integrityHash
+            ]
+          );
+        }
+        await db.run('COMMIT');
+      } catch (err) {
+        await db.run('ROLLBACK').catch(() => {});
+        throw err;
+      }
+    };
+
+    const FLUSH_TIMEOUT_MS = 5000;
+    try {
+      await Promise.race([
+        writeEntries(),
+        new Promise((_, reject) =>
+          setTimeout(() => reject(new Error('flush timeout')), FLUSH_TIMEOUT_MS)
+        ),
+      ]);
+    } catch (err) {
+      process.stderr.write(
+        JSON.stringify({ event: 'audit_flush_failed', error: err.message, entries }) + '\n'
+      );
+    }
+  }
+
+  /**
+   * Start the periodic auto-flush timer.
+   * @returns {void}
+   */
+  static startAutoFlush() {
+    if (_autoFlushTimer) return;
+    _autoFlushTimer = setInterval(() => {
+      if (_pendingBuffer.length > 0) {
+        AuditLogService.flush().catch(() => {});
+      }
+    }, BUFFER_FLUSH_INTERVAL_MS);
+    if (_autoFlushTimer.unref) _autoFlushTimer.unref();
+  }
+
+  /**
+   * Stop the periodic auto-flush timer.
+   * @returns {void}
+   */
+  static stopAutoFlush() {
+    if (_autoFlushTimer) {
+      clearInterval(_autoFlushTimer);
+      _autoFlushTimer = null;
     }
   }
 
@@ -460,11 +505,19 @@ class AuditLogService {
 
   /**
    * Query audit logs using cursor-based pagination.
+   *
+   * Pass `pagination.snapshotAt` (ISO 8601) to obtain a consistent,
+   * point-in-time view across multiple page requests.  When provided, only
+   * records with `timestamp <= snapshotAt` are returned, preventing the
+   * concurrent-insert skip/duplicate problem.  See `src/utils/pagination.js`
+   * for a full explanation.
+   *
    * @param {Object} filters - Query filters.
    * @param {Object} pagination - Pagination options.
    * @param {{ timestamp: string, id: string }|null} pagination.cursor - Decoded cursor.
    * @param {number} pagination.limit - Page size.
    * @param {string} pagination.direction - Pagination direction.
+   * @param {string|null} [pagination.snapshotAt] - Optional ISO 8601 upper-bound timestamp for consistent pagination.
    * @returns {Promise<{ data: Array, totalCount: number, meta: Object }>} Paginated results.
    */
   static async queryPaginated(filters = {}, pagination = {}) {
@@ -472,12 +525,18 @@ class AuditLogService {
       cursor = null,
       limit = 20,
       direction = 'next',
+      snapshotAt = null,
     } = pagination;
 
     const filterQuery = this.buildFilterQuery(filters);
+
+    // When snapshotAt is provided, scope the total count to the same snapshot
+    // so that X-Total-Count is consistent with the pages the client will see.
+    const snapshotCountClause = snapshotAt ? ` AND timestamp <= ?` : '';
+    const snapshotCountParams = snapshotAt ? [snapshotAt] : [];
     const totalRow = await db.get(
-      `SELECT COUNT(*) as total${filterQuery.clause}`,
-      filterQuery.params
+      `SELECT COUNT(*) as total${filterQuery.clause}${snapshotCountClause}`,
+      [...filterQuery.params, ...snapshotCountParams]
     );
 
     const cursorIsValid = await this.cursorExists(filters, cursor);
@@ -490,6 +549,7 @@ class AuditLogService {
       direction,
       timestampColumn: 'timestamp',
       idColumn: 'id',
+      snapshotAt,
     });
 
     const orderBy = direction === 'prev'

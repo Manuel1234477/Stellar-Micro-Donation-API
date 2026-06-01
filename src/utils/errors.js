@@ -48,6 +48,7 @@ const ERROR_CODES = {
   // Business logic errors (5000-5099)
   INSUFFICIENT_BALANCE: { code: 'INSUFFICIENT_BALANCE', numeric: 5000 },
   TRANSACTION_FAILED:   { code: 'TRANSACTION_FAILED',   numeric: 5001 },
+  INVALID_STATE_TRANSITION: { code: 'INVALID_STATE_TRANSITION', numeric: 5015 },
   FEE_BUMP_MAX_ATTEMPTS:  { code: 'FEE_BUMP_MAX_ATTEMPTS',  numeric: 5010 },
   FEE_BUMP_EXCEEDS_CAP:   { code: 'FEE_BUMP_EXCEEDS_CAP',   numeric: 5011 },
   FEE_BUMP_INVALID_STATE: { code: 'FEE_BUMP_INVALID_STATE', numeric: 5012 },
@@ -64,7 +65,8 @@ const ERROR_CODES = {
   RECIPIENT_NOT_IN_POOL:     { code: 'RECIPIENT_NOT_IN_POOL',     numeric: 5026 },
   DONOR_COORDINATES_REQUIRED:{ code: 'DONOR_COORDINATES_REQUIRED',numeric: 5027 },
   NO_ELIGIBLE_RECIPIENTS:    { code: 'NO_ELIGIBLE_RECIPIENTS',    numeric: 5028 },
-  NO_ACTIVE_CAMPAIGNS:       { code: 'NO_ACTIVE_CAMPAIGNS',       numeric: 5029 },
+  NO_ACTIVE_CAMPAIGNS:         { code: 'NO_ACTIVE_CAMPAIGNS',         numeric: 5029 },
+  RECIPIENT_ACCOUNT_NOT_FOUND: { code: 'RECIPIENT_ACCOUNT_NOT_FOUND', numeric: 5030 },
 
   // Rate limiting errors (6000-6099)
   RATE_LIMIT_EXCEEDED: { code: 'RATE_LIMIT_EXCEEDED', numeric: 6000 },

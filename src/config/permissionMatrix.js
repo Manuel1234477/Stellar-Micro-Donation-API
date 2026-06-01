@@ -105,6 +105,7 @@ const ROUTE_PERMISSIONS = [
   { method: 'GET', path: '/donations/recent', permission: PERMISSIONS.DONATIONS_READ },
   { method: 'GET', path: '/donations/:id', permission: PERMISSIONS.DONATIONS_READ },
   { method: 'PATCH', path: '/donations/:id/status', permission: PERMISSIONS.DONATIONS_UPDATE },
+  { method: 'GET', path: '/donations/stats/by-tag', permission: PERMISSIONS.STATS_READ },
 
   // Wallet routes
   { method: 'POST', path: '/wallets', permission: PERMISSIONS.WALLETS_CREATE },

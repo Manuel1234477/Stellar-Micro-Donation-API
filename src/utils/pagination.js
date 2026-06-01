@@ -14,6 +14,44 @@ const PAGINATION_DIRECTIONS = ['next', 'prev'];
  * - Query parameter parsing with optional snapshotAt support
  * - SQL WHERE clause generation for cursor pagination
  * - Metadata generation for paginated responses
+ * @fileoverview Cursor-based pagination utilities.
+ *
+ * ## Concurrent-Insert Consistency Limitation
+ *
+ * The cursor mechanism uses a composite (timestamp, id) position to mark the
+ * client's place in the result set.  Because records are ordered by timestamp
+ * descending, each page request fetches records whose timestamp/id is strictly
+ * less than (or greater than, for `prev`) the cursor value.
+ *
+ * **Known limitation — concurrent inserts:**
+ *
+ * If a new record is inserted *between* two page requests with a timestamp
+ * that falls *before* the current cursor (i.e. an older timestamp), that
+ * record will never appear in any page the client receives — the client has
+ * already moved past that position.  Conversely, a record inserted with a
+ * timestamp *after* the cursor may appear on the next page even though it did
+ * not exist when the client started paginating.
+ *
+ * **Implication for batch processing / reconciliation:**
+ *
+ * Clients that rely on pagination to process *every* record (e.g. nightly
+ * reconciliation jobs) may silently miss records that were inserted during
+ * their pagination session.
+ *
+ * **Mitigation — `snapshotAt` parameter:**
+ *
+ * Pass an ISO 8601 timestamp as `snapshotAt` on the *first* request and
+ * repeat it on every subsequent page request.  The implementation will add
+ * `AND timestamp <= :snapshotAt` to every query, ensuring that only records
+ * that existed at the snapshot moment are ever returned.  This gives the
+ * client a consistent, point-in-time view of the data for the duration of
+ * the pagination session.
+ *
+ * Example:
+ * ```
+ * GET /donations?snapshotAt=2026-05-30T12:00:00.000Z&limit=20
+ * GET /donations?snapshotAt=2026-05-30T12:00:00.000Z&limit=20&cursor=<next_cursor>
+ * ```
  */
 
 /**
@@ -91,16 +129,47 @@ function validateSnapshotAt(snapshotAt) {
   if (Number.isNaN(parsedDate.getTime())) {
     throw new ValidationError(
       'Invalid snapshotAt parameter: must be a valid ISO-8601 timestamp',
+ * Parse and validate an optional ISO 8601 snapshotAt timestamp.
+ *
+ * When provided, callers should add `AND <timestampColumn> <= :snapshotAt` to
+ * their queries so that every page in a pagination session sees the same
+ * consistent set of records (see the module-level JSDoc for the full
+ * concurrent-insert explanation).
+ *
+ * @param {string|undefined|null} value - Raw query-string value.
+ * @returns {string|null} ISO 8601 string or null when not supplied.
+ * @throws {ValidationError} If the value is present but not a valid date.
+ */
+function parseSnapshotAt(value) {
+  if (value === undefined || value === null || value === '') {
+    return null;
+  }
+
+  if (typeof value !== 'string') {
+    throw new ValidationError('Invalid snapshotAt parameter', null, ERROR_CODES.INVALID_REQUEST);
+  }
+
+  const parsed = new Date(value);
+  if (Number.isNaN(parsed.getTime())) {
+    throw new ValidationError(
+      'Invalid snapshotAt parameter: must be a valid ISO 8601 timestamp',
       null,
       ERROR_CODES.INVALID_REQUEST
     );
   }
 
   return parsedDate.toISOString();
+  return parsed.toISOString();
 }
 
 /**
  * Parse and strictly validate cursor pagination query parameters.
+ *
+ * Supports an optional `snapshotAt` ISO 8601 timestamp that clients can use
+ * to obtain a consistent, point-in-time view across multiple page requests.
+ * See the module-level JSDoc for a full explanation of the concurrent-insert
+ * limitation and how `snapshotAt` mitigates it.
+ *
  * @param {Object} query - Express request query object.
  * @returns {{ cursor: { timestamp: string, id: string }|null, limit: number, direction: string, snapshotAt: string|null }}
  */
@@ -137,6 +206,7 @@ function parseCursorPaginationQuery(query = {}) {
     limit: limitResult.value,
     direction,
     snapshotAt: validateSnapshotAt(query.snapshotAt),
+    snapshotAt: parseSnapshotAt(query.snapshotAt),
   };
 }
 
@@ -179,6 +249,13 @@ function compareItemsDescending(left, right, timestampField, idField = 'id') {
 
 /**
  * Paginate a sorted in-memory collection using cursor semantics.
+ *
+ * When `snapshotAt` is provided, only records whose timestamp field is ≤ the
+ * snapshot value are considered.  This gives callers a consistent,
+ * point-in-time view across multiple page requests and prevents the
+ * concurrent-insert skip/duplicate problem described in the module-level
+ * JSDoc.
+ *
  * @param {Object[]} items - Records to paginate.
  * @param {Object} options - Pagination options.
  * @param {{ timestamp: string, id: string }|null} options.cursor - Decoded cursor.
@@ -186,6 +263,7 @@ function compareItemsDescending(left, right, timestampField, idField = 'id') {
  * @param {string} options.direction - Pagination direction.
  * @param {string} options.timestampField - Timestamp field name.
  * @param {string} options.idField - Identifier field name.
+ * @param {string|null} [options.snapshotAt] - Optional ISO 8601 upper-bound timestamp for consistent pagination.
  * @returns {{ data: Object[], totalCount: number, meta: { limit: number, direction: string, next_cursor: string|null, prev_cursor: string|null } }}
  */
 function paginateCollection(items, {
@@ -194,8 +272,15 @@ function paginateCollection(items, {
   direction = 'next',
   timestampField,
   idField = 'id',
+  snapshotAt = null,
 }) {
-  const sortedItems = [...items].sort((left, right) => compareItemsDescending(left, right, timestampField, idField));
+  // Apply snapshot filter before sorting so totalCount reflects the snapshot.
+  const snapshotMs = snapshotAt ? new Date(snapshotAt).getTime() : null;
+  const filteredItems = snapshotMs !== null
+    ? items.filter((item) => new Date(item[timestampField]).getTime() <= snapshotMs)
+    : items;
+
+  const sortedItems = [...filteredItems].sort((left, right) => compareItemsDescending(left, right, timestampField, idField));
   const totalCount = sortedItems.length;
 
   let startIndex = 0;
@@ -245,12 +330,19 @@ function paginateCollection(items, {
  * IMPORTANT: Cursor pagination has known limitations with concurrent inserts.
  * See docs/PAGINATION_CURSOR_STABILITY.md for details and snapshot-based alternatives.
  *
+ * When `snapshotAt` is provided, an additional `AND <timestampColumn> <=
+ * :snapshotAt` predicate is appended.  Clients should pass the same
+ * `snapshotAt` value on every page request to obtain a consistent,
+ * point-in-time view and avoid the concurrent-insert skip/duplicate problem
+ * described in the module-level JSDoc.
+ *
  * @param {Object} options - Clause options.
  * @param {{ timestamp: string, id: string }|null} options.cursor - Decoded cursor.
  * @param {string} options.direction - Pagination direction.
  * @param {string} options.timestampColumn - Timestamp column name.
  * @param {string} options.idColumn - Identifier column name.
  * @param {string|null} options.snapshotAt - Optional ISO-8601 timestamp for snapshot-based pagination.
+ * @param {string|null} [options.snapshotAt] - Optional ISO 8601 upper-bound timestamp for consistent pagination.
  * @returns {{ clause: string, params: Array<string> }} SQL clause fragment and parameters.
  */
 function buildCursorWhereClause({
@@ -280,6 +372,24 @@ function buildCursorWhereClause({
   }
 
   return { clause, params };
+  const snapshotClause = snapshotAt ? ` AND ${timestampColumn} <= ?` : '';
+  const snapshotParams = snapshotAt ? [snapshotAt] : [];
+
+  if (!cursor) {
+    return { clause: snapshotClause, params: snapshotParams };
+  }
+
+  if (direction === 'prev') {
+    return {
+      clause: ` AND ((${timestampColumn} > ?) OR (${timestampColumn} = ? AND ${idColumn} > ?))${snapshotClause}`,
+      params: [cursor.timestamp, cursor.timestamp, cursor.id, ...snapshotParams],
+    };
+  }
+
+  return {
+    clause: ` AND ((${timestampColumn} < ?) OR (${timestampColumn} = ? AND ${idColumn} < ?))${snapshotClause}`,
+    params: [cursor.timestamp, cursor.timestamp, cursor.id, ...snapshotParams],
+  };
 }
 
 /**
@@ -337,6 +447,7 @@ module.exports = {
   encodeCursor,
   decodeCursor,
   validateSnapshotAt,
+  parseSnapshotAt,
   parseCursorPaginationQuery,
   createCursorFromItem,
   compareItemsDescending,

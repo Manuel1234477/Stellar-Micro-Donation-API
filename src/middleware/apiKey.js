@@ -16,7 +16,7 @@ const log = require("../utils/log");
 const AuditLogService = require("../services/AuditLogService");
 const { verify: verifySignature } = require("../utils/requestSigner");
 const { isIpAllowed } = require("../utils/ipAllowlist");
-const { defaultStore: nonceStore } = require("../utils/nonceStore");
+const { getDefaultStore } = require("../utils/nonceStore");
 const WebhookService = require("../services/WebhookService");
 
 /**
@@ -250,7 +250,8 @@ const requireApiKey = async (req, res, next) => {
           });
         }
 
-        const { seen } = nonceStore.check(nonce);
+        const nonceStore = getDefaultStore();
+        const { seen } = await nonceStore.check(nonce);
         if (seen) {
           log.warn('API_KEY_AUTH', 'Replayed nonce rejected', {
             path: req.path,

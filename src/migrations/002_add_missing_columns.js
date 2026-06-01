@@ -11,7 +11,10 @@
 exports.name = '002_add_missing_columns';
 
 exports.up = async (db) => {
-  // Issue #687: Add missing columns to recurring_donations table
+  // Get existing columns on recurring_donations
+  const tableInfo = await db.query('PRAGMA table_info(recurring_donations)', []);
+  const existingCols = new Set(tableInfo.map(r => r.name));
+
   const columns = [
     { name: 'customIntervalDays', type: 'INTEGER DEFAULT NULL' },
     { name: 'maxExecutions', type: 'INTEGER DEFAULT NULL' },
@@ -21,35 +24,22 @@ exports.up = async (db) => {
   ];
 
   for (const col of columns) {
-    try {
-      await db.run(`
-        ALTER TABLE recurring_donations
-        ADD COLUMN ${col.name} ${col.type}
-      `);
-      console.log(`✓ Added column ${col.name} to recurring_donations`);
-    } catch (err) {
-      // Column already exists - this is idempotent
-      if (err.message.includes('duplicate column name')) {
-        console.log(`ℹ Column ${col.name} already exists on recurring_donations`);
-      } else {
-        throw err;
-      }
+    if (existingCols.has(col.name)) {
+      console.log(`ℹ Column ${col.name} already exists on recurring_donations`);
+      continue;
     }
+    await db.run(`ALTER TABLE recurring_donations ADD COLUMN ${col.name} ${col.type}`);
+    console.log(`✓ Added column ${col.name} to recurring_donations`);
   }
 
-  // Issue #686: Ensure deleted_at exists on users table (idempotent)
-  try {
-    await db.run(`
-      ALTER TABLE users
-      ADD COLUMN deleted_at DATETIME DEFAULT NULL
-    `);
+  // Ensure deleted_at exists on users table
+  const usersInfo = await db.query('PRAGMA table_info(users)', []);
+  const userCols = new Set(usersInfo.map(r => r.name));
+  if (!userCols.has('deleted_at')) {
+    await db.run('ALTER TABLE users ADD COLUMN deleted_at DATETIME DEFAULT NULL');
     console.log('✓ Added column deleted_at to users');
-  } catch (err) {
-    if (err.message.includes('duplicate column name')) {
-      console.log('ℹ Column deleted_at already exists on users');
-    } else {
-      throw err;
-    }
+  } else {
+    console.log('ℹ Column deleted_at already exists on users');
   }
 };
 

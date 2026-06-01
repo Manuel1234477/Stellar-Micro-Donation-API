@@ -44,3 +44,21 @@ exports.up = async (db) => {
   await db.run(`CREATE INDEX IF NOT EXISTS idx_recovery_requests_walletId ON recovery_requests(walletId)`);
   await db.run(`CREATE INDEX IF NOT EXISTS idx_recovery_approvals_requestId ON recovery_approvals(recoveryRequestId)`);
 };
+
+exports.down = async (db) => {
+  await db.run('DROP INDEX IF EXISTS idx_recovery_guardians_walletId');
+  await db.run('DROP INDEX IF EXISTS idx_recovery_requests_walletId');
+  await db.run('DROP INDEX IF EXISTS idx_recovery_approvals_requestId');
+  await db.run('DROP TABLE IF EXISTS recovery_approvals');
+  await db.run('DROP TABLE IF EXISTS recovery_requests');
+  await db.run('DROP TABLE IF EXISTS recovery_guardians');
+};
+
+exports.down = async (db) => {
+  await db.run('DROP INDEX IF EXISTS idx_recovery_guardians_walletId');
+  await db.run('DROP INDEX IF EXISTS idx_recovery_requests_walletId');
+  await db.run('DROP INDEX IF EXISTS idx_recovery_approvals_requestId');
+  await db.run('DROP TABLE IF EXISTS recovery_approvals');
+  await db.run('DROP TABLE IF EXISTS recovery_requests');
+  await db.run('DROP TABLE IF EXISTS recovery_guardians');
+};

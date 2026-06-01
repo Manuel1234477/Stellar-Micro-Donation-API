@@ -202,6 +202,40 @@
           "refId": "A"
         }
       ]
+    },
+    {
+      "id": 9,
+      "title": "Skipped Executions (rate/min)",
+      "description": "Schedules skipped on each tick because they were already in-progress. A rising rate indicates the scheduler cannot keep up with demand.",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 20 },
+      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+      "fieldConfig": {
+        "defaults": { "unit": "reqpm" },
+        "overrides": [
+          { "matcher": { "id": "byName", "options": "in_progress" }, "properties": [{ "id": "color", "value": { "fixedColor": "yellow", "mode": "fixed" } }] }
+        ]
+      },
+      "options": {
+        "tooltip": { "mode": "multi" }
+      },
+      "targets": [
+        {
+          "expr": "rate(recurring_donations_skipped_total{reason=\"in_progress\"}[$__rate_interval]) * 60",
+          "legendFormat": "in_progress",
+          "refId": "A"
+        },
+        {
+          "expr": "rate(recurring_donations_skipped_total{reason=\"network_degraded\"}[$__rate_interval]) * 60",
+          "legendFormat": "network_degraded",
+          "refId": "B"
+        },
+        {
+          "expr": "rate(recurring_donations_skipped_total{reason=\"scheduler_paused\"}[$__rate_interval]) * 60",
+          "legendFormat": "scheduler_paused",
+          "refId": "C"
+        }
+      ]
     }
   ],
   "refresh": "30s",

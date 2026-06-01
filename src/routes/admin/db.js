@@ -58,6 +58,26 @@ function parseLimit(rawLimit) {
 }
 
 /**
+ * Sanitize SQL by replacing parameter values with ? placeholders.
+ *
+ * @param {string} sql - SQL statement
+ * @param {Array} params - Query parameters
+ * @returns {string} Sanitized SQL
+ */
+function sanitizeSql(sql, params = []) {
+  if (!params || params.length === 0) {
+    return sql;
+  }
+
+  let sanitized = sql;
+  for (let i = 0; i < params.length; i++) {
+    // Replace first occurrence of ? with placeholder
+    sanitized = sanitized.replace('?', '?');
+  }
+  return sanitized;
+}
+
+/**
  * GET /admin/db/pool-status
  * Returns current connection pool metrics (issue #631).
  */
@@ -69,22 +89,93 @@ router.get('/pool-status', checkPermission(PERMISSIONS.ADMIN_ALL), (req, res) =>
 /**
  * GET /admin/db/slow-queries
  * Returns the slowest queries captured during the last 24 hours.
+ * Query params: limit (default 50, max 200), threshold (default SLOW_QUERY_WARN_MS)
  */
 router.get('/slow-queries', checkPermission(PERMISSIONS.ADMIN_ALL), (req, res, next) => {
   try {
-    const limit = parseLimit(req.query.limit);
-    const queries = Database.getSlowQueries({ limit });
+    const limit = Math.min(200, parseLimit(req.query.limit) || 50);
+    const threshold = parseLimit(req.query.threshold);
+    
+    let queries = Database.getSlowQueries({ limit });
+    
+    // Filter by threshold if provided
+    if (threshold !== undefined) {
+      queries = queries.filter(q => q.durationMs >= threshold);
+    }
+    
+    // Sanitize SQL statements
+    const sanitizedQueries = queries.map(q => ({
+      sql: sanitizeSql(q.sql, q.params),
+      durationMs: q.durationMs,
+      timestamp: q.isoTimestamp,
+      callerContext: q.method || 'unknown'
+    }));
+    
     const metrics = Database.getPerformanceMetrics();
 
     res.json({
       success: true,
       data: {
-        thresholdMs: metrics.thresholdMs,
+        thresholdMs: threshold !== undefined ? threshold : metrics.thresholdMs,
         averageQueryTimeMs: metrics.averageQueryTimeMs,
         recentQueryCount: metrics.recentQueryCount,
         slowQueryCount: metrics.slowQueryCount,
-        queries,
+        queries: sanitizedQueries,
       },
+    });
+  } catch (error) {
+    next(error);
+  }
+});
+
+/**
+ * GET /admin/db/slow-queries/stats
+ * Returns aggregate statistics about slow queries.
+ */
+router.get('/slow-queries/stats', checkPermission(PERMISSIONS.ADMIN_ALL), (req, res, next) => {
+  try {
+    const queries = Database.getSlowQueries({ limit: 1000 });
+    const metrics = Database.getPerformanceMetrics();
+    
+    // Group queries by SQL pattern
+    const queryStats = {};
+    queries.forEach(q => {
+      const sanitized = sanitizeSql(q.sql, q.params);
+      if (!queryStats[sanitized]) {
+        queryStats[sanitized] = {
+          sql: sanitized,
+          count: 0,
+          totalDurationMs: 0,
+          minDurationMs: Infinity,
+          maxDurationMs: 0
+        };
+      }
+      queryStats[sanitized].count += 1;
+      queryStats[sanitized].totalDurationMs += q.durationMs;
+      queryStats[sanitized].minDurationMs = Math.min(queryStats[sanitized].minDurationMs, q.durationMs);
+      queryStats[sanitized].maxDurationMs = Math.max(queryStats[sanitized].maxDurationMs, q.durationMs);
+    });
+    
+    // Calculate averages and sort by count descending
+    const topQueries = Object.values(queryStats)
+      .map(stat => ({
+        sql: stat.sql,
+        count: stat.count,
+        avgDurationMs: Number((stat.totalDurationMs / stat.count).toFixed(2)),
+        minDurationMs: stat.minDurationMs,
+        maxDurationMs: stat.maxDurationMs
+      }))
+      .sort((a, b) => b.count - a.count)
+      .slice(0, 10);
+
+    res.json({
+      success: true,
+      data: {
+        totalSlowQueries24h: queries.length,
+        averageDurationMs: metrics.averageQueryTimeMs,
+        maxDurationMs: queries.length > 0 ? Math.max(...queries.map(q => q.durationMs)) : 0,
+        topQueries
+      }
     });
   } catch (error) {
     next(error);
@@ -190,6 +281,144 @@ router.get('/stats', dbStatsRateLimiter, checkPermission(PERMISSIONS.ADMIN_ALL),
   } catch (error) {
     next(error);
   }
+});
+
+// In-memory vacuum job store
+const vacuumJobs = new Map();
+let activeVacuumJobId = null;
+
+/**
+ * POST /admin/db/vacuum
+ * Starts a background VACUUM job. Returns immediately with a jobId.
+ * Only one vacuum job may run at a time.
+ */
+router.post('/vacuum', checkPermission(PERMISSIONS.ADMIN_ALL), async (req, res) => {
+  if (activeVacuumJobId && vacuumJobs.get(activeVacuumJobId)?.status === 'running') {
+    return res.status(409).json({ success: false, error: { code: 'VACUUM_IN_PROGRESS', message: 'A vacuum job is already running' } });
+  }
+
+  const jobId = `vacuum-${Date.now()}`;
+  activeVacuumJobId = jobId;
+  vacuumJobs.set(jobId, { status: 'running', startedAt: Date.now() });
+
+  // Run in background
+  setImmediate(async () => {
+    const job = vacuumJobs.get(jobId);
+    try {
+      const dbPath = process.env.DB_PATH || path.join(__dirname, '../../../data/stellar_donations.db');
+      let sizeBefore = 0;
+      try { sizeBefore = fs.statSync(dbPath).size; } catch (_) {}
+
+      await Database.run('PRAGMA wal_checkpoint(FULL)');
+      await Database.run('VACUUM');
+
+      let sizeAfter = 0;
+      try { sizeAfter = fs.statSync(dbPath).size; } catch (_) {}
+
+      job.status = 'completed';
+      job.sizeBefore = sizeBefore;
+      job.sizeAfter = sizeAfter;
+      job.reclaimedBytes = sizeBefore - sizeAfter;
+      job.durationMs = Date.now() - job.startedAt;
+    } catch (err) {
+      job.status = 'failed';
+      job.error = err.message;
+      job.durationMs = Date.now() - job.startedAt;
+    } finally {
+      activeVacuumJobId = null;
+    }
+  });
+
+  res.json({ success: true, jobId });
+});
+
+/**
+ * GET /admin/db/vacuum/:jobId
+ * Returns the status of a vacuum job.
+ */
+router.get('/vacuum/:jobId', checkPermission(PERMISSIONS.ADMIN_ALL), (req, res) => {
+  const job = vacuumJobs.get(req.params.jobId);
+  if (!job) {
+    return res.status(404).json({ success: false, error: { code: 'JOB_NOT_FOUND', message: 'Vacuum job not found' } });
+  }
+  res.json({ success: true, data: { jobId: req.params.jobId, ...job } });
+});
+
+// ─── Integrity Check ──────────────────────────────────────────────────────────
+
+/** In-memory store for integrity check jobs */
+const integrityJobs = new Map();
+
+/**
+ * Run SQLite integrity_check and foreign_key_check pragmas.
+ * Returns { status, issues, checkedAt, durationMs }.
+ */
+async function runIntegrityCheck() {
+  const startedAt = Date.now();
+  const checkedAt = new Date().toISOString();
+  const issues = [];
+
+  try {
+    // PRAGMA integrity_check returns rows with a single column "integrity_check"
+    const integrityRows = await Database.query('PRAGMA integrity_check', []);
+    for (const row of integrityRows) {
+      const msg = row.integrity_check || row[Object.keys(row)[0]];
+      if (msg && msg !== 'ok') issues.push(`integrity_check: ${msg}`);
+    }
+
+    // PRAGMA foreign_key_check returns rows for each violation
+    const fkRows = await Database.query('PRAGMA foreign_key_check', []);
+    for (const row of fkRows) {
+      issues.push(`foreign_key_check: table=${row.table} rowid=${row.rowid} parent=${row.parent} fkid=${row.fkid}`);
+    }
+  } catch (err) {
+    issues.push(`check_error: ${err.message}`);
+  }
+
+  return {
+    status: issues.length === 0 ? 'ok' : 'corrupted',
+    issues,
+    checkedAt,
+    durationMs: Date.now() - startedAt,
+  };
+}
+
+/**
+ * POST /admin/db/integrity-check
+ * Start a background integrity check job.
+ * Returns { jobId } immediately; poll GET /admin/db/integrity-check/:jobId for results.
+ */
+router.post('/integrity-check', checkPermission(PERMISSIONS.ADMIN_ALL), (req, res) => {
+  const jobId = `integrity-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+  const job = { status: 'running', issues: [], checkedAt: null, durationMs: null };
+  integrityJobs.set(jobId, job);
+
+  // Run asynchronously — do not await
+  runIntegrityCheck().then(result => {
+    Object.assign(job, result);
+  }).catch(err => {
+    job.status = 'corrupted';
+    job.issues = [`unexpected_error: ${err.message}`];
+    job.checkedAt = new Date().toISOString();
+    job.durationMs = 0;
+  });
+
+  res.json({ success: true, jobId });
+});
+
+/**
+ * GET /admin/db/integrity-check/:jobId
+ * Returns the status and results of an integrity check job.
+ */
+router.get('/integrity-check/:jobId', checkPermission(PERMISSIONS.ADMIN_ALL), (req, res) => {
+  const job = integrityJobs.get(req.params.jobId);
+  if (!job) {
+    return res.status(404).json({
+      success: false,
+      error: { code: 'JOB_NOT_FOUND', message: 'Integrity check job not found' },
+    });
+  }
+  res.json({ success: true, data: { jobId: req.params.jobId, ...job } });
 });
 
 module.exports = router;

@@ -113,3 +113,13 @@ exports.up = async (db) => {
     )
   `);
 };
+
+exports.down = async (db) => {
+  await db.run('DROP TABLE IF EXISTS fee_payments');
+  await db.run('DROP TABLE IF EXISTS student_fees');
+  await db.run('DROP INDEX IF EXISTS idx_transactions_idempotency');
+  await db.run('DROP TABLE IF EXISTS recurring_donations');
+  await db.run('DROP TABLE IF EXISTS transactions');
+  await db.run('DROP TABLE IF EXISTS campaigns');
+  await db.run('DROP TABLE IF EXISTS users');
+};

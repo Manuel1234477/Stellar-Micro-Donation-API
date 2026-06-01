@@ -18,6 +18,7 @@ const https = require('https');
 const http = require('http');
 const { URL } = require('url');
 const log = require('../utils/log');
+const db = require('../utils/database');
 const {
   getKeysExpiringWithin,
   markExpiryNotificationSent,

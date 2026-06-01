@@ -4,6 +4,7 @@
  */
 const Database = require('../utils/database');
 const AuditLogService = require('../services/AuditLogService');
+const DonationExportService = require('../services/DonationExportService');
 
 async function runCleanup() {
   console.log('--- Starting Soft Delete Cleanup Job ---');
@@ -24,7 +25,22 @@ async function runCleanup() {
     console.log(`✓ Cleaned up expired transactions.`);
     console.log(`✓ Cleaned up expired wallets.`);
 
-    // 3. Log the cleanup for audit purposes
+    // 3. Clean up expired refresh token revocations (Issue #68)
+    try {
+      const { cleanupExpiredRevocations } = require('../services/JwtService');
+      const deleted = await cleanupExpiredRevocations();
+      console.log(`✓ Cleaned up ${deleted} expired refresh token revocations.`);
+    } catch (_) { /* table may not exist yet */ }
+
+    // 4. Clean up expired donation exports (Issue #123)
+    try {
+      const deletedExports = await DonationExportService.deleteExpiredExports();
+      console.log(`✓ Cleaned up ${deletedExports} expired donation exports.`);
+    } catch (err) {
+      console.error('✗ Failed to clean up donation exports:', err.message);
+    }
+
+    // 5. Log the cleanup for audit purposes
     await AuditLogService.log({
       category: AuditLogService.CATEGORY.SYSTEM,
       action: 'SOFT_DELETE_CLEANUP',

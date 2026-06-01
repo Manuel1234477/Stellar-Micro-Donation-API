@@ -27,6 +27,7 @@ const transactionRoutes = require('./transaction');
 const apiKeysRoutes = require('./apiKeys');
 const apiKeyUsageRoutes = require('./apiKeyUsage');
 const recurringDonationRoutes = require('./recurringDonation');
+const disputesRoutes = require('./disputes');
 const channelRoutes = require('./channels');
 const assetRoutes = require('./assets');
 const feesRoutes = require('./fees');
@@ -36,10 +37,14 @@ const dbAdminRoutes = require('./admin/db');
 const adminTracesRoutes = require('./admin/traces');
 const systemInfoRoutes = require('./admin/systemInfo');
 const retentionAdminRoutes = require('./admin/retention');
+const retentionService = require('../services/RetentionService');
 const backupAdminRoutes = require('./admin/backup');
+const schedulerAdminRoutes = require('./admin/scheduler');
+const geoRulesAdminRoutes = require('./admin/geoRules');
 const encryptionAdminRoutes = require('./admin/encryption');
 const matchingProgramsAdminRoutes = require('./admin/matchingPrograms');
 const corporateMatchingAdminRoutes = require('./admin/corporateMatching');
+const crowdfundingAdminRoutes = require('./admin/crowdfunding');
 const { router: corporateMatchingRoutes } = require('./corporateMatching');
 const routingAdminRoutes = require('./admin/routing');
 const impactMetricsAdminRoutes = require('./admin/impactMetrics');
@@ -47,6 +52,7 @@ const impactRoutes = require('./impact');
 const adminAnalyticsRoutes = require('./admin/analytics');
 const adminInspectRoutes = require('./admin/inspect');
 const reconciliationAdminRoutes = require('./admin/reconciliation');
+const paymentChannelsAdminRoutes = require('./admin/paymentChannels');
 const webhooksRoutes = require('./webhooks');
 const campaignsRoutes = require('./campaigns');
 const tiersRoutes = require('./tiers');
@@ -62,6 +68,7 @@ const replayDetectionMiddleware = require('../middleware/replayDetection');
 const Database = require('../utils/database');
 const HealthCheckService = require('../services/HealthCheckService');
 const { initializeApiKeysTable } = require('../models/apiKeys');
+const { initializeDefaultStore } = require('../utils/nonceStore');
 const WebhookService = require('../services/WebhookService');
 const { validateRBAC } = require('../utils/rbacValidator');
 const log = require('../utils/log');
@@ -85,6 +92,7 @@ const { parseCursorPaginationQuery } = require('../utils/pagination');
 const AuditLogService = require('../services/AuditLogService');
 const auditLogRetentionService = require('../services/AuditLogRetentionService');
 const { runCleanup } = require('../jobs/cleanupJob');
+const DonationExportService = require('../services/DonationExportService');
 const { requireAdmin } = require('../middleware/rbac');
 const requireApiKey = require('../middleware/apiKey');
 const encryptionRoutes = require('./encryption');
@@ -95,6 +103,8 @@ const { attachSubscriptionServer } = require('../graphql');
 const sseManager = require('../services/SseManager');
 const claimableBalancesRoutes = require('./claimableBalances');
 const { requestTimeout, TIMEOUTS } = require('../middleware/requestTimeout');
+const { healthCheckRateLimiter } = require('../middleware/rateLimiter');
+const apiVersionMiddleware = require('../middleware/apiVersion');
 
 const app = express();
 
@@ -118,6 +128,7 @@ let replayCleanupTimer = null;
 // Graceful shutdown state
 let isShuttingDown = false;
 let inFlightRequests = 0;
+const requestCounter = require('../utils/requestCounter');
 
 // In-flight request tracking and graceful shutdown rejection middleware
 app.use((req, res, next) => {
@@ -129,16 +140,18 @@ app.use((req, res, next) => {
       error: { code: 'SERVICE_UNAVAILABLE', message: 'Server is shutting down' }
     });
   }
-  
+
   inFlightRequests++;
+  requestCounter.increment();
   let handled = false;
   const decrement = () => {
     if (!handled) {
       handled = true;
       inFlightRequests--;
+      requestCounter.decrement();
     }
   };
-  
+
   res.on('finish', decrement);
   res.on('close', decrement);
   next();
@@ -205,6 +218,10 @@ app.use(require('../middleware/suspiciousPatternDetection'));
 // Attach user role from authentication (must be before routes)
 app.use(attachUserRole());
 
+// Request signing enforcement (Issue #66) — runs after auth so req.apiKey is populated
+const { createRequestSigningMiddleware } = require('../middleware/requestSigning');
+app.use(createRequestSigningMiddleware());
+
 // Track API quota usage (must be after authentication)
 app.use(trackQuotaUsage);
 
@@ -239,6 +256,9 @@ app.use((req, res, next) => {
   return requestTimeout(GLOBAL_TIMEOUT_MS)(req, res, next);
 });
 
+// Schema versioning middleware — parses X-Schema-Version header and injects version info
+app.use(apiVersionMiddleware);
+
 // ─── Versioned API Router (issue #738) ───────────────────────────────────────
 // All API routes are mounted under /api/v1
 const apiV1 = express.Router();
@@ -251,6 +271,7 @@ apiV1.use('/wallets', thresholdsRouter);
 apiV1.use('/', recoveryRoutes);
 apiV1.use('/donations', donationRoutes);
 apiV1.use('/donations', require('./receipt'));
+apiV1.use('/donations', disputesRoutes);
 apiV1.use('/donations/recurring', recurringDonationRoutes);
 apiV1.use('/assets', assetRoutes);
 apiV1.use('/stats', statsRoutes);
@@ -272,7 +293,8 @@ apiV1.use('/transactions', transactionRoutes);
 apiV1.use('/', corporateMatchingRoutes);
 apiV1.use('/claimable-balances', claimableBalancesRoutes);
 apiV1.use('/liquidity-pools', require('./liquidity-pools'));
-apiV1.use('/api-keys', apiKeysRoutes);
+const { requireAdminTOTP } = require('../middleware/adminTOTP');
+apiV1.use('/api-keys', requireAdminTOTP(), apiKeysRoutes);
 apiV1.use('/api-keys', apiKeyUsageRoutes);
 
 // Exchange rates endpoint
@@ -358,8 +380,29 @@ try {
 // Health check endpoints — available at both /health (unversioned) and /api/v1/health (versioned)
 const healthHandler = asyncHandler(async (req, res) => {
   try {
-    const health = await HealthCheckService.getFullHealth(stellarService, networkStatusService, recurringDonationScheduler);
-    const stellarConfig = require('../config/stellar');
+    // Issue #889: Check for verbose mode (admin only)
+    const isAdmin = req.apiKey?.role === 'admin' || req.user?.role === 'admin';
+    const verbose = req.query.verbose === 'true' && isAdmin;
+    
+    // In production, unauthenticated requests get minimal response
+    const isProduction = process.env.NODE_ENV === 'production';
+    const shouldMinimize = isProduction && !isAdmin;
+    
+    const health = await HealthCheckService.getFullHealth(
+      stellarService, 
+      networkStatusService, 
+      recurringDonationScheduler,
+      verbose && !shouldMinimize
+    );
+    
+    // Issue #889: Minimize response in production for unauthenticated requests
+    if (shouldMinimize) {
+      return res.status(health.status === 'healthy' ? 200 : 503).json({
+        status: health.status,
+        timestamp: health.timestamp
+      });
+    }
+    
     health.stellarEnvironment = stellarConfig.environment || 'testnet';
     health.stellarNetwork = stellarConfig.network || 'testnet';
     health.requestId = req.id;
@@ -377,28 +420,34 @@ const healthHandler = asyncHandler(async (req, res) => {
   }
 });
 
-app.get('/api/v1/health', healthHandler);
+app.get('/api/v1/health', healthCheckRateLimiter, healthHandler);
 
-app.get('/health', healthHandler);
+app.get('/health', healthCheckRateLimiter, healthHandler);
 
-// Liveness probe — returns 200 as long as the process is running
+// Liveness probe — returns 200 as long as the process is running.
+// Excluded from rate limiting: Kubernetes calls this every few seconds per pod.
 app.get('/health/live', (req, res) => {
   return res.status(200).json(HealthCheckService.getLiveness());
 });
 
-// Readiness probe — returns 200 only when all dependencies are healthy
+// Readiness probe — returns 200 only when all dependencies are healthy.
+// Excluded from rate limiting: Kubernetes calls this every few seconds per pod.
 app.get('/health/ready', asyncHandler(async (req, res) => {
+  if (isShuttingDown) {
+    return res.status(503).json({ status: 'not_ready', reason: 'server is shutting down' });
+  }
   try {
     const readiness = await HealthCheckService.getReadiness(stellarService, networkStatusService, recurringDonationScheduler);
-    const httpStatus = readiness.ready ? 200 : 503;
-    return res.status(httpStatus).json(readiness);
+    if (readiness.ready) {
+      return res.status(200).json({ status: 'ready', timestamp: readiness.timestamp });
+    }
+    const reason = readiness.status === 'unhealthy'
+      ? 'one or more critical dependencies are unavailable'
+      : `service is ${readiness.status}`;
+    return res.status(503).json({ status: 'not_ready', reason, timestamp: readiness.timestamp });
   } catch (err) {
     log.error('HEALTH', 'Readiness check failed', { error: err.message });
-    return res.status(503).json({
-      success: false,
-      ready: false,
-      error: { code: 'READINESS_CHECK_ERROR', message: 'Readiness check failed' }
-    });
+    return res.status(503).json({ status: 'not_ready', reason: 'readiness check failed' });
   }
 }));
 
@@ -454,17 +503,44 @@ app.get('/suspicious-patterns', require('../middleware/rbac').requireAdmin(), (r
   });
 });
 
-// Feature flags admin UI + API (issue #807)
-app.use('/admin/feature-flags', requireApiKey, featureFlagsAdminRoutes);
+// Crowdfunding campaign management (admin only)
+app.use('/admin/crowdfunding', crowdfundingAdminRoutes);
 
-// Circuit breaker admin endpoints (issue #736)
-app.use('/admin/circuit-breaker', requireApiKey, require('./admin/circuitBreaker'));
+// CORS allowlist management (admin only) — Issue #979
+const corsRulesAdminRoutes = require('./admin/corsRules');
+app.use('/admin/cors/rules', corsRulesAdminRoutes);
 
-// System info endpoint (issue #803)
-app.use('/admin/system/info', requireApiKey, systemInfoRoutes);
+// Database admin endpoints (admin only) — Issue #70
+app.use('/admin/db', dbAdminRoutes);
 
-// Database monitoring admin endpoints
-app.use('/admin/db', requireApiKey, dbAdminRoutes);
+// Data retention admin endpoints (admin only)
+app.use('/admin/retention', retentionAdminRoutes);
+
+// Scheduler admin endpoints (admin only)
+app.use('/admin/scheduler', schedulerAdminRoutes);
+
+// Pledge management admin endpoints (admin only)
+const pledgeAdminRoutes = require('./admin/pledges');
+app.use('/admin/pledges', pledgeAdminRoutes);
+
+// Disputes admin endpoints (admin only)
+app.use('/admin/disputes', disputesRoutes);
+
+// Geo-rules management (admin only)
+app.use('/admin/geo-rules', geoRulesAdminRoutes);
+
+// Payment channels management (admin only) — Issue #122
+app.use('/admin/payment-channels', paymentChannelsAdminRoutes);
+
+// System info endpoint (admin only) — Issue #64
+app.use('/admin/system-info', systemInfoRoutes);
+
+// Backup / restore endpoints (admin only) — mounted at /admin so router defines /backup and /backups paths
+app.use('/admin', backupAdminRoutes);
+
+// TOTP 2FA admin routes (Issue #918)
+const totpAdminRoutes = require('./admin/totp');
+app.use('/admin/totp', requireApiKey, totpAdminRoutes);
 
 // Transaction inspection (admin only)
 app.use('/admin/inspect/xdr', require('../middleware/rbac').requireAdmin(), adminInspectRoutes);
@@ -595,6 +671,9 @@ app.post('/admin/sync', require('../middleware/rbac').requireAdmin(), payloadSiz
   }
 }));
 
+// Security scan admin endpoints (issue: security-scan-api)
+app.use('/admin/security/scan', requireApiKey, require('./admin/securityScan'));
+
 // Orphaned transactions stats (admin only)
 app.get('/admin/orphaned-transactions', require('../middleware/rbac').requireAdmin(), asyncHandler(async (req, res, next) => {
   try {
@@ -690,6 +769,7 @@ async function startServer() {
         const { runMigrations } = require('../utils/migrationRunner');
         await runMigrations();
         await initializeApiKeysTable();
+        initializeDefaultStore(Database);
 
         const { initializeFeatureFlagsTable, loadFlagsFromEnv } = require('../utils/featureFlags');
         await initializeFeatureFlagsTable();
@@ -697,8 +777,14 @@ async function startServer() {
           await loadFlagsFromEnv(process.env.FEATURE_FLAGS);
         }
 
-        await WebhookService.initTable();
+        await WebhookService.WebhookService.initTable();
         await validateRBAC();
+
+        // Initialize donation export service (Issue #123)
+        await DonationExportService.initialize();
+
+        // Start audit log auto-flush timer
+        AuditLogService.startAutoFlush();
 
         // Only start background workers and jobs if not in test environment
         if (process.env.NODE_ENV !== 'test') {
@@ -709,6 +795,7 @@ async function startServer() {
           recurringDonationScheduler.start();
           reconciliationService.start();
           auditLogRetentionService.start();
+          retentionService.start();
           transactionSyncScheduler.start();
           sseManager.start();
 
@@ -721,7 +808,7 @@ async function startServer() {
           log.warn('NETWORK_STATUS', 'Network status degraded', { status });
         });
         try {
-          await networkStatusService.initialize();
+          networkStatusService.start();
         } catch (err) {
           log.error('APP', 'Failed to initialize NetworkStatusService', { error: err.message });
         }
@@ -821,6 +908,7 @@ async function startServer() {
 
         reconciliationService.stop();
         auditLogRetentionService.stop();
+        retentionService.stop();
         transactionSyncScheduler.stop();
         require('../workers/expiryWorker').stop();
         
@@ -831,7 +919,7 @@ async function startServer() {
         }
         
         try {
-          await networkStatusService.shutdown();
+          networkStatusService.stop();
         } catch (err) {
           log.error("SHUTDOWN", "Error shutting down NetworkStatusService", { error: err.message });
         }
@@ -839,6 +927,23 @@ async function startServer() {
         if (replayCleanupTimer) {
           clearInterval(replayCleanupTimer);
           log.info("SHUTDOWN", "Replay detection cleanup timer stopped");
+        }
+
+        // Checkpoint SQLite WAL before closing
+        try {
+          await Database.run('PRAGMA wal_checkpoint(TRUNCATE)');
+          log.info("SHUTDOWN", "SQLite WAL checkpoint completed");
+        } catch (err) {
+          log.warn("SHUTDOWN", "Error checkpointing WAL", { error: err.message });
+        }
+
+        // Flush pending audit log entries before closing the database
+        try {
+          await AuditLogService.flush();
+          AuditLogService.stopAutoFlush();
+          log.info("SHUTDOWN", "Audit log buffer flushed");
+        } catch (err) {
+          log.error("SHUTDOWN", "Error flushing audit log buffer", { error: err.message });
         }
 
         await Database.close();

@@ -10,6 +10,9 @@ function ensureDataDir() {
   if (!fs.existsSync(DATA_DIR)) {
     fs.mkdirSync(DATA_DIR, { recursive: true });
     console.log(`✓ Created data directory: ${DATA_DIR}`);
+    // Issue #890: Set restrictive permissions on data directory (owner only)
+    fs.chmodSync(DATA_DIR, 0o700);
+    console.log(`✓ Set data directory permissions to 0700 (owner only)`);
   }
 }
 
@@ -20,6 +23,13 @@ function createDatabase() {
         reject(err);
       } else {
         console.log(`✓ Connected to SQLite database: ${DB_PATH}`);
+        // Issue #890: Set restrictive permissions on database file (owner only)
+        try {
+          fs.chmodSync(DB_PATH, 0o600);
+          console.log(`✓ Set database file permissions to 0600 (owner only)`);
+        } catch (chmodErr) {
+          console.warn(`⚠ Could not set database file permissions: ${chmodErr.message}`);
+        }
         resolve(db);
       }
     });

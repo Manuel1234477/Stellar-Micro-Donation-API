@@ -86,14 +86,33 @@ const SENSITIVE_PATTERNS = [
 ];
 
 /**
- * Patterns for values that should be masked (regex-based)
+ * Stellar secret key: 56-char StrKey starting with S (base32 alphabet A-Z, 2-7).
+ * Applied to all string values so secrets in memo/label/metadata fields are caught.
+ */
+const STELLAR_SECRET_PATTERN = /S[A-Z2-7]{55}/g;
+const STELLAR_SECRET_REDACTED = '[STELLAR_SECRET_REDACTED]';
+
+/**
+ * Patterns for values that should be masked when the entire value matches (regex-based)
  */
 const VALUE_PATTERNS = [
-  // Stellar secret keys (start with S, 56 chars)
+  // Stellar secret keys (start with S, 56 chars) — public keys (G…) are not matched
   /^S[A-Z2-7]{55}$/,
   // JWT tokens (three base64 segments separated by dots)
   /eyJ[A-Za-z0-9_-]+\.eyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+/,
 ];
+
+/**
+ * Mask Stellar secret key substrings inside any string (issue #938).
+ * @param {string} str
+ * @returns {string}
+ */
+function maskStellarSecretsInString(str) {
+  if (typeof str !== 'string' || str.length === 0) {
+    return str;
+  }
+  return str.replace(STELLAR_SECRET_PATTERN, STELLAR_SECRET_REDACTED);
+}
 
 /**
  * Check if a key name indicates sensitive data
@@ -119,6 +138,29 @@ function isSensitiveKey(key) {
 function isSensitiveValue(value) {
   if (typeof value !== 'string') return false;
   return VALUE_PATTERNS.some(pattern => pattern.test(value));
+}
+
+/**
+ * Mask a string after name-based rules: full-value secrets vs embedded patterns.
+ * @param {string} value
+ * @param {Object} options
+ * @returns {string}
+ */
+function maskStringValue(value, options = {}) {
+  const { showPartial = false } = options;
+
+  if (isSensitiveValue(value) && /^S[A-Z2-7]{55}$/.test(value)) {
+    if (showPartial) {
+      return maskValue(value, { showFirst: 4, showLast: 4 });
+    }
+    return STELLAR_SECRET_REDACTED;
+  }
+
+  if (isSensitiveValue(value)) {
+    return maskValue(value, showPartial ? { showFirst: 4, showLast: 4 } : {});
+  }
+
+  return maskStellarSecretsInString(value);
 }
 
 /**
@@ -183,7 +225,9 @@ function maskSensitiveData(data, options = {}) {
   
   // Handle primitives
   if (typeof data !== 'object') {
-    // Check if the value itself looks sensitive
+    if (typeof data === 'string') {
+      return maskStringValue(data, { showPartial });
+    }
     if (isSensitiveValue(data)) {
       return maskValue(data, showPartial ? { showFirst: 4, showLast: 4 } : {});
     }
@@ -205,10 +249,10 @@ function maskSensitiveData(data, options = {}) {
     if (isSensitiveKey(key)) {
       masked[key] = maskValue(value, showPartial ? { showFirst: 4, showLast: 4 } : {});
     } else if (typeof value === 'object' && value !== null) {
-      // Recursively mask nested objects
       masked[key] = maskSensitiveData(value, { ...options, currentDepth: currentDepth + 1 });
+    } else if (typeof value === 'string') {
+      masked[key] = maskStringValue(value, { showPartial });
     } else if (isSensitiveValue(value)) {
-      // Check if value looks sensitive even if key doesn't
       masked[key] = maskValue(value, showPartial ? { showFirst: 4, showLast: 4 } : {});
     } else {
       masked[key] = value;
@@ -236,7 +280,7 @@ function maskError(error) {
   if (error.stack) {
     masked.stack = error.stack.split('\n').map(line => {
       // Replace Stellar secret keys in stack trace lines
-      return line.replace(/S[A-Z2-7]{55}/g, '[REDACTED]');
+      return line.replace(STELLAR_SECRET_PATTERN, STELLAR_SECRET_REDACTED);
     }).join('\n');
   }
   
@@ -266,8 +310,11 @@ module.exports = {
   maskSensitiveData,
   maskError,
   maskValue,
+  maskStellarSecretsInString,
   isSensitiveKey,
   isSensitiveValue,
   addSensitivePatterns,
   SENSITIVE_PATTERNS,
+  STELLAR_SECRET_PATTERN,
+  STELLAR_SECRET_REDACTED,
 };

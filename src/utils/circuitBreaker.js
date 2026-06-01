@@ -14,6 +14,15 @@
 
 const STATES = Object.freeze({ CLOSED: 'closed', OPEN: 'open', HALF_OPEN: 'half_open' });
 
+/** Lazy-load Database to avoid circular deps at module load time */
+function getDb() {
+  try {
+    return require('./database');
+  } catch (_) {
+    return null;
+  }
+}
+
 class CircuitBreaker {
   /**
    * @param {Object} [options]
@@ -35,6 +44,57 @@ class CircuitBreaker {
     this._openedAt = null;
     /** @type {boolean} Whether a half-open probe is currently in-flight */
     this._probeInFlight = false;
+  }
+
+  /**
+   * Load persisted state from DB on startup.
+   * Respects remaining cooldown so an open circuit stays open after restart.
+   * Fire-and-forget errors are logged but do not throw.
+   */
+  async loadState() {
+    try {
+      const db = getDb();
+      if (!db) return;
+      const row = await db.get(
+        'SELECT state, failureCount, lastFailureAt, openedAt FROM circuit_breaker_state WHERE name = ?',
+        [this.name]
+      );
+      if (!row) return;
+
+      this._openedAt = row.openedAt || null;
+
+      if (row.state === STATES.OPEN && this._openedAt !== null) {
+        const elapsed = Date.now() - this._openedAt;
+        if (elapsed < this.cooldownMs) {
+          // Still within cooldown — restore open state
+          this._state = STATES.OPEN;
+        }
+        // else: cooldown already elapsed, stay CLOSED (default)
+      }
+      // CLOSED or HALF_OPEN: start fresh (CLOSED is safe default)
+    } catch (err) {
+      console.error(`[CircuitBreaker:${this.name}] loadState error:`, err.message);
+    }
+  }
+
+  /**
+   * Persist current state to DB (fire-and-forget).
+   * @private
+   */
+  _persistState() {
+    const db = getDb();
+    if (!db) return;
+    const now = Date.now();
+    db.run(
+      `INSERT INTO circuit_breaker_state (name, state, failureCount, lastFailureAt, openedAt)
+       VALUES (?, ?, ?, ?, ?)
+       ON CONFLICT(name) DO UPDATE SET
+         state = excluded.state,
+         failureCount = excluded.failureCount,
+         lastFailureAt = excluded.lastFailureAt,
+         openedAt = excluded.openedAt`,
+      [this.name, this._state, this._failures.length, now, this._openedAt]
+    ).catch(err => console.error(`[CircuitBreaker:${this.name}] persistState error:`, err.message));
   }
 
   /** @returns {'closed'|'open'|'half_open'} */
@@ -159,6 +219,7 @@ class CircuitBreaker {
     this._state = STATES.OPEN;
     this._openedAt = Date.now();
     this._probeInFlight = false;
+    this._persistState();
   }
 
   /** @private */
@@ -167,6 +228,7 @@ class CircuitBreaker {
     this._failures = [];
     this._openedAt = null;
     this._probeInFlight = false;
+    this._persistState();
   }
 
   /** @private */
@@ -184,6 +246,7 @@ class CircuitBreaker {
     this._failures = [];
     this._openedAt = null;
     this._probeInFlight = false;
+    this._persistState();
   }
 
   /**

@@ -174,14 +174,16 @@
 const express = require('express');
 const router = express.Router();
 const requireApiKey = require('../middleware/apiKey');
-const { requireIdempotency, storeIdempotencyResponse } = require('../middleware/idempotency');
+const { requireIdempotency, conditionalIdempotency, storeIdempotencyResponse } = require('../middleware/idempotency');
 const { checkPermission } = require('../middleware/rbac');
 const { PERMISSIONS } = require('../utils/permissions');
 const { ValidationError, ERROR_CODES } = require('../utils/errors');
 const log = require('../utils/log');
 const { donationRateLimiter, verificationRateLimiter, batchRateLimiter } = require('../middleware/rateLimiter');
+const perKeyRateLimit = require('../middleware/perKeyRateLimit');
 const { validateRequiredFields, validateFloat, validateInteger } = require('../utils/validationHelpers');
 const { validateSchema } = require('../middleware/schemaValidation');
+const { validateDateRange } = require('../middleware/validation');
 const { TRANSACTION_STATES } = require('../utils/transactionStateMachine');
 const { parseCursorPaginationQuery } = require('../utils/pagination');
 const { payloadSizeLimiter, ENDPOINT_LIMITS } = require('../middleware/payloadSizeLimiter');
@@ -189,14 +191,26 @@ const { parseAssetInput } = require('../utils/stellarAsset');
 
 const asyncHandler = require('../utils/asyncHandler');
 const { getStellarService } = require('../config/stellar');
+const config = require('../config');
 const DonationService = require('../services/DonationService');
+const StatsService = require('../services/StatsService');
 const { calculateCostBreakdown } = require('../utils/costBreakdown');
 const LimitService = require('../services/LimitService');
 
 const Transaction = require('./models/transaction');
 const donationValidator = require('../utils/donationValidator');
 const { buildErrorResponse } = require('../utils/validationErrorFormatter');
+
+const statsByTagQuerySchema = validateSchema({
+  query: {
+    fields: {
+      startDate: { type: 'dateString', required: true },
+      endDate: { type: 'dateString', required: true },
+    },
+  },
+});
 const donationEvents = require('../events/donationEvents');
+const { isValidStellarPublicKey } = require('../utils/validators');
 
 const donationService = new DonationService(getStellarService());
 
@@ -421,8 +435,30 @@ router.post('/batch', payloadSizeLimiter(ENDPOINT_LIMITS.batchDonation), batchRa
 const createDonationSchema = validateSchema({
   body: {
     fields: {
-      amount: { type: 'number', required: true },
-      recipient: { type: 'string', required: true, trim: true, minLength: 1 },
+      amount: { 
+        type: 'number', 
+        required: true,
+        min: config.donations.minAmount,
+        max: config.donations.maxAmount,
+        validate: (value) => {
+          if (!Number.isFinite(value)) return 'Amount must be a finite number';
+          if (value <= 0) return 'Amount must be greater than zero';
+          return true;
+        }
+      },
+      recipient: {
+        type: 'string',
+        required: true,
+        trim: true,
+        minLength: 1,
+        validate: (value) => {
+          // Allow federation addresses (e.g. alice*example.com) to pass through
+          if (typeof value === 'string' && value.includes('*')) return true;
+          return isValidStellarPublicKey(value)
+            ? true
+            : 'address must be a valid Stellar public key (56-character Ed25519 public key starting with G)';
+        },
+      },
       currency: { type: 'string', required: false, nullable: true },
       donor: { type: 'string', required: false, nullable: true },
       memo: { type: 'string', required: false, maxLength: 28, nullable: true },
@@ -430,7 +466,19 @@ const createDonationSchema = validateSchema({
       notes: { type: 'string', required: false, nullable: true },
       tags: { type: 'array', required: false, nullable: true },
       sourceAsset: { type: 'string', required: false, nullable: true },
-      sourceAmount: { type: 'number', required: false, nullable: true }
+      sourceAmount: { 
+        type: 'number', 
+        required: false, 
+        nullable: true,
+        min: config.donations.minAmount,
+        max: config.donations.maxAmount,
+        validate: (value) => {
+          if (value === null || value === undefined) return true;
+          if (!Number.isFinite(value)) return 'Source amount must be a finite number';
+          if (value <= 0) return 'Source amount must be greater than zero';
+          return true;
+        }
+      }
     }
   }
 });
@@ -439,9 +487,13 @@ const createDonationSchema = validateSchema({
  * POST /donations
  * Create a non-custodial donation record
  */
-router.post('/', payloadSizeLimiter(ENDPOINT_LIMITS.singleDonation), donationRateLimiter, requireApiKey, requireIdempotency, createDonationSchema, async (req, res, next) => {
+router.post('/', payloadSizeLimiter(ENDPOINT_LIMITS.singleDonation), donationRateLimiter, perKeyRateLimit, requireApiKey, requireIdempotency, createDonationSchema, async (req, res, next) => {
   try {
+<<<<<<< fix/donation-created-webhook
+    const { amount, currency, donor, recipient, memo, memoType, notes, tags, encryptMemo, anonymous, sourceAsset, sourceAmount } = req.body;
+=======
     const { amount, currency, donor, recipient, memo, memoType, notes, tags, sourceAsset, sourceAmount } = req.body;
+>>>>>>> main
 
     // Basic validation
     if (!amount || !recipient) {
@@ -529,6 +581,7 @@ router.post('/', payloadSizeLimiter(ENDPOINT_LIMITS.singleDonation), donationRat
       apiKeyId: req.apiKey ? req.apiKey.id : null,
       apiKeyRole: req.apiKey ? req.apiKey.role : (req.user?.role || 'user'),
       anonymous: anonymous === true,
+      correlationId: req.id,
     });
 
     // Estimate fee for informational purposes (non-blocking)
@@ -777,7 +830,7 @@ async function withDonorLock(donorId, fn) {
   }
 }
 
-router.post('/', donationRateLimiter, checkPermission(PERMISSIONS.DONATIONS_CREATE), requireIdempotency, payloadSizeLimiter(ENDPOINT_LIMITS.singleDonation), asyncHandler(async (req, res, next) => {
+router.post('/', donationRateLimiter, checkPermission(PERMISSIONS.DONATIONS_CREATE), conditionalIdempotency, payloadSizeLimiter(ENDPOINT_LIMITS.singleDonation), asyncHandler(async (req, res, next) => {
   try {
     const { senderId, receiverId, amount, memo } = req.body;
 
@@ -991,8 +1044,135 @@ router.post('/batch', requireApiKey, batchRateLimiter, checkPermission(PERMISSIO
 }));
 
 /**
+ * POST /donations/bulk
+ * Batch donation creation with 207 Multi-Status response.
+ * - Up to 50 items per request
+ * - Concurrent processing (BULK_DONATION_CONCURRENCY, default 5)
+ * - Per-item validation; failures don't block other items
+ * - Rate limiting counts each item against the per-key quota
+ * - Per-item idempotency keys via item.idempotencyKey
+ * - Requires donations:write permission
+ */
+router.post('/bulk', checkPermission(PERMISSIONS.DONATIONS_CREATE), payloadSizeLimiter(ENDPOINT_LIMITS.batchDonation), asyncHandler(async (req, res, next) => {
+  try {
+    const { donations } = req.body || {};
+
+    if (!Array.isArray(donations)) {
+      return res.status(400).json({ success: false, error: { code: 'INVALID_PAYLOAD', message: "'donations' must be an array" } });
+    }
+    if (donations.length === 0 || donations.length > 50) {
+      return res.status(400).json({ success: false, error: { code: 'INVALID_BATCH_SIZE', message: 'Batch must contain 1–50 items' } });
+    }
+
+    // Rate-limit: consume one quota unit per item
+    const apiKeyId = req.apiKey?.id || req.ip;
+    const quotaKey = `bulk_donation_quota:${apiKeyId}`;
+    const windowMs = 60_000;
+    const maxPerWindow = 50;
+    const now = Date.now();
+    const windowStart = now - windowMs;
+    if (!router._bulkQuota) router._bulkQuota = new Map();
+    const timestamps = (router._bulkQuota.get(quotaKey) || []).filter(t => t > windowStart);
+    if (timestamps.length + donations.length > maxPerWindow) {
+      return res.status(429).json({ success: false, error: { code: 'RATE_LIMIT_EXCEEDED', message: 'Bulk donation quota exceeded (50 items/min)' } });
+    }
+    for (let i = 0; i < donations.length; i++) timestamps.push(now);
+    router._bulkQuota.set(quotaKey, timestamps);
+
+    const CONCURRENCY = parseInt(process.env.BULK_DONATION_CONCURRENCY || '5', 10);
+    const IdempotencyService = require('../services/IdempotencyService');
+    const idempotencySvc = new IdempotencyService();
+
+    // Process items in concurrent batches
+    const results = new Array(donations.length);
+
+    async function processItem(index) {
+      const item = donations[index];
+
+      if (!item || typeof item !== 'object' || Array.isArray(item)) {
+        results[index] = { index, status: 'failed', error: { code: 'INVALID_ITEM', message: 'Each item must be an object' } };
+        return;
+      }
+
+      // Per-item idempotency
+      const itemKey = item.idempotencyKey;
+      if (itemKey) {
+        try {
+          const cached = await idempotencySvc.get(itemKey);
+          if (cached) {
+            results[index] = { index, status: 'success', ...cached.response };
+            return;
+          }
+        } catch (_) {}
+      }
+
+      // Validate
+      const missing = [];
+      if (item.senderId == null) missing.push('senderId');
+      if (item.receiverId == null) missing.push('receiverId');
+      if (item.amount == null) missing.push('amount');
+      if (missing.length > 0) {
+        results[index] = { index, status: 'failed', error: { code: 'MISSING_FIELDS', message: `Missing: ${missing.join(', ')}` } };
+        return;
+      }
+
+      const senderVal = validateInteger(item.senderId, { min: 1 });
+      if (!senderVal.valid) { results[index] = { index, status: 'failed', error: { code: 'INVALID_SENDER_ID', message: senderVal.error } }; return; }
+
+      const receiverVal = validateInteger(item.receiverId, { min: 1 });
+      if (!receiverVal.valid) { results[index] = { index, status: 'failed', error: { code: 'INVALID_RECEIVER_ID', message: receiverVal.error } }; return; }
+
+      const amountVal = validateFloat(item.amount);
+      if (!amountVal.valid) { results[index] = { index, status: 'failed', error: { code: 'INVALID_AMOUNT', message: amountVal.error } }; return; }
+
+      try {
+        const result = await donationService.sendCustodialDonation({
+          senderId: senderVal.value,
+          receiverId: receiverVal.value,
+          amount: amountVal.value,
+          memo: item.memo || null,
+          notes: item.notes || null,
+          tags: item.tags || null,
+          apiKeyId: req.apiKey?.id,
+          requestId: req.id,
+        });
+        const itemResult = { index, status: 'success', donationId: result.id, transactionHash: result.transactionHash };
+        results[index] = itemResult;
+        if (itemKey) {
+          idempotencySvc.store(itemKey, null, itemResult).catch(() => {});
+        }
+      } catch (err) {
+        results[index] = { index, status: 'failed', error: { code: err.code || 'DONATION_FAILED', message: err.message || 'Donation failed' } };
+      }
+    }
+
+    // Run with concurrency limit
+    for (let i = 0; i < donations.length; i += CONCURRENCY) {
+      const chunk = [];
+      for (let j = i; j < Math.min(i + CONCURRENCY, donations.length); j++) {
+        chunk.push(processItem(j));
+      }
+      await Promise.all(chunk);
+    }
+
+    return res.status(207).json({ results });
+  } catch (error) {
+    next(error);
+  }
+}));
+
+/**
  * GET /donations
- * List all donations with optional pagination.
+ * List all donations with cursor-based pagination.
+ * Query params:
+ *   - limit: integer (default 20, max 100)
+ *   - cursor: opaque string for pagination
+ *   - sort: one of id:asc, id:desc, timestamp:asc, timestamp:desc, amount:asc, amount:desc
+ *   - status: comma-separated status values (pending, submitted, confirmed, failed)
+ *   - from: start date filter
+ *   - to: end date filter
+ *   - minAmount: minimum donation amount
+ *   - maxAmount: maximum donation amount
  */
 router.get('/', checkPermission(PERMISSIONS.DONATIONS_READ), asyncHandler(async (req, res, next) => {
   try {
@@ -1015,7 +1195,7 @@ router.get('/', checkPermission(PERMISSIONS.DONATIONS_READ), asyncHandler(async 
     // #766: parse filter params from query string
     const { status, from, to, minAmount, maxAmount } = req.query;
 
-    // Support comma-separated status values (e.g. ?status=pending,processing)
+    // Support comma-separated status values (e.g. ?status=pending,submitted)
     let statusFilter;
     if (status) {
       const statuses = status.split(',').map(s => s.trim()).filter(Boolean);
@@ -1035,20 +1215,16 @@ router.get('/', checkPermission(PERMISSIONS.DONATIONS_READ), asyncHandler(async 
     const result = donationService.getPaginatedDonations(pagination, filters);
     res.setHeader('X-Total-Count', String(result.totalCount));
 
-    if (req.query.envelope === 'true') {
-      return res.json({
-        data: result.data,
-        pagination: {
-          total: result.totalCount,
-          limit: result.meta.limit,
-          hasMore: result.meta.next_cursor !== null,
-          next_cursor: result.meta.next_cursor,
-          prev_cursor: result.meta.prev_cursor,
-        },
-      });
-    }
-
-    res.json({ success: true, data: result.data, count: result.data.length, meta: result.meta });
+    // Return standard pagination response format
+    res.json({
+      success: true,
+      data: result.data,
+      pagination: {
+        nextCursor: result.meta.next_cursor,
+        hasMore: result.meta.next_cursor !== null,
+        total: result.totalCount,
+      },
+    });
   } catch (error) {
     next(error);
   }
@@ -1135,23 +1311,150 @@ router.get('/pending', checkPermission(PERMISSIONS.DONATIONS_READ), asyncHandler
 }));
 
 /**
+ * GET /donations/by-campaign/:campaignId
+ * Returns paginated donations linked to a campaign.
+ * Must be registered before /:id to prevent Express matching the path as an id.
+ *
+ * Query params:
+ *   - status  {string}  filter by donation status (pending|submitted|confirmed|failed)
+ *   - limit   {integer} page size (default 20, max 100)
+ *   - cursor  {integer} last seen donation id for cursor-based pagination
+ */
+router.get('/by-campaign/:campaignId', checkPermission(PERMISSIONS.DONATIONS_READ), asyncHandler(async (req, res, next) => {
+  try {
+    const { campaignId } = req.params;
+    const { status, cursor } = req.query;
+    const limit = Math.min(Math.max(parseInt(req.query.limit, 10) || 20, 1), 100);
+
+    // Verify campaign exists
+    const Database = require('../utils/database');
+    const campaign = await Database.get(
+      'SELECT id FROM campaigns WHERE id = ? AND deleted_at IS NULL',
+      [campaignId]
+    );
+    if (!campaign) {
+      return res.status(404).json({
+        success: false,
+        error: { code: 'NOT_FOUND', message: 'Campaign not found' },
+      });
+    }
+
+    // Build query
+    const params = [campaignId];
+    let where = 'WHERE t.campaign_id = ?';
+
+    if (status) {
+      where += ' AND t.status = ?';
+      params.push(status);
+    }
+
+    if (cursor) {
+      where += ' AND t.id > ?';
+      params.push(parseInt(cursor, 10));
+    }
+
+    // Total count (without cursor)
+    const countParams = [campaignId];
+    let countWhere = 'WHERE t.campaign_id = ?';
+    if (status) {
+      countWhere += ' AND t.status = ?';
+      countParams.push(status);
+    }
+    const countRow = await Database.get(
+      `SELECT COUNT(*) as total FROM transactions t ${countWhere}`,
+      countParams
+    );
+
+    const rows = await Database.query(
+      `SELECT t.id, t.amount, t.status, t.stellar_tx_id as transactionHash,
+              t.timestamp, t.anonymous,
+              sender.publicKey as donorPublicKey,
+              t.tags
+       FROM transactions t
+       LEFT JOIN users sender ON t.senderId = sender.id
+       ${where}
+       ORDER BY t.id ASC
+       LIMIT ?`,
+      [...params, limit]
+    );
+
+    const data = rows.map(tx => ({
+      id: tx.id,
+      amount: tx.amount,
+      donorPublicKey: tx.anonymous ? null : tx.donorPublicKey,
+      timestamp: tx.timestamp,
+      status: tx.status,
+      transactionHash: tx.transactionHash,
+      tags: tx.tags ? JSON.parse(tx.tags) : [],
+    }));
+
+    const nextCursor = rows.length === limit && rows.length > 0
+      ? rows[rows.length - 1].id
+      : null;
+
+    res.json({
+      success: true,
+      data,
+      count: data.length,
+      total: countRow.total,
+      pagination: { limit, nextCursor },
+    });
+  } catch (error) {
+    next(error);
+  }
+}));
+
+/**
  * GET /donations/recent
  * Get recent donations, ordered by creation date descending.
  * Must be registered before /:id to prevent Express matching "recent" as an id.
  *
  * Query params:
- *   - limit {integer} max results to return (default 10, max 100)
+ *   - limit {integer} max results to return (default 10, max configurable via RECENT_DONATIONS_MAX_LIMIT, default 100)
  */
+const Cache = require('../utils/cache');
+const RECENT_MAX_LIMIT = parseInt(process.env.RECENT_DONATIONS_MAX_LIMIT || '100', 10);
+const RECENT_CACHE_TTL_MS = parseInt(process.env.RECENT_DONATIONS_CACHE_TTL_SECONDS || '5', 10) * 1000;
+
+// Invalidate recent donations cache when a new donation is created
+donationEvents.on(donationEvents.EVENTS.CREATED, () => {
+  Cache.clearPrefix('donations:recent:');
+});
+
 router.get('/recent', checkPermission(PERMISSIONS.DONATIONS_READ), asyncHandler(async (req, res, next) => {
   try {
-    const limit = Math.min(parseInt(req.query.limit, 10) || 10, 100);
+    const rawLimit = req.query.limit;
+
+    let limit = 10;
+    if (rawLimit !== undefined) {
+      const parsed = Number(rawLimit);
+      if (!Number.isInteger(parsed) || parsed <= 0 || String(rawLimit).trim() !== String(Math.floor(parsed))) {
+        return res.status(400).json({
+          success: false,
+          error: { code: 'INVALID_LIMIT', message: 'limit must be a positive integer' },
+        });
+      }
+      limit = Math.min(parsed, RECENT_MAX_LIMIT);
+    }
+
+    const cacheKey = `donations:recent:${limit}`;
+    const cached = Cache.get(cacheKey);
+    if (cached) {
+      res.setHeader('X-Cache', 'HIT');
+      return res.json(cached);
+    }
+
     const Database = require('../utils/database');
     const [rows, countRow] = await Promise.all([
-      Database.query(`SELECT * FROM transactions ORDER BY timestamp DESC LIMIT ?`, [limit]),
-      Database.get(`SELECT COUNT(*) AS total FROM transactions`),
+      Database.query('SELECT * FROM transactions ORDER BY timestamp DESC LIMIT ?', [limit]),
+      Database.get('SELECT COUNT(*) AS total FROM transactions'),
     ]);
+
     res.setHeader('X-Total-Count', String(countRow ? countRow.total : rows.length));
-    res.json({ success: true, data: rows, count: rows.length });
+    const body = { success: true, data: rows, count: rows.length };
+    Cache.set(cacheKey, body, RECENT_CACHE_TTL_MS);
+    res.setHeader('X-Cache', 'MISS');
+    res.json(body);
   } catch (error) {
     next(error);
   }
@@ -1160,28 +1463,64 @@ router.get('/recent', checkPermission(PERMISSIONS.DONATIONS_READ), asyncHandler(
 /**
  * POST /donations/verify
  * Verify a transaction on the Stellar blockchain.
- * Non-admin callers must provide their walletAddress and be the sender or recipient.
+ *
+ * Requires both transactionHash and donationId.
+ * The endpoint validates that the submitted hash matches the donation record
+ * and that the on-chain amount, sender, and recipient are consistent.
+ *
+ * Non-admin callers must also supply walletAddress to prove ownership.
  */
 router.post('/verify', verificationRateLimiter, checkPermission(PERMISSIONS.DONATIONS_READ), asyncHandler(async (req, res, next) => {
   try {
-    const { transactionHash, walletAddress } = req.body;
+    const { transactionHash, donationId, walletAddress } = req.body;
 
     if (!transactionHash) {
-      return res.status(400).json({ success: false, error: { code: 'MISSING_FIELD', message: 'transactionHash is required' } });
+      return res.status(400).json({
+        success: false,
+        error: { code: 'MISSING_FIELD', message: 'transactionHash is required' },
+      });
     }
 
-    const result = await donationService.verifyTransaction(transactionHash);
+    if (!donationId) {
+      return res.status(400).json({
+        success: false,
+        error: { code: 'MISSING_FIELD', message: 'donationId is required' },
+      });
+    }
+
+    let result;
+    try {
+      result = await donationService.verifyTransaction(transactionHash, donationId);
+    } catch (verifyError) {
+      // Surface VERIFICATION_FAILED errors as HTTP 422
+      if (verifyError.code === 'VERIFICATION_FAILED' || verifyError.errorCode === 'VERIFICATION_FAILED') {
+        return res.status(422).json({
+          success: false,
+          error: {
+            code: 'VERIFICATION_FAILED',
+            message: verifyError.message,
+          },
+        });
+      }
+      throw verifyError;
+    }
 
     // Admins can verify any transaction; non-admins must own it
     const isAdmin = req.user && req.user.role === 'admin';
     if (!isAdmin) {
       if (!walletAddress) {
-        return res.status(400).json({ success: false, error: { code: 'MISSING_FIELD', message: 'walletAddress is required' } });
+        return res.status(400).json({
+          success: false,
+          error: { code: 'MISSING_FIELD', message: 'walletAddress is required' },
+        });
       }
       const tx = result.transaction;
       const isOwner = tx && (tx.source === walletAddress || tx.destination === walletAddress);
       if (!isOwner) {
-        return res.status(403).json({ success: false, error: { code: 'FORBIDDEN', message: 'You are not authorized to verify this transaction' } });
+        return res.status(403).json({
+          success: false,
+          error: { code: 'FORBIDDEN', message: 'You are not authorized to verify this transaction' },
+        });
       }
     }
 
@@ -1295,6 +1634,306 @@ router.get('/:id/status', requireApiKey, donationIdParamSchema, asyncHandler(asy
 }));
 
 /**
+ * POST /donations/export
+ * Queue async donation export job. Requires admin role.
+ * Supports filters: format, startDate, endDate, status, senderPublicKey, recipientPublicKey
+ * Issue #123
+ */
+router.post('/export', requireApiKey, checkPermission(PERMISSIONS.ADMIN_ALL), asyncHandler(async (req, res, next) => {
+  try {
+    const DonationExportService = require('../services/DonationExportService');
+    const { format = 'csv', startDate, endDate, status, senderPublicKey, recipientPublicKey } = req.body;
+
+    const result = await DonationExportService.queueExportJob(req.apiKey.id, {
+      format,
+      startDate,
+      endDate,
+      status,
+      senderPublicKey,
+      recipientPublicKey,
+    });
+
+    return res.status(202).json({
+      success: true,
+      data: result,
+    });
+  } catch (error) {
+    next(error);
+  }
+}));
+
+/**
+ * GET /donations/export/:jobId
+ * Get status of an export job. Requires admin role.
+ * Issue #123
+ */
+router.get('/export/:jobId', requireApiKey, checkPermission(PERMISSIONS.ADMIN_ALL), asyncHandler(async (req, res, next) => {
+  try {
+    const DonationExportService = require('../services/DonationExportService');
+    const status = await DonationExportService.getJobStatus(req.params.jobId);
+
+    return res.json({
+      success: true,
+      data: status,
+    });
+  } catch (error) {
+    next(error);
+  }
+}));
+
+/**
+ * GET /donations/export/:jobId/download
+ * Download completed export file. Requires admin role and valid signed URL.
+ * Issue #123
+ */
+router.get('/export/:jobId/download', requireApiKey, checkPermission(PERMISSIONS.ADMIN_ALL), asyncHandler(async (req, res, next) => {
+  try {
+    const DonationExportService = require('../services/DonationExportService');
+    const { token, expires } = req.query;
+
+    if (!token || !expires) {
+      return res.status(400).json({
+        success: false,
+        error: { code: 'MISSING_PARAMS', message: 'token and expires parameters are required' },
+      });
+    }
+
+    const { filePath, format } = await DonationExportService.verifyAndGetDownload(
+      req.params.jobId,
+      token,
+      expires
+    );
+
+    const fs = require('fs');
+    const path = require('path');
+
+    // Check if file exists
+    if (!fs.existsSync(filePath)) {
+      return res.status(404).json({
+        success: false,
+        error: { code: 'FILE_NOT_FOUND', message: 'Export file not found' },
+      });
+    }
+
+    // Set appropriate headers
+    const contentType = format === 'csv' ? 'text/csv' : 'application/json';
+    const fileName = `donations-${req.params.jobId}.${format}`;
+
+    res.setHeader('Content-Type', contentType);
+    res.setHeader('Content-Disposition', `attachment; filename="${fileName}"`);
+
+    // Stream file to response
+    const fileStream = fs.createReadStream(filePath);
+    fileStream.pipe(res);
+  } catch (error) {
+    next(error);
+  }
+}));
+
+/**
+ * GET /donations/export (DEPRECATED - use POST /donations/export instead)
+ * Stream donations as CSV or JSON. Requires admin role.
+ * Supports filters: format, startDate, endDate, status, senderPublicKey, recipientPublicKey
+ * Issue #919
+ * @deprecated Use POST /donations/export for async export instead
+ */
+router.get('/export', requireApiKey, checkPermission(PERMISSIONS.ADMIN_ALL), asyncHandler(async (req, res) => {
+  const { format = 'csv', startDate, endDate, status, senderPublicKey, recipientPublicKey } = req.query;
+
+  if (!['csv', 'json'].includes(format)) {
+    return res.status(400).json({ success: false, error: { code: 'INVALID_FORMAT', message: 'format must be csv or json' } });
+  }
+
+  const db = require('../utils/database');
+  const BATCH_SIZE = 1000;
+  const CSV_HEADERS = ['id', 'amount', 'senderPublicKey', 'recipientPublicKey', 'memo', 'status', 'timestamp', 'transactionHash'];
+
+  let query = `
+    SELECT t.id, t.amount,
+           sender.publicKey AS senderPublicKey,
+           receiver.publicKey AS recipientPublicKey,
+           t.memo, t.status, t.timestamp, t.stellar_tx_id AS transactionHash
+    FROM transactions t
+    LEFT JOIN users sender ON t.senderId = sender.id
+    LEFT JOIN users receiver ON t.receiverId = receiver.id
+    WHERE 1=1
+  `;
+  const params = [];
+  if (startDate)          { query += ' AND t.timestamp >= ?'; params.push(startDate); }
+  if (endDate)            { query += ' AND t.timestamp <= ?'; params.push(endDate); }
+  if (status)             { query += ' AND t.status = ?'; params.push(status); }
+  if (senderPublicKey)    { query += ' AND sender.publicKey = ?'; params.push(senderPublicKey); }
+  if (recipientPublicKey) { query += ' AND receiver.publicKey = ?'; params.push(recipientPublicKey); }
+  query += ' ORDER BY t.timestamp DESC';
+
+  function csvEscape(v) {
+    if (v === null || v === undefined) return '';
+    const s = String(v);
+    return (s.includes('"') || s.includes(',') || s.includes('\n')) ? `"${s.replace(/"/g, '""')}"` : s;
+  }
+
+  const ts = new Date().toISOString().replace(/[:.]/g, '-');
+
+  if (format === 'csv') {
+    res.setHeader('Content-Type', 'text/csv');
+    res.setHeader('Content-Disposition', `attachment; filename="donations-${ts}.csv"`);
+    res.write(CSV_HEADERS.join(',') + '\n');
+  } else {
+    res.setHeader('Content-Type', 'application/json');
+    res.write('[');
+  }
+
+  let offset = 0;
+  let firstRow = true;
+
+  for (;;) {
+    const rows = await db.all(query + ` LIMIT ${BATCH_SIZE} OFFSET ${offset}`, params);
+    if (!rows || rows.length === 0) break;
+    for (const row of rows) {
+      if (format === 'csv') {
+        res.write(CSV_HEADERS.map(h => csvEscape(row[h])).join(',') + '\n');
+      } else {
+        res.write((firstRow ? '' : ',') + JSON.stringify(row));
+        firstRow = false;
+      }
+    }
+    if (rows.length < BATCH_SIZE) break;
+    offset += BATCH_SIZE;
+  }
+
+  if (format === 'json') res.write(']');
+  res.end();
+}));
+
+/**
+ * GET /donations/search
+ * Search donations with full-text and field filtering
+ * 
+ * Query params:
+ *   - q: memo text search (case-insensitive LIKE)
+ *   - minAmount: minimum donation amount
+ *   - maxAmount: maximum donation amount
+ *   - startDate: start date (ISO 8601)
+ *   - endDate: end date (ISO 8601)
+ *   - status: donation status filter
+ *   - senderPublicKey: filter by sender public key
+ *   - recipientPublicKey: filter by recipient public key
+ *   - limit: max results (default 50, max 100)
+ *   - cursor: pagination cursor
+ */
+router.get('/search', checkPermission(PERMISSIONS.DONATIONS_READ), asyncHandler(async (req, res, next) => {
+  try {
+    const Database = require('../utils/database');
+    const { q, minAmount, maxAmount, startDate, endDate, status, senderPublicKey, recipientPublicKey, limit = 50, cursor } = req.query;
+
+    // Validate numeric parameters
+    const parsedLimit = Math.min(parseInt(limit, 10) || 50, 100);
+    if (parsedLimit < 1) {
+      return res.status(400).json({
+        success: false,
+        error: { code: 'INVALID_LIMIT', message: 'limit must be >= 1' }
+      });
+    }
+
+    const parsedMinAmount = minAmount !== undefined ? parseFloat(minAmount) : undefined;
+    const parsedMaxAmount = maxAmount !== undefined ? parseFloat(maxAmount) : undefined;
+
+    if (minAmount !== undefined && isNaN(parsedMinAmount)) {
+      return res.status(400).json({
+        success: false,
+        error: { code: 'INVALID_MIN_AMOUNT', message: 'minAmount must be a valid number' }
+      });
+    }
+
+    if (maxAmount !== undefined && isNaN(parsedMaxAmount)) {
+      return res.status(400).json({
+        success: false,
+        error: { code: 'INVALID_MAX_AMOUNT', message: 'maxAmount must be a valid number' }
+      });
+    }
+
+    // Build WHERE clause
+    const conditions = [];
+    const params = [];
+
+    if (q) {
+      conditions.push('memo LIKE ?');
+      params.push(`%${q}%`);
+    }
+
+    if (parsedMinAmount !== undefined) {
+      conditions.push('amount >= ?');
+      params.push(parsedMinAmount);
+    }
+
+    if (parsedMaxAmount !== undefined) {
+      conditions.push('amount <= ?');
+      params.push(parsedMaxAmount);
+    }
+
+    if (startDate) {
+      conditions.push('timestamp >= ?');
+      params.push(startDate);
+    }
+
+    if (endDate) {
+      conditions.push('timestamp <= ?');
+      params.push(endDate);
+    }
+
+    if (status) {
+      conditions.push('status = ?');
+      params.push(status);
+    }
+
+    if (senderPublicKey) {
+      conditions.push('sender_public_key = ?');
+      params.push(senderPublicKey);
+    }
+
+    if (recipientPublicKey) {
+      conditions.push('recipient_public_key = ?');
+      params.push(recipientPublicKey);
+    }
+
+    const whereClause = conditions.length > 0 ? 'WHERE ' + conditions.join(' AND ') : '';
+
+    // Get total count
+    const countResult = await Database.get(
+      `SELECT COUNT(*) as total FROM transactions ${whereClause}`,
+      params
+    );
+    const totalCount = countResult?.total || 0;
+
+    // Get paginated results
+    const offset = cursor ? parseInt(cursor, 10) : 0;
+    const rows = await Database.query(
+      `SELECT * FROM transactions ${whereClause} ORDER BY timestamp DESC LIMIT ? OFFSET ?`,
+      [...params, parsedLimit + 1, offset]
+    );
+
+    const hasMore = rows.length > parsedLimit;
+    const data = rows.slice(0, parsedLimit);
+    const nextCursor = hasMore ? offset + parsedLimit : null;
+
+    res.setHeader('X-Total-Count', String(totalCount));
+    res.json({
+      success: true,
+      data,
+      pagination: {
+        cursor: offset,
+        nextCursor,
+        hasMore,
+        limit: parsedLimit,
+        total: totalCount
+      }
+    });
+  } catch (error) {
+    next(error);
+  }
+}));
+
+/**
  * GET /donations/:id
  * Get a specific donation
  */
@@ -1336,6 +1975,146 @@ router.get('/:id', checkPermission(PERMISSIONS.DONATIONS_READ), donationIdParamS
     next(error);
   }
 });
+
+/**
+ * GET /donations/:id/timeline
+ * Get the complete lifecycle timeline of a donation
+ */
+router.get('/:id/timeline', checkPermission(PERMISSIONS.DONATIONS_READ), donationIdParamSchema, asyncHandler(async (req, res, next) => {
+  try {
+    const donationId = req.params.id;
+    const Database = require('../utils/database');
+
+    // Verify donation exists
+    const donation = donationService.getDonationById(donationId);
+    if (!donation) {
+      return res.status(404).json({
+        success: false,
+        error: { code: 'NOT_FOUND', message: 'Donation not found' }
+      });
+    }
+
+    const timeline = [];
+
+    // Event 1: Donation created
+    timeline.push({
+      timestamp: donation.timestamp,
+      event: 'created',
+      details: {
+        amount: donation.amount,
+        donor: donation.donor,
+        recipient: donation.recipient,
+        memo: donation.memo || null
+      }
+    });
+
+    // Event 2: Status changes from audit logs
+    try {
+      const auditLogs = await Database.query(
+        `SELECT * FROM audit_logs 
+         WHERE resource LIKE ? AND action LIKE 'DONATION_%' 
+         ORDER BY created_at ASC`,
+        [`%${donationId}%`]
+      );
+
+      for (const log of auditLogs) {
+        if (log.action === 'DONATION_SUBMITTED') {
+          timeline.push({
+            timestamp: log.created_at,
+            event: 'submitted',
+            details: log.details || {}
+          });
+        } else if (log.action === 'DONATION_CONFIRMED') {
+          timeline.push({
+            timestamp: log.created_at,
+            event: 'confirmed',
+            details: log.details || {}
+          });
+        } else if (log.action === 'DONATION_FAILED') {
+          timeline.push({
+            timestamp: log.created_at,
+            event: 'failed',
+            details: log.details || {}
+          });
+        } else if (log.action === 'DONATION_STATUS_CHANGED') {
+          timeline.push({
+            timestamp: log.created_at,
+            event: 'status_changed',
+            details: log.details || {}
+          });
+        }
+      }
+    } catch (err) {
+      // Audit logs table may not exist, continue
+    }
+
+    // Event 3: Refunds
+    try {
+      const refunds = await Database.query(
+        `SELECT * FROM refunds 
+         WHERE donation_id = ? 
+         ORDER BY created_at ASC`,
+        [donationId]
+      );
+
+      for (const refund of refunds) {
+        timeline.push({
+          timestamp: refund.created_at,
+          event: 'refunded',
+          details: {
+            refund_id: refund.id,
+            amount: refund.amount,
+            reason: refund.reason || null,
+            status: refund.status || 'pending'
+          }
+        });
+      }
+    } catch (err) {
+      // Refunds table may not exist, continue
+    }
+
+    // Event 4: Matching donations
+    try {
+      const matchingDonations = await Database.query(
+        `SELECT md.*, mp.sponsor_wallet_id 
+         FROM matching_donations md
+         JOIN matching_programs mp ON md.matching_program_id = mp.id
+         WHERE md.original_donation_id = ? 
+         ORDER BY md.created_at ASC`,
+        [donationId]
+      );
+
+      for (const match of matchingDonations) {
+        timeline.push({
+          timestamp: match.created_at,
+          event: 'matched',
+          details: {
+            matching_program_id: match.matching_program_id,
+            sponsor_wallet_id: match.sponsor_wallet_id,
+            matched_amount: match.matched_amount
+          }
+        });
+      }
+    } catch (err) {
+      // Matching donations table may not exist, continue
+    }
+
+    // Sort timeline by timestamp
+    timeline.sort((a, b) => new Date(a.timestamp) - new Date(b.timestamp));
+
+    // Mark processing complete
+    if (req.markLifecycleStage) {
+      req.markLifecycleStage(LIFECYCLE_STAGES.PROCESSED);
+    }
+
+    res.json({
+      success: true,
+      data: timeline
+    });
+  } catch (error) {
+    next(error);
+  }
+}));
 
 /**
  * PATCH /donations/:id/status
@@ -1750,4 +2529,237 @@ router.get('/limits', checkPermission(PERMISSIONS.DONATIONS_READ), (req, res) =>
   return res.json({ success: true, data: limitsData });
 });
 
+/**
+ * GET /donations/stats/by-campaign
+ * Aggregate donation statistics per campaign.
+ * Supports date range filtering, sorting, and pagination.
+ * Results are cached for 60 seconds.
+ */
+router.get('/stats/by-campaign', checkPermission(PERMISSIONS.STATS_READ), asyncHandler(async (req, res, next) => {
+  try {
+    const { from, to, sort = 'totalRaised', order = 'desc', limit = 20, offset = 0 } = req.query;
+    
+    // Validate sort parameter
+    const validSortFields = ['totalRaised', 'donorCount', 'donationCount'];
+    if (!validSortFields.includes(sort)) {
+      return res.status(400).json({
+        success: false,
+        error: {
+          code: 'INVALID_SORT',
+          message: `Invalid sort field. Valid options: ${validSortFields.join(', ')}`
+        }
+      });
+    }
+    
+    // Validate order parameter
+    const validOrders = ['asc', 'desc'];
+    if (!validOrders.includes(order.toLowerCase())) {
+      return res.status(400).json({
+        success: false,
+        error: {
+          code: 'INVALID_ORDER',
+          message: 'Order must be "asc" or "desc"'
+        }
+      });
+    }
+    
+    // Parse and validate limit
+    const parsedLimit = Math.min(parseInt(limit, 10) || 20, 100);
+    const parsedOffset = Math.max(parseInt(offset, 10) || 0, 0);
+    
+    // Build query with optional date filtering
+    let query = `
+      SELECT
+        c.id as campaignId,
+        c.name as campaignName,
+        COALESCE(SUM(t.amount), 0) as totalRaised,
+        COUNT(DISTINCT t.senderId) as donorCount,
+        COUNT(t.id) as donationCount,
+        COALESCE(AVG(t.amount), 0) as averageDonation,
+        c.goal_amount as goalAmount,
+        CASE 
+          WHEN c.goal_amount > 0 THEN ROUND((COALESCE(SUM(t.amount), 0) / c.goal_amount) * 100, 2)
+          ELSE 0
+        END as percentComplete,
+        MIN(t.timestamp) as firstDonationAt,
+        MAX(t.timestamp) as lastDonationAt
+      FROM campaigns c
+      LEFT JOIN transactions t ON c.id = t.campaign_id
+    `;
+    
+    const params = [];
+    const conditions = [];
+    
+    // Add date range filtering
+    if (from) {
+      conditions.push('t.timestamp >= ?');
+      params.push(from);
+    }
+    if (to) {
+      conditions.push('t.timestamp <= ?');
+      params.push(to);
+    }
+    
+    if (conditions.length > 0) {
+      query += ' WHERE ' + conditions.join(' AND ');
+    }
+    
+    query += ` GROUP BY c.id, c.name, c.goal_amount`;
+    query += ` HAVING COUNT(t.id) > 0`; // Exclude campaigns with zero donations
+    
+    // Map sort field to column name
+    const sortColumnMap = {
+      'totalRaised': 'totalRaised',
+      'donorCount': 'donorCount',
+      'donationCount': 'donationCount'
+    };
+    
+    query += ` ORDER BY ${sortColumnMap[sort]} ${order.toUpperCase()}`;
+    query += ` LIMIT ? OFFSET ?`;
+    params.push(parsedLimit, parsedOffset);
+    
+    const data = await Database.query(query, params);
+    
+    // Get total count for pagination
+    let countQuery = `
+      SELECT COUNT(DISTINCT c.id) as total
+      FROM campaigns c
+      LEFT JOIN transactions t ON c.id = t.campaign_id
+    `;
+    
+    const countParams = [];
+    const countConditions = [];
+    
+    if (from) {
+      countConditions.push('t.timestamp >= ?');
+      countParams.push(from);
+    }
+    if (to) {
+      countConditions.push('t.timestamp <= ?');
+      countParams.push(to);
+    }
+    
+    if (countConditions.length > 0) {
+      countQuery += ' WHERE ' + countConditions.join(' AND ');
+    }
+    
+    countQuery += ` GROUP BY c.id HAVING COUNT(t.id) > 0`;
+    
+    const countResult = await Database.query(countQuery, countParams);
+    const total = countResult.length;
+    
+    // Set cache headers
+    res.setHeader('Cache-Control', 'public, max-age=60');
+    
+    res.json({
+      success: true,
+      data,
+      total,
+      limit: parsedLimit,
+      offset: parsedOffset,
+      generatedAt: new Date().toISOString()
+    });
+  } catch (error) {
+    next(error);
+  }
+}));
+
+/**
+ * GET /donations/stats/by-tag
+ * Aggregate donation statistics per tag.
+ * Query params: startDate, endDate (ISO format)
+ */
+router.get('/stats/by-tag', checkPermission(PERMISSIONS.STATS_READ), statsByTagQuerySchema, validateDateRange, asyncHandler(async (req, res, next) => {
+  try {
+    const { startDate, endDate } = req.query;
+    const start = new Date(startDate);
+    const end = new Date(endDate);
+    const data = StatsService.getTagStats(start, end);
+
+    res.setHeader('Cache-Control', 'public, max-age=60');
+    return res.json({
+      success: true,
+      data,
+      metadata: {
+        startDate: start.toISOString(),
+        endDate: end.toISOString(),
+        totalTags: data.length,
+        generatedAt: new Date().toISOString()
+      }
+    });
+  } catch (error) {
+    next(error);
+  }
+}));
+
+// ─── Donation Tags (Issue #65) ────────────────────────────────────────────────
+
+const { validateTag } = require('../constants/tags');
+
+/**
+ * GET /donations/:id/tags
+ * Returns the current list of tags for a donation.
+ * Requires donations:read permission.
+ */
+router.get('/:id/tags', requireApiKey, checkPermission(PERMISSIONS.DONATIONS_READ), donationIdParamSchema, asyncHandler(async (req, res) => {
+  const tx = Transaction.getById(req.params.id);
+  if (!tx) return res.status(404).json({ success: false, error: { code: 'NOT_FOUND', message: 'Donation not found' } });
+  return res.json({ success: true, data: { tags: tx.tags || [] } });
+}));
+
+/**
+ * POST /donations/:id/tags
+ * Add tags to a donation (idempotent — duplicates are ignored).
+ * Body: { tags: string[] }
+ * Requires donations:write (DONATIONS_UPDATE) permission.
+ */
+router.post('/:id/tags', requireApiKey, checkPermission(PERMISSIONS.DONATIONS_UPDATE), donationIdParamSchema, asyncHandler(async (req, res) => {
+  const tx = Transaction.getById(req.params.id);
+  if (!tx) return res.status(404).json({ success: false, error: { code: 'NOT_FOUND', message: 'Donation not found' } });
+
+  const { tags } = req.body || {};
+  if (!Array.isArray(tags) || tags.length === 0) {
+    return res.status(400).json({ success: false, error: { code: 'VALIDATION_ERROR', message: "'tags' must be a non-empty array" } });
+  }
+
+  for (const tag of tags) {
+    const result = validateTag(tag);
+    if (!result.valid) {
+      return res.status(400).json({ success: false, error: { code: 'INVALID_TAG', message: result.reason, tag } });
+    }
+  }
+
+  const existing = new Set(tx.tags || []);
+  for (const tag of tags) existing.add(tag);
+  const updated = Array.from(existing);
+
+  const transactions = Transaction.loadTransactions();
+  const idx = transactions.findIndex(t => t.id === tx.id);
+  transactions[idx].tags = updated;
+  Transaction.saveTransactions(transactions);
+
+  return res.json({ success: true, data: { tags: updated } });
+}));
+
+/**
+ * DELETE /donations/:id/tags/:tag
+ * Remove a specific tag from a donation.
+ * Requires donations:write (DONATIONS_UPDATE) permission.
+ */
+router.delete('/:id/tags/:tag', requireApiKey, checkPermission(PERMISSIONS.DONATIONS_UPDATE), asyncHandler(async (req, res) => {
+  const tx = Transaction.getById(req.params.id);
+  if (!tx) return res.status(404).json({ success: false, error: { code: 'NOT_FOUND', message: 'Donation not found' } });
+
+  const { tag } = req.params;
+  const updated = (tx.tags || []).filter(t => t !== tag);
+
+  const transactions = Transaction.loadTransactions();
+  const idx = transactions.findIndex(t => t.id === tx.id);
+  transactions[idx].tags = updated;
+  Transaction.saveTransactions(transactions);
+
+  return res.json({ success: true, data: { tags: updated } });
+}));
+
 module.exports = router;
+

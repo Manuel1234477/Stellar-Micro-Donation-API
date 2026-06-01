@@ -14,8 +14,10 @@ const TABLE = `
     donor_wallet_id TEXT NOT NULL,
     amount          REAL NOT NULL,
     status          TEXT NOT NULL DEFAULT 'pending'
-                      CHECK(status IN ('pending','fulfilled','expired')),
+                      CHECK(status IN ('pending','fulfilled','expired','cancelled')),
     expires_at      DATETIME NOT NULL,
+    cancel_reason   TEXT,
+    cancelled_at    DATETIME,
     created_at      DATETIME DEFAULT CURRENT_TIMESTAMP,
     FOREIGN KEY (campaign_id) REFERENCES campaigns(id)
   )
@@ -72,4 +74,55 @@ async function getExpiredPledges(now = new Date().toISOString()) {
   );
 }
 
-module.exports = { initTable, create, listByCampaign, getPendingByCampaign, fulfillAll, expireOverdue, getExpiredPledges };
+/**
+ * Fetch a single pledge by its UUID.
+ * @param {string} id
+ * @returns {Promise<Object|null>}
+ */
+async function findById(id) {
+  return Database.get(`SELECT * FROM pledges WHERE id = ?`, [id]);
+}
+
+/**
+ * List all pledges, optionally filtered by status.
+ * @param {{ status?: string }} [opts]
+ * @returns {Promise<Object[]>}
+ */
+async function listAll({ status } = {}) {
+  if (status) {
+    return Database.query(
+      `SELECT * FROM pledges WHERE status = ? ORDER BY created_at DESC`,
+      [status]
+    );
+  }
+  return Database.query(`SELECT * FROM pledges ORDER BY created_at DESC`);
+}
+
+/**
+ * Cancel a pledge by ID (only if currently pending).
+ * @param {string} id
+ * @param {string} [reason]
+ * @returns {Promise<{changes: number}>}
+ */
+async function cancel(id, reason = null) {
+  const now = new Date().toISOString();
+  return Database.run(
+    `UPDATE pledges
+     SET status = 'cancelled', cancel_reason = ?, cancelled_at = ?
+     WHERE id = ? AND status = 'pending'`,
+    [reason, now, id]
+  );
+}
+
+module.exports = {
+  initTable,
+  create,
+  listByCampaign,
+  getPendingByCampaign,
+  fulfillAll,
+  expireOverdue,
+  getExpiredPledges,
+  findById,
+  listAll,
+  cancel,
+};

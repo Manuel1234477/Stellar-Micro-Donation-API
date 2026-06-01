@@ -29,12 +29,16 @@ const log = require('../utils/log');
 /**
  * Encrypt a memo for a specific recipient with key versioning.
  *
+ * The encrypted memo is stored as a versioned ciphertext string:
+ *   "v<version>:<base64-encoded-json-envelope>"
+ * This embeds the key version so future decryption can select the correct key.
+ *
  * @param {string} plaintext - Plaintext memo (e.g., "Thank you for your support!")
  * @param {string} recipientStellarAddress - Recipient's Stellar public key (G...)
  * @param {Object} options - Optional parameters
  * @param {number} options.keyVersion - Force a specific key version (for testing)
  * @returns {{
- *   memoEnvelope: Object,
+ *   memoEnvelope: string,
  *   memoHash: string,
  *   encryptionMetadata: {keyVersion: number, algorithm: string, createdAt: string}
  * }}
@@ -49,16 +53,22 @@ function encryptMemoForRecipient(plaintext, recipientStellarAddress, options = {
   }
 
   try {
-    // Determine key version to use
+    // Determine key version to use (always the active version unless overridden for tests)
     const keyVersion = options.keyVersion || memoKeyManager.getActiveKeyVersion();
 
-    // Encrypt the memo
-    const memoEnvelope = encryptMemo(plaintext, recipientStellarAddress);
+    // Encrypt the memo using ECDH-X25519-AES256GCM
+    const rawEnvelope = encryptMemo(plaintext, recipientStellarAddress);
 
-    // Compute on-chain MEMO_HASH (immutable reference)
-    const memoHash = envelopeToMemoHash(memoEnvelope);
+    // Serialize as versioned ciphertext: "v<version>:<base64json>"
+    const versionedMemo = memoKeyManager.serializeVersionedCiphertext({
+      keyVersion,
+      encryptedEnvelope: rawEnvelope,
+    });
 
-    // Store encryption metadata for later decryption
+    // Compute on-chain MEMO_HASH (immutable reference based on raw envelope)
+    const memoHash = envelopeToMemoHash(rawEnvelope);
+
+    // Store encryption metadata for diagnostics and rotation tracking
     const encryptionMetadata = {
       keyVersion,
       algorithm: 'ECDH-X25519-AES256GCM',
@@ -72,7 +82,7 @@ function encryptMemoForRecipient(plaintext, recipientStellarAddress, options = {
     });
 
     return {
-      memoEnvelope,
+      memoEnvelope: versionedMemo,
       memoHash,
       encryptionMetadata,
     };
@@ -87,12 +97,17 @@ function encryptMemoForRecipient(plaintext, recipientStellarAddress, options = {
 
 /**
  * Decrypt a memo using the recipient's Stellar secret key.
- * The decryption automatically uses the correct key version stored in the envelope.
  *
- * @param {Object|string} memoEnvelope - Encrypted memo envelope (object or JSON string)
+ * Accepts both the new versioned format ("v<n>:<base64>") and the legacy raw
+ * envelope format (object or JSON string) for backward compatibility.
+ *
+ * When the versioned format is used, the key version is parsed from the prefix
+ * and validated against the key store before decryption proceeds.
+ *
+ * @param {string|Object} memoEnvelope - Versioned ciphertext ("v1:base64…") or raw envelope
  * @param {string} recipientStellarSecret - Recipient's Stellar secret key (S...)
  * @returns {string} Plaintext memo
- * @throws {Error} if recipient secret key is wrong or memo is tampered
+ * @throws {Error} if key version is unknown, recipient secret key is wrong, or memo is tampered
  */
 function decryptMemoForRecipient(memoEnvelope, recipientStellarSecret) {
   if (typeof recipientStellarSecret !== 'string' || !recipientStellarSecret.startsWith('S')) {
@@ -100,7 +115,25 @@ function decryptMemoForRecipient(memoEnvelope, recipientStellarSecret) {
   }
 
   try {
-    const plaintext = decryptMemo(memoEnvelope, recipientStellarSecret);
+    let envelopeToDecrypt = memoEnvelope;
+
+    // Handle versioned ciphertext format: "v<n>:<base64json>"
+    if (typeof memoEnvelope === 'string' && /^v\d+:/.test(memoEnvelope)) {
+      const { keyVersion, encryptedEnvelope } = memoKeyManager.deserializeVersionedCiphertext(memoEnvelope);
+
+      // Validate the key version exists in the key store (throws if unknown)
+      try {
+        memoKeyManager.getKeyMaterial(keyVersion);
+      } catch {
+        throw new Error(`Unknown key version ${keyVersion}: memo encrypted with a key that no longer exists`);
+      }
+
+      envelopeToDecrypt = encryptedEnvelope;
+
+      log.debug('MEMO_ENCRYPTION_SERVICE', 'Decrypting versioned memo', { keyVersion });
+    }
+
+    const plaintext = decryptMemo(envelopeToDecrypt, recipientStellarSecret);
 
     log.debug('MEMO_ENCRYPTION_SERVICE', 'Memo decrypted successfully');
 
@@ -108,7 +141,7 @@ function decryptMemoForRecipient(memoEnvelope, recipientStellarSecret) {
   } catch (err) {
     log.error('MEMO_ENCRYPTION_SERVICE', 'Decryption failed', {
       error: err.message,
-      isJsonString: typeof memoEnvelope === 'string',
+      isVersioned: typeof memoEnvelope === 'string' && /^v\d+:/.test(memoEnvelope),
     });
     throw err;
   }

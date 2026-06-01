@@ -20,7 +20,7 @@ function createTestApp() {
   const app = express();
   app.use(express.json());
   app.use(attachUserRole());
-  app.use('/donations', donationRouter);
+  app.use('/api/v1/donations', donationRouter);
 
   // Add error handler
   app.use((err, req, res, next) => {
@@ -65,13 +65,13 @@ describe('Donation Routes Integration Tests', () => {
     userApp = express();
     userApp.use(express.json());
     userApp.use((req, _res, next) => { req.user = { id: 'user-1', role: 'user' }; next(); });
-    userApp.use('/donations', donationRouter);
+    userApp.use('/api/v1/donations', donationRouter);
     userApp.use(errorHandler);
 
     adminApp = express();
     adminApp.use(express.json());
     adminApp.use((req, _res, next) => { req.user = { id: 'admin-1', role: 'admin' }; next(); });
-    adminApp.use('/donations', donationRouter);
+    adminApp.use('/api/v1/donations', donationRouter);
     adminApp.use(errorHandler);
   });
 
@@ -679,7 +679,7 @@ describe('Donation Routes Integration Tests', () => {
       const transactionHash = txResult.transactionId;
 
       const response = await request(userApp)
-        .post('/donations/verify')
+        .post('/api/v1/donations/verify')
         .send({ transactionHash });
 
       expect(response.status).toBe(400);
@@ -696,7 +696,7 @@ describe('Donation Routes Integration Tests', () => {
       const unrelatedWallet = await stellarService.createWallet();
 
       const response = await request(userApp)
-        .post('/donations/verify')
+        .post('/api/v1/donations/verify')
         .send({ transactionHash, walletAddress: unrelatedWallet.publicKey });
 
       expect(response.status).toBe(403);
@@ -713,7 +713,7 @@ describe('Donation Routes Integration Tests', () => {
       const transactionHash = txResult.transactionId;
 
       const response = await request(userApp)
-        .post('/donations/verify')
+        .post('/api/v1/donations/verify')
         .send({ transactionHash, walletAddress: testDonor.publicKey });
 
       expect(response.status).toBe(200);
@@ -729,7 +729,7 @@ describe('Donation Routes Integration Tests', () => {
       const transactionHash = txResult.transactionId;
 
       const response = await request(userApp)
-        .post('/donations/verify')
+        .post('/api/v1/donations/verify')
         .send({ transactionHash, walletAddress: testRecipient.publicKey });
 
       expect(response.status).toBe(200);
@@ -745,7 +745,7 @@ describe('Donation Routes Integration Tests', () => {
       const transactionHash = txResult.transactionId;
 
       const response = await request(adminApp)
-        .post('/donations/verify')
+        .post('/api/v1/donations/verify')
         .send({ transactionHash });
 
       expect(response.status).toBe(200);

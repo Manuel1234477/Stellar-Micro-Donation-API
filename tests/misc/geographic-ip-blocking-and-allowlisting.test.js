@@ -77,6 +77,12 @@ jest.mock('../../src/services/TOTPService', () => ({
 
 const geoBlockingAdminRouter = require('../../src/routes/admin/geoBlocking');
 
+// Save original fs.existsSync so tests that mock it don't leak into other suites
+const _originalExistsSync = require('fs').existsSync;
+afterEach(() => {
+  require('fs').existsSync = _originalExistsSync;
+});
+
 // Mock config
 jest.mock('../../src/config', () => ({
   apiKeys: {

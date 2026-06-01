@@ -161,24 +161,37 @@ function validateField(value, rules, fieldPath) {
   return null;
 }
 
+function stripUnknown(data, segmentSchema) {
+  const fields = segmentSchema.fields || {};
+  const allowUnknown = segmentSchema.allowUnknown === true;
+
+  if (!isPlainObject(data)) return data;
+
+  const result = {};
+  for (const [key, value] of Object.entries(data)) {
+    if (Object.prototype.hasOwnProperty.call(fields, key)) {
+      const rules = fields[key];
+      // Recurse into nested objects if the field has its own fields definition
+      if (isPlainObject(value) && rules.fields) {
+        result[key] = stripUnknown(value, rules);
+      } else {
+        result[key] = value;
+      }
+    } else if (allowUnknown) {
+      result[key] = value;
+    }
+  }
+  return result;
+}
+
 function validateSegment(data, segmentSchema, segmentName) {
   const errors = [];
   const fields = segmentSchema.fields || {};
-  const allowUnknown = segmentSchema.allowUnknown === true;
 
   if (!isPlainObject(data)) {
     return [
       formatSegmentError(segmentName, `Invalid ${segmentName}. Expected an object, received ${getValueType(data)}.`),
     ];
-  }
-
-  if (!allowUnknown) {
-    const unknownFields = Object.keys(data).filter((key) => !Object.prototype.hasOwnProperty.call(fields, key));
-    if (unknownFields.length > 0) {
-      errors.push(
-        formatUnknownFieldsError(segmentName, unknownFields, Object.keys(fields))
-      );
-    }
   }
 
   for (const [fieldName, rules] of Object.entries(fields)) {
@@ -297,6 +310,10 @@ function validateSchema(schemaOrKey, versions, options) {
 
     if (schemaToUse.params) {
       allErrors.push(...validateSegment(req.params ?? {}, schemaToUse.params, 'params'));
+    }
+
+    if (allErrors.length === 0) {
+      if (schemaToUse.body) req.body = stripUnknown(req.body ?? {}, schemaToUse.body);
     }
 
     if (allErrors.length > 0) {

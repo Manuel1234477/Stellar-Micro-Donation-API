@@ -42,6 +42,13 @@ const options = {
             'otherwise the server generates one automatically.',
           schema: { type: 'string', format: 'uuid', example: '550e8400-e29b-41d4-a716-446655440000' },
         },
+        XSchemaVersion: {
+          description:
+            'Request body schema version. Specify the schema version for request body validation. ' +
+            'Defaults to version 1 if not provided. Supported versions are listed in the X-Schema-Version-Supported response header. ' +
+            'Use this header to maintain backward compatibility when the API evolves.',
+          schema: { type: 'string', example: '1.0.0' },
+        },
       },
       schemas: {
         Error: {

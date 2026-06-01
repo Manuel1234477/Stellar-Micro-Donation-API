@@ -33,6 +33,12 @@ const AuditLogService = require('../services/AuditLogService');
 const donationRateLimiter = rateLimit({
   windowMs: 60 * 1000,
   max: 10,
+  keyGenerator: (req) => {
+    if (req.apiKey && req.apiKey.id && !req.apiKey.isLegacy) {
+      return `key:${req.apiKey.id}`;
+    }
+    return `ip:${req.ip}`;
+  },
   message: {
     success: false,
     error: {
@@ -41,7 +47,7 @@ const donationRateLimiter = rateLimit({
     }
   },
   standardHeaders: true,
-  legacyHeaders: false,
+  legacyHeaders: true,
   validate: false,
   handler: (req, res) => {
     // Audit log: Rate limit exceeded
@@ -111,7 +117,7 @@ const verificationRateLimiter = rateLimit({
     }
   },
   standardHeaders: true,
-  legacyHeaders: false,
+  legacyHeaders: true,
   validate: false,
   handler: (req, res) => {
     const isKeyBased = req.apiKey && req.apiKey.id && !req.apiKey.isLegacy;
@@ -166,7 +172,7 @@ const batchRateLimiter = rateLimit({
   max: 1,
   keyGenerator: (req) => req.apiKey?.id || req.ip,
   standardHeaders: true,
-  legacyHeaders: false,
+  legacyHeaders: true,
   validate: false,
   handler: (req, res) => {
     const identifier = req.apiKey?.id ? `api-key:${req.apiKey.id}` : `ip:${req.ip}`;
@@ -209,7 +215,7 @@ const bulkImportRateLimiter = rateLimit({
   max: 10,
   keyGenerator: (req) => req.apiKey?.id || req.ip,
   standardHeaders: true,
-  legacyHeaders: false,
+  legacyHeaders: true,
   validate: false,
   handler: (req, res) => {
     const retryAfter = req.rateLimit?.resetTime
@@ -272,7 +278,7 @@ const authTokenRateLimiter = rateLimit({
   max: parseInt(process.env.AUTH_TOKEN_RATE_LIMIT || '10'),
   keyGenerator: (req) => req.ip,
   standardHeaders: true,
-  legacyHeaders: false,
+  legacyHeaders: true,
   validate: false,
   handler: (req, res) => {
     const retryAfter = req.rateLimit?.resetTime
@@ -323,7 +329,7 @@ const authRefreshRateLimiter = rateLimit({
   max: parseInt(process.env.AUTH_REFRESH_RATE_LIMIT || '20'),
   keyGenerator: (req) => req.ip,
   standardHeaders: true,
-  legacyHeaders: false,
+  legacyHeaders: true,
   validate: false,
   handler: (req, res) => {
     const retryAfter = req.rateLimit?.resetTime
@@ -358,6 +364,67 @@ const authRefreshRateLimiter = rateLimit({
   }
 });
 
+/**
+ * Health Check Limiter (Issue #889)
+ * Intent: Prevent reconnaissance attacks via continuous health endpoint polling
+ * Scope: GET /health, GET /api/v1/health
+ * 
+ * Flow & Configuration:
+ * 1. Window: 60-second sliding window
+ * 2. Threshold: Max 60 requests per IP (1 per second)
+ * 3. Headers: X-RateLimit-Limit, X-RateLimit-Remaining, X-RateLimit-Reset
+ * 4. Exhaustion: Responds with HTTP 429
+ */
+const healthCheckRateLimiter = rateLimit({
+  windowMs: 60 * 1000,
+  max: 60,
+  keyGenerator: (req) => req.ip,
+  standardHeaders: true,
+  legacyHeaders: true,
+  validate: false,
+  handler: (req, res) => {
+    const retryAfter = req.rateLimit?.resetTime
+      ? Math.ceil((new Date(req.rateLimit.resetTime) - Date.now()) / 1000)
+      : 60;
+
+    res.set('Retry-After', String(retryAfter));
+    res.status(429).json({
+      status: 'degraded',
+      timestamp: new Date().toISOString()
+    });
+  }
+});
+
+/**
+ * Live Wallet History Limiter
+ * Intent: Prevent Horizon API abuse via source=live queries.
+ * Scope: GET /wallets/:id/history?source=live
+ *
+ * Flow & Configuration:
+ * 1. Window: 60-second sliding window.
+ * 2. Threshold: Max 10 requests per authenticated client (keyed by API key ID, fallback to IP).
+ * 3. Exhaustion: Responds with HTTP 429.
+ */
+const liveHistoryRateLimiter = rateLimit({
+  windowMs: 60 * 1000,
+  max: 10,
+  keyGenerator: (req) => req.apiKey?.id || req.ip,
+  standardHeaders: true,
+  legacyHeaders: true,
+  validate: false,
+  skip: () => process.env.NODE_ENV === 'test',
+  handler: (req, res) => {
+    res.status(429).json({
+      success: false,
+      error: {
+        code: 'RATE_LIMIT_EXCEEDED',
+        message: 'Too many live history requests. Please try again later.',
+        retryAfter: req.rateLimit?.resetTime,
+      }
+    });
+  }
+});
+
 module.exports = {
   donationRateLimiter,
   verificationRateLimiter,
@@ -365,13 +432,15 @@ module.exports = {
   bulkImportRateLimiter,
   authTokenRateLimiter,
   authRefreshRateLimiter,
+  healthCheckRateLimiter,
+  liveHistoryRateLimiter,
   createRateLimiter,
   friendbotRateLimiter: rateLimit({
     windowMs: 60 * 1000,
     max: 5,
     keyGenerator: (req) => req.apiKey?.id || req.ip,
     standardHeaders: true,
-    legacyHeaders: false,
+    legacyHeaders: true,
     validate: false,
     handler: (req, res) => {
       res.status(429).json({
@@ -384,4 +453,67 @@ module.exports = {
       });
     }
   }),
+  statsRateLimiter: rateLimit({
+    windowMs: 60 * 1000,
+    max: 30,
+    keyGenerator: (req) => {
+      const identifier = (req.apiKey && req.apiKey.id && !req.apiKey.isLegacy)
+        ? `key:${req.apiKey.id}`
+        : `ip:${req.ip}`;
+      return `rate_limit:${identifier}:stats`;
+    },
+    message: {
+      success: false,
+      error: {
+        code: 'RATE_LIMIT_EXCEEDED',
+        message: 'Too many stats requests. Please try again later.',
+      }
+    },
+    standardHeaders: true,
+    legacyHeaders: true,
+    validate: false,
+    handler: (req, res) => {
+      const isKeyBased = req.apiKey && req.apiKey.id && !req.apiKey.isLegacy;
+      const retryAfter = Math.ceil((new Date(req.rateLimit.resetTime) - Date.now()) / 1000);
+
+      AuditLogService.log({
+        category: AuditLogService.CATEGORY.RATE_LIMITING,
+        action: AuditLogService.ACTION.RATE_LIMIT_EXCEEDED,
+        severity: AuditLogService.SEVERITY.MEDIUM,
+        result: 'FAILURE',
+        requestId: req.id,
+        ipAddress: req.ip,
+        resource: req.path,
+        reason: 'Stats rate limit exceeded',
+        details: {
+          limit: 30,
+          window: '60s',
+          limitedBy: isKeyBased ? 'api-key' : 'ip',
+          resetTime: req.rateLimit.resetTime
+        }
+      }).catch(err => {
+        console.error('Audit log failed:', err);
+      });
+
+      res.set('X-RateLimit-Identifier', isKeyBased ? 'api-key' : 'ip');
+      res.set('Retry-After', String(retryAfter));
+      res.status(429).json({
+        success: false,
+        error: {
+          code: 'RATE_LIMIT_EXCEEDED',
+          message: isKeyBased
+            ? 'Too many stats requests for this API key. Please try again later.'
+            : 'Too many stats requests from this IP. Please try again later.',
+          retryAfter,
+          limitedBy: isKeyBased ? 'api-key' : 'ip',
+        }
+      });
+    },
+    skip: (req, res) => {
+      const isKeyBased = req.apiKey && req.apiKey.id && !req.apiKey.isLegacy;
+      res.set('X-RateLimit-Identifier', isKeyBased ? 'api-key' : 'ip');
+      return false;
+    },
+  }),
 };
+

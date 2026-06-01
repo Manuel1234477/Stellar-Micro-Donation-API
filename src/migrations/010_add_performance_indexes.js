@@ -22,6 +22,19 @@ exports.up = async (db) => {
     ON recurring_donations(status, nextExecutionDate)
   `);
 
+  // Ensure idempotency_keys table exists before indexing
+  await db.run(`
+    CREATE TABLE IF NOT EXISTS idempotency_keys (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      idempotencyKey VARCHAR(255) NOT NULL UNIQUE,
+      requestHash VARCHAR(64) NOT NULL,
+      response TEXT NOT NULL,
+      userId INTEGER,
+      createdAt DATETIME NOT NULL,
+      expiresAt DATETIME NOT NULL
+    )
+  `);
+
   await db.run(`
     CREATE INDEX IF NOT EXISTS idx_idempotency_keys_key
     ON idempotency_keys(idempotencyKey)

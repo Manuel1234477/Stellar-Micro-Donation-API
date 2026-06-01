@@ -8,20 +8,20 @@
 
 'use strict';
 
-jest.mock('../src/utils/log', () => ({
+jest.mock('../../src/utils/log', () => ({
   info: jest.fn(), warn: jest.fn(), error: jest.fn(), debug: jest.fn(),
 }));
 
-jest.mock('../src/utils/database');
+jest.mock('../../src/utils/database');
 const Database = require('../../src/utils/database');
 
-jest.mock('../src/middleware/rbac', () => ({
+jest.mock('../../src/middleware/rbac', () => ({
   checkPermission: () => (req, res, next) => next(),
   requireAdmin: () => (req, res, next) => next(),
   attachUserRole: () => (req, res, next) => { req.user = { id: 'test-user', role: 'admin' }; next(); },
 }));
 
-jest.mock('../src/config/stellar', () => ({
+jest.mock('../../src/config/stellar', () => ({
   getStellarService: jest.fn(),
 }));
 

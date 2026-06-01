@@ -5,6 +5,63 @@ const { API_KEY_STATUS } = require('../constants/index');
 let isInitialized = false;
 let initializationPromise = null;
 
+// TTL Cache for API key validation results
+// Configurable via API_KEY_CACHE_TTL_SECONDS (default: 60, max: 300)
+const API_KEY_CACHE_TTL_MS = (parseInt(process.env.API_KEY_CACHE_TTL_SECONDS, 10) || 60) * 1000;
+const MAX_CACHE_TTL_MS = 300 * 1000; // 5 minutes max
+
+// Validate cache TTL configuration
+if (API_KEY_CACHE_TTL_MS > MAX_CACHE_TTL_MS) {
+  throw new Error(`API_KEY_CACHE_TTL_SECONDS cannot exceed 300 seconds (5 minutes). Received: ${API_KEY_CACHE_TTL_MS / 1000}`);
+}
+
+// In-memory cache with TTL: Map<keyHash, { value, expiresAt }>
+const keyCache = new Map();
+
+/**
+ * Get cached key validation result if not expired
+ * @param {string} keyHash - SHA256 hash of the API key
+ * @returns {Object|null} Cached key info or null if expired/missing
+ */
+function getCachedKey(keyHash) {
+  const entry = keyCache.get(keyHash);
+  if (!entry) return null;
+  
+  if (Date.now() > entry.expiresAt) {
+    keyCache.delete(keyHash);
+    return null;
+  }
+  
+  return entry.value;
+}
+
+/**
+ * Set cached key validation result with TTL
+ * @param {string} keyHash - SHA256 hash of the API key
+ * @param {Object} value - Key validation result
+ */
+function setCachedKey(keyHash, value) {
+  keyCache.set(keyHash, {
+    value,
+    expiresAt: Date.now() + API_KEY_CACHE_TTL_MS,
+  });
+}
+
+/**
+ * Immediately invalidate a cached key entry
+ * @param {string} keyHash - SHA256 hash of the API key
+ */
+function invalidateCachedKey(keyHash) {
+  keyCache.delete(keyHash);
+}
+
+/**
+ * Invalidate all cached keys (used during server shutdown or cache flush)
+ */
+function invalidateAllCachedKeys() {
+  keyCache.clear();
+}
+
 const CREATE_TABLE_SQL = `
   CREATE TABLE IF NOT EXISTS api_keys (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -133,6 +190,7 @@ async function createApiKey({
 
 /**
  * Validate a raw API key and return its metadata, or null if invalid/expired.
+ * Uses TTL cache to avoid repeated database lookups.
  *
  * @param {string} rawKey
  * @returns {Promise<Object|null>}
@@ -142,14 +200,31 @@ async function validateApiKey(rawKey) {
   const keyHash = crypto.createHash('sha256').update(rawKey).digest('hex');
   const now = Date.now();
 
+  // Check cache first
+  const cached = getCachedKey(keyHash);
+  if (cached !== null) {
+    return cached;
+  }
+
   const row = await db.get(
     `SELECT * FROM api_keys WHERE key_hash = ?`,
     [keyHash]
   );
 
-  if (!row) return null;
-  if (row.status === API_KEY_STATUS.REVOKED) return null;
-  if (row.expires_at && row.expires_at < now) return null;
+  if (!row) {
+    setCachedKey(keyHash, null);
+    return null;
+  }
+  
+  if (row.status === API_KEY_STATUS.REVOKED) {
+    setCachedKey(keyHash, null);
+    return null;
+  }
+  
+  if (row.expires_at && row.expires_at < now) {
+    setCachedKey(keyHash, null);
+    return null;
+  }
 
   // Check and reset quota if needed
   if (row.monthly_quota && row.quota_reset_at && row.quota_reset_at <= now) {
@@ -161,7 +236,7 @@ async function validateApiKey(rawKey) {
   // Update last_used_at
   await db.run('UPDATE api_keys SET last_used_at = ? WHERE id = ?', [now, row.id]);
 
-  return {
+  const result = {
     id: row.id,
     keyPrefix: row.key_prefix,
     name: row.name,
@@ -181,7 +256,11 @@ async function validateApiKey(rawKey) {
     quotaUsed: row.quota_used || 0,
     quotaResetAt: row.quota_reset_at,
     notificationEmail: row.notification_email || null,
+    rateLimitPerMinute: row.rate_limit_per_minute || null,
   };
+
+  setCachedKey(keyHash, result);
+  return result;
 }
 
 // Alias used by apiKey.js middleware
@@ -223,31 +302,53 @@ async function listApiKeys(filters = {}) {
 
 /**
  * Deprecate an active API key (marks it for rotation grace period).
+ * Invalidates the cache entry to ensure deprecation headers are sent on next request.
  *
  * @param {number} id
  * @returns {Promise<boolean>}
  */
 async function deprecateApiKey(id) {
   await initializeApiKeysTable();
+  
+  // Get the key_hash before deprecating so we can invalidate the cache
+  const row = await db.get('SELECT key_hash FROM api_keys WHERE id = ?', [id]);
+  
   const result = await db.run(
     `UPDATE api_keys SET status = 'deprecated', deprecated_at = ? WHERE id = ? AND status = 'active'`,
     [Date.now(), id]
   );
+  
+  // Invalidate cache entry immediately
+  if (row && result.changes > 0) {
+    invalidateCachedKey(row.key_hash);
+  }
+  
   return result.changes > 0;
 }
 
 /**
  * Revoke an API key immediately.
+ * Invalidates the cache entry to ensure revocation takes effect immediately.
  *
  * @param {number} id
  * @returns {Promise<boolean>}
  */
 async function revokeApiKey(id) {
   await initializeApiKeysTable();
+  
+  // Get the key_hash before revoking so we can invalidate the cache
+  const row = await db.get('SELECT key_hash FROM api_keys WHERE id = ?', [id]);
+  
   const result = await db.run(
     `UPDATE api_keys SET status = 'revoked', revoked_at = ? WHERE id = ? AND status != 'revoked'`,
     [Date.now(), id]
   );
+  
+  // Invalidate cache entry immediately
+  if (row && result.changes > 0) {
+    invalidateCachedKey(row.key_hash);
+  }
+  
   return result.changes > 0;
 }
 
@@ -521,6 +622,42 @@ async function getExpirationNotices(keyId) {
   }
 }
 
+/**
+ * Extend an API key's expiration date by a given number of days.
+ * Extension is applied from the current expiresAt, not from today.
+ * Revoked keys cannot be extended.
+ *
+ * @param {number} id - API key ID
+ * @param {number} days - Number of days to extend (max 365)
+ * @returns {Promise<{oldExpiresAt: number|null, newExpiresAt: number}|null>}
+ *   Returns null if key not found, throws if revoked.
+ */
+async function extendApiKey(id, days) {
+  await initializeApiKeysTable();
+
+  const row = await db.get('SELECT id, status, expires_at, key_hash FROM api_keys WHERE id = ?', [id]);
+  if (!row) return null;
+
+  if (row.status === 'revoked') {
+    const err = new Error('Cannot extend a revoked key');
+    err.code = 'KEY_REVOKED';
+    throw err;
+  }
+
+  const oldExpiresAt = row.expires_at || null;
+  const base = oldExpiresAt || Date.now();
+  const newExpiresAt = base + days * 24 * 60 * 60 * 1000;
+
+  await db.run('UPDATE api_keys SET expires_at = ? WHERE id = ?', [newExpiresAt, id]);
+
+  // Invalidate cache so next request picks up the new expiry
+  if (row.key_hash) {
+    invalidateCachedKey(row.key_hash);
+  }
+
+  return { oldExpiresAt, newExpiresAt };
+}
+
 module.exports = {
   initializeApiKeysTable,
   createApiKey,
@@ -530,6 +667,7 @@ module.exports = {
   listApiKeys,
   deprecateApiKey,
   revokeApiKey,
+  extendApiKey,
   cleanupOldKeys,
   rotateApiKey,
   revokeExpiredDeprecatedKeys,
@@ -540,4 +678,9 @@ module.exports = {
   getKeysExpiringWithin,
   markExpiryNotificationSent,
   getExpirationNotices,
+  // Cache management
+  getCachedKey,
+  setCachedKey,
+  invalidateCachedKey,
+  invalidateAllCachedKeys,
 };

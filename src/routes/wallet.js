@@ -13,6 +13,7 @@ const express = require('express');
 const router = express.Router();
 const { checkPermission, requireAdmin } = require('../middleware/rbac');
 const { PERMISSIONS } = require('../utils/permissions');
+const { NotFoundError, ValidationError, ERROR_CODES } = require('../utils/errors');
 const LimitService = require('../services/LimitService');
 const Database = require('../utils/database');
 const asyncHandler = require('../utils/asyncHandler');
@@ -21,6 +22,18 @@ const { buildErrorResponse } = require('../utils/validationErrorFormatter');
 const { validateSchema } = require('../middleware/schemaValidation');
 const { cacheMiddleware } = require('../middleware/caching');
 const { validateDataEntry } = require('../middleware/validateDataEntry');
+const { toWalletResponse } = require('../utils/responseSanitizer');
+const BulkWalletImportService = require('../services/BulkWalletImportService');
+const Wallet = require('./models/wallet');
+const { STROOPS_PER_XLM } = require('../constants');
+const WalletService = require('../services/WalletService');
+const AuditLogService = require('../services/AuditLogService');
+const log = require('../utils/log');
+const { parseCursorPaginationQuery } = require('../utils/pagination');
+
+const walletService = new WalletService();
+
+const { getStellarService } = require('../config/stellar');
 
 const requireAuth = requireAdmin;
 const requirePermission = (perm) => checkPermission(perm);
@@ -41,10 +54,20 @@ const walletPublicKeySchema = validateSchema({
   }
 });
 
+const { isValidStellarPublicKey } = require('../utils/validators');
+
 const walletCreateSchema = validateSchema({
   body: {
     fields: {
-      address: { type: 'string', required: true, trim: true, minLength: 1 },
+      address: {
+        type: 'string',
+        required: true,
+        trim: true,
+        minLength: 1,
+        validate: (value) => isValidStellarPublicKey(value)
+          ? true
+          : 'address must be a valid Stellar public key (56-character Ed25519 public key starting with G)',
+      },
       label: { type: 'string', required: false, nullable: true },
       ownerName: { type: 'string', required: false, nullable: true },
       sponsored: { type: 'boolean', required: false, nullable: true }
@@ -72,11 +95,11 @@ router.patch(
     try {
       const { id } = req.params;
       const { destination, signedXDR } = req.body;
-      const wallet = await WalletService.getWalletById(id);
+      const wallet = await walletService.getWalletById(id);
       if (!wallet) return res.status(404).json({ error: 'Wallet not found' });
-      const result = await StellarService.submitSignedTransaction(signedXDR);
-      // Optionally log audit here
-      res.status(200).json({ success: true, inflationDestination: destination, result });
+      const stellarService = getStellarService();
+      const result = await stellarService.submitSignedTransaction(signedXDR);
+      res.status(200).json({ success: true, inflationDestination: destination, transactionHash: result.hash });
     } catch (err) {
       next(err);
     }
@@ -91,9 +114,10 @@ router.get(
   asyncHandler(async (req, res, next) => {
     try {
       const { id } = req.params;
-      const wallet = await WalletService.getWalletById(id);
+      const wallet = await walletService.getWalletById(id);
       if (!wallet) return res.status(404).json({ error: 'Wallet not found' });
-      const inflationDestination = await StellarService.getInflationDestination(wallet.address);
+      const stellarService = getStellarService();
+      const inflationDestination = await stellarService.getInflationDestination(wallet.address);
       res.status(200).json({ inflationDestination });
     } catch (err) {
       next(err);
@@ -307,7 +331,7 @@ router.post('/', payloadSizeLimiter(ENDPOINT_LIMITS.wallet), checkPermission(PER
 
     res.status(201).json({
       success: true,
-      data: wallet
+      data: toWalletResponse(wallet)
     });
   } catch (error) {
     next(error);
@@ -344,7 +368,7 @@ router.get('/', checkPermission(PERMISSIONS.WALLETS_READ), cacheMiddleware('wall
 
     res.json({
       success: true,
-      data: result.data,
+      data: result.data.map(toWalletResponse),
       count: result.data.length,
       total: result.totalCount,
       nextCursor: result.meta.next_cursor,
@@ -357,54 +381,38 @@ router.get('/', checkPermission(PERMISSIONS.WALLETS_READ), cacheMiddleware('wall
 
 /**
  * GET /wallets/:id/balance
- * Get wallet balance natively bypassing horizon load via TTL
+ * Returns XLM balance with TTL caching. Use ?refresh=true to force a live query.
+ * Requires wallets:read permission.
  */
 router.get('/:id/balance', checkPermission(PERMISSIONS.WALLETS_READ), walletIdSchema, asyncHandler(async (req, res, next) => {
   try {
     const forceRefresh = req.query.refresh === 'true';
-    const wallet = walletService.getWalletById(req.params.id);
-    const address = wallet.address || wallet.publicKey;
-    const stellarSvc = getStellarService();
 
-    res.setHeader('Cache-Control', 'max-age=10');
-
-    // Try to get all asset balances if available
-    if (stellarSvc && typeof stellarSvc.getAccountBalances === 'function') {
-      try {
-        const balances = await stellarSvc.getAccountBalances(address);
-        const nativeBalance = balances.find(b => b.asset_type === 'native');
-        const xlmBalance = nativeBalance ? parseFloat(nativeBalance.balance) : 0;
-        const subentryCount = balances.filter(b => b.asset_type !== 'native').length;
-        const minimumReserve = 1.0 + subentryCount * 0.5;
-
-        return res.json({
-          success: true,
-          data: {
-            balances: balances.map(b => ({
-              asset: b.asset_type === 'native' ? 'XLM' : `${b.asset_code}:${b.asset_issuer}`,
-              balance: b.balance,
-              assetType: b.asset_type,
-            })),
-            xlmBalance: nativeBalance ? nativeBalance.balance : '0',
-            minimumReserve: minimumReserve.toFixed(7),
-          }
+    let result;
+    try {
+      result = await walletService.getBalance(req.params.id, forceRefresh);
+    } catch (err) {
+      // StellarErrorHandler throws plain objects: { status, code, message }
+      // A 404 from Horizon means the account exists locally but not on-chain
+      if (err && (err.status === 404 || err.response?.status === 404)) {
+        return res.status(422).json({
+          success: false,
+          error: {
+            code: 'STELLAR_ACCOUNT_NOT_FOUND',
+            message: 'Stellar account not found. The account exists in the local database but has not been funded on the Stellar network.',
+          },
         });
-      } catch (_) {
-        // fall through to getBalance
       }
+      throw err;
     }
-
-    const result = await walletService.getBalance(req.params.id, forceRefresh);
 
     res.setHeader('X-Cache', result.cached ? 'HIT' : 'MISS');
 
-    res.json({
-      success: true,
-      data: {
-        balance: result.balance,
-        asset: result.asset,
-        minimumReserve: '1.0000000',
-      }
+    return res.json({
+      balance: result.balance,
+      asset: result.asset || 'XLM',
+      lastUpdated: result.lastUpdated || new Date().toISOString(),
+      cached: result.cached,
     });
   } catch (error) {
     next(error);
@@ -412,13 +420,180 @@ router.get('/:id/balance', checkPermission(PERMISSIONS.WALLETS_READ), walletIdSc
 }));
 
 /**
+ * GET /wallets/:id/history
+ * Returns transaction history for a wallet.
+ * Query params:
+ *   - source: 'db' (default) — local DB query; 'live' — fetch from Horizon and persist
+ *   - cursor: opaque pagination cursor
+ *   - limit: page size (default 20, max 100)
+ * source=live is rate-limited to 10 req/min per API key.
+ * Requires wallets:read permission.
+ */
+const { liveHistoryRateLimiter } = require('../middleware/rateLimiter');
+const TransactionSyncService = require('../services/TransactionSyncService');
+
+router.get('/:id/history', checkPermission(PERMISSIONS.WALLETS_READ), walletIdSchema, asyncHandler(async (req, res, next) => {
+  const source = req.query.source || 'db';
+
+  if (source !== 'db' && source !== 'live') {
+    return res.status(400).json({
+      success: false,
+      error: { code: 'INVALID_SOURCE', message: "source must be 'db' or 'live'" },
+    });
+  }
+
+  // Apply live rate limiter inline when source=live
+  if (source === 'live') {
+    await new Promise((resolve, reject) => {
+      liveHistoryRateLimiter(req, res, (err) => {
+        if (err) return reject(err);
+        resolve();
+      });
+    });
+    if (res.headersSent) return; // rate limiter already responded
+  }
+
+  // Validate limit
+  let limit = 20;
+  if (req.query.limit !== undefined) {
+    const parsed = parseInt(req.query.limit, 10);
+    if (!Number.isFinite(parsed) || parsed < 1 || parsed > 100) {
+      return res.status(400).json({
+        success: false,
+        error: { code: 'INVALID_LIMIT', message: 'limit must be an integer between 1 and 100' },
+      });
+    }
+    limit = parsed;
+  }
+
+  // Look up wallet by numeric id
+  const wallet = await Database.get(
+    'SELECT id, publicKey FROM users WHERE id = ?',
+    [req.params.id]
+  );
+  if (!wallet) {
+    return res.status(404).json({ success: false, error: 'Wallet not found' });
+  }
+
+  if (source === 'live') {
+    // Decode cursor (Horizon paging_token)
+    let horizonCursor;
+    if (req.query.cursor) {
+      try {
+        horizonCursor = Buffer.from(req.query.cursor, 'base64').toString('utf8');
+      } catch {
+        return res.status(400).json({
+          success: false,
+          error: { code: 'INVALID_CURSOR', message: 'Invalid cursor parameter' },
+        });
+      }
+    }
+
+    const syncService = new TransactionSyncService(getStellarService());
+    const horizonTxs = await syncService._fetchHorizonTransactions(
+      wallet.publicKey,
+      limit,
+      horizonCursor,
+      1 // single page
+    );
+
+    // Persist new transactions to DB
+    const Transaction = require('./models/transaction');
+    for (const tx of horizonTxs) {
+      if (!Transaction.getByStellarTxId(tx.id)) {
+        Transaction.create({
+          stellarTxId: tx.id,
+          status: 'confirmed',
+          amount: tx.operations?.[0]?.amount || '0',
+          memo: tx.memo,
+          timestamp: tx.created_at,
+        });
+      }
+    }
+
+    const hasMore = horizonTxs.length === limit;
+    const lastTx = horizonTxs[horizonTxs.length - 1];
+    const nextCursor = hasMore && lastTx
+      ? Buffer.from(String(lastTx.paging_token)).toString('base64')
+      : null;
+
+    return res.json({
+      success: true,
+      source: 'live',
+      data: horizonTxs.map(tx => ({
+        stellarTxId: tx.id,
+        amount: tx.operations?.[0]?.amount || '0',
+        memo: tx.memo || null,
+        timestamp: tx.created_at,
+        pagingToken: tx.paging_token,
+      })),
+      pagination: { nextCursor, hasMore },
+    });
+  }
+
+  // source=db: cursor-based query from local DB
+  let cursorId = null;
+  if (req.query.cursor) {
+    try {
+      const decoded = Buffer.from(req.query.cursor, 'base64').toString('utf8');
+      const parsed = parseInt(decoded, 10);
+      if (!Number.isFinite(parsed)) throw new Error('invalid');
+      cursorId = parsed;
+    } catch {
+      return res.status(400).json({
+        success: false,
+        error: { code: 'INVALID_CURSOR', message: 'Invalid cursor parameter' },
+      });
+    }
+  }
+
+  const params = [wallet.id, wallet.id];
+  let query = `SELECT t.id, t.senderId, t.receiverId, t.amount, t.memo, t.timestamp,
+      sender.publicKey as senderPublicKey, receiver.publicKey as receiverPublicKey
+    FROM transactions t
+    LEFT JOIN users sender ON t.senderId = sender.id
+    LEFT JOIN users receiver ON t.receiverId = receiver.id
+    WHERE (t.senderId = ? OR t.receiverId = ?)`;
+
+  if (cursorId !== null) {
+    query += ' AND t.id > ?';
+    params.push(cursorId);
+  }
+  query += ' ORDER BY t.id ASC LIMIT ?';
+  params.push(limit + 1);
+
+  const rows = await Database.query(query, params);
+  const hasMore = rows.length > limit;
+  const transactions = hasMore ? rows.slice(0, limit) : rows;
+
+  const lastRow = transactions[transactions.length - 1];
+  const nextCursor = hasMore && lastRow
+    ? Buffer.from(String(lastRow.id)).toString('base64')
+    : null;
+
+  return res.json({
+    success: true,
+    source: 'db',
+    data: transactions.map(tx => ({
+      id: tx.id,
+      sender: tx.senderPublicKey,
+      receiver: tx.receiverPublicKey,
+      amount: (tx.amount / STROOPS_PER_XLM).toFixed(7),
+      memo: tx.memo,
+      timestamp: tx.timestamp,
+    })),
+    pagination: { nextCursor, hasMore },
+  });
+}));
+
+/**
  * GET /wallets/:id
- * Get a specific wallet
+ * Get a specific wallet. Excludes soft-deleted wallets by default.
  */
 router.get('/:id', checkPermission(PERMISSIONS.WALLETS_READ), walletIdSchema, cacheMiddleware('wallet', 'private'), asyncHandler(async (req, res, next) => {
   try {
     const wallet = await Database.get(
-      'SELECT id, publicKey, label, ownerName, createdAt FROM users WHERE id = ?',
+      'SELECT id, publicKey, label, ownerName, createdAt FROM users WHERE id = ? AND deleted_at IS NULL',
       [req.params.id]
     );
     if (!wallet) {
@@ -444,7 +619,55 @@ router.get('/:id', checkPermission(PERMISSIONS.WALLETS_READ), walletIdSchema, ca
 
     const stellarSvc = getStellarService();
     const homeDomain = await stellarSvc.getHomeDomain(wallet.address || wallet.publicKey).catch(() => null);
-    res.json({ success: true, data: { ...wallet, homeDomain: homeDomain || null } });
+    res.json({ success: true, data: toWalletResponse({ ...wallet, homeDomain: homeDomain || null }) });
+  } catch (error) {
+    next(error);
+  }
+}));
+
+/**
+ * PATCH /wallets/:id/label
+ * Update the human-readable label for a wallet.
+ * Body: { "label": "string" } — empty string or null clears the label.
+ * Requires wallets:write permission (not admin).
+ */
+router.patch('/:id/label', checkPermission(PERMISSIONS.WALLETS_UPDATE), walletIdSchema, payloadSizeLimiter(ENDPOINT_LIMITS.wallet), asyncHandler(async (req, res, next) => {
+  try {
+    const { id } = req.params;
+    const { label } = req.body;
+
+    // label key must be present (can be null or empty string to clear)
+    if (!Object.prototype.hasOwnProperty.call(req.body, 'label')) {
+      return res.status(400).json({
+        success: false,
+        error: { code: 'VALIDATION_ERROR', message: "'label' field is required" },
+      });
+    }
+
+    // null or empty string → clear the label; otherwise validate max length
+    const newLabel = (label === null || label === '') ? null : String(label);
+    if (newLabel !== null && newLabel.length > 100) {
+      return res.status(400).json({
+        success: false,
+        error: { code: 'VALIDATION_ERROR', message: 'label must not exceed 100 characters' },
+      });
+    }
+
+    const wallet = await walletService.updateWallet(id, { label: newLabel });
+
+    await AuditLogService.log({
+      category: AuditLogService.CATEGORY.WALLET_OPERATION,
+      action: AuditLogService.ACTION.WALLET_UPDATED,
+      severity: AuditLogService.SEVERITY.LOW,
+      result: 'SUCCESS',
+      userId: req.user && req.user.id,
+      requestId: req.id,
+      ipAddress: req.ip,
+      resource: `/wallets/${id}/label`,
+      details: { walletId: id, label: newLabel },
+    });
+
+    res.json({ success: true, data: toWalletResponse(wallet) });
   } catch (error) {
     next(error);
   }
@@ -483,7 +706,7 @@ router.patch('/:id', checkPermission(PERMISSIONS.WALLETS_UPDATE), payloadSizeLim
       details: { walletId: req.params.id, updates: { label, ownerName } }
     });
 
-    res.json({ success: true, data: wallet });
+    res.json({ success: true, data: toWalletResponse(wallet) });
   } catch (error) {
     next(error);
   }
@@ -666,90 +889,108 @@ router.post('/:id/home-domain/verify', checkPermission(PERMISSIONS.WALLETS_READ)
 
 /**
  * GET /wallets/:publicKey/transactions
- * Get all transactions (sent and received) for a wallet with pagination
+ * Get all transactions (sent and received) for a wallet with cursor-based pagination.
  * Query params:
  *   - limit: number of results per page (default 20, max 100)
- *   - cursor: pagination cursor (transaction ID to start after)
+ *   - cursor: opaque base64-encoded pagination cursor (transaction ID)
  */
 router.get('/:publicKey/transactions', checkPermission(PERMISSIONS.WALLETS_READ), walletPublicKeySchema, asyncHandler(async (req, res, next) => {
   try {
     const { publicKey } = req.params;
-    const limit = Math.min(Math.max(parseInt(req.query.limit, 10) || 20, 1), 100);
-    const cursor = req.query.cursor ? parseInt(req.query.cursor, 10) : null;
 
-    // First, check if user exists with this publicKey
+    // Validate limit
+    const rawLimit = req.query.limit;
+    let limit = 20;
+    if (rawLimit !== undefined) {
+      const parsed = parseInt(rawLimit, 10);
+      if (!Number.isFinite(parsed) || parsed < 1 || parsed > 100) {
+        return res.status(400).json({
+          success: false,
+          error: { code: 'INVALID_LIMIT', message: 'limit must be an integer between 1 and 100' },
+        });
+      }
+      limit = parsed;
+    }
+
+    // Decode opaque cursor (base64-encoded numeric ID)
+    let cursorId = null;
+    if (req.query.cursor) {
+      try {
+        const decoded = Buffer.from(req.query.cursor, 'base64').toString('utf8');
+        const parsed = parseInt(decoded, 10);
+        if (!Number.isFinite(parsed)) throw new Error('invalid');
+        cursorId = parsed;
+      } catch {
+        return res.status(400).json({
+          success: false,
+          error: { code: 'INVALID_CURSOR', message: 'Invalid cursor parameter' },
+        });
+      }
+    }
+
+    // Check wallet exists
     const user = await Database.get(
-      'SELECT id, publicKey, createdAt FROM users WHERE publicKey = ? AND deleted_at IS NULL',
+      'SELECT id, publicKey, createdAt FROM users WHERE publicKey = ?',
       [publicKey]
     );
 
     if (!user) {
-      // Return 404 if wallet doesn't exist or is soft-deleted
       return res.status(404).json({ error: 'Wallet not found' });
     }
 
-    // Get total count
+    // Total count
     const countResult = await Database.get(
-      `SELECT COUNT(*) as total
-      FROM transactions t
-      WHERE t.senderId = ? OR t.receiverId = ?`,
+      'SELECT COUNT(*) as total FROM transactions t WHERE t.senderId = ? OR t.receiverId = ?',
       [user.id, user.id]
     );
     const total = countResult.total;
 
-    // Build query with cursor-based pagination
+    // Fetch limit+1 to detect hasMore
+    const params = [user.id, user.id];
     let query = `SELECT
-        t.id,
-        t.senderId,
-        t.receiverId,
-        t.amount,
-        t.memo,
-        t.timestamp,
+        t.id, t.senderId, t.receiverId, t.amount, t.memo, t.timestamp,
         sender.publicKey as senderPublicKey,
         receiver.publicKey as receiverPublicKey
       FROM transactions t
       LEFT JOIN users sender ON t.senderId = sender.id
       LEFT JOIN users receiver ON t.receiverId = receiver.id
       WHERE (t.senderId = ? OR t.receiverId = ?)`;
-    
-    const params = [user.id, user.id];
 
-    // Add cursor condition if provided
-    if (cursor) {
-      query += ` AND t.id > ?`;
-      params.push(cursor);
+    if (cursorId !== null) {
+      query += ' AND t.id > ?';
+      params.push(cursorId);
     }
 
-    query += ` ORDER BY t.id ASC LIMIT ?`;
-    params.push(limit);
+    query += ' ORDER BY t.id ASC LIMIT ?';
+    params.push(limit + 1);
 
-    // Get transactions
-    const transactions = await Database.query(query, params);
+    const rows = await Database.query(query, params);
+    const hasMore = rows.length > limit;
+    const transactions = hasMore ? rows.slice(0, limit) : rows;
 
-    // Format the response
     const formattedTransactions = transactions.map(tx => ({
       id: tx.id,
       sender: tx.senderPublicKey,
       receiver: tx.receiverPublicKey,
-      amount: tx.amount,
+      amount: (tx.amount / STROOPS_PER_XLM).toFixed(7),
       memo: tx.memo,
-      timestamp: tx.timestamp
+      timestamp: tx.timestamp,
     }));
 
-    // Calculate next cursor
-    const nextCursor = transactions.length === limit && transactions.length > 0
-      ? transactions[transactions.length - 1].id
+    // Encode next cursor as opaque base64 string
+    const lastTx = transactions[transactions.length - 1];
+    const nextCursor = hasMore && lastTx
+      ? Buffer.from(String(lastTx.id)).toString('base64')
       : null;
 
     res.json({
       success: true,
       data: formattedTransactions,
-      count: formattedTransactions.length,
-      total,
       pagination: {
-        limit,
-        nextCursor
-      }
+        nextCursor,
+        hasMore,
+        total,
+      },
     });
   } catch (error) {
     next(error);
@@ -912,7 +1153,8 @@ router.post('/:id/revoke-sponsorship', checkPermission(PERMISSIONS.WALLETS_UPDAT
 
 /**
  * DELETE /wallets/:id
- * Soft delete a wallet by setting deleted_at timestamp
+ * Soft delete a wallet by setting deleted_at timestamp.
+ * Returns 409 if the wallet has active recurring donation schedules.
  */
 router.delete('/:id', checkPermission(PERMISSIONS.WALLETS_DELETE), walletIdSchema, asyncHandler(async (req, res, next) => {
   try {
@@ -922,6 +1164,22 @@ router.delete('/:id', checkPermission(PERMISSIONS.WALLETS_DELETE), walletIdSchem
     const wallet = await Database.get('SELECT id FROM users WHERE id = ? AND deleted_at IS NULL', [id]);
     if (!wallet) {
       throw new NotFoundError('Wallet not found or already deleted', ERROR_CODES.WALLET_NOT_FOUND);
+    }
+
+    // 409: block deletion if wallet has active recurring donation schedules
+    const activeSchedules = await Database.query(
+      `SELECT id FROM recurring_donations WHERE (donorId = ? OR recipientId = ?) AND status = 'active'`,
+      [id, id]
+    );
+    if (activeSchedules && activeSchedules.length > 0) {
+      return res.status(409).json({
+        success: false,
+        error: {
+          code: 'ACTIVE_SCHEDULES',
+          message: 'Cannot delete wallet with active recurring donation schedules',
+          activeScheduleIds: activeSchedules.map(s => s.id)
+        }
+      });
     }
 
     // Perform Soft Delete
@@ -954,16 +1212,49 @@ router.delete('/:id', checkPermission(PERMISSIONS.WALLETS_DELETE), walletIdSchem
  */
 router.get('/admin/deleted', requireAdmin(), asyncHandler(async (req, res, next) => {
   try {
-    const deletedWallets = await Database.query('SELECT * FROM users WHERE deleted_at IS NULL');
+    const deletedWallets = await Database.query('SELECT * FROM users WHERE deleted_at IS NOT NULL');
     const deletedTransactions = await Database.query('SELECT * FROM transactions WHERE deleted_at IS NOT NULL');
 
     res.json({
       success: true,
       data: {
-        wallets: deletedWallets,
+        wallets: deletedWallets.map(toWalletResponse),
         transactions: deletedTransactions
       }
     });
+  } catch (error) {
+    next(error);
+  }
+}));
+
+/**
+ * POST /admin/wallets/:id/restore
+ * Admin only: Restore a soft-deleted wallet by clearing deleted_at
+ */
+router.post('/admin/wallets/:id/restore', requireAdmin(), walletIdSchema, asyncHandler(async (req, res, next) => {
+  try {
+    const { id } = req.params;
+
+    const wallet = await Database.get('SELECT id FROM users WHERE id = ? AND deleted_at IS NOT NULL', [id]);
+    if (!wallet) {
+      return res.status(404).json({ success: false, error: 'Wallet not found or not deleted' });
+    }
+
+    await Database.run('UPDATE users SET deleted_at = NULL WHERE id = ?', [id]);
+
+    await AuditLogService.log({
+      category: AuditLogService.CATEGORY.WALLET_OPERATION,
+      action: 'WALLET_RESTORED',
+      severity: AuditLogService.SEVERITY.HIGH,
+      result: 'SUCCESS',
+      userId: req.user && req.user.id,
+      requestId: req.id,
+      ipAddress: req.ip,
+      resource: `/admin/wallets/${id}/restore`,
+      details: { walletId: id }
+    });
+
+    res.json({ success: true, message: 'Wallet restored successfully' });
   } catch (error) {
     next(error);
   }
@@ -1209,17 +1500,6 @@ router.post('/:id/merge', checkPermission(PERMISSIONS.WALLETS_DELETE), payloadSi
 
     // ── Execute merge on Stellar ─────────────────────────────────────────────
     const stellarService = getStellarService();
-
-    // Pre-merge eligibility check
-    const eligibility = await stellarService.validateMergeEligibility(sourceWallet.publicKey);
-    if (!eligibility.eligible) {
-      return res.status(400).json({
-        success: false,
-        error: 'Account is not eligible for merge',
-        data: { blockers: eligibility.blockers }
-      });
-    }
-
     const mergeResult = await stellarService.mergeAccount(sourceSecret, destinationPublicKey);
 
     // ── Soft-delete source wallet ────────────────────────────────────────────
@@ -1330,7 +1610,7 @@ const trustlineUpdateSchema = validateSchema({
  * @body {string|null} [limit]      - Optional trust limit (positive numeric string,
  *   max "922337203685.4775807"). Omit for unlimited.
  */
-router.post('/:id/trustlines', checkPermission(PERMISSIONS.WALLETS_UPDATE), trustlineCreateSchema, payloadSizeLimiter(ENDPOINT_LIMITS.wallet), asyncHandler(async (req, res, next) => {
+async function handleTrustlineCreate(req, res, next) {
   try {
     const { secretKey, assetCode, issuerPublic, limit } = req.body;
 
@@ -1350,7 +1630,7 @@ router.post('/:id/trustlines', checkPermission(PERMISSIONS.WALLETS_UPDATE), trus
       userId: req.user && req.user.id,
       requestId: req.id,
       ipAddress: req.ip,
-      resource: `/wallets/${req.params.id}/trustlines`,
+      resource: req.originalUrl,
       details: { walletId: req.params.id, assetCode, issuerPublic, limit: result.limit, txHash: result.hash },
     });
 
@@ -1358,7 +1638,10 @@ router.post('/:id/trustlines', checkPermission(PERMISSIONS.WALLETS_UPDATE), trus
   } catch (error) {
     next(error);
   }
-}));
+}
+
+router.post('/:id/trustlines', checkPermission(PERMISSIONS.WALLETS_UPDATE), trustlineCreateSchema, payloadSizeLimiter(ENDPOINT_LIMITS.wallet), asyncHandler(handleTrustlineCreate));
+router.post('/:id/trustline', checkPermission(PERMISSIONS.WALLETS_UPDATE), trustlineCreateSchema, payloadSizeLimiter(ENDPOINT_LIMITS.wallet), asyncHandler(handleTrustlineCreate));
 
 /**
  * PATCH /wallets/:id/trustlines/:asset
@@ -1370,7 +1653,7 @@ router.post('/:id/trustlines', checkPermission(PERMISSIONS.WALLETS_UPDATE), trus
  * @body {string} limit          - New trust limit (positive numeric string,
  *   max "922337203685.4775807")
  */
-router.patch('/:id/trustlines/:asset', checkPermission(PERMISSIONS.WALLETS_UPDATE), trustlineUpdateSchema, payloadSizeLimiter(ENDPOINT_LIMITS.wallet), asyncHandler(async (req, res, next) => {
+async function handleTrustlineUpdate(req, res, next) {
   try {
     const { asset } = req.params;
     const { secretKey, issuerPublic, limit } = req.body;
@@ -1389,7 +1672,7 @@ router.patch('/:id/trustlines/:asset', checkPermission(PERMISSIONS.WALLETS_UPDAT
       userId: req.user && req.user.id,
       requestId: req.id,
       ipAddress: req.ip,
-      resource: `/wallets/${req.params.id}/trustlines/${asset}`,
+      resource: req.originalUrl,
       details: { walletId: req.params.id, assetCode: asset, issuerPublic, limit: result.limit, txHash: result.hash },
     });
 
@@ -1397,7 +1680,10 @@ router.patch('/:id/trustlines/:asset', checkPermission(PERMISSIONS.WALLETS_UPDAT
   } catch (error) {
     next(error);
   }
-}));
+}
+
+router.patch('/:id/trustlines/:asset', checkPermission(PERMISSIONS.WALLETS_UPDATE), trustlineUpdateSchema, payloadSizeLimiter(ENDPOINT_LIMITS.wallet), asyncHandler(handleTrustlineUpdate));
+router.patch('/:id/trustline/:asset', checkPermission(PERMISSIONS.WALLETS_UPDATE), trustlineUpdateSchema, payloadSizeLimiter(ENDPOINT_LIMITS.wallet), asyncHandler(handleTrustlineUpdate));
 
 // ─── Account Set Options ──────────────────────────────────────────────────────
 
@@ -1486,7 +1772,7 @@ const trustlineListSchema = validateSchema({
  * @body {string} secretKey    - Secret key of the wallet account
  * @body {string} issuerPublic - Public key of the asset issuer
  */
-router.delete('/:id/trustlines/:asset', checkPermission(PERMISSIONS.WALLETS_UPDATE), trustlineDeleteSchema, asyncHandler(async (req, res, next) => {
+async function handleTrustlineDelete(req, res, next) {
   try {
     const { asset } = req.params;
     const { secretKey, issuerPublic } = req.body;
@@ -1502,7 +1788,7 @@ router.delete('/:id/trustlines/:asset', checkPermission(PERMISSIONS.WALLETS_UPDA
       userId: req.user && req.user.id,
       requestId: req.id,
       ipAddress: req.ip,
-      resource: `/wallets/${req.params.id}/trustlines/${asset}`,
+      resource: req.originalUrl,
       details: { walletId: req.params.id, assetCode: asset, issuerPublic, txHash: result.hash },
     });
 
@@ -1510,23 +1796,64 @@ router.delete('/:id/trustlines/:asset', checkPermission(PERMISSIONS.WALLETS_UPDA
   } catch (error) {
     next(error);
   }
-}));
+}
+
+router.delete('/:id/trustlines/:asset', checkPermission(PERMISSIONS.WALLETS_UPDATE), trustlineDeleteSchema, asyncHandler(handleTrustlineDelete));
+router.delete('/:id/trustline/:asset', checkPermission(PERMISSIONS.WALLETS_UPDATE), trustlineDeleteSchema, asyncHandler(handleTrustlineDelete));
 
 /**
  * GET /wallets/:id/trustlines
- * List all trustlines for the wallet's Stellar account with their balances.
- *
- * Returns an array of trustlines containing asset details, current balance, and limits.
+ * List all trustlines (and native XLM balance) for the wallet's Stellar account.
+ * Response is cached for 30 seconds per wallet.
  */
 router.get('/:id/trustlines', checkPermission(PERMISSIONS.WALLETS_READ), trustlineListSchema, asyncHandler(async (req, res, next) => {
   try {
     const walletId = parseInt(req.params.id, 10);
 
-    const wallet = await Database.get('SELECT * FROM users WHERE id = ?', [walletId]);
-    if (!wallet) throw new NotFoundError(`Wallet ${walletId} not found`);
+    const wallet = await Database.get('SELECT id, publicKey, address FROM users WHERE id = ?', [walletId]);
+    if (!wallet) {
+      return res.status(404).json({
+        success: false,
+        error: { code: 'WALLET_NOT_FOUND', message: `Wallet ${walletId} not found` },
+      });
+    }
 
+    const publicKey = wallet.publicKey || wallet.address;
     const stellar = getStellarService();
-    const trustlines = await stellar.getTrustlines(wallet.publicKey);
+
+    let balances;
+    try {
+      balances = await stellar.getAccountBalances(publicKey);
+    } catch (err) {
+      // Horizon returns 404 when the account has never been funded
+      const notFound =
+        err?.status === 404 ||
+        err?.response?.status === 404 ||
+        err?.message?.toLowerCase().includes('not found') ||
+        err?.message?.toLowerCase().includes('does not exist');
+      if (notFound) {
+        return res.status(422).json({
+          success: false,
+          error: { code: 'STELLAR_ACCOUNT_NOT_FOUND', message: 'Stellar account does not exist on the network' },
+        });
+      }
+      throw err;
+    }
+
+    const trustlines = balances.map(b => {
+      if (b.asset_type === 'native') {
+        return { assetCode: 'XLM', assetType: 'native', balance: b.balance };
+      }
+      return {
+        assetCode: b.asset_code,
+        assetIssuer: b.asset_issuer,
+        balance: b.balance,
+        limit: b.limit,
+        authorized: Boolean(b.is_authorized),
+      };
+    });
+
+    res.setHeader('Cache-Control', 'private, max-age=30');
 
     await AuditLogService.log({
       category: AuditLogService.CATEGORY.WALLET_OPERATION,
@@ -1540,7 +1867,7 @@ router.get('/:id/trustlines', checkPermission(PERMISSIONS.WALLETS_READ), trustli
       details: { walletId, count: trustlines.length },
     });
 
-    return res.json({ success: true, data: { trustlines, count: trustlines.length } });
+    return res.json({ success: true, data: trustlines, count: trustlines.length });
   } catch (error) {
     next(error);
   }
@@ -1551,18 +1878,40 @@ router.get('/:id/trustlines', checkPermission(PERMISSIONS.WALLETS_READ), trustli
 // ─────────────────────────────────────────────────────────────────────────────
 
 const multer = require('multer');
-const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 10 * 1024 * 1024 } });
+const { parse: parseCsvSync } = require('csv-parse/sync');
+const StellarSdkBulk = require('stellar-sdk');
+
+const BULK_IMPORT_MAX_BYTES = parseInt(process.env.BULK_IMPORT_MAX_SIZE_BYTES || (1 * 1024 * 1024), 10);
+const bulkUpload = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: BULK_IMPORT_MAX_BYTES },
+});
 
 /**
- * @route   POST /wallets/bulk-import
- * @desc    Bulk import wallets from a CSV or JSON file (multipart/form-data, field: "file").
- *          Atomically inserts all rows or rolls back on any failure.
- * @access  wallets:create
+ * POST /wallets/bulk-import
+ * Bulk import wallet addresses from a CSV file (multipart/form-data, field: "file").
+ * CSV must have a header row: address,label,ownerName (label and ownerName are optional).
+ * Each row is validated independently — invalid rows are counted as failed, duplicates as skipped.
+ * Requires admin role.
  */
 router.post(
   '/bulk-import',
-  checkPermission(PERMISSIONS.WALLETS_CREATE),
-  upload.single('file'),
+  requireAdmin(),
+  (req, res, next) => {
+    bulkUpload.single('file')(req, res, (err) => {
+      if (err && err.code === 'LIMIT_FILE_SIZE') {
+        return res.status(413).json({
+          success: false,
+          error: {
+            code: 'FILE_TOO_LARGE',
+            message: `File exceeds the maximum allowed size of ${BULK_IMPORT_MAX_BYTES} bytes`,
+          },
+        });
+      }
+      if (err) return next(err);
+      next();
+    });
+  },
   asyncHandler(async (req, res, next) => {
     try {
       if (!req.file) {
@@ -1572,39 +1921,82 @@ router.post(
         });
       }
 
-      const mimeType = req.file.mimetype;
-      const service = new BulkWalletImportService();
-
-      let result;
+      let rows;
       try {
-        result = service.importFile(req.file.buffer, mimeType);
-      } catch (err) {
-        if (err.code === 'ROW_LIMIT_EXCEEDED') {
-          return res.status(400).json({
-            success: false,
-            error: { code: 'ROW_LIMIT_EXCEEDED', message: err.message, limit: err.limit },
-          });
-        }
-        if (err.code === 'VALIDATION_FAILED') {
-          return res.status(400).json({
-            success: false,
-            error: { code: 'VALIDATION_FAILED', message: err.message, details: err.details },
-          });
-        }
-        if (err.code === 'INSERT_FAILED') {
-          return res.status(400).json({
-            success: false,
-            error: { code: 'INSERT_FAILED', message: err.message },
-          });
-        }
-        // Unsupported type or parse error
+        rows = parseCsvSync(req.file.buffer, {
+          columns: true,
+          skip_empty_lines: true,
+          trim: true,
+        });
+      } catch (parseErr) {
         return res.status(400).json({
           success: false,
-          error: { code: 'PARSE_ERROR', message: err.message },
+          error: { code: 'PARSE_ERROR', message: `CSV parse error: ${parseErr.message}` },
         });
       }
 
-      return res.status(201).json({ success: true, data: result });
+      if (rows.length === 0) {
+        return res.status(400).json({
+          success: false,
+          error: { code: 'EMPTY_FILE', message: 'CSV file contains no data rows' },
+        });
+      }
+
+      if (!Object.prototype.hasOwnProperty.call(rows[0], 'address')) {
+        return res.status(400).json({
+          success: false,
+          error: {
+            code: 'INVALID_HEADER',
+            message: 'CSV must have a header row with at least an "address" column',
+          },
+        });
+      }
+
+      let imported = 0;
+      let skipped = 0;
+      let failed = 0;
+      const errors = [];
+
+      for (let i = 0; i < rows.length; i++) {
+        const row = rows[i];
+        const rowNum = i + 2; // row 1 is the header
+        const address = (row.address || '').trim();
+
+        if (!address) {
+          failed++;
+          errors.push({ row: rowNum, address: '', reason: 'Missing address' });
+          continue;
+        }
+
+        if (!StellarSdkBulk.StrKey.isValidEd25519PublicKey(address)) {
+          failed++;
+          errors.push({ row: rowNum, address, reason: 'Invalid Stellar public key' });
+          continue;
+        }
+
+        const existing = Wallet.getByAddress(address);
+        if (existing) {
+          skipped++;
+          continue;
+        }
+
+        try {
+          Wallet.create({
+            address,
+            label: row.label || null,
+            ownerName: row.ownerName || null,
+          });
+          imported++;
+        } catch (createErr) {
+          failed++;
+          errors.push({ row: rowNum, address, reason: createErr.message });
+        }
+      }
+
+      return res.status(200).json({
+        success: true,
+        data: { imported, skipped, failed, errors },
+      });
     } catch (error) {
       next(error);
     }
@@ -1690,6 +2082,91 @@ router.post('/:id/fund', requireApiKey, checkPermission(PERMISSIONS.WALLETS_UPDA
   } catch (error) {
     next(error);
   }
+}));
+
+const Cache = require('../utils/cache');
+const WALLET_ANALYTICS_CACHE_TTL_MS = 5 * 60 * 1000; // 5 minutes
+
+/**
+ * GET /wallets/:id/analytics
+ * Returns aggregated donation analytics for a wallet (by DB id).
+ * Requires wallets:read permission. Cached for 5 minutes.
+ */
+router.get('/:id/analytics', checkPermission(PERMISSIONS.WALLETS_READ), walletIdSchema, asyncHandler(async (req, res) => {
+  const walletId = parseInt(req.params.id, 10);
+
+  const wallet = await Database.get('SELECT id FROM users WHERE id = ?', [walletId]);
+  if (!wallet) {
+    return res.status(404).json({ success: false, error: { code: 'WALLET_NOT_FOUND', message: 'Wallet not found' } });
+  }
+
+  const cacheKey = `wallet:analytics:${walletId}`;
+  const cached = Cache.get(cacheKey);
+  if (cached) return res.json(cached);
+
+  const [outRows, inRows] = await Promise.all([
+    Database.query('SELECT amount, receiverId, timestamp FROM transactions WHERE senderId = ?', [walletId]),
+    Database.query('SELECT amount, senderId, timestamp FROM transactions WHERE receiverId = ?', [walletId]),
+  ]);
+
+  // Aggregate outgoing (donor)
+  const totalDonated = outRows.reduce((s, r) => s + r.amount, 0);
+  const donationCount = outRows.length;
+  const averageDonationAmount = donationCount > 0 ? totalDonated / donationCount : 0;
+  const largestDonation = donationCount > 0 ? Math.max(...outRows.map(r => r.amount)) : 0;
+
+  // Top 5 recipients
+  const recipientTotals = {};
+  for (const r of outRows) {
+    recipientTotals[r.receiverId] = (recipientTotals[r.receiverId] || 0) + r.amount;
+  }
+  const topRecipients = Object.entries(recipientTotals)
+    .sort((a, b) => b[1] - a[1]).slice(0, 5)
+    .map(([id, total]) => ({ walletId: Number(id), total }));
+
+  // Aggregate incoming (recipient)
+  const totalReceived = inRows.reduce((s, r) => s + r.amount, 0);
+  const receiptCount = inRows.length;
+
+  // Top 5 donors
+  const donorTotals = {};
+  for (const r of inRows) {
+    donorTotals[r.senderId] = (donorTotals[r.senderId] || 0) + r.amount;
+  }
+  const topDonors = Object.entries(donorTotals)
+    .sort((a, b) => b[1] - a[1]).slice(0, 5)
+    .map(([id, total]) => ({ walletId: Number(id), total }));
+
+  // Donations by month (last 12 months) — outgoing
+  const now = new Date();
+  const donationsByMonth = [];
+  for (let i = 11; i >= 0; i--) {
+    const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
+    const month = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
+    const monthRows = outRows.filter(r => {
+      const t = new Date(r.timestamp);
+      return t.getFullYear() === d.getFullYear() && t.getMonth() === d.getMonth();
+    });
+    donationsByMonth.push({ month, amount: monthRows.reduce((s, r) => s + r.amount, 0), count: monthRows.length });
+  }
+
+  // First/last donation timestamps
+  const allTimestamps = outRows.map(r => r.timestamp).filter(Boolean).sort();
+  const firstDonationAt = allTimestamps.length > 0 ? allTimestamps[0] : null;
+  const lastDonationAt = allTimestamps.length > 0 ? allTimestamps[allTimestamps.length - 1] : null;
+
+  const body = {
+    success: true,
+    data: {
+      totalDonated, totalReceived, donationCount, receiptCount,
+      averageDonationAmount, largestDonation,
+      topRecipients, topDonors, donationsByMonth,
+      firstDonationAt, lastDonationAt,
+    },
+  };
+
+  Cache.set(cacheKey, body, WALLET_ANALYTICS_CACHE_TTL_MS);
+  return res.json(body);
 }));
 
 module.exports = router;
