@@ -14,24 +14,24 @@ const mockDonationService = {
   sendCustodialDonation: jest.fn(),
 };
 
-jest.mock('../src/config/stellar', () => ({
+jest.mock('../../src/config/stellar', () => ({
   getStellarService: jest.fn(() => ({})),
 }));
 
-jest.mock('../src/services/DonationService', () => {
+jest.mock('../../src/services/DonationService', () => {
   return jest.fn().mockImplementation(() => mockDonationService);
 });
 
-jest.mock('../src/middleware/rateLimiter', () => ({
+jest.mock('../../src/middleware/rateLimiter', () => ({
   donationRateLimiter: (req, res, next) => next(),
   verificationRateLimiter: (req, res, next) => next(),
 }));
 
-jest.mock('../src/middleware/rbac', () => ({
+jest.mock('../../src/middleware/rbac', () => ({
   checkPermission: () => (req, res, next) => next(),
 }));
 
-jest.mock('../src/middleware/apiKey', () => {
+jest.mock('../../src/middleware/apiKey', () => {
   return (req, res, next) => {
     if (req.get('X-API-Key') === 'test-key-1') {
       return next();
@@ -46,7 +46,7 @@ jest.mock('../src/middleware/apiKey', () => {
   };
 });
 
-jest.mock('../src/middleware/idempotency', () => ({
+jest.mock('../../src/middleware/idempotency', () => ({
   requireIdempotency: (req, res, next) => {
     const key = req.get('X-Idempotency-Key');
     if (!key) {
@@ -64,7 +64,7 @@ jest.mock('../src/middleware/idempotency', () => ({
   storeIdempotencyResponse: jest.fn().mockResolvedValue(undefined),
 }));
 
-jest.mock('../src/utils/log', () => ({
+jest.mock('../../src/utils/log', () => ({
   error: jest.fn(),
   warn: jest.fn(),
   info: jest.fn(),

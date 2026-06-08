@@ -4,9 +4,9 @@ const Wallet = require('../../src/routes/models/wallet');
 const Transaction = require('../../src/routes/models/transaction');
 const log = require('../../src/utils/log');
 
-jest.mock('../src/routes/models/wallet');
-jest.mock('../src/routes/models/transaction');
-jest.mock('../src/utils/log');
+jest.mock('../../src/routes/models/wallet');
+jest.mock('../../src/routes/models/transaction');
+jest.mock('../../src/utils/log');
 
 const mockServer = {
   transactions: jest.fn().mockReturnThis(),

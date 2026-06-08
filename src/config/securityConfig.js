@@ -10,7 +10,6 @@
  */
 
 const log = require('../utils/log');
-const crypto = require('crypto');
 
 /**
  * Security-sensitive environment variables and their safe defaults

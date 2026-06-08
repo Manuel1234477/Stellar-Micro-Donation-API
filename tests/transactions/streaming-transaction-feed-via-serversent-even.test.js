@@ -162,17 +162,17 @@ describe('SseManager.addClient / removeClient / connectionCount', () => {
   it('tracks connections per key', () => {
     SseManager.addClient('c1', 'key-1', {}, fakeRes());
     SseManager.addClient('c2', 'key-1', {}, fakeRes());
-    expect(SseManager.connectionCount('key-1')).toBe(2);
+    expect(SseManager.connectionCountForKey('key-1')).toBe(2);
   });
 
   it('removes client correctly', () => {
     SseManager.addClient('c1', 'key-1', {}, fakeRes());
     SseManager.removeClient('c1');
-    expect(SseManager.connectionCount('key-1')).toBe(0);
+    expect(SseManager.connectionCountForKey('key-1')).toBe(0);
   });
 
   it('returns 0 for unknown key', () => {
-    expect(SseManager.connectionCount('unknown')).toBe(0);
+    expect(SseManager.connectionCountForKey('unknown')).toBe(0);
   });
 });
 

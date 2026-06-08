@@ -91,4 +91,58 @@ function buildErrorResponse(errors) {
   };
 }
 
-module.exports = { formatError, buildErrorResponse, maskValue, isSensitive, ERROR_REGISTRY, SENSITIVE_FIELDS };
+function formatRequiredError(fieldPath, rules) {
+  return { field: fieldPath, message: `${fieldPath} is required`, code: 'REQUIRED' };
+}
+
+function formatNullError(fieldPath, rules) {
+  return { field: fieldPath, message: `${fieldPath} cannot be null`, code: 'NULL_NOT_ALLOWED' };
+}
+
+function formatTypeError(fieldPath, value, expectedTypes, rules) {
+  const types = Array.isArray(expectedTypes) ? expectedTypes.join(', ') : expectedTypes;
+  return { field: fieldPath, message: `${fieldPath} must be of type ${types}`, code: 'INVALID_TYPE', receivedValue: isSensitive(fieldPath) ? maskValue(value) : value };
+}
+
+function formatEnumError(fieldPath, value, enumValues) {
+  return { field: fieldPath, message: `${fieldPath} must be one of: ${enumValues.join(', ')}`, code: 'INVALID_ENUM', receivedValue: isSensitive(fieldPath) ? maskValue(value) : value };
+}
+
+function formatLengthError(fieldPath, value, minLength, maxLength) {
+  const msg = minLength !== undefined && maxLength !== undefined
+    ? `${fieldPath} length must be between ${minLength} and ${maxLength}`
+    : minLength !== undefined ? `${fieldPath} must be at least ${minLength} characters`
+    : `${fieldPath} must not exceed ${maxLength} characters`;
+  return { field: fieldPath, message: msg, code: 'INVALID_LENGTH' };
+}
+
+function formatRangeError(fieldPath, value, min, max) {
+  const msg = min !== undefined && max !== undefined
+    ? `${fieldPath} must be between ${min} and ${max}`
+    : min !== undefined ? `${fieldPath} must be at least ${min}`
+    : `${fieldPath} must not exceed ${max}`;
+  return { field: fieldPath, message: msg, code: 'OUT_OF_RANGE' };
+}
+
+function formatPatternError(fieldPath, value, pattern, rules) {
+  return { field: fieldPath, message: `${fieldPath} does not match required pattern`, code: 'INVALID_PATTERN' };
+}
+
+function formatCustomError(fieldPath, value, message) {
+  return { field: fieldPath, message: typeof message === 'string' ? message : `${fieldPath} is invalid`, code: 'VALIDATION_FAILED' };
+}
+
+function formatSegmentError(segmentName, message) {
+  return { field: segmentName, message, code: 'SEGMENT_ERROR' };
+}
+
+function formatUnknownFieldsError(segmentName, unknownFields) {
+  return { field: segmentName, message: `Unknown fields: ${unknownFields.join(', ')}`, code: 'UNKNOWN_FIELDS' };
+}
+
+module.exports = {
+  formatError, buildErrorResponse, maskValue, isSensitive, ERROR_REGISTRY, SENSITIVE_FIELDS,
+  formatRequiredError, formatNullError, formatTypeError, formatEnumError,
+  formatLengthError, formatRangeError, formatPatternError, formatCustomError,
+  formatSegmentError, formatUnknownFieldsError,
+};

@@ -14,7 +14,7 @@ const { EventEmitter } = require('events');
 const Database = require('../../src/utils/database');
 const DonationService = require('../../src/services/DonationService');
 const WebhookService = require('../../src/services/WebhookService');
-const MockStellarService = require('../MockStellarService.test');
+const MockStellarService = require('../../src/services/MockStellarService');
 
 // Mock the EventSource for SSE testing
 class MockEventSource extends EventEmitter {

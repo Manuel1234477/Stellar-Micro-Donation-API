@@ -17,7 +17,6 @@
 const {
   encryptMemo,
   decryptMemo,
-  isEncryptedMemoEnvelope,
   envelopeToMemoHash,
 } = require('../utils/memoEncryption');
 

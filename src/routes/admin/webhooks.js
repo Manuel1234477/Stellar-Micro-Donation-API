@@ -15,8 +15,7 @@ const router = express.Router();
 const requireApiKey = require('../../middleware/apiKey');
 const asyncHandler = require('../../utils/asyncHandler');
 const { payloadSizeLimiter, ENDPOINT_LIMITS } = require('../../middleware/payloadSizeLimiter');
-const { requireAdmin, checkPermission } = require('../../middleware/rbac');
-const { PERMISSIONS } = require('../../utils/permissions');
+const { requireAdmin} = require('../../middleware/rbac');
 const WebhookService = require('../../services/WebhookService');
 const Database = require('../../utils/database');
 

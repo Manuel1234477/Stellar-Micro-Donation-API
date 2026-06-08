@@ -29,7 +29,7 @@
 process.env.MOCK_STELLAR = 'true';
 process.env.API_KEYS = 'test-fed-key';
 
-jest.mock('../src/services/AuditLogService', () => ({
+jest.mock('../../src/services/AuditLogService', () => ({
   log: jest.fn().mockResolvedValue(undefined),
   CATEGORY: { AUTHENTICATION: 'AUTHENTICATION', DONATION: 'DONATION' },
   ACTION: { API_KEY_VALIDATION_FAILED: 'API_KEY_VALIDATION_FAILED', API_KEY_VALIDATED: 'API_KEY_VALIDATED' },
@@ -303,7 +303,7 @@ describe('GET /federation', () => {
 // ─── POST /donations federation integration ───────────────────────────────────
 
 // Mock idempotency middleware to avoid DB dependency in these integration tests
-jest.mock('../src/middleware/idempotency', () => ({
+jest.mock('../../src/middleware/idempotency', () => ({
   requireIdempotency: (req, res, next) => {
     req.idempotency = { key: req.get('Idempotency-Key') || `auto-${Date.now()}` };
     next();

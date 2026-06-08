@@ -108,7 +108,7 @@ class StellarService extends StellarServiceInterface {
         const result = await this._submitTransactionWithNetworkSafety(transaction);
 
         // Fetch the balanceId from the transaction result
-        const txResult = await this.server.transactions().transaction(result.hash).call();
+        const _txResult = await this.server.transactions().transaction(result.hash).call();
         const effects = await this.server.effects().forTransaction(result.hash).call();
         const cbEffect = effects.records.find(e => e.type === 'claimable_balance_created');
         if (!cbEffect) throw new Error('Claimable balance creation effect not found');
@@ -228,7 +228,7 @@ class StellarService extends StellarServiceInterface {
    */
   _createHttpClient() {
     const { generateCorrelationHeaders } = require('../utils/correlation');
-    const fetch = require('node-fetch');
+    const fetch = globalThis.fetch;
     
     return {
       async request(method, url, data, headers = {}) {
@@ -1519,7 +1519,10 @@ class StellarService extends StellarServiceInterface {
     if (domain.length > 32) {
       throw new ValidationError('domain must be 32 characters or fewer per Stellar spec');
     }
-    if (!/^[a-zA-Z0-9]([a-zA-Z0-9\-]{0,61}[a-zA-Z0-9])?(\.[a-zA-Z0-9]([a-zA-Z0-9\-]{0,61}[a-zA-Z0-9])?)*$/.test(domain)) {
+    // Input is already length-capped to <=32 chars above, so the bounded
+    // quantifiers cannot trigger catastrophic backtracking (heuristic false positive).
+    // eslint-disable-next-line security/detect-unsafe-regex
+    if (!/^[a-zA-Z0-9]([a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?(\.[a-zA-Z0-9]([a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?)*$/.test(domain)) {
       throw new ValidationError('domain must be a valid hostname with no protocol or path');
     }
 

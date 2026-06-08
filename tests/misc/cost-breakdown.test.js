@@ -7,33 +7,36 @@
 
 'use strict';
 
-jest.mock('../src/utils/log', () => ({
+jest.mock('../../src/utils/log', () => ({
   info: jest.fn(), warn: jest.fn(), error: jest.fn(), debug: jest.fn(),
 }));
 
 // Mock heavy middleware / DB dependencies so route loads cleanly
-jest.mock('../src/middleware/rbac', () => ({
+jest.mock('../../src/middleware/rbac', () => ({
   checkPermission: () => (req, res, next) => next(),
   requireAdmin: () => (req, res, next) => next(),
   attachUserRole: () => (req, res, next) => { req.user = { role: 'user' }; next(); },
 }));
-jest.mock('../src/middleware/apiKey', () => (req, res, next) => next());
-jest.mock('../src/middleware/idempotency', () => ({
+jest.mock('../../src/middleware/apiKey', () => (req, res, next) => next());
+jest.mock('../../src/middleware/idempotency', () => ({
   requireIdempotency: (req, res, next) => next(),
+  conditionalIdempotency: (req, res, next) => next(),
   storeIdempotencyResponse: jest.fn().mockResolvedValue(),
 }));
-jest.mock('../src/middleware/rateLimiter', () => ({
+jest.mock('../../src/middleware/rateLimiter', () => ({
   donationRateLimiter: (req, res, next) => next(),
   verificationRateLimiter: (req, res, next) => next(),
+  batchRateLimiter: (req, res, next) => next(),
+  createRateLimiter: () => (req, res, next) => next(),
 }));
-jest.mock('../src/utils/database');
-jest.mock('../src/config/stellar', () => ({
+jest.mock('../../src/utils/database');
+jest.mock('../../src/config/stellar', () => ({
   getStellarService: () => ({
     sendDonation: jest.fn(),
     verifyTransaction: jest.fn(),
   }),
 }));
-jest.mock('../src/services/DonationService', () => {
+jest.mock('../../src/services/DonationService', () => {
   return jest.fn().mockImplementation(() => ({
     getAllDonations: jest.fn().mockReturnValue([]),
     getRecentDonations: jest.fn().mockReturnValue([]),

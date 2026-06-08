@@ -74,7 +74,7 @@ const apiKeyCleanupSchema = validateSchema({
  */
 router.post('/', requireAdmin(), apiKeyCreateSchema, payloadSizeLimiter(ENDPOINT_LIMITS.admin), asyncHandler(async (req, res, next) => {
   try {
-    const { name, role = 'user', expiresInDays, metadata, rateLimit, rateLimitWindowSeconds, allowedIps } = req.body;
+    const { name, role = 'user', expiresInDays, metadata, rateLimit, rateLimitWindowSeconds, allowedIps, scopes } = req.body;
 
     const nameValidation = validateNonEmptyString(name, 'Name');
     if (!nameValidation.valid) {

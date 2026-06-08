@@ -9,7 +9,7 @@ describe('Replay Detection Configuration', () => {
 
   beforeAll(() => {
     // Mock the logger module before any imports
-    jest.mock('../src/utils/log', () => ({
+    jest.mock('../../src/utils/log', () => ({
       warn: jest.fn(),
       info: jest.fn(),
       error: jest.fn(),

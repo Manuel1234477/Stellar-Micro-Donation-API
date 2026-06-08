@@ -96,7 +96,6 @@ router.post('/rotate', requireAdmin(), payloadSizeLimiter(ENDPOINT_LIMITS.admin)
 router.post('/memo-rotate', checkPermission(PERMISSIONS.ADMIN_ALL), payloadSizeLimiter(ENDPOINT_LIMITS.admin), asyncHandler(async (req, res, next) => {
   try {
     const MemoEncryptionService = require('../../services/MemoEncryptionService');
-    const memoKeyManager = require('../../utils/memoKeyManager');
 
     // Initiate key rotation (creates new key version)
     const rotationInfo = MemoEncryptionService.initiateKeyRotation();

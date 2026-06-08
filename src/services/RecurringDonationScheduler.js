@@ -34,7 +34,6 @@ const {
   withAsyncContext,
   getCorrelationSummary,
 } = require('../utils/correlation');
-const { withSpanInContext, extractTraceContext, injectTraceHeaders, getCurrentTraceparent } = require('../utils/tracing');
 
 class RecurringDonationScheduler {
   /**

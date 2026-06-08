@@ -1,7 +1,7 @@
 const { errorHandler, notFoundHandler } = require('../../src/middleware/errorHandler');
 const { ValidationError, ERROR_CODES } = require('../../src/utils/errors');
 
-jest.mock('../src/utils/log', () => ({
+jest.mock('../../src/utils/log', () => ({
   error: jest.fn(),
   info: jest.fn(),
   warn: jest.fn()

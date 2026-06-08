@@ -21,7 +21,7 @@ describe('Regression Tests - Recent Features', () => {
         cleanup();
         cleanup = null;
       }
-      delete require.cache[require.resolve('../src/utils/log')];
+      delete require.cache[require.resolve('../../src/utils/log')];
     });
 
     it('should not enable debug mode in production', () => {
@@ -41,7 +41,7 @@ describe('Regression Tests - Recent Features', () => {
         NODE_ENV: 'development'
       });
       
-      delete require.cache[require.resolve('../src/utils/log')];
+      delete require.cache[require.resolve('../../src/utils/log')];
       const logModule = require('../../src/utils/log');
       
       // In test environment, debug mode is disabled by default
@@ -55,7 +55,7 @@ describe('Regression Tests - Recent Features', () => {
         NODE_ENV: 'development'
       });
       
-      delete require.cache[require.resolve('../src/utils/log')];
+      delete require.cache[require.resolve('../../src/utils/log')];
       const logModule = require('../../src/utils/log');
       
       expect(logModule.isDebugMode).toBe(false);

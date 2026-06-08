@@ -14,9 +14,9 @@ const router = express.Router();
 const { requireAdmin } = require('../middleware/rbac');
 const { ValidationError, NotFoundError, ERROR_CODES } = require('../utils/errors');
 const { validateSchema } = require('../middleware/schemaValidation');
+const asyncHandler = require('../utils/asyncHandler');
 const AuditLogService = require('../services/AuditLogService');
 const AuditLogExportService = require('../services/AuditLogExportService');
-const log = require('../utils/log');
 
 /**
  * Schema for audit log export request
@@ -77,7 +77,6 @@ router.get('/:id/audit-log', requireAdmin(), auditLogExportSchema, asyncHandler(
 
     // Validate API key exists
     const apiKeysModel = require('../models/apiKeys');
-const asyncHandler = require('../utils/asyncHandler');
     const apiKey = await apiKeysModel.getApiKeyById(apiKeyId);
     if (!apiKey) {
       throw new NotFoundError('API key not found', ERROR_CODES.API_KEY_NOT_FOUND);

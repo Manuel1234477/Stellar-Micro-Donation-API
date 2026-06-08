@@ -24,7 +24,7 @@ process.env.MOCK_STELLAR = 'true';
 process.env.API_KEYS = 'test-key-claimable';
 
 // Mock AuditLogService before any requires to prevent unhandled DB rejections
-jest.mock('../src/services/AuditLogService', () => ({
+jest.mock('../../src/services/AuditLogService', () => ({
   log: jest.fn().mockResolvedValue(undefined),
   CATEGORY: { AUTHENTICATION: 'AUTHENTICATION', DONATION: 'DONATION' },
   ACTION: {

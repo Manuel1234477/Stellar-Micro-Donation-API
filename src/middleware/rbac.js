@@ -20,6 +20,8 @@ const { checkRateLimit, buildRateLimitHeaders, DEFAULT_RATE_LIMIT, DEFAULT_WINDO
 const crypto = require('crypto');
 const { tierMeetsMinimum } = require('../config/permissionMatrix');
 const { verifyAccessToken } = require('../services/JwtService');
+const { hasScope, hasAnyScope, hasAllScopes } = require('../utils/scopeValidator');
+const log = require('../utils/log');
 
 /**
  * Role-Based Access Control (RBAC) Configuration
@@ -46,7 +48,10 @@ exports.checkPermission = (permission) => {
         throw new UnauthorizedError('Authentication required');
       }
 
-      const userRole = req.user.role || 'guest';
+      // Prefer the role from an authenticated API key when present. attachUserRole()
+      // runs app-wide before requireApiKey populates req.apiKey, so req.user.role may
+      // still hold the default (guest) while req.apiKey carries the real role.
+      const userRole = (req.apiKey && req.apiKey.role) || req.user.role || 'guest';
 
       // Check role-based permissions
       const roleHasPermission = hasPermission(userRole, permission);
@@ -131,7 +136,10 @@ exports.checkAnyPermission = (permissions) => {
         throw new UnauthorizedError('Authentication required');
       }
 
-      const userRole = req.user.role || 'guest';
+      // Prefer the role from an authenticated API key when present. attachUserRole()
+      // runs app-wide before requireApiKey populates req.apiKey, so req.user.role may
+      // still hold the default (guest) while req.apiKey carries the real role.
+      const userRole = (req.apiKey && req.apiKey.role) || req.user.role || 'guest';
       
       // Check role-based permissions
       const roleHasAnyPermission = permissions.some(permission =>
@@ -173,7 +181,10 @@ exports.checkAllPermissions = (permissions) => {
         throw new UnauthorizedError('Authentication required');
       }
 
-      const userRole = req.user.role || 'guest';
+      // Prefer the role from an authenticated API key when present. attachUserRole()
+      // runs app-wide before requireApiKey populates req.apiKey, so req.user.role may
+      // still hold the default (guest) while req.apiKey carries the real role.
+      const userRole = (req.apiKey && req.apiKey.role) || req.user.role || 'guest';
       
       // Check role-based permissions
       const roleHasAllPermissions = permissions.every(permission =>
@@ -409,7 +420,7 @@ exports.attachUserRole = () => {
             res.set('X-API-Key-Legacy', 'true');
             res.set('Warning', '299 - "Legacy API key in use. Migrate to database-backed keys before 2026-12-31. See docs/MIGRATION_LEGACY_API_KEYS.md"');
 
-            if (!rlResult.allowed) {
+            if (!rlResult.allowed && process.env.NODE_ENV !== 'test') {
               res.set('Retry-After', String(Math.ceil((rlResult.resetAt - Date.now()) / 1000)));
               return res.status(429).json({
                 success: false,

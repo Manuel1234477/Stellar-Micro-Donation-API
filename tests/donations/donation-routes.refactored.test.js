@@ -319,7 +319,7 @@ describe('Donation Routes Integration Tests (Refactored)', () => {
 
         const response = await request(app)
           .post('/api/v1/donations')
-          .set('X-Idempotency-Key', 'test-idem-017')
+          .set('X-Idempotency-Key', 'test-idem-key-017')
           .send(donationData);
 
         expect(response.status).toBe(401);

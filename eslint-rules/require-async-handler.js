@@ -42,13 +42,6 @@ module.exports = {
       );
     }
 
-    function isWrappedInAsyncHandler(node) {
-      return (
-        node.type === 'CallExpression' &&
-        node.callee.type === 'Identifier' &&
-        node.callee.name === 'asyncHandler'
-      );
-    }
 
     return {
       CallExpression(node) {

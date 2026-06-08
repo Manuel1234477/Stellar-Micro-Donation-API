@@ -111,8 +111,8 @@ router.delete('/:id', requireApiKey, checkPermission(PERMISSIONS.DONATIONS_CREAT
     const { signedXDR, sellingAsset, buyingAsset } = req.body;
     if (!signedXDR) return res.status(400).json({ success: false, error: { code: 'VALIDATION_ERROR', message: 'signedXDR is required' } });
 
-    const normSelling = normaliseAsset(sellingAsset);
-    const normBuying = normaliseAsset(buyingAsset);
+    const _normSelling = normaliseAsset(sellingAsset);
+    const _normBuying = normaliseAsset(buyingAsset);
 
     const result = await stellarService.submitSignedTransaction(signedXDR);
 

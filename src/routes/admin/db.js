@@ -219,8 +219,8 @@ router.get('/stats', dbStatsRateLimiter, checkPermission(PERMISSIONS.ADMIN_ALL),
     // File sizes
     let fileSizeBytes = 0;
     let walFileSizeBytes = 0;
-    try { fileSizeBytes = fs.statSync(dbPath).size; } catch (_) {}
-    try { walFileSizeBytes = fs.statSync(dbPath + '-wal').size; } catch (_) {}
+    try { fileSizeBytes = fs.statSync(dbPath).size; } catch (_) { /* best-effort */ }
+    try { walFileSizeBytes = fs.statSync(dbPath + '-wal').size; } catch (_) { /* best-effort */ }
 
     // PRAGMA info
     const [pageCountRow, pageSizeRow, journalRow] = await Promise.all([
@@ -307,13 +307,13 @@ router.post('/vacuum', checkPermission(PERMISSIONS.ADMIN_ALL), async (req, res) 
     try {
       const dbPath = process.env.DB_PATH || path.join(__dirname, '../../../data/stellar_donations.db');
       let sizeBefore = 0;
-      try { sizeBefore = fs.statSync(dbPath).size; } catch (_) {}
+      try { sizeBefore = fs.statSync(dbPath).size; } catch (_) { /* best-effort */ }
 
       await Database.run('PRAGMA wal_checkpoint(FULL)');
       await Database.run('VACUUM');
 
       let sizeAfter = 0;
-      try { sizeAfter = fs.statSync(dbPath).size; } catch (_) {}
+      try { sizeAfter = fs.statSync(dbPath).size; } catch (_) { /* best-effort */ }
 
       job.status = 'completed';
       job.sizeBefore = sizeBefore;

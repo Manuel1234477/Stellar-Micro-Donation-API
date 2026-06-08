@@ -23,7 +23,6 @@ const { validateSchema } = require('../middleware/schemaValidation');
 const { cacheMiddleware } = require('../middleware/caching');
 const { validateDataEntry } = require('../middleware/validateDataEntry');
 const { toWalletResponse } = require('../utils/responseSanitizer');
-const BulkWalletImportService = require('../services/BulkWalletImportService');
 const Wallet = require('./models/wallet');
 const { STROOPS_PER_XLM } = require('../constants');
 const WalletService = require('../services/WalletService');
@@ -781,7 +780,7 @@ router.put('/:id/home-domain', checkPermission(PERMISSIONS.WALLETS_UPDATE), wall
       return res.status(400).json({ success: false, error: 'Missing required fields: domain, sourceSecret' });
     }
 
-    const wallet = walletService.getWalletById(req.params.id);
+    const _wallet = walletService.getWalletById(req.params.id);
 
     const stellarSvc = getStellarService();
     let result;
@@ -2057,7 +2056,7 @@ router.post('/:id/fund', requireApiKey, checkPermission(PERMISSIONS.WALLETS_UPDA
     }
 
     // Fund via Friendbot
-    const fundResult = await stellarSvc.fundWithFriendbot(address);
+    const _fundResult = await stellarSvc.fundWithFriendbot(address);
 
     // Update wallet record with fundedAt timestamp
     const now = new Date().toISOString();

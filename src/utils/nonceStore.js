@@ -13,6 +13,7 @@
  */
 
 const { SIGNATURE_MAX_AGE_MS } = require('./requestSigner');
+const log = require('./log');
 
 /** How often the cleanup sweep runs (ms). Defaults to 5 minutes. */
 const CLEANUP_INTERVAL_MS = parseInt(process.env.NONCE_CLEANUP_INTERVAL_MS, 10) || 300000;
@@ -80,7 +81,7 @@ class NonceStore {
       return { seen: false };
     } catch (err) {
       // Log error but don't fail the request
-      console.error('NonceStore.check error:', err.message);
+      log.error('NONCE_STORE', 'check error', { error: err.message });
       return { seen: false };
     }
   }
@@ -125,7 +126,7 @@ class NonceStore {
       );
       return { removed: result.changes || 0 };
     } catch (err) {
-      console.error('NonceStore.cleanup error:', err.message);
+      log.error('NONCE_STORE', 'cleanup error', { error: err.message });
       return { removed: 0 };
     }
   }

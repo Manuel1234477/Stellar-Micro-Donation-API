@@ -14,7 +14,6 @@ const { checkPermission } = require('../middleware/rbac');
 const { PERMISSIONS } = require('../utils/permissions');
 const Database = require('../utils/database');
 const asyncHandler = require('../utils/asyncHandler');
-const log = require('../utils/log');
 const AuditLogService = require('../services/AuditLogService');
 const WebhookService = require('../services/WebhookService');
 const { payloadSizeLimiter, ENDPOINT_LIMITS } = require('../middleware/payloadSizeLimiter');

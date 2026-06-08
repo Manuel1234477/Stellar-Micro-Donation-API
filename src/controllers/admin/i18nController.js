@@ -1,5 +1,4 @@
-const Translation = require('../../models/Translation');
-const i18n = require('../../utils/i18n');
+const Translation = require('../../models/translation');
 
 // In-memory cache
 let translationCache = {};

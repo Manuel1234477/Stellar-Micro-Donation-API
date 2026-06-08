@@ -9,7 +9,7 @@ const MockStellarService = require('../../src/services/MockStellarService');
 const HealthCheckService = require('../../src/services/HealthCheckService');
 
 // Mock the service container to use MockStellarService
-jest.mock('../src/config/serviceContainer', () => ({
+jest.mock('../../src/config/serviceContainer', () => ({
   getStellarService: () => new MockStellarService(),
   getTransactionReconciliationService: () => ({}),
   getRecurringDonationScheduler: () => ({}),
@@ -18,7 +18,7 @@ jest.mock('../src/config/serviceContainer', () => ({
 }));
 
 // Mock HealthCheckService to avoid real checks
-jest.mock('../src/services/HealthCheckService', () => ({
+jest.mock('../../src/services/HealthCheckService', () => ({
   getFullHealth: jest.fn().mockResolvedValue({
     status: 'healthy',
     dependencies: {

@@ -11,7 +11,6 @@ const router = express.Router();
 const crypto = require('crypto');
 const requireApiKey = require('../middleware/apiKey');
 const WebhookService = require('../services/WebhookService');
-const EncryptionService = require('../services/EncryptionService');
 const asyncHandler = require('../utils/asyncHandler');
 const { payloadSizeLimiter, ENDPOINT_LIMITS } = require('../middleware/payloadSizeLimiter');
 

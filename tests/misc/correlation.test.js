@@ -403,7 +403,7 @@ describe('Correlation ID Propagation', () => {
       });
       
       // Re-require the correlation module to test fallback
-      delete require.cache[require.resolve('../src/utils/correlation')];
+      delete require.cache[require.resolve('../../src/utils/correlation')];
       const correlationFallback = require('../../src/utils/correlation');
       
       expect(() => {

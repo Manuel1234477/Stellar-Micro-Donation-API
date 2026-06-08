@@ -16,7 +16,6 @@ const { PERMISSIONS } = require('../utils/permissions');
 const SocialRecoveryService = require('../services/SocialRecoveryService');
 const asyncHandler = require('../utils/asyncHandler');
 const { getStellarService } = require('../config/stellar');
-const { ValidationError, NotFoundError } = require('../utils/errors');
 
 const recoveryService = new SocialRecoveryService(getStellarService());
 

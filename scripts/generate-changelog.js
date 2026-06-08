@@ -64,6 +64,7 @@ function getCommitsSince(tag) {
 
 function parseCommit({ hash, subject, body }) {
   // Match: type(scope)!: description  or  type!: description  or  type: description
+  // eslint-disable-next-line security/detect-unsafe-regex
   const match = subject.match(/^(\w+)(\([^)]+\))?(!)?\s*:\s*(.+)$/);
   if (!match) return null;
 

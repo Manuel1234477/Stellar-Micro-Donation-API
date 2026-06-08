@@ -54,7 +54,7 @@ const CREATE_REVOCATIONS_TABLE_SQL = `
 async function initializeRefreshTokensTable() {
   await db.run(CREATE_TABLE_SQL);
   // Add jti column to existing tables that predate this change
-  try { await db.run(`ALTER TABLE refresh_tokens ADD COLUMN jti TEXT`); } catch (_) {}
+  try { await db.run(`ALTER TABLE refresh_tokens ADD COLUMN jti TEXT`); } catch (_) { /* best-effort */ }
   await db.run(CREATE_REVOCATIONS_TABLE_SQL);
   await db.run(`CREATE INDEX IF NOT EXISTS idx_revocations_jti ON refresh_token_revocations(jti)`);
   await db.run(`CREATE INDEX IF NOT EXISTS idx_revocations_expires ON refresh_token_revocations(expires_at)`);

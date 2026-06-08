@@ -27,7 +27,7 @@ describe('EncryptionService.encryptField / decryptField', () => {
     process.env.ENCRYPTION_KEY_1 = 'test-key-version-1-secret';
     process.env.ENCRYPTION_KEY_2 = 'test-key-version-2-secret';
     process.env.ENCRYPTION_KEY_VERSION = '1';
-    delete require.cache[require.resolve('../src/services/EncryptionService')];
+    delete require.cache[require.resolve('../../src/services/EncryptionService')];
     svc = require('../../src/services/EncryptionService');
   });
 
@@ -35,7 +35,7 @@ describe('EncryptionService.encryptField / decryptField', () => {
     delete process.env.ENCRYPTION_KEY_1;
     delete process.env.ENCRYPTION_KEY_2;
     delete process.env.ENCRYPTION_KEY_VERSION;
-    delete require.cache[require.resolve('../src/services/EncryptionService')];
+    delete require.cache[require.resolve('../../src/services/EncryptionService')];
   });
 
   it('encrypts and decrypts a string round-trip', () => {
@@ -114,8 +114,8 @@ describe('Wallet model — field encryption', () => {
     process.env.ENCRYPTION_KEY_VERSION = '1';
 
     // Bust module cache so env changes take effect and use temp file
-    delete require.cache[require.resolve('../src/routes/models/wallet')];
-    delete require.cache[require.resolve('../src/services/EncryptionService')];
+    delete require.cache[require.resolve('../../src/routes/models/wallet')];
+    delete require.cache[require.resolve('../../src/services/EncryptionService')];
 
     Wallet = require('../../src/routes/models/wallet');
     // Point to temp file
@@ -136,8 +136,8 @@ describe('Wallet model — field encryption', () => {
     delete process.env.ENCRYPTION_KEY_1;
     delete process.env.ENCRYPTION_KEY_VERSION;
     jest.restoreAllMocks();
-    delete require.cache[require.resolve('../src/routes/models/wallet')];
-    delete require.cache[require.resolve('../src/services/EncryptionService')];
+    delete require.cache[require.resolve('../../src/routes/models/wallet')];
+    delete require.cache[require.resolve('../../src/services/EncryptionService')];
   });
 
   it('stores label encrypted in the file', () => {
@@ -180,8 +180,8 @@ describe('Wallet model — field encryption', () => {
   it('passes through plaintext label when no key configured', () => {
     delete process.env.ENCRYPTION_KEY_1;
     delete process.env.ENCRYPTION_KEY;
-    delete require.cache[require.resolve('../src/routes/models/wallet')];
-    delete require.cache[require.resolve('../src/services/EncryptionService')];
+    delete require.cache[require.resolve('../../src/routes/models/wallet')];
+    delete require.cache[require.resolve('../../src/services/EncryptionService')];
     Wallet = require('../../src/routes/models/wallet');
     jest.spyOn(Wallet, 'loadWallets').mockReturnValue([]);
     jest.spyOn(Wallet, 'saveWallets').mockImplementation((data) => {
@@ -219,9 +219,9 @@ describe('POST /admin/encryption/rotate', () => {
     process.env.ENCRYPTION_KEY_2 = 'rotate-key-v2';
     process.env.ENCRYPTION_KEY_VERSION = '1';
 
-    delete require.cache[require.resolve('../src/routes/models/wallet')];
-    delete require.cache[require.resolve('../src/services/EncryptionService')];
-    delete require.cache[require.resolve('../src/routes/admin/encryption')];
+    delete require.cache[require.resolve('../../src/routes/models/wallet')];
+    delete require.cache[require.resolve('../../src/services/EncryptionService')];
+    delete require.cache[require.resolve('../../src/routes/admin/encryption')];
 
     Wallet = require('../../src/routes/models/wallet');
     jest.spyOn(Wallet, 'loadWallets').mockImplementation(() => {
@@ -249,7 +249,7 @@ describe('POST /admin/encryption/rotate', () => {
 
     // Switch to v2
     process.env.ENCRYPTION_KEY_VERSION = '2';
-    delete require.cache[require.resolve('../src/routes/admin/encryption')];
+    delete require.cache[require.resolve('../../src/routes/admin/encryption')];
 
     const app = createApp();
     const res = await request(app).post('/admin/encryption/rotate');
@@ -273,7 +273,7 @@ describe('POST /admin/encryption/rotate', () => {
 
     // Rotate to v1 (same version — should skip)
     process.env.ENCRYPTION_KEY_VERSION = '1';
-    delete require.cache[require.resolve('../src/routes/admin/encryption')];
+    delete require.cache[require.resolve('../../src/routes/admin/encryption')];
 
     const app = createApp();
     const res = await request(app).post('/admin/encryption/rotate');
@@ -290,7 +290,7 @@ describe('POST /admin/encryption/rotate', () => {
     }]));
 
     process.env.ENCRYPTION_KEY_VERSION = '1';
-    delete require.cache[require.resolve('../src/routes/admin/encryption')];
+    delete require.cache[require.resolve('../../src/routes/admin/encryption')];
 
     const app = createApp();
     const res = await request(app).post('/admin/encryption/rotate');
@@ -308,7 +308,7 @@ describe('POST /admin/encryption/rotate', () => {
     }]));
 
     process.env.ENCRYPTION_KEY_VERSION = '2';
-    delete require.cache[require.resolve('../src/routes/admin/encryption')];
+    delete require.cache[require.resolve('../../src/routes/admin/encryption')];
 
     const app = createApp();
     const res = await request(app).post('/admin/encryption/rotate');

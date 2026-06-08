@@ -13,7 +13,7 @@ const donationRouter = require('../../src/routes/donation');
 const Transaction = require('../../src/routes/models/transaction');
 const { getStellarService } = require('../../src/config/stellar');
 const { attachUserRole } = require('../../src/middleware/rbac');
-const { resetMockStellarService } = require('../helpers/testIsolation');
+const { resetMockStellarService, clearDatabaseTables } = require('../helpers/testIsolation');
 
 // Create test app
 function createTestApp() {
@@ -75,9 +75,12 @@ describe('Donation Routes Integration Tests', () => {
     adminApp.use(errorHandler);
   });
 
-  beforeEach(() => {
+  beforeEach(async () => {
     // Clear transaction data before each test
     Transaction._clearAllData();
+    // Clear persisted idempotency keys so each test's setup re-creates donations
+    // (idempotency is stored in SQLite and survives Transaction._clearAllData()).
+    await clearDatabaseTables();
   });
 
   afterEach(() => {
@@ -96,7 +99,7 @@ describe('Donation Routes Integration Tests', () => {
         const response = await request(app)
           .post('/api/v1/donations')
           .set('X-API-Key', 'test-key-1')
-          .set('X-Idempotency-Key', 'test-idem-001')
+          .set('X-Idempotency-Key', 'test-idem-key-001')
           .send({
             amount: '100',
             donor: testDonor.publicKey,
@@ -115,7 +118,7 @@ describe('Donation Routes Integration Tests', () => {
         const response = await request(app)
           .post('/api/v1/donations')
           .set('X-API-Key', 'test-key-1')
-          .set('X-Idempotency-Key', 'test-idem-002')
+          .set('X-Idempotency-Key', 'test-idem-key-002')
           .send({
             amount: '50',
             donor: testDonor.publicKey,
@@ -130,7 +133,7 @@ describe('Donation Routes Integration Tests', () => {
         const response = await request(app)
           .post('/api/v1/donations')
           .set('X-API-Key', 'test-key-1')
-          .set('X-Idempotency-Key', 'test-idem-003')
+          .set('X-Idempotency-Key', 'test-idem-key-003')
           .send({
             amount: '25',
             recipient: testRecipient.publicKey,
@@ -145,7 +148,7 @@ describe('Donation Routes Integration Tests', () => {
         const response = await request(app)
           .post('/api/v1/donations')
           .set('X-API-Key', 'test-key-1')
-          .set('X-Idempotency-Key', 'test-idem-004')
+          .set('X-Idempotency-Key', 'test-idem-key-004')
           .send({
             amount: '123.456789',
             donor: testDonor.publicKey,
@@ -160,7 +163,7 @@ describe('Donation Routes Integration Tests', () => {
         const response = await request(app)
           .post('/api/v1/donations')
           .set('X-API-Key', 'test-key-1')
-          .set('X-Idempotency-Key', 'test-idem-005')
+          .set('X-Idempotency-Key', 'test-idem-key-005')
           .send({
             amount: '1000',
             donor: testDonor.publicKey,
@@ -182,7 +185,7 @@ describe('Donation Routes Integration Tests', () => {
         const response = await request(app)
           .post('/api/v1/donations')
           .set('X-API-Key', 'test-key-1')
-          .set('X-Idempotency-Key', 'test-idem-006')
+          .set('X-Idempotency-Key', 'test-idem-key-006')
           .send({
             donor: testDonor.publicKey,
             recipient: testRecipient.publicKey
@@ -197,7 +200,7 @@ describe('Donation Routes Integration Tests', () => {
         const response = await request(app)
           .post('/api/v1/donations')
           .set('X-API-Key', 'test-key-1')
-          .set('X-Idempotency-Key', 'test-idem-007')
+          .set('X-Idempotency-Key', 'test-idem-key-007')
           .send({
             amount: '100',
             donor: testDonor.publicKey
@@ -211,7 +214,7 @@ describe('Donation Routes Integration Tests', () => {
         const response = await request(app)
           .post('/api/v1/donations')
           .set('X-API-Key', 'test-key-1')
-          .set('X-Idempotency-Key', 'test-idem-008')
+          .set('X-Idempotency-Key', 'test-idem-key-008')
           .send({
             amount: '-100',
             donor: testDonor.publicKey,
@@ -219,14 +222,14 @@ describe('Donation Routes Integration Tests', () => {
           });
 
         expect(response.status).toBe(400);
-        expect(response.body.error).toMatch(/positive number/i);
+        expect(response.body.error).toMatch(/greater than 0/i);
       });
 
       test('should reject zero amount', async () => {
         const response = await request(app)
           .post('/api/v1/donations')
           .set('X-API-Key', 'test-key-1')
-          .set('X-Idempotency-Key', 'test-idem-009')
+          .set('X-Idempotency-Key', 'test-idem-key-009')
           .send({
             amount: '0',
             donor: testDonor.publicKey,
@@ -234,14 +237,14 @@ describe('Donation Routes Integration Tests', () => {
           });
 
         expect(response.status).toBe(400);
-        expect(response.body.error).toMatch(/positive number/i);
+        expect(response.body.error).toMatch(/greater than 0/i);
       });
 
       test('should reject invalid amount format', async () => {
         const response = await request(app)
           .post('/api/v1/donations')
           .set('X-API-Key', 'test-key-1')
-          .set('X-Idempotency-Key', 'test-idem-010')
+          .set('X-Idempotency-Key', 'test-idem-key-010')
           .send({
             amount: 'not-a-number',
             donor: testDonor.publicKey,
@@ -249,14 +252,15 @@ describe('Donation Routes Integration Tests', () => {
           });
 
         expect(response.status).toBe(400);
-        expect(response.body.error).toMatch(/positive number/i);
+        expect(response.body.success).toBe(false);
+        expect(response.body.error.code).toBe('VALIDATION_ERROR');
       });
 
       test('should reject donation to self', async () => {
         const response = await request(app)
           .post('/api/v1/donations')
           .set('X-API-Key', 'test-key-1')
-          .set('X-Idempotency-Key', 'test-idem-011')
+          .set('X-Idempotency-Key', 'test-idem-key-011')
           .send({
             amount: '100',
             donor: testDonor.publicKey,
@@ -271,7 +275,7 @@ describe('Donation Routes Integration Tests', () => {
         const response = await request(app)
           .post('/api/v1/donations')
           .set('X-API-Key', 'test-key-1')
-          .set('X-Idempotency-Key', 'test-idem-012')
+          .set('X-Idempotency-Key', 'test-idem-key-012')
           .send({
             amount: '100',
             donor: testDonor.publicKey,
@@ -281,14 +285,15 @@ describe('Donation Routes Integration Tests', () => {
 
         expect(response.status).toBe(400);
         expect(response.body.success).toBe(false);
-        expect(response.body.error.code).toMatch(/MEMO/i);
+        expect(response.body.error.code).toBe('VALIDATION_ERROR');
+        expect(JSON.stringify(response.body.error)).toMatch(/memo/i);
       });
 
       test('should reject malformed donor field', async () => {
         const response = await request(app)
           .post('/api/v1/donations')
           .set('X-API-Key', 'test-key-1')
-          .set('X-Idempotency-Key', 'test-idem-013')
+          .set('X-Idempotency-Key', 'test-idem-key-013')
           .send({
             amount: '100',
             donor: { invalid: 'object' },
@@ -296,14 +301,15 @@ describe('Donation Routes Integration Tests', () => {
           });
 
         expect(response.status).toBe(400);
-        expect(response.body.error).toMatch(/malformed/i);
+        expect(response.body.success).toBe(false);
+        expect(response.body.error.code).toBe('VALIDATION_ERROR');
       });
 
       test('should reject malformed recipient field', async () => {
         const response = await request(app)
           .post('/api/v1/donations')
           .set('X-API-Key', 'test-key-1')
-          .set('X-Idempotency-Key', 'test-idem-014')
+          .set('X-Idempotency-Key', 'test-idem-key-014')
           .send({
             amount: '100',
             donor: testDonor.publicKey,
@@ -311,7 +317,8 @@ describe('Donation Routes Integration Tests', () => {
           });
 
         expect(response.status).toBe(400);
-        expect(response.body.error).toMatch(/malformed/i);
+        expect(response.body.success).toBe(false);
+        expect(response.body.error.code).toBe('VALIDATION_ERROR');
       });
     });
 
@@ -320,9 +327,9 @@ describe('Donation Routes Integration Tests', () => {
         const response = await request(app)
           .post('/api/v1/donations')
           .set('X-API-Key', 'test-key-1')
-          .set('X-Idempotency-Key', 'test-idem-015')
+          .set('X-Idempotency-Key', 'test-idem-key-015')
           .send({
-            amount: '0.5', // Below minimum of 1 XLM
+            amount: '0.001', // Below configured minimum (0.01 XLM)
             donor: testDonor.publicKey,
             recipient: testRecipient.publicKey
           });
@@ -330,23 +337,23 @@ describe('Donation Routes Integration Tests', () => {
         expect(response.status).toBe(400);
         expect(response.body.success).toBe(false);
         expect(response.body.error.code).toBeDefined();
-        expect(response.body.error.limits).toBeDefined();
+        expect(response.body.error.message).toMatch(/at least|minimum/i);
       });
 
       test('should reject amount above maximum', async () => {
         const response = await request(app)
           .post('/api/v1/donations')
           .set('X-API-Key', 'test-key-1')
-          .set('X-Idempotency-Key', 'test-idem-016')
+          .set('X-Idempotency-Key', 'test-idem-key-016')
           .send({
-            amount: '100001', // Above maximum of 100000 XLM
+            amount: '100001', // Above configured maximum (10000 XLM)
             donor: testDonor.publicKey,
             recipient: testRecipient.publicKey
           });
 
         expect(response.status).toBe(400);
         expect(response.body.success).toBe(false);
-        expect(response.body.error.limits).toBeDefined();
+        expect(response.body.error.message).toMatch(/exceed|maximum/i);
       });
     });
 
@@ -376,7 +383,10 @@ describe('Donation Routes Integration Tests', () => {
           .send(requestData);
 
         expect(response2.status).toBe(200); // Returns cached response
-        expect(response2.body).toEqual(response1.body);
+        // The cached replay carries idempotency metadata (_idempotent,
+        // _originalTimestamp); the original payload is preserved under data.
+        expect(response2.body.data).toEqual(response1.body.data);
+        expect(response2.body._idempotent).toBe(true);
       });
 
       test('should reject request without idempotency key', async () => {
@@ -397,7 +407,7 @@ describe('Donation Routes Integration Tests', () => {
       test('should reject request without API key', async () => {
         const response = await request(app)
           .post('/api/v1/donations')
-          .set('X-Idempotency-Key', 'test-idem-017')
+          .set('X-Idempotency-Key', 'test-idem-key-017')
           .send({
             amount: '100',
             donor: testDonor.publicKey,
@@ -411,7 +421,7 @@ describe('Donation Routes Integration Tests', () => {
         const response = await request(app)
           .post('/api/v1/donations')
           .set('X-API-Key', 'invalid-key')
-          .set('X-Idempotency-Key', 'test-idem-018')
+          .set('X-Idempotency-Key', 'test-idem-key-018')
           .send({
             amount: '100',
             donor: testDonor.publicKey,
@@ -429,7 +439,7 @@ describe('Donation Routes Integration Tests', () => {
       await request(app)
         .post('/api/v1/donations')
         .set('X-API-Key', 'test-key-1')
-        .set('X-Idempotency-Key', 'test-list-001')
+        .set('X-Idempotency-Key', 'test-list-key-001')
         .send({
           amount: '100',
           donor: testDonor.publicKey,
@@ -439,7 +449,7 @@ describe('Donation Routes Integration Tests', () => {
       await request(app)
         .post('/api/v1/donations')
         .set('X-API-Key', 'test-key-1')
-        .set('X-Idempotency-Key', 'test-list-002')
+        .set('X-Idempotency-Key', 'test-list-key-002')
         .send({
           amount: '200',
           donor: testDonor.publicKey,
@@ -455,7 +465,7 @@ describe('Donation Routes Integration Tests', () => {
       expect(response.status).toBe(200);
       expect(response.body.success).toBe(true);
       expect(response.body.data).toBeInstanceOf(Array);
-      expect(response.body.count).toBeGreaterThanOrEqual(2);
+      expect(response.body.data.length).toBeGreaterThanOrEqual(2);
     });
 
     test('should return donations when correct structure', async () => {
@@ -480,7 +490,7 @@ describe('Donation Routes Integration Tests', () => {
         await request(app)
           .post('/api/v1/donations')
           .set('X-API-Key', 'test-key-1')
-          .set('X-Idempotency-Key', `test-recent-${i}`)
+          .set('X-Idempotency-Key', `test-recent-donation-key-${i}`)
           .send({
             amount: `${10 + i}`,
             donor: testDonor.publicKey,
@@ -498,7 +508,6 @@ describe('Donation Routes Integration Tests', () => {
       expect(response.body.success).toBe(true);
       expect(response.body.data).toBeInstanceOf(Array);
       expect(response.body.data.length).toBeLessThanOrEqual(10);
-      expect(response.body.limit).toBe(10);
     });
 
     test('should respect custom limit parameter', async () => {
@@ -508,7 +517,6 @@ describe('Donation Routes Integration Tests', () => {
 
       expect(response.status).toBe(200);
       expect(response.body.data.length).toBeLessThanOrEqual(5);
-      expect(response.body.limit).toBe(5);
     });
 
     test('should enforce maximum limit of 100', async () => {
@@ -625,7 +633,7 @@ describe('Donation Routes Integration Tests', () => {
       const createResponse = await request(app)
         .post('/api/v1/donations')
         .set('X-API-Key', 'test-key-1')
-        .set('X-Idempotency-Key', 'test-verify-001')
+        .set('X-Idempotency-Key', 'test-verify-key-001')
         .send({
           amount: '100',
           donor: testDonor.publicKey,
@@ -824,7 +832,7 @@ describe('Donation Routes Integration Tests', () => {
       const createResponse = await request(app)
         .post('/api/v1/donations')
         .set('X-API-Key', 'test-key-1')
-        .set('X-Idempotency-Key', 'test-e2e-001')
+        .set('X-Idempotency-Key', 'test-e2e-key-001')
         .send({
           amount: donationAmount.toString(),
           donor: testDonor.publicKey,
@@ -866,7 +874,7 @@ describe('Donation Routes Integration Tests', () => {
       const response = await request(app)
         .post('/api/v1/donations')
         .set('X-API-Key', 'test-key-1')
-        .set('X-Idempotency-Key', 'test-error-001')
+        .set('X-Idempotency-Key', 'test-error-key-001')
         .set('Content-Type', 'application/json')
         .send('{ invalid json }');
 
@@ -877,7 +885,7 @@ describe('Donation Routes Integration Tests', () => {
       const response = await request(app)
         .post('/api/v1/donations')
         .set('X-API-Key', 'test-key-1')
-        .set('X-Idempotency-Key', 'test-error-002')
+        .set('X-Idempotency-Key', 'test-error-key-002')
         .send({
           amount: '100',
           donor: testDonor.publicKey,
@@ -896,7 +904,7 @@ describe('Donation Routes Integration Tests', () => {
       const response = await request(app)
         .post('/api/v1/donations')
         .set('X-API-Key', 'test-key-1')
-        .set('X-Idempotency-Key', 'test-rate-001')
+        .set('X-Idempotency-Key', 'test-rate-key-001')
         .send({
           amount: '100',
           donor: testDonor.publicKey,

@@ -1,5 +1,6 @@
 // External modules
 const { Horizon } = require('stellar-sdk');
+const log = require('../../utils/log');
 
 // Internal modules
 const Database = require('../../utils/database');
@@ -41,7 +42,7 @@ class AnalyticsService {
 
       return { ...stats, last_updated: timestamp };
     } catch (error) {
-      console.error(`Analytics failed for ${address}:`, error.message);
+      log.error('ANALYTICS', 'Analytics failed for address', { address, error: error.message });
       throw error;
     }
   }

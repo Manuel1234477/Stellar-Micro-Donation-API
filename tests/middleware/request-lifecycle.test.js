@@ -7,13 +7,13 @@
  * the supertest/superagent peer-dependency issue.
  */
 
-jest.mock('../src/config', () => ({
+jest.mock('../../src/config', () => ({
   app: { name: 'test-app', version: '1.0.0' },
   server: { env: 'test', port: 3000 },
   logging: { debugMode: false, level: 'INFO', format: 'text', sampleRate: 1.0 },
 }));
 
-jest.mock('../src/utils/log', () => ({
+jest.mock('../../src/utils/log', () => ({
   info: jest.fn(),
   warn: jest.fn(),
   error: jest.fn(),
@@ -23,8 +23,8 @@ jest.mock('../src/utils/log', () => ({
   isDebugMode: false,
 }));
 
-jest.mock('../src/utils/sanitizer', () => ({ sanitizeForLogging: jest.fn(v => v) }));
-jest.mock('../src/utils/correlation', () => ({
+jest.mock('../../src/utils/sanitizer', () => ({ sanitizeForLogging: jest.fn(v => v) }));
+jest.mock('../../src/utils/correlation', () => ({
   initializeRequestContext: jest.fn(),
   parseCorrelationHeaders: jest.fn(() => ({})),
   getCorrelationContext: jest.fn(() => ({})),

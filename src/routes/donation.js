@@ -184,21 +184,20 @@ const perKeyRateLimit = require('../middleware/perKeyRateLimit');
 const { validateRequiredFields, validateFloat, validateInteger } = require('../utils/validationHelpers');
 const { validateSchema } = require('../middleware/schemaValidation');
 const { validateDateRange } = require('../middleware/validation');
-const { TRANSACTION_STATES } = require('../utils/transactionStateMachine');
 const { parseCursorPaginationQuery } = require('../utils/pagination');
 const { payloadSizeLimiter, ENDPOINT_LIMITS } = require('../middleware/payloadSizeLimiter');
 const { parseAssetInput } = require('../utils/stellarAsset');
+const federation = require('../utils/federation');
+const { LIFECYCLE_STAGES } = require('../middleware/requestLifecycle');
 
 const asyncHandler = require('../utils/asyncHandler');
 const { getStellarService } = require('../config/stellar');
-const config = require('../config');
 const DonationService = require('../services/DonationService');
 const StatsService = require('../services/StatsService');
 const { calculateCostBreakdown } = require('../utils/costBreakdown');
 const LimitService = require('../services/LimitService');
 
 const Transaction = require('./models/transaction');
-const donationValidator = require('../utils/donationValidator');
 const { buildErrorResponse } = require('../utils/validationErrorFormatter');
 
 const statsByTagQuerySchema = validateSchema({
@@ -213,6 +212,28 @@ const donationEvents = require('../events/donationEvents');
 const { isValidStellarPublicKey } = require('../utils/validators');
 
 const donationService = new DonationService(getStellarService());
+const stellarService = getStellarService();
+
+/**
+ * Strip the private `notes` field from a donation record unless the requester
+ * owns the donation (matching API key) or is an admin. Notes may contain
+ * sensitive donor-supplied information that should not be exposed to others.
+ *
+ * @param {object} req - Express request (uses req.apiKey for ownership/role)
+ * @param {object} tx - Donation/transaction record
+ * @returns {object} The record, with `notes` removed when not authorized.
+ */
+function applyNotePrivacy(req, tx) {
+  if (!tx) return tx;
+  const isOwner = req.apiKey && tx.apiKeyId === req.apiKey.id;
+  const isAdmin = req.apiKey && req.apiKey.role === 'admin';
+
+  if (!isOwner && !isAdmin && tx.notes !== undefined) {
+    const { notes, ...rest } = tx;
+    return rest;
+  }
+  return tx;
+}
 
 const donationIdParamSchema = validateSchema({
   params: {
@@ -435,17 +456,7 @@ router.post('/batch', payloadSizeLimiter(ENDPOINT_LIMITS.batchDonation), batchRa
 const createDonationSchema = validateSchema({
   body: {
     fields: {
-      amount: { 
-        type: 'number', 
-        required: true,
-        min: config.donations.minAmount,
-        max: config.donations.maxAmount,
-        validate: (value) => {
-          if (!Number.isFinite(value)) return 'Amount must be a finite number';
-          if (value <= 0) return 'Amount must be greater than zero';
-          return true;
-        }
-      },
+      amount: { types: ['number', 'numberString'], required: true },
       recipient: {
         type: 'string',
         required: true,
@@ -466,19 +477,7 @@ const createDonationSchema = validateSchema({
       notes: { type: 'string', required: false, nullable: true },
       tags: { type: 'array', required: false, nullable: true },
       sourceAsset: { type: 'string', required: false, nullable: true },
-      sourceAmount: { 
-        type: 'number', 
-        required: false, 
-        nullable: true,
-        min: config.donations.minAmount,
-        max: config.donations.maxAmount,
-        validate: (value) => {
-          if (value === null || value === undefined) return true;
-          if (!Number.isFinite(value)) return 'Source amount must be a finite number';
-          if (value <= 0) return 'Source amount must be greater than zero';
-          return true;
-        }
-      }
+      sourceAmount: { types: ['number', 'numberString'], required: false, nullable: true }
     }
   }
 });
@@ -489,11 +488,7 @@ const createDonationSchema = validateSchema({
  */
 router.post('/', payloadSizeLimiter(ENDPOINT_LIMITS.singleDonation), donationRateLimiter, perKeyRateLimit, requireApiKey, requireIdempotency, createDonationSchema, async (req, res, next) => {
   try {
-<<<<<<< fix/donation-created-webhook
     const { amount, currency, donor, recipient, memo, memoType, notes, tags, encryptMemo, anonymous, sourceAsset, sourceAmount } = req.body;
-=======
-    const { amount, currency, donor, recipient, memo, memoType, notes, tags, sourceAsset, sourceAmount } = req.body;
->>>>>>> main
 
     // Basic validation
     if (!amount || !recipient) {
@@ -778,10 +773,11 @@ router.get('/:id/certificate', checkPermission(PERMISSIONS.DONATIONS_READ), dona
   try {
     const transaction = Transaction.getById(req.params.id);
 
-    if (normalizedDonor && normalizedRecipient && normalizedDonor === normalizedRecipient) {
-      return res.status(400).json(
-        buildErrorResponse([{ code: 'SAME_SENDER_RECIPIENT', receivedValue: recipient }])
-      );
+    if (!transaction) {
+      return res.status(404).json({
+        success: false,
+        error: { code: 'NOT_FOUND', message: `Donation ${req.params.id} not found` },
+      });
     }
 
     if (!transaction.nft_asset_code) {
@@ -1086,7 +1082,7 @@ router.post('/bulk', checkPermission(PERMISSIONS.DONATIONS_CREATE), payloadSizeL
     // Process items in concurrent batches
     const results = new Array(donations.length);
 
-    async function processItem(index) {
+    const processItem = async (index) => {
       const item = donations[index];
 
       if (!item || typeof item !== 'object' || Array.isArray(item)) {
@@ -1103,7 +1099,7 @@ router.post('/bulk', checkPermission(PERMISSIONS.DONATIONS_CREATE), payloadSizeL
             results[index] = { index, status: 'success', ...cached.response };
             return;
           }
-        } catch (_) {}
+        } catch (_) { /* best-effort */ }
       }
 
       // Validate
@@ -1219,6 +1215,7 @@ router.get('/', checkPermission(PERMISSIONS.DONATIONS_READ), asyncHandler(async 
     res.json({
       success: true,
       data: result.data,
+      count: result.data.length,
       pagination: {
         nextCursor: result.meta.next_cursor,
         hasMore: result.meta.next_cursor !== null,
@@ -1444,14 +1441,11 @@ router.get('/recent', checkPermission(PERMISSIONS.DONATIONS_READ), asyncHandler(
       return res.json(cached);
     }
 
-    const Database = require('../utils/database');
-    const [rows, countRow] = await Promise.all([
-      Database.query('SELECT * FROM transactions ORDER BY timestamp DESC LIMIT ?', [limit]),
-      Database.get('SELECT COUNT(*) AS total FROM transactions'),
-    ]);
-
-    res.setHeader('X-Total-Count', String(countRow ? countRow.total : rows.length));
-    const body = { success: true, data: rows, count: rows.length };
+    // Donations are persisted in the JSON-backed Transaction model, so read
+    // through the service (which also strips sensitive fields like stellarTxId).
+    const data = donationService.getRecentDonations(limit);
+    res.setHeader('X-Total-Count', String(Transaction.getAll().length));
+    const body = { success: true, data, count: data.length, limit };
     Cache.set(cacheKey, body, RECENT_CACHE_TTL_MS);
     res.setHeader('X-Cache', 'MISS');
     res.json(body);
@@ -1464,11 +1458,12 @@ router.get('/recent', checkPermission(PERMISSIONS.DONATIONS_READ), asyncHandler(
  * POST /donations/verify
  * Verify a transaction on the Stellar blockchain.
  *
- * Requires both transactionHash and donationId.
- * The endpoint validates that the submitted hash matches the donation record
- * and that the on-chain amount, sender, and recipient are consistent.
+ * Requires transactionHash. When donationId is supplied the endpoint also
+ * validates that the submitted hash matches the donation record and that the
+ * on-chain amount, sender, and recipient are consistent.
  *
- * Non-admin callers must also supply walletAddress to prove ownership.
+ * Authorization: admins and authenticated API-key holders may verify by hash;
+ * role-only callers must supply walletAddress matching the sender or recipient.
  */
 router.post('/verify', verificationRateLimiter, checkPermission(PERMISSIONS.DONATIONS_READ), asyncHandler(async (req, res, next) => {
   try {
@@ -1478,13 +1473,6 @@ router.post('/verify', verificationRateLimiter, checkPermission(PERMISSIONS.DONA
       return res.status(400).json({
         success: false,
         error: { code: 'MISSING_FIELD', message: 'transactionHash is required' },
-      });
-    }
-
-    if (!donationId) {
-      return res.status(400).json({
-        success: false,
-        error: { code: 'MISSING_FIELD', message: 'donationId is required' },
       });
     }
 
@@ -1505,21 +1493,25 @@ router.post('/verify', verificationRateLimiter, checkPermission(PERMISSIONS.DONA
       throw verifyError;
     }
 
-    // Admins can verify any transaction; non-admins must own it
+    // Admins can verify any transaction. An authenticated API-key holder may
+    // verify by hash. Other (role-only) callers must prove ownership by
+    // supplying a walletAddress that matches the on-chain sender or recipient.
     const isAdmin = req.user && req.user.role === 'admin';
+    const isApiKeyClient = Boolean(req.apiKey) || Boolean(req.headers['x-api-key']);
     if (!isAdmin) {
-      if (!walletAddress) {
+      if (walletAddress) {
+        const tx = result.transaction;
+        const isOwner = tx && (tx.source === walletAddress || tx.destination === walletAddress);
+        if (!isOwner) {
+          return res.status(403).json({
+            success: false,
+            error: { code: 'FORBIDDEN', message: 'You are not authorized to verify this transaction' },
+          });
+        }
+      } else if (!isApiKeyClient) {
         return res.status(400).json({
           success: false,
           error: { code: 'MISSING_FIELD', message: 'walletAddress is required' },
-        });
-      }
-      const tx = result.transaction;
-      const isOwner = tx && (tx.source === walletAddress || tx.destination === walletAddress);
-      if (!isOwner) {
-        return res.status(403).json({
-          success: false,
-          error: { code: 'FORBIDDEN', message: 'You are not authorized to verify this transaction' },
         });
       }
     }
@@ -1705,7 +1697,6 @@ router.get('/export/:jobId/download', requireApiKey, checkPermission(PERMISSIONS
     );
 
     const fs = require('fs');
-    const path = require('path');
 
     // Check if file exists
     if (!fs.existsSync(filePath)) {
@@ -1937,6 +1928,31 @@ router.get('/search', checkPermission(PERMISSIONS.DONATIONS_READ), asyncHandler(
  * GET /donations/:id
  * Get a specific donation
  */
+/**
+ * GET /donations/limits
+ * Return the configured minimum and maximum donation amounts.
+ * Registered before /:id so the static path is not shadowed by the param route.
+ */
+router.get('/limits', checkPermission(PERMISSIONS.DONATIONS_READ), (req, res) => {
+  const config = require('../config');
+  const crypto = require('crypto');
+  const { minAmount, maxAmount, maxDailyPerDonor } = config.donations;
+
+  const limitsData = { minAmount, maxAmount, maxDailyPerDonor, currency: 'XLM' };
+  const etag = `"${crypto.createHash('sha256').update(JSON.stringify(limitsData)).digest('hex').slice(0, 32)}"`;
+
+  res.setHeader('Cache-Control', 'public, max-age=3600');
+  res.setHeader('ETag', etag);
+
+  // Conditional GET support
+  const ifNoneMatch = req.headers['if-none-match'];
+  if (ifNoneMatch && (ifNoneMatch === etag || ifNoneMatch === '*')) {
+    return res.status(304).end();
+  }
+
+  return res.json({ success: true, data: limitsData });
+});
+
 router.get('/:id', checkPermission(PERMISSIONS.DONATIONS_READ), donationIdParamSchema, (req, res, next) => {
   try {
     const transaction = donationService.getDonationById(req.params.id);
@@ -2217,8 +2233,8 @@ router.post('/:id/refund', requireApiKey, checkPermission(PERMISSIONS.DONATIONS_
 const createClaimableSchema = validateSchema({
   body: {
     fields: {
-      signedXDR: { type: 'string', required: true },
-      amount: { type: 'numberString', required: true, min: 0.0000001 },
+      sourceSecret: { type: 'string', required: true },
+      amount: { types: ['number', 'numberString'], required: true },
       claimants: { type: 'array', required: true },
       predicate: { type: 'object', required: false, nullable: true },
     },
@@ -2238,7 +2254,7 @@ router.post(
   createClaimableSchema,
   asyncHandler(async (req, res, next) => {
     try {
-      const { signedXDR, amount, claimants, predicate } = req.body;
+      const { sourceSecret, amount, claimants, predicate } = req.body;
 
       if (!Array.isArray(claimants) || claimants.length === 0) {
         return res.status(400).json({
@@ -2247,7 +2263,12 @@ router.post(
         });
       }
 
-      const result = await stellarService.submitSignedTransaction(signedXDR);
+      const result = await stellarService.createClaimableBalance({
+        sourceSecret,
+        amount,
+        claimants,
+        predicate,
+      });
 
       // Store claimable balance ID in transaction records
       Transaction.create({
@@ -2283,16 +2304,16 @@ router.post(
   asyncHandler(async (req, res, next) => {
     try {
       const { id } = req.params;
-      const { signedXDR } = req.body;
+      const { claimantSecret } = req.body;
 
-      if (!signedXDR) {
+      if (!claimantSecret) {
         return res.status(400).json({
           success: false,
-          error: { code: 'VALIDATION_ERROR', message: 'signedXDR is required' },
+          error: { code: 'VALIDATION_ERROR', message: 'claimantSecret is required' },
         });
       }
 
-      const result = await stellarService.submitSignedTransaction(signedXDR);
+      const result = await stellarService.claimBalance({ balanceId: id, claimantSecret });
 
       if (req.markLifecycleStage) req.markLifecycleStage(LIFECYCLE_STAGES.PROCESSED);
 
@@ -2502,32 +2523,6 @@ router.get('/:id/certificate/ipfs', checkPermission(PERMISSIONS.DONATIONS_READ),
     next(error);
   }
 }));
-
-/**
- * GET /donations/limits
- * Return the configured minimum and maximum donation amounts.
- * Response is cached for 1 hour (Cache-Control: public, max-age=3600).
- * ETag is derived from the config values so it changes when config changes.
- */
-router.get('/limits', checkPermission(PERMISSIONS.DONATIONS_READ), (req, res) => {
-  const config = require('../config');
-  const crypto = require('crypto');
-  const { minAmount, maxAmount, maxDailyPerDonor } = config.donations;
-
-  const limitsData = { minAmount, maxAmount, maxDailyPerDonor, currency: 'XLM' };
-  const etag = `"${crypto.createHash('sha256').update(JSON.stringify(limitsData)).digest('hex').slice(0, 32)}"`;
-
-  res.setHeader('Cache-Control', 'public, max-age=3600');
-  res.setHeader('ETag', etag);
-
-  // Conditional GET support
-  const ifNoneMatch = req.headers['if-none-match'];
-  if (ifNoneMatch && (ifNoneMatch === etag || ifNoneMatch === '*')) {
-    return res.status(304).end();
-  }
-
-  return res.json({ success: true, data: limitsData });
-});
 
 /**
  * GET /donations/stats/by-campaign

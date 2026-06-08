@@ -123,7 +123,7 @@ const auditLogMetrics = {
 
 /** In-memory buffer for pending audit log entries */
 const _pendingBuffer = [];
-const BUFFER_FLUSH_THRESHOLD = 20;
+const _BUFFER_FLUSH_THRESHOLD = 20;
 const BUFFER_FLUSH_INTERVAL_MS = 2000;
 let _autoFlushTimer = null;
 
@@ -276,6 +276,9 @@ class AuditLogService {
       return await AuditLogService._log(params);
     } catch (error) {
       this.logWriteFailure(error, params && params.category, params && params.action);
+      if (error.message === 'Missing required audit log fields') {
+        throw error;
+      }
       return { success: false, error: error.message };
     }
   }
@@ -297,7 +300,8 @@ class AuditLogService {
           resource TEXT,
           reason TEXT,
           details TEXT,
-          integrityHash TEXT NOT NULL
+          integrityHash TEXT NOT NULL,
+          createdAt DATETIME DEFAULT CURRENT_TIMESTAMP
         )
       `);
       tableInitialized = true;
@@ -346,8 +350,21 @@ class AuditLogService {
       const hash = this.generateHash(auditEntry);
       auditEntry.integrityHash = hash;
 
-      // Buffer entry; flush when threshold is reached
-      _pendingBuffer.push(auditEntry);
+      // Write directly to DB for immediate persistence
+      await AuditLogService.initializeTable();
+      const dbResult = await db.run(
+        `INSERT INTO audit_logs (
+          timestamp, category, action, severity, result,
+          userId, requestId, ipAddress, resource, reason,
+          details, integrityHash
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        [
+          auditEntry.timestamp, auditEntry.category, auditEntry.action, auditEntry.severity, auditEntry.result,
+          auditEntry.userId, auditEntry.requestId, auditEntry.ipAddress, auditEntry.resource, auditEntry.reason,
+          auditEntry.details, auditEntry.integrityHash
+        ]
+      );
+      auditEntry.id = dbResult.id;
 
       // Log to application logs for real-time monitoring
       const logLevel = severity === AUDIT_SEVERITY.HIGH ? 'warn' : 'info';
@@ -355,11 +372,7 @@ class AuditLogService {
         category, action, severity, result, userId, requestId, ipAddress, resource, reason
       });
 
-      if (_pendingBuffer.length >= BUFFER_FLUSH_THRESHOLD) {
-        AuditLogService.flush().catch(() => {});
-      }
-
-      return { buffered: true, ...auditEntry };
+      return auditEntry;
     } catch (error) {
       this.logWriteFailure(error, category, action);
       // Re-throw validation errors, swallow DB errors
@@ -388,12 +401,12 @@ class AuditLogService {
         for (const entry of entries) {
           await db.run(
             `INSERT INTO audit_logs (
-              timestamp, category, action, severity, result,
+              id, timestamp, category, action, severity, result,
               userId, requestId, ipAddress, resource, reason,
               details, integrityHash
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
             [
-              entry.timestamp, entry.category, entry.action, entry.severity, entry.result,
+              entry.id, entry.timestamp, entry.category, entry.action, entry.severity, entry.result,
               entry.userId, entry.requestId, entry.ipAddress, entry.resource, entry.reason,
               entry.details, entry.integrityHash
             ]

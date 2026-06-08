@@ -9,18 +9,18 @@ const request = require('supertest');
 const express = require('express');
 
 // Mock dependencies before requiring validation middleware
-jest.mock('../src/events/donationEvents', () => ({
+jest.mock('../../src/events/donationEvents', () => ({
   emit: jest.fn(),
   on: jest.fn()
 }));
 
-jest.mock('../src/routes/models/transaction', () => ({
+jest.mock('../../src/routes/models/transaction', () => ({
   getById: jest.fn(),
   create: jest.fn(),
   update: jest.fn()
 }));
 
-jest.mock('../src/routes/models/user', () => ({
+jest.mock('../../src/routes/models/user', () => ({
   getById: jest.fn(),
   getByWallet: jest.fn()
 }));

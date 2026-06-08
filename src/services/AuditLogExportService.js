@@ -13,7 +13,6 @@
  */
 
 const Database = require('../utils/database');
-const AuditLogService = require('./AuditLogService');
 const log = require('../utils/log');
 const { ValidationError, NotFoundError, ERROR_CODES } = require('../utils/errors');
 const crypto = require('crypto');
@@ -384,11 +383,11 @@ class AuditLogExportService {
         });
 
         // Convert to requested format
-        let content;
+        let _content;
         if (format === EXPORT_FORMAT.CSV) {
-          content = this.convertToCSV(logs);
+          _content = this.convertToCSV(logs);
         } else {
-          content = this.convertToJSON(logs);
+          _content = this.convertToJSON(logs);
         }
 
         // In production, save to file storage (S3, GCS, etc.)
@@ -457,7 +456,7 @@ class AuditLogExportService {
     const exportId = this.generateExportId();
 
     // Create export record
-    const exportRecord = await this.createExportRecord(
+    const _exportRecord = await this.createExportRecord(
       exportId,
       apiKeyId,
       { startDate, endDate, action },

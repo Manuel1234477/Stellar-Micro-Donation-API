@@ -1,6 +1,6 @@
 process.env.MOCK_STELLAR = 'true';
 
-jest.mock('../src/utils/database', () => ({
+jest.mock('../../src/utils/database', () => ({
   run: jest.fn(),
   get: jest.fn(),
   all: jest.fn(),
@@ -195,7 +195,7 @@ describe('Export routes', () => {
 
   beforeEach(() => {
     jest.resetModules();
-    jest.doMock('../src/middleware/apiKey', () => (req, _res, next) => {
+    jest.doMock('../../src/middleware/apiKey', () => (req, _res, next) => {
       req.user = { id: 'apikey-1', role: 'user' };
       next();
     });
@@ -204,7 +204,7 @@ describe('Export routes', () => {
       getExportStatus: jest.fn(),
       getSignedDownloadUrl: jest.fn(),
     };
-    jest.doMock('../src/services/ExportService', () => service);
+    jest.doMock('../../src/services/ExportService', () => service);
 
     const router = require('../../src/routes/exports');
     app = express();

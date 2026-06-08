@@ -7,7 +7,7 @@
  *   - GET  /donations/:id/receipt/status
  */
 
-jest.mock('../src/models/apiKeys', () => ({
+jest.mock('../../src/models/apiKeys', () => ({
   initializeApiKeysTable: jest.fn().mockResolvedValue(undefined),
   createApiKey: jest.fn(),
   listApiKeys: jest.fn(),
@@ -20,7 +20,7 @@ jest.mock('../src/models/apiKeys', () => ({
   revokeExpiredDeprecatedKeys: jest.fn().mockResolvedValue(0),
 }));
 
-jest.mock('../src/services/RecurringDonationScheduler', () => ({
+jest.mock('../../src/services/RecurringDonationScheduler', () => ({
   Class: class { start() {} stop() {} },
 }));
 

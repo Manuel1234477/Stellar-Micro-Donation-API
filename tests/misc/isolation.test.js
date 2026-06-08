@@ -164,7 +164,7 @@ describe('Test Isolation Verification', () => {
       clearModuleCache();
 
       // Module should be reloadable
-      delete require.cache[require.resolve('../src/utils/log')];
+      delete require.cache[require.resolve('../../src/utils/log')];
       const log2 = require('../../src/utils/log');
       expect(log2).toBeDefined();
     });

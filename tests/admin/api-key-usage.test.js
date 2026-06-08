@@ -8,7 +8,7 @@ const request = require('supertest');
 const ApiKeyUsageService = require('../../src/services/ApiKeyUsageService');
 
 // ─── App setup ───────────────────────────────────────────────────────────────
-jest.mock('../src/config/stellar', () => ({
+jest.mock('../../src/config/stellar', () => ({
   getStellarService: () => ({ getContractEvents: async () => [] }),
   useMockStellar: true,
   network: 'testnet',

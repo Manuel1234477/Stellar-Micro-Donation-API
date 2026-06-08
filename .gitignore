@@ -110,3 +110,6 @@ sdk/python/__pycache__/
 sdk/python/.coverage
 *.pyc
 .pytest_cache/
+
+# Generated encrypted backup artifacts from backup/restore tests
+data/backups/

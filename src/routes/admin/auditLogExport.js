@@ -96,7 +96,7 @@ const express = require('express');
 const router = express.Router();
 const { requireAdmin } = require('../../middleware/rbac');
 const AuditLogExportService = require('../../services/AuditLogExportService');
-const { ValidationError, NotFoundError, ERROR_CODES } = require('../../utils/errors');
+const { ValidationError, ERROR_CODES} = require('../../utils/errors');
 const asyncHandler = require('../../utils/asyncHandler');
 const { payloadSizeLimiter, ENDPOINT_LIMITS } = require('../../middleware/payloadSizeLimiter');
 

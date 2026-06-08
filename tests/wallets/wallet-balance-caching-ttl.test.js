@@ -9,14 +9,14 @@ const Transaction = require('../../src/routes/models/transaction');
 const Database = require('../../src/utils/database');
 const { TRANSACTION_STATES } = require('../../src/utils/transactionStateMachine');
 
-jest.mock('../src/routes/models/wallet');
-jest.mock('../src/routes/models/transaction');
-jest.mock('../src/utils/database');
-jest.mock('../src/middleware/rbac', () => ({
+jest.mock('../../src/routes/models/wallet');
+jest.mock('../../src/routes/models/transaction');
+jest.mock('../../src/utils/database');
+jest.mock('../../src/middleware/rbac', () => ({
   checkPermission: () => (req, res, next) => next(),
   requireAdmin: () => (req, res, next) => next()
 }));
-jest.mock('../src/config/serviceContainer', () => {
+jest.mock('../../src/config/serviceContainer', () => {
   return {
     getStellarService: jest.fn().mockReturnValue({
       getBalance: jest.fn()

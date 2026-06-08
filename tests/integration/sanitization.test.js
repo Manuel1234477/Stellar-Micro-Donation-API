@@ -10,12 +10,12 @@ const Transaction = require('../../src/routes/models/transaction');
 const Wallet = require('../../src/routes/models/wallet');
 
 // Mock dependencies
-jest.mock('../src/utils/database');
-jest.mock('../src/middleware/apiKey', () => (req, res, next) => next());
-jest.mock('../src/middleware/rbac', () => ({
+jest.mock('../../src/utils/database');
+jest.mock('../../src/middleware/apiKey', () => (req, res, next) => next());
+jest.mock('../../src/middleware/rbac', () => ({
   checkPermission: () => (req, res, next) => next()
 }));
-jest.mock('../src/middleware/idempotency', () => ({
+jest.mock('../../src/middleware/idempotency', () => ({
   requireIdempotency: (req, res, next) => {
     req.idempotency = { key: 'test-key-' + Date.now() };
     next();

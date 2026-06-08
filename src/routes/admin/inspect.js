@@ -2,7 +2,7 @@ const express = require('express');
 const StellarSdk = require('stellar-sdk');
 const Transaction = require('../models/transaction');
 const { requireAdmin } = require('../../middleware/rbac');
-const { ERROR_CODES, ValidationError, NotFoundError } = require('../../utils/errors');
+const { ValidationError, NotFoundError} = require('../../utils/errors');
 const log = require('../../utils/log');
 
 const router = express.Router();

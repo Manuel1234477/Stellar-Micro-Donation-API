@@ -75,78 +75,7 @@ class MockStellarService extends StellarServiceInterface {
       if (!wallet) throw new ValidationError('Wallet not found');
       return wallet.inflationDestination || null;
     }
-    /**
-     * Create a mock claimable balance.
-     * @param {string} sourceSecret - Secret key of the source account
-     * @param {object} asset - Asset object (native or custom)
-     * @param {string} amount - Amount to lock in the claimable balance
-     * @param {Array<object>} claimants - Array of claimant objects
-     * @returns {Promise<{balanceId: string, transactionId: string, ledger: number}>}
-     */
-    async createClaimableBalance(sourceSecret, asset, amount, claimants) {
-      await this._simulateNetworkDelay();
-      this._checkRateLimit();
-      this._simulateFailure();
-      this._validateSecretKey(sourceSecret);
-      this._validateAmount(amount);
-      const sourceWallet = this._findWalletBySecret(sourceSecret);
-      if (!sourceWallet) throw new NotFoundError('Source wallet not found', ERROR_CODES.WALLET_NOT_FOUND);
-      const assetKey = getAssetKey(asset || NATIVE_ASSET);
-      const sourceBalance = parseFloat(sourceWallet.assetBalances[assetKey] || '0');
-      const amountNum = parseFloat(amount);
-      if (sourceBalance < amountNum) throw new BusinessLogicError(ERROR_CODES.INSUFFICIENT_BALANCE, 'Insufficient balance for claimable balance creation');
-      // Deduct from source
-      this._setWalletAssetBalance(sourceWallet, asset || NATIVE_ASSET, sourceBalance - amountNum);
-      // Create claimable balance object
-      if (!this._claimableBalances) this._claimableBalances = new Map();
-      const balanceId = `mock_cb_${crypto.randomBytes(12).toString('hex')}`;
-      const cb = {
-        balanceId,
-        asset: asset || NATIVE_ASSET,
-        amount: amountNum.toFixed(7),
-        claimants: claimants.map(c => ({ destination: c.destination, predicate: c.predicate })),
-        claimed: false,
-        claimedBy: null,
-        createdBy: sourceWallet.publicKey,
-        createdAt: new Date().toISOString(),
-      };
-      this._claimableBalances.set(balanceId, cb);
-      // Simulate transaction
-      const transactionId = `mock_tx_${crypto.randomBytes(8).toString('hex')}`;
-      return { balanceId, transactionId, ledger: Math.floor(Math.random() * 1000000) + 1 };
-    }
 
-    /**
-     * Claim a mock claimable balance.
-     * @param {string} claimantSecret - Secret key of the claimant
-     * @param {string} balanceId - Claimable balance ID
-     * @returns {Promise<{transactionId: string, ledger: number}>}
-     */
-    async claimBalance(claimantSecret, balanceId) {
-      await this._simulateNetworkDelay();
-      this._checkRateLimit();
-      this._simulateFailure();
-      this._validateSecretKey(claimantSecret);
-      if (!this._claimableBalances) throw new NotFoundError('No claimable balances exist');
-      const cb = this._claimableBalances.get(balanceId);
-      if (!cb) throw new NotFoundError('Claimable balance not found');
-      if (cb.claimed) throw new BusinessLogicError(ERROR_CODES.TRANSACTION_FAILED, 'Claimable balance already claimed');
-      const claimantWallet = this._findWalletBySecret(claimantSecret);
-      if (!claimantWallet) throw new NotFoundError('Claimant wallet not found', ERROR_CODES.WALLET_NOT_FOUND);
-      // Check if claimant is authorized
-      const isClaimant = cb.claimants.some(c => c.destination === claimantWallet.publicKey);
-      if (!isClaimant) throw new BusinessLogicError(ERROR_CODES.PERMISSION_DENIED, 'Not an authorized claimant');
-      // Credit to claimant
-      const assetKey = getAssetKey(cb.asset);
-      const prev = parseFloat(claimantWallet.assetBalances[assetKey] || '0');
-      this._setWalletAssetBalance(claimantWallet, cb.asset, prev + parseFloat(cb.amount));
-      cb.claimed = true;
-      cb.claimedBy = claimantWallet.publicKey;
-      cb.claimedAt = new Date().toISOString();
-      // Simulate transaction
-      const transactionId = `mock_tx_${crypto.randomBytes(8).toString('hex')}`;
-      return { transactionId, ledger: Math.floor(Math.random() * 1000000) + 1 };
-    }
   constructor(config = {}) {
     super();
     this.wallets = new Map();
@@ -509,6 +438,34 @@ class MockStellarService extends StellarServiceInterface {
       }
     }
     return null;
+  }
+
+  /**
+   * Resolve the public key for a given secret seed.
+   * Returns the public key of a known wallet when the secret matches one,
+   * otherwise derives a deterministic mock public key from the secret so
+   * callers receive a stable G... address for unknown secrets.
+   * @param {string|{secretKey:string}} secret - Stellar secret seed.
+   * @returns {string} Stellar public key (G...).
+   * @private
+   */
+  _secretToPublic(secret) {
+    if (secret && typeof secret === 'object' && secret.secretKey) {
+      secret = secret.secretKey;
+    }
+    const wallet = this._findWalletBySecret(secret);
+    if (wallet) {
+      return wallet.publicKey;
+    }
+    // Deterministic fallback: derive a stable G-address from the secret.
+    // eslint-disable-next-line no-secrets/no-secrets
+    const base32Chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ234567';
+    const hash = crypto.createHash('sha256').update(String(secret || '')).digest();
+    let key = 'G';
+    for (let i = 0; i < 55; i += 1) {
+      key += base32Chars[hash[i % hash.length] % base32Chars.length];
+    }
+    return key;
   }
 
   _ensureDestinationFunded(wallet) {
@@ -2593,6 +2550,8 @@ class MockStellarService extends StellarServiceInterface {
     if (domain.length > 32) {
       throw new ValidationError('domain must be 32 characters or fewer per Stellar spec');
     }
+    // Input is already length-capped to <=32 chars above (heuristic false positive).
+    // eslint-disable-next-line security/detect-unsafe-regex
     if (!/^[a-zA-Z0-9]([a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?(\.[a-zA-Z0-9]([a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?)*$/.test(domain)) {
       throw new ValidationError('domain must be a valid hostname with no protocol or path');
     }
@@ -2719,71 +2678,6 @@ class MockStellarService extends StellarServiceInterface {
     if (!this._orderbookListeners) return 0;
     const key = `${sellingAsset}:${buyingAsset}`;
     return this._orderbookListeners.has(key) ? this._orderbookListeners.get(key).size : 0;
-  }
-
-  /**
-   * Add a trustline for an asset to an account (mock implementation).
-   * @param {string} publicKey - Account public key
-   * @param {Object} asset - Asset object with code and issuer
-   * @returns {Promise<{hash: string, ledger: number}>}
-   */
-  async addTrustline(publicKey, asset) {
-    return this._executeWithRetry(async () => {
-      await this._simulateNetworkDelay();
-      this._checkRateLimit();
-      this._validatePublicKey(publicKey);
-      this._simulateFailure();
-
-      // Validate asset code
-      if (!asset.code || !/^[A-Za-z0-9]{1,12}$/.test(asset.code)) {
-        throw new ValidationError('Asset code must be 1-12 alphanumeric characters');
-      }
-
-      // Validate issuer
-      if (!asset.issuer || !this.isValidAddress(asset.issuer)) {
-        throw new ValidationError('Invalid issuer public key');
-      }
-
-      const wallet = this.wallets.get(publicKey);
-      if (!wallet) {
-        throw new NotFoundError('Account not found', ERROR_CODES.WALLET_NOT_FOUND);
-      }
-
-      // Initialize trustlines array if it doesn't exist
-      if (!wallet.trustlines) {
-        wallet.trustlines = new Map();
-      }
-
-      const assetKey = getAssetKey(asset);
-      
-      // Check if trustline already exists
-      if (wallet.trustlines.has(assetKey)) {
-        throw new BusinessLogicError(
-          ERROR_CODES.TRANSACTION_FAILED,
-          'Trustline already exists for this asset'
-        );
-      }
-
-      // Add trustline with zero balance and maximum limit
-      wallet.trustlines.set(assetKey, {
-        asset: { code: asset.code, issuer: asset.issuer },
-        balance: '0.0000000',
-        limit: '922337203685.4775807', // Maximum Stellar limit
-        active: true
-      });
-
-      const hash = `mock_${crypto.randomBytes(16).toString('hex')}`;
-      const ledger = Math.floor(Math.random() * 1000000) + 1;
-
-      log.info('MOCK_STELLAR_SERVICE', 'Trustline added', {
-        publicKey,
-        assetCode: asset.code,
-        issuer: asset.issuer,
-        hash
-      });
-
-      return { hash, ledger };
-    });
   }
 
   /**

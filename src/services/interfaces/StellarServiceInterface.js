@@ -92,10 +92,6 @@ class StellarServiceInterface {
     throw new Error('pathPayment() must be implemented');
   }
 
-  isValidAddress(_address) {
-    void _address;
-    throw new Error('isValidAddress() must be implemented');
-  }
 
   stroopsToXlm(_stroops) {
     void _stroops;

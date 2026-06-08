@@ -220,15 +220,15 @@ router.post('/test', ...auth, async (req, res, next) => {
       return respondError(res, 400, 'VALIDATION_ERROR', 'ip is required');
     }
 
-    // Validate IP format (basic check)
+    // Validate IP format (basic check). Fixed {3} repetition — linear, not ReDoS-prone.
+    // eslint-disable-next-line security/detect-unsafe-regex
     const ipRegex = /^(\d{1,3}\.){3}\d{1,3}$/;
     if (!ipRegex.test(ip)) {
       return respondError(res, 400, 'INVALID_IP_FORMAT', 'ip must be a valid IPv4 address');
     }
 
     // Check if it's a private/reserved IP
-    const isPrivateIP = this.isPrivateIP(ip);
-    if (isPrivateIP) {
+    if (isPrivateIP(ip)) {
       return respondSuccess(res, {
         allowed: true,
         country: null,
@@ -244,7 +244,7 @@ router.post('/test', ...auth, async (req, res, next) => {
     const decision = geoBlockMiddleware.shouldBlock(ip, ruleState);
 
     // Get country name from country code
-    const countryName = countryCode ? this.getCountryName(countryCode) : null;
+    const countryName = countryCode ? getCountryName(countryCode) : null;
 
     // Determine matched rule details
     let matchedRule = null;
@@ -453,3 +453,5 @@ function getCountryName(countryCode) {
   };
   return countryNames[countryCode] || null;
 }
+
+module.exports = router;

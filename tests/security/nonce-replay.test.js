@@ -228,14 +228,14 @@ describe('apiKey middleware – nonce enforcement', () => {
     // Stub the nonce store so we control seen/unseen.
     mockNonceStore = { check: jest.fn().mockReturnValue({ seen: false }) };
 
-    jest.mock('../src/models/apiKeys', () => ({ validateKey: mockValidateKey }));
-    jest.mock('../src/utils/nonceStore', () => ({ defaultStore: mockNonceStore }));
-    jest.mock('../src/config/securityConfig', () => ({ securityConfig: { API_KEYS: [] } }));
-    jest.mock('../src/services/AuditLogService', () => ({ log: jest.fn().mockResolvedValue(undefined), CATEGORY: {}, ACTION: {}, SEVERITY: {} }));
-    jest.mock('../src/utils/log', () => ({ warn: jest.fn(), error: jest.fn(), info: jest.fn() }));
+    jest.mock('../../src/models/apiKeys', () => ({ validateKey: mockValidateKey }));
+    jest.mock('../../src/utils/nonceStore', () => ({ defaultStore: mockNonceStore }));
+    jest.mock('../../src/config/securityConfig', () => ({ securityConfig: { API_KEYS: [] } }));
+    jest.mock('../../src/services/AuditLogService', () => ({ log: jest.fn().mockResolvedValue(undefined), CATEGORY: {}, ACTION: {}, SEVERITY: {} }));
+    jest.mock('../../src/utils/log', () => ({ warn: jest.fn(), error: jest.fn(), info: jest.fn() }));
 
     // Stub requestSigner to always return valid so we isolate nonce logic.
-    jest.mock('../src/utils/requestSigner', () => ({
+    jest.mock('../../src/utils/requestSigner', () => ({
       verify: jest.fn().mockReturnValue({ valid: true }),
       SIGNATURE_MAX_AGE_MS: 300_000,
     }));

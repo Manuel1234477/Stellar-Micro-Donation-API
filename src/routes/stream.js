@@ -159,7 +159,7 @@ const streamScheduleIdSchema = validateSchema({
  */
 router.post('/create', payloadSizeLimiter(ENDPOINT_LIMITS.stream), requestTimeout(TIMEOUTS.stream), checkPermission(PERMISSIONS.STREAM_CREATE), streamCreateSchema, asyncHandler(async (req, res, next) => {
   try {
-    const { donorPublicKey, recipientPublicKey, amount, frequency, customIntervalDays } = req.body;
+    const { donorPublicKey, recipientPublicKey, amount, frequency } = req.body;
 
     // Validate required fields
     const requiredValidation = validateRequiredFields(

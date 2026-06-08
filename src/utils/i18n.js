@@ -1,4 +1,5 @@
-const Translation = require('../models/Translation');
+const Translation = require('../models/translation');
+const log = require('./log');
 
 // In-memory cache
 let translationCache = {};
@@ -22,11 +23,11 @@ const loadTranslations = async () => {
     });
 
     lastCacheUpdate = now;
-    console.log(`[i18n] Loaded ${Object.keys(translationCache).length} translation keys from DB`);
+    log.info('I18N', 'Loaded translation keys from DB', { count: Object.keys(translationCache).length });
     
     return translationCache;
   } catch (error) {
-    console.error('[i18n] Failed to load translations from DB:', error.message);
+    log.error('I18N', 'Failed to load translations from DB', { error: error.message });
     return translationCache; // fallback to existing cache
   }
 };

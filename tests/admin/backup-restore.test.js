@@ -217,7 +217,7 @@ describe('Admin backup routes', () => {
     app.use(express.json());
 
     // Bypass RBAC for route tests
-    jest.mock('../src/middleware/rbac', () => ({
+    jest.mock('../../src/middleware/rbac', () => ({
       checkPermission: () => (req, res, next) => next(),
       requireAdmin: () => (req, res, next) => next(),
     }));

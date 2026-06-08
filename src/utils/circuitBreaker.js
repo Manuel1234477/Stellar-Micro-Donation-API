@@ -11,6 +11,7 @@
  *  - windowMs         : 60 000 ms (60 s) sliding failure window
  *  - cooldownMs       : 30 000 ms (30 s) before a probe is attempted
  */
+const log = require('./log');
 
 const STATES = Object.freeze({ CLOSED: 'closed', OPEN: 'open', HALF_OPEN: 'half_open' });
 
@@ -73,7 +74,7 @@ class CircuitBreaker {
       }
       // CLOSED or HALF_OPEN: start fresh (CLOSED is safe default)
     } catch (err) {
-      console.error(`[CircuitBreaker:${this.name}] loadState error:`, err.message);
+      log.error('CIRCUIT_BREAKER', 'loadState error', { name: this.name, error: err.message });
     }
   }
 
@@ -94,7 +95,7 @@ class CircuitBreaker {
          lastFailureAt = excluded.lastFailureAt,
          openedAt = excluded.openedAt`,
       [this.name, this._state, this._failures.length, now, this._openedAt]
-    ).catch(err => console.error(`[CircuitBreaker:${this.name}] persistState error:`, err.message));
+    ).catch(err => log.error('CIRCUIT_BREAKER', 'persistState error', { name: this.name, error: err.message }));
   }
 
   /** @returns {'closed'|'open'|'half_open'} */

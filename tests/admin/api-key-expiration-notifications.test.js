@@ -576,7 +576,7 @@ describe('RecurringDonationScheduler — expiry notification integration', () =>
   it('references ApiKeyExpirationNotifier in scheduler source', () => {
     const fs = require('fs');
     const schedulerSource = fs.readFileSync(
-      require.resolve('../src/services/RecurringDonationScheduler.js'),
+      require.resolve('../../src/services/RecurringDonationScheduler.js'),
       'utf8'
     );
     expect(schedulerSource).toContain('ApiKeyExpirationNotifier');

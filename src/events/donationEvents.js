@@ -1,4 +1,5 @@
 const { EventEmitter } = require('events');
+const log = require('../utils/log');
 
 /**
  * DonationEvents - Event emitter for donation lifecycle events
@@ -41,8 +42,8 @@ class DonationEvents extends EventEmitter {
       try {
         listener(payload);
       } catch (error) {
-        console.error(`Error in hook ${index + 1} for event ${eventName}:`, error.message);
-        console.error('Hook error details:', error);
+        log.error('DONATION_EVENTS', 'Error in event hook', { hook: index + 1, event: eventName, error: error.message });
+        log.debug('DONATION_EVENTS', 'Hook error details', { error: error && error.message });
       }
     });
   }

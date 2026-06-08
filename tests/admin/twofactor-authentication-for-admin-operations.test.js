@@ -55,7 +55,7 @@ const mockDb = {
   async query() { return []; },
 };
 
-jest.mock('../src/utils/database', () => mockDb);
+jest.mock('../../src/utils/database', () => mockDb);
 
 const TOTPService = require('../../src/services/TOTPService');
 const {
@@ -400,7 +400,7 @@ describe('requireAdmin middleware with TOTP', () => {
   beforeEach(() => jest.resetModules());
 
   test('passes through when TOTP is not enabled', async () => {
-    jest.mock('../src/services/TOTPService', () => ({
+    jest.mock('../../src/services/TOTPService', () => ({
       isTotpEnabled: jest.fn().mockResolvedValue(false),
       verify: jest.fn(), verifyBackupCode: jest.fn(),
     }));
@@ -411,7 +411,7 @@ describe('requireAdmin middleware with TOTP', () => {
   });
 
   test('returns 401 + X-TOTP-Required when TOTP enabled but no code supplied', async () => {
-    jest.mock('../src/services/TOTPService', () => ({
+    jest.mock('../../src/services/TOTPService', () => ({
       isTotpEnabled: jest.fn().mockResolvedValue(true),
       verify: jest.fn(), verifyBackupCode: jest.fn(),
     }));
@@ -424,7 +424,7 @@ describe('requireAdmin middleware with TOTP', () => {
   });
 
   test('returns 401 + X-TOTP-Required for invalid TOTP code', async () => {
-    jest.mock('../src/services/TOTPService', () => ({
+    jest.mock('../../src/services/TOTPService', () => ({
       isTotpEnabled: jest.fn().mockResolvedValue(true),
       verify: jest.fn().mockResolvedValue(false),
       verifyBackupCode: jest.fn().mockResolvedValue(false),
@@ -439,7 +439,7 @@ describe('requireAdmin middleware with TOTP', () => {
   });
 
   test('passes through with valid TOTP code in X-TOTP-Code header', async () => {
-    jest.mock('../src/services/TOTPService', () => ({
+    jest.mock('../../src/services/TOTPService', () => ({
       isTotpEnabled: jest.fn().mockResolvedValue(true),
       verify: jest.fn().mockResolvedValue(true),
       verifyBackupCode: jest.fn().mockResolvedValue(false),
@@ -453,7 +453,7 @@ describe('requireAdmin middleware with TOTP', () => {
   });
 
   test('passes through with valid backup code in header', async () => {
-    jest.mock('../src/services/TOTPService', () => ({
+    jest.mock('../../src/services/TOTPService', () => ({
       isTotpEnabled: jest.fn().mockResolvedValue(true),
       verify: jest.fn().mockResolvedValue(false),
       verifyBackupCode: jest.fn().mockResolvedValue(true),
@@ -467,7 +467,7 @@ describe('requireAdmin middleware with TOTP', () => {
   });
 
   test('accepts TOTP code from request body totpCode field', async () => {
-    jest.mock('../src/services/TOTPService', () => ({
+    jest.mock('../../src/services/TOTPService', () => ({
       isTotpEnabled: jest.fn().mockResolvedValue(true),
       verify: jest.fn().mockResolvedValue(true),
       verifyBackupCode: jest.fn().mockResolvedValue(false),
@@ -482,7 +482,7 @@ describe('requireAdmin middleware with TOTP', () => {
   });
 
   test('skips TOTP check for legacy keys', async () => {
-    jest.mock('../src/services/TOTPService', () => ({
+    jest.mock('../../src/services/TOTPService', () => ({
       isTotpEnabled: jest.fn(), verify: jest.fn(), verifyBackupCode: jest.fn(),
     }));
     const { requireAdmin: ra } = require('../../src/middleware/rbac');
@@ -495,7 +495,7 @@ describe('requireAdmin middleware with TOTP', () => {
   });
 
   test('returns 403 for non-admin role', async () => {
-    jest.mock('../src/services/TOTPService', () => ({
+    jest.mock('../../src/services/TOTPService', () => ({
       isTotpEnabled: jest.fn().mockResolvedValue(false),
       verify: jest.fn(), verifyBackupCode: jest.fn(),
     }));

@@ -4,7 +4,7 @@ const { getFeeStats, getCongestionLevel, buildRecommendations } = require('../..
 const Cache = require('../../src/utils/cache');
 
 // Mock the http/https fetch so no real network calls are made
-jest.mock('../src/services/NetworkFeeService', () => {
+jest.mock('../../src/services/NetworkFeeService', () => {
   const actual = jest.requireActual('../src/services/NetworkFeeService');
   return {
     ...actual,

@@ -12,7 +12,7 @@ const { PERMISSIONS, ROLES } = require('../../src/utils/permissions');
 const { validateApiKey } = require('../../src/models/apiKeys');
 const { errorHandler } = require('../../src/middleware/errorHandler');
 
-jest.mock('../src/models/apiKeys');
+jest.mock('../../src/models/apiKeys');
 
 describe('Negative Authorization Tests', () => {
   let app;

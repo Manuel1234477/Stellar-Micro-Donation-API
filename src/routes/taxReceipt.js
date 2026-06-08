@@ -13,11 +13,10 @@ const express = require('express');
 const router = express.Router();
 const { checkPermission, requireAdmin } = require('../middleware/rbac');
 const { PERMISSIONS } = require('../utils/permissions');
-const { ValidationError, NotFoundError, ERROR_CODES } = require('../utils/errors');
+const { ValidationError, ERROR_CODES} = require('../utils/errors');
 const { validateSchema } = require('../middleware/schemaValidation');
 const AuditLogService = require('../services/AuditLogService');
 const TaxReceiptService = require('../services/TaxReceiptService');
-const log = require('../utils/log');
 const asyncHandler = require('../utils/asyncHandler');
 
 /**

@@ -245,7 +245,7 @@ class MatchingProgramService {
       throw new ValidationError(`Invalid status. Must be one of: ${validStatuses.join(', ')}`);
     }
 
-    const program = await this.getById(id);
+    const _program = await this.getById(id);
     await Database.run(
       `UPDATE matching_programs SET status = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?`,
       [status, id]

@@ -5,39 +5,39 @@
 const Database = require('../utils/database');
 const AuditLogService = require('../services/AuditLogService');
 const DonationExportService = require('../services/DonationExportService');
+const log = require('../utils/log');
 
 async function runCleanup() {
-  console.log('--- Starting Soft Delete Cleanup Job ---');
-  
+  log.info('CLEANUP_JOB', 'Starting soft delete cleanup job');
+
   try {
     const retentionPeriod = "30 days";
 
     // 1. Hard delete transactions older than 30 days
-    const txResult = await Database.run(
+    await Database.run(
       `DELETE FROM transactions WHERE deleted_at < date('now', '-${retentionPeriod}')`
     );
 
     // 2. Hard delete users (wallets) older than 30 days
-    const userResult = await Database.run(
+    await Database.run(
       `DELETE FROM users WHERE deleted_at < date('now', '-${retentionPeriod}')`
     );
 
-    console.log(`✓ Cleaned up expired transactions.`);
-    console.log(`✓ Cleaned up expired wallets.`);
+    log.info('CLEANUP_JOB', 'Cleaned up expired transactions and wallets');
 
     // 3. Clean up expired refresh token revocations (Issue #68)
     try {
       const { cleanupExpiredRevocations } = require('../services/JwtService');
       const deleted = await cleanupExpiredRevocations();
-      console.log(`✓ Cleaned up ${deleted} expired refresh token revocations.`);
+      log.info('CLEANUP_JOB', 'Cleaned up expired refresh token revocations', { deleted });
     } catch (_) { /* table may not exist yet */ }
 
     // 4. Clean up expired donation exports (Issue #123)
     try {
       const deletedExports = await DonationExportService.deleteExpiredExports();
-      console.log(`✓ Cleaned up ${deletedExports} expired donation exports.`);
+      log.info('CLEANUP_JOB', 'Cleaned up expired donation exports', { deletedExports });
     } catch (err) {
-      console.error('✗ Failed to clean up donation exports:', err.message);
+      log.error('CLEANUP_JOB', 'Failed to clean up donation exports', { error: err.message });
     }
 
     // 5. Log the cleanup for audit purposes
@@ -46,17 +46,17 @@ async function runCleanup() {
       action: 'SOFT_DELETE_CLEANUP',
       severity: AuditLogService.SEVERITY.LOW,
       result: 'SUCCESS',
-      details: { 
+      details: {
         retention: retentionPeriod,
         timestamp: new Date().toISOString()
       }
     });
 
   } catch (error) {
-    console.error('✗ Cleanup Job Failed:', error.message);
+    log.error('CLEANUP_JOB', 'Cleanup job failed', { error: error.message });
   }
-  
-  console.log('--- Cleanup Job Finished ---');
+
+  log.info('CLEANUP_JOB', 'Cleanup job finished');
 }
 
 // Export for use in a cron job or manual trigger

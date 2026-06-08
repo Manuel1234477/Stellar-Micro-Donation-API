@@ -13,12 +13,12 @@
 
 // ─── Mocks ────────────────────────────────────────────────────────────────────
 
-jest.mock('../src/utils/database', () => ({
+jest.mock('../../src/utils/database', () => ({
   run: jest.fn(),
   get: jest.fn(),
   query: jest.fn(),
 }));
-jest.mock('../src/middleware/rbac', () => ({
+jest.mock('../../src/middleware/rbac', () => ({
   checkPermission: () => (req, res, next) => {
     req.user = { id: 'admin-user', role: 'admin' };
     next();
@@ -28,13 +28,13 @@ jest.mock('../src/middleware/rbac', () => ({
     next();
   },
 }));
-jest.mock('../src/services/AuditLogService', () => ({
+jest.mock('../../src/services/AuditLogService', () => ({
   log: jest.fn().mockResolvedValue(undefined),
   CATEGORY: { CONFIGURATION: 'CONFIGURATION', DATA_ACCESS: 'DATA_ACCESS', FINANCIAL_OPERATION: 'FINANCIAL_OPERATION', AUTHORIZATION: 'AUTHORIZATION' },
   ACTION: {},
   SEVERITY: { HIGH: 'HIGH', MEDIUM: 'MEDIUM', LOW: 'LOW' },
 }));
-jest.mock('../src/config/serviceContainer', () => ({
+jest.mock('../../src/config/serviceContainer', () => ({
   getRecurringDonationScheduler: jest.fn(() => mockScheduler),
   getStellarService: jest.fn(() => ({})),
 }));

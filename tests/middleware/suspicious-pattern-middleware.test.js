@@ -10,7 +10,7 @@ const suspiciousPatternMiddleware = require('../../src/middleware/suspiciousPatt
 const suspiciousPatternDetector = require('../../src/utils/suspiciousPatternDetector');
 const log = require('../../src/utils/log');
 
-jest.mock('../src/utils/log');
+jest.mock('../../src/utils/log');
 
 describe('Suspicious Pattern Middleware Integration', () => {
   let app;

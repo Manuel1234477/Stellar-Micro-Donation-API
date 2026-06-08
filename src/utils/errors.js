@@ -105,6 +105,7 @@ class AppError extends Error {
     }
 
     this.statusCode = statusCode;
+    this.status = statusCode;
     this.details = details;
     this.timestamp = new Date().toISOString();
     Error.captureStackTrace(this, this.constructor);

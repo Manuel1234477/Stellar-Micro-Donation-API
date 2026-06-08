@@ -294,7 +294,7 @@ function reencryptMemo(memoRecord, decryptFn, encryptFn) {
 
   // Encrypt with active version
   const newActiveVersion = getActiveKeyVersion();
-  const newVersionedCiphertext = encryptFn(plaintext, newActiveVersion);
+  const _newVersionedCiphertext = encryptFn(plaintext, newActiveVersion);
 
   return {
     ...memoRecord.encryptionMetadata,

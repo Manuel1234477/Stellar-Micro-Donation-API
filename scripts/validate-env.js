@@ -37,7 +37,6 @@ function error(name, detail) {
 
 function isBool(v) { return v === 'true' || v === 'false'; }
 function isPositiveInt(v) { return /^\d+$/.test(v) && parseInt(v, 10) > 0; }
-function isNonNegativeInt(v) { return /^\d+$/.test(v); }
 function isPositiveNumber(v) { return !isNaN(parseFloat(v)) && parseFloat(v) > 0; }
 function isNonNegativeNumber(v) { return !isNaN(parseFloat(v)) && parseFloat(v) >= 0; }
 

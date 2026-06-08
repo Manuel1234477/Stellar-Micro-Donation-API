@@ -15,7 +15,7 @@ const AccountMonitorService = require('../../src/services/AccountMonitorService'
 jest.mock('axios');
 
 // ─── App setup ───────────────────────────────────────────────────────────────
-jest.mock('../src/config/stellar', () => ({
+jest.mock('../../src/config/stellar', () => ({
   getStellarService: () => new MockStellarService(),
   useMockStellar: true,
   network: 'testnet',

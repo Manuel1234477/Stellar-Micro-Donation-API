@@ -8,7 +8,7 @@ const { createRateLimiter } = require('../../src/middleware/rateLimiter');
 const { requireApiKey } = require('../../src/middleware/apiKey');
 
 // Mock API key validation to focus on rate limiting
-jest.mock('../src/middleware/apiKey', () => ({
+jest.mock('../../src/middleware/apiKey', () => ({
   requireApiKey: (req, res, next) => {
     const key = req.headers['x-api-key'];
     if (!key || key === '') {

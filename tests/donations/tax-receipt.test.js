@@ -13,8 +13,8 @@ const Database = require('../../src/utils/database');
 const config = require('../../src/config');
 
 // Mock dependencies
-jest.mock('../src/utils/database');
-jest.mock('../src/services/PriceOracleService', () => ({
+jest.mock('../../src/utils/database');
+jest.mock('../../src/services/PriceOracleService', () => ({
   getPriceAtTime: jest.fn().mockResolvedValue(0.15)
 }));
 

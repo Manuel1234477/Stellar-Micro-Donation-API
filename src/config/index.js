@@ -115,7 +115,10 @@ const validateUrl = (value, varName) => {
  * Validate IP address or CIDR range
  */
 const isValidIPOrCIDR = (ip) => {
+  // Fixed {3} repetition with no nested unbounded quantifiers — linear, not ReDoS-prone.
+  // eslint-disable-next-line security/detect-unsafe-regex
   const ipRegex = /^(?:[0-9]{1,3}\.){3}[0-9]{1,3}$/;
+  // eslint-disable-next-line security/detect-unsafe-regex
   const cidrRegex = /^(?:[0-9]{1,3}\.){3}[0-9]{1,3}\/[0-9]{1,2}$/;
 
   if (ipRegex.test(ip)) {

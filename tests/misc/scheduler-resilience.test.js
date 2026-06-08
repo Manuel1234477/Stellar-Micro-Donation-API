@@ -3,10 +3,10 @@ const Database = require('../../src/utils/database');
 const MockStellarService = require('../../src/services/MockStellarService');
 
 // Mock Database
-jest.mock('../src/utils/database');
+jest.mock('../../src/utils/database');
 
 // Mock MockStellarService
-jest.mock('../src/services/MockStellarService');
+jest.mock('../../src/services/MockStellarService');
 
 describe('Recurring Donation Scheduler - Resilience Tests', () => {
   let scheduler;

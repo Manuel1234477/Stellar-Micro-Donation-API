@@ -108,7 +108,7 @@ pubsub.filteredIterator = function (topic, filter = {}) {
 
   return {
     async next() {
-      while (true) {
+      for (;;) {
         const result = await base.next();
         if (result.done) return result;
         const p = result.value;

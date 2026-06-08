@@ -223,7 +223,7 @@ class AdminCrowdfundingService {
 
     // Idempotent: already closed
     if (campaign.status === 'closed') {
-      const milestones = await Database.query(
+      const _milestones = await Database.query(
         'SELECT * FROM campaign_milestones WHERE campaign_id = ? ORDER BY target_amount ASC',
         [id]
       );

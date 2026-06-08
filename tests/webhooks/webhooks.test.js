@@ -5,7 +5,7 @@
  */
 
 // Mock broken modules with duplicate declarations (pre-existing issue)
-jest.mock('../src/models/apiKeys', () => ({
+jest.mock('../../src/models/apiKeys', () => ({
   initializeApiKeysTable: jest.fn().mockResolvedValue(undefined),
   createApiKey: jest.fn(),
   listApiKeys: jest.fn(),
@@ -16,12 +16,12 @@ jest.mock('../src/models/apiKeys', () => ({
   revokeExpiredDeprecatedKeys: jest.fn().mockResolvedValue(0),
 }));
 
-jest.mock('../src/services/RecurringDonationScheduler', () => ({
+jest.mock('../../src/services/RecurringDonationScheduler', () => ({
   Class: class { start() {} stop() {} },
 }));
 
 // Database mock — store lives inside the factory to satisfy Jest's scope rules
-jest.mock('../src/utils/database', () => {
+jest.mock('../../src/utils/database', () => {
   const mockStore = { rows: [], nextId: 1 };
 
   const run = jest.fn().mockImplementation(async (sql, params) => {

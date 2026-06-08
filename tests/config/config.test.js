@@ -23,7 +23,7 @@ describe('Centralized Configuration Module', () => {
         API_KEYS: 'test-key'
       });
 
-      delete require.cache[require.resolve('../src/config')];
+      delete require.cache[require.resolve('../../src/config')];
       config = require('../../src/config');
 
       expect(config.server.port).toBe(3000);
@@ -43,7 +43,7 @@ describe('Centralized Configuration Module', () => {
         MAX_DONATION_AMOUNT: '5000'
       });
 
-      delete require.cache[require.resolve('../src/config')];
+      delete require.cache[require.resolve('../../src/config')];
       config = require('../../src/config');
 
       expect(config.server.port).toBe(4000);
@@ -58,7 +58,7 @@ describe('Centralized Configuration Module', () => {
         // Intentionally missing API_KEYS
       });
 
-      delete require.cache[require.resolve('../src/config')];
+      delete require.cache[require.resolve('../../src/config')];
       
       expect(() => {
         config = require('../../src/config');
@@ -75,7 +75,7 @@ describe('Centralized Configuration Module', () => {
         API_PREFIX: '/api/v2'
       });
 
-      delete require.cache[require.resolve('../src/config')];
+      delete require.cache[require.resolve('../../src/config')];
       config = require('../../src/config');
 
       expect(config.server).toMatchObject({
@@ -95,7 +95,7 @@ describe('Centralized Configuration Module', () => {
         ENCRYPTION_KEY: 'prod-encryption-key'
       });
 
-      delete require.cache[require.resolve('../src/config')];
+      delete require.cache[require.resolve('../../src/config')];
       config = require('../../src/config');
 
       expect(config.server.isProduction).toBe(true);
@@ -110,7 +110,7 @@ describe('Centralized Configuration Module', () => {
         API_KEYS: 'test-key'
       });
 
-      delete require.cache[require.resolve('../src/config')];
+      delete require.cache[require.resolve('../../src/config')];
       config = require('../../src/config');
 
       expect(config.stellar).toMatchObject({
@@ -128,7 +128,7 @@ describe('Centralized Configuration Module', () => {
         HORIZON_URL: 'https://custom-horizon.example.com'
       });
 
-      delete require.cache[require.resolve('../src/config')];
+      delete require.cache[require.resolve('../../src/config')];
       config = require('../../src/config');
 
       expect(config.stellar.horizonUrl).toBe('https://custom-horizon.example.com');
@@ -141,7 +141,7 @@ describe('Centralized Configuration Module', () => {
         MOCK_STELLAR: 'true'
       });
 
-      delete require.cache[require.resolve('../src/config')];
+      delete require.cache[require.resolve('../../src/config')];
       config = require('../../src/config');
 
       expect(config.stellar.mockEnabled).toBe(true);
@@ -155,7 +155,7 @@ describe('Centralized Configuration Module', () => {
         API_KEYS: 'test-key'
       });
 
-      delete require.cache[require.resolve('../src/config')];
+      delete require.cache[require.resolve('../../src/config')];
       config = require('../../src/config');
 
       expect(config.rateLimit).toMatchObject({
@@ -173,7 +173,7 @@ describe('Centralized Configuration Module', () => {
         RATE_LIMIT_WINDOW_MS: '120000'
       });
 
-      delete require.cache[require.resolve('../src/config')];
+      delete require.cache[require.resolve('../../src/config')];
       config = require('../../src/config');
 
       expect(config.rateLimit.maxRequests).toBe(200);
@@ -188,7 +188,7 @@ describe('Centralized Configuration Module', () => {
         API_KEYS: 'test-key'
       });
 
-      delete require.cache[require.resolve('../src/config')];
+      delete require.cache[require.resolve('../../src/config')];
       config = require('../../src/config');
 
       expect(config.donations).toMatchObject({
@@ -207,7 +207,7 @@ describe('Centralized Configuration Module', () => {
         MAX_DAILY_DONATION_PER_DONOR: '100'
       });
 
-      delete require.cache[require.resolve('../src/config')];
+      delete require.cache[require.resolve('../../src/config')];
       config = require('../../src/config');
 
       expect(config.donations.minAmount).toBe(0.5);
@@ -223,7 +223,7 @@ describe('Centralized Configuration Module', () => {
         API_KEYS: 'test-key'
       });
 
-      delete require.cache[require.resolve('../src/config')];
+      delete require.cache[require.resolve('../../src/config')];
       config = require('../../src/config');
 
       expect(config.logging).toMatchObject({
@@ -243,7 +243,7 @@ describe('Centralized Configuration Module', () => {
         DEBUG_MODE: 'true'
       });
 
-      delete require.cache[require.resolve('../src/config')];
+      delete require.cache[require.resolve('../../src/config')];
       config = require('../../src/config');
 
       expect(config.logging.toFile).toBe(true);
@@ -259,7 +259,7 @@ describe('Centralized Configuration Module', () => {
         API_KEYS: 'key1,key2,key3'
       });
 
-      delete require.cache[require.resolve('../src/config')];
+      delete require.cache[require.resolve('../../src/config')];
       config = require('../../src/config');
 
       expect(config.apiKeys.legacy).toEqual(['key1', 'key2', 'key3']);
@@ -271,7 +271,7 @@ describe('Centralized Configuration Module', () => {
         API_KEYS: ''
       });
 
-      delete require.cache[require.resolve('../src/config')];
+      delete require.cache[require.resolve('../../src/config')];
       config = require('../../src/config');
 
       expect(config.apiKeys.legacy).toEqual([]);
@@ -286,7 +286,7 @@ describe('Centralized Configuration Module', () => {
         ENCRYPTION_KEY: 'test-encryption-key'
       });
 
-      delete require.cache[require.resolve('../src/config')];
+      delete require.cache[require.resolve('../../src/config')];
       config = require('../../src/config');
 
       expect(config.encryption.key).toBe('test-encryption-key');
@@ -300,7 +300,7 @@ describe('Centralized Configuration Module', () => {
         ENCRYPTION_KEY: 'prod-key'
       });
 
-      delete require.cache[require.resolve('../src/config')];
+      delete require.cache[require.resolve('../../src/config')];
       config = require('../../src/config');
 
       expect(config.encryption.requireInProduction).toBe(true);
@@ -315,7 +315,7 @@ describe('Centralized Configuration Module', () => {
         PORT: '99999'
       });
 
-      delete require.cache[require.resolve('../src/config')];
+      delete require.cache[require.resolve('../../src/config')];
       
       expect(() => {
         config = require('../../src/config');
@@ -329,7 +329,7 @@ describe('Centralized Configuration Module', () => {
         STELLAR_NETWORK: 'invalid-network'
       });
 
-      delete require.cache[require.resolve('../src/config')];
+      delete require.cache[require.resolve('../../src/config')];
       
       expect(() => {
         config = require('../../src/config');
@@ -343,7 +343,7 @@ describe('Centralized Configuration Module', () => {
         MOCK_STELLAR: 'maybe'
       });
 
-      delete require.cache[require.resolve('../src/config')];
+      delete require.cache[require.resolve('../../src/config')];
       
       expect(() => {
         config = require('../../src/config');
@@ -357,7 +357,7 @@ describe('Centralized Configuration Module', () => {
         HORIZON_URL: 'not-a-valid-url'
       });
 
-      delete require.cache[require.resolve('../src/config')];
+      delete require.cache[require.resolve('../../src/config')];
       
       expect(() => {
         config = require('../../src/config');
@@ -372,7 +372,7 @@ describe('Centralized Configuration Module', () => {
         API_KEYS: 'test-key'
       });
 
-      delete require.cache[require.resolve('../src/config')];
+      delete require.cache[require.resolve('../../src/config')];
       config = require('../../src/config');
 
       expect(config.app.name).toBe('stellar-micro-donation-api');

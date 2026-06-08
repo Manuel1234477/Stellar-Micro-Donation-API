@@ -129,6 +129,15 @@ function validateSnapshotAt(snapshotAt) {
   if (Number.isNaN(parsedDate.getTime())) {
     throw new ValidationError(
       'Invalid snapshotAt parameter: must be a valid ISO-8601 timestamp',
+      null,
+      ERROR_CODES.INVALID_REQUEST
+    );
+  }
+
+  return parsedDate.toISOString();
+}
+
+/**
  * Parse and validate an optional ISO 8601 snapshotAt timestamp.
  *
  * When provided, callers should add `AND <timestampColumn> <= :snapshotAt` to
@@ -158,7 +167,6 @@ function parseSnapshotAt(value) {
     );
   }
 
-  return parsedDate.toISOString();
   return parsed.toISOString();
 }
 
@@ -205,7 +213,6 @@ function parseCursorPaginationQuery(query = {}) {
     cursor: decodeCursor(query.cursor),
     limit: limitResult.value,
     direction,
-    snapshotAt: validateSnapshotAt(query.snapshotAt),
     snapshotAt: parseSnapshotAt(query.snapshotAt),
   };
 }
@@ -372,24 +379,6 @@ function buildCursorWhereClause({
   }
 
   return { clause, params };
-  const snapshotClause = snapshotAt ? ` AND ${timestampColumn} <= ?` : '';
-  const snapshotParams = snapshotAt ? [snapshotAt] : [];
-
-  if (!cursor) {
-    return { clause: snapshotClause, params: snapshotParams };
-  }
-
-  if (direction === 'prev') {
-    return {
-      clause: ` AND ((${timestampColumn} > ?) OR (${timestampColumn} = ? AND ${idColumn} > ?))${snapshotClause}`,
-      params: [cursor.timestamp, cursor.timestamp, cursor.id, ...snapshotParams],
-    };
-  }
-
-  return {
-    clause: ` AND ((${timestampColumn} < ?) OR (${timestampColumn} = ? AND ${idColumn} < ?))${snapshotClause}`,
-    params: [cursor.timestamp, cursor.timestamp, cursor.id, ...snapshotParams],
-  };
 }
 
 /**

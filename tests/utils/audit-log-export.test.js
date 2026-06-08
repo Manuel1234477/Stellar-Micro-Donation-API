@@ -12,8 +12,8 @@ const AuditLogExportService = require('../../src/services/AuditLogExportService'
 const Database = require('../../src/utils/database');
 
 // Mock dependencies
-jest.mock('../src/utils/database');
-jest.mock('../src/services/AuditLogService', () => ({
+jest.mock('../../src/utils/database');
+jest.mock('../../src/services/AuditLogService', () => ({
   log: jest.fn().mockResolvedValue({}),
   getStatistics: jest.fn().mockResolvedValue([])
 }));

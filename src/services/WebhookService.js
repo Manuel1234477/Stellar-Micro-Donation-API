@@ -24,7 +24,6 @@ const {
   withAsyncContext, 
   generateCorrelationHeaders 
 } = require('../utils/correlation');
-const { withSpan, injectTraceHeaders } = require('../utils/tracing');
 
 /** Retry queue constants */
 const RETRY_DELAYS_MS = [

@@ -27,12 +27,14 @@ module.exports = async () => {
     )`);
     await Database.run(`CREATE TABLE IF NOT EXISTS idempotency_keys (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
-      idempotencyKey TEXT NOT NULL UNIQUE,
+      apiKeyId TEXT,
+      idempotencyKey TEXT NOT NULL,
       requestHash TEXT,
       response TEXT,
       userId TEXT,
       createdAt DATETIME DEFAULT CURRENT_TIMESTAMP,
-      expiresAt DATETIME
+      expiresAt DATETIME,
+      UNIQUE(apiKeyId, idempotencyKey)
     )`);
     await Database.run(`CREATE TABLE IF NOT EXISTS transactions (
       id INTEGER PRIMARY KEY AUTOINCREMENT,

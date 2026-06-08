@@ -13,9 +13,9 @@
  *  - GET  /campaigns/:id/pledges
  */
 
-jest.mock('../src/utils/database');
-jest.mock('../src/services/WebhookService', () => ({ deliver: jest.fn().mockResolvedValue(undefined) }));
-jest.mock('../src/utils/log', () => ({ info: jest.fn(), error: jest.fn(), warn: jest.fn(), debug: jest.fn() }));
+jest.mock('../../src/utils/database');
+jest.mock('../../src/services/WebhookService', () => ({ deliver: jest.fn().mockResolvedValue(undefined) }));
+jest.mock('../../src/utils/log', () => ({ info: jest.fn(), error: jest.fn(), warn: jest.fn(), debug: jest.fn() }));
 
 const Database = require('../../src/utils/database');
 const WebhookService = require('../../src/services/WebhookService');

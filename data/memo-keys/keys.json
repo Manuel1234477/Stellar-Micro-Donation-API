@@ -3,9 +3,9 @@
   "keys": [
     {
       "version": 1,
-      "keyMaterial": "4e50422df8667979bb9a6ea1efc74c06a83cc8c04680899c7011a7daee829e41",
-      "createdAt": "2026-05-30T04:50:00.403Z",
-      "status": "active"
+      "key": "fd77f260ba6bb1c4a24a69b90d5dc134ae2125021c9a6834cf0939295108b126",
+      "createdAt": "2026-06-08T12:39:11.068Z",
+      "retiredAt": null
     }
   ]
 }

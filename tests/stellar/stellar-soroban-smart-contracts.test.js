@@ -14,7 +14,7 @@ const EscrowContract = require('../../src/contracts/EscrowContract');
 // ─── App setup for route tests ────────────────────────────────────────────────
 // Override getStellarService so the route uses a fresh MockStellarService per test
 let mockServiceInstance;
-jest.mock('../src/config/stellar', () => ({
+jest.mock('../../src/config/stellar', () => ({
   getStellarService: () => mockServiceInstance,
   useMockStellar: true,
 }));

@@ -137,7 +137,7 @@ router.patch('/:id', requireApiKey, requireAdmin(), updateProgramSchema, payload
     const { match_ratio, max_match_amount, end_date } = req.body;
 
     // Verify program exists
-    const program = await MatchingProgramService.getById(id);
+    const _program = await MatchingProgramService.getById(id);
 
     // Build update query
     const updates = [];

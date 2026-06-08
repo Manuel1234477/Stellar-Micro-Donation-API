@@ -15,7 +15,7 @@ const crypto = require('crypto');
 
 // ─── Mocks ────────────────────────────────────────────────────────────────────
 
-jest.mock('../src/middleware/rbac', () => ({
+jest.mock('../../src/middleware/rbac', () => ({
   checkPermission: () => (req, res, next) => { req.user = { id: 'u1', role: 'admin' }; next(); },
   requireAdmin: () => (req, res, next) => { req.user = { id: 'u1', role: 'admin' }; next(); },
   attachUserRole: () => (req, res, next) => next(),

@@ -9,7 +9,7 @@
  * - POST /wallets/:id/thresholds endpoint
  */
 
-jest.mock('../src/utils/log', () => ({
+jest.mock('../../src/utils/log', () => ({
   info: jest.fn(),
   warn: jest.fn(),
   error: jest.fn(),

@@ -17,7 +17,6 @@
  * - Sensitive fields can be added to BLOCKED_FIELDS to prevent exposure.
  */
 
-const { ValidationError } = require('../utils/errors');
 
 /**
  * Fields that can never be selected, regardless of the `?fields` parameter.

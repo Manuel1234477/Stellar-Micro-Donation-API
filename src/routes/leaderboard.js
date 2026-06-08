@@ -19,7 +19,6 @@ const { PERMISSIONS } = require('../utils/permissions');
 const AuditLogService = require('../services/AuditLogService');
 const SseManager = require('../services/SseManager');
 const LeaderboardSSE = require('../services/LeaderboardSSE');
-const { v4: uuidv4 } = require('uuid');
 
 /** Valid time periods for leaderboard queries */
 const VALID_PERIODS = ['all', 'monthly', 'weekly', 'daily'];

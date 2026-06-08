@@ -233,7 +233,6 @@ router.get('/:id/progress/stream', requireApiKey, asyncHandler(async (req, res, 
   const log = require('../utils/log');
   const { v4: uuidv4 } = require('uuid');
   const SseManager = require('../services/SseManager');
-  const DonationService = require('../services/DonationService');
   const donationEvents = require('../events/donationEvents');
   
   const campaignId = req.params.id;
@@ -251,7 +250,7 @@ router.get('/:id/progress/stream', requireApiKey, asyncHandler(async (req, res, 
   }
 
   // Check connection limit
-  if (SseManager.connectionCount(keyId) >= SseManager.MAX_CONNECTIONS_PER_KEY) {
+  if (SseManager.connectionCountForKey(keyId) >= SseManager.MAX_CONNECTIONS_PER_KEY) {
     return res.status(429).json({
       success: false,
       error: `Too many connections for this API key. Maximum: ${SseManager.MAX_CONNECTIONS_PER_KEY}`
@@ -301,7 +300,7 @@ router.get('/:id/progress/stream', requireApiKey, asyncHandler(async (req, res, 
   }, SseManager.HEARTBEAT_INTERVAL_MS);
 
   // Listen for progress updates and milestone events
-  const progressHandler = async () => {
+  const _progressHandler = async () => {
     try {
       const campaign = await Database.get('SELECT * FROM campaigns WHERE id = ?', [campaignId]);
       if (!campaign) return;
@@ -324,7 +323,7 @@ router.get('/:id/progress/stream', requireApiKey, asyncHandler(async (req, res, 
     }
   };
 
-  const milestoneHandler = (data) => {
+  const _milestoneHandler = (data) => {
     if (data.campaign_id === parseInt(campaignId)) {
       try {
         res.write(`event: milestone_reached\ndata: ${JSON.stringify(data)}\n\n`);

@@ -1,7 +1,7 @@
 ﻿const TransactionSyncService = require('../../src/services/TransactionSyncService');
 const Transaction = require('../../src/routes/models/transaction');
 
-jest.mock('../src/routes/models/transaction');
+jest.mock('../../src/routes/models/transaction');
 
 describe('Transaction Sync - Consistency Checks', () => {
   let syncService;

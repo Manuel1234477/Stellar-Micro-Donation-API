@@ -14,7 +14,7 @@ const express = require('express');
 
 // ─── Mock dependencies before requiring the router ───────────────────────────
 
-jest.mock('../src/middleware/rbac', () => ({
+jest.mock('../../src/middleware/rbac', () => ({
   checkPermission: () => (req, res, next) => {
     req.user = { id: 'admin-user', role: 'admin' };
     next();
@@ -25,7 +25,7 @@ jest.mock('../src/middleware/rbac', () => ({
   },
 }));
 
-jest.mock('../src/services/AuditLogService', () => {
+jest.mock('../../src/services/AuditLogService', () => {
   const mockLog = jest.fn().mockResolvedValue(undefined);
   return {
     log: mockLog,
@@ -46,11 +46,11 @@ jest.mock('../src/services/AuditLogService', () => {
 
 const mockBumpSequence = jest.fn();
 
-jest.mock('../src/config/serviceContainer', () => ({
+jest.mock('../../src/config/serviceContainer', () => ({
   getStellarService: jest.fn(() => ({ bumpSequence: mockBumpSequence })),
 }));
 
-jest.mock('../src/routes/models/wallet', () => ({
+jest.mock('../../src/routes/models/wallet', () => ({
   getById: jest.fn(),
   getAll: jest.fn(() => []),
   getByAddress: jest.fn(),
@@ -58,13 +58,13 @@ jest.mock('../src/routes/models/wallet', () => ({
   update: jest.fn(),
 }));
 
-jest.mock('../src/utils/database', () => ({
+jest.mock('../../src/utils/database', () => ({
   get: jest.fn(),
   query: jest.fn(() => []),
   run: jest.fn(),
 }));
 
-jest.mock('../src/middleware/payloadSizeLimiter', () => ({
+jest.mock('../../src/middleware/payloadSizeLimiter', () => ({
   payloadSizeLimiter: () => (req, res, next) => next(),
   ENDPOINT_LIMITS: { wallet: 1024 },
 }));
@@ -81,7 +81,7 @@ function buildApp() {
   jest.resetModules();
 
   // Re-apply mocks after resetModules
-  jest.mock('../src/middleware/rbac', () => ({
+  jest.mock('../../src/middleware/rbac', () => ({
     checkPermission: () => (req, res, next) => {
       req.user = { id: 'admin-user', role: 'admin' };
       next();
@@ -310,7 +310,7 @@ describe('POST /wallets/:id/bump-sequence — admin auth required', () => {
     restrictedApp.use(express.json());
 
     // Override rbac to deny
-    jest.doMock('../src/middleware/rbac', () => ({
+    jest.doMock('../../src/middleware/rbac', () => ({
       checkPermission: () => (req, res, next) => {
         const { ForbiddenError } = require('../../src/utils/errors');
         next(new ForbiddenError('Insufficient permissions'));
@@ -324,26 +324,26 @@ describe('POST /wallets/:id/bump-sequence — admin auth required', () => {
     jest.resetModules();
 
     // Re-apply other mocks
-    jest.doMock('../src/config/serviceContainer', () => ({
+    jest.doMock('../../src/config/serviceContainer', () => ({
       getStellarService: jest.fn(() => ({ bumpSequence: jest.fn() })),
     }));
-    jest.doMock('../src/routes/models/wallet', () => ({
+    jest.doMock('../../src/routes/models/wallet', () => ({
       getById: jest.fn(() => ({ id: '1', address: 'GABC' })),
       getAll: jest.fn(() => []),
       getByAddress: jest.fn(),
       create: jest.fn(),
       update: jest.fn(),
     }));
-    jest.doMock('../src/utils/database', () => ({
+    jest.doMock('../../src/utils/database', () => ({
       get: jest.fn(),
       query: jest.fn(() => []),
       run: jest.fn(),
     }));
-    jest.doMock('../src/middleware/payloadSizeLimiter', () => ({
+    jest.doMock('../../src/middleware/payloadSizeLimiter', () => ({
       payloadSizeLimiter: () => (req, res, next) => next(),
       ENDPOINT_LIMITS: { wallet: 1024 },
     }));
-    jest.doMock('../src/services/AuditLogService', () => ({
+    jest.doMock('../../src/services/AuditLogService', () => ({
       log: jest.fn().mockResolvedValue(undefined),
       CATEGORY: { WALLET_OPERATION: 'WALLET_OPERATION', AUTHORIZATION: 'AUTHORIZATION' },
       ACTION: { BUMP_SEQUENCE_EXECUTED: 'BUMP_SEQUENCE_EXECUTED', BUMP_SEQUENCE_FAILED: 'BUMP_SEQUENCE_FAILED', WALLET_CREATED: 'WALLET_CREATED', WALLET_UPDATED: 'WALLET_UPDATED', WALLET_QUERIED: 'WALLET_QUERIED', WALLET_DELETED: 'WALLET_DELETED', PERMISSION_GRANTED: 'PERMISSION_GRANTED', PERMISSION_DENIED: 'PERMISSION_DENIED' },

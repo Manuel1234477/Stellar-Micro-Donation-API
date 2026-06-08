@@ -7,7 +7,7 @@ const { TrackingStore, startCleanup } = require('../../src/utils/replayDetector'
 const log = require('../../src/utils/log');
 
 // Mock the log module
-jest.mock('../src/utils/log', () => ({
+jest.mock('../../src/utils/log', () => ({
   info: jest.fn(),
   error: jest.fn()
 }));

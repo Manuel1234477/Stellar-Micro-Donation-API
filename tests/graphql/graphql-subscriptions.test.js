@@ -10,9 +10,10 @@ process.env.MOCK_STELLAR = 'true';
 process.env.NODE_ENV = 'test';
 process.env.API_KEYS = 'test-key-sub';
 
-jest.mock('../src/models/apiKeys', () => ({
+jest.mock('../../src/models/apiKeys', () => ({
   initializeApiKeysTable: jest.fn().mockResolvedValue(undefined),
-  validateApiKey: jest.fn().mockResolvedValue(null),
+  validateApiKey: jest.fn().mockResolvedValue(null),\
+  
   validateKey: jest.fn().mockResolvedValue(null),
   getApiKeyByValue: jest.fn().mockResolvedValue(null),
   createApiKey: jest.fn(),
@@ -23,7 +24,7 @@ jest.mock('../src/models/apiKeys', () => ({
   revokeExpiredDeprecatedKeys: jest.fn().mockResolvedValue(0),
 }));
 
-jest.mock('../src/services/RecurringDonationScheduler', () => {
+jest.mock('../../src/services/RecurringDonationScheduler', () => {
   const MockClass = class { start() {} stop() {} };
   MockClass.Class = MockClass;
   return MockClass;

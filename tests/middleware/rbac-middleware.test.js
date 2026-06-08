@@ -1,4 +1,4 @@
-jest.mock('../src/models/apiKeys', () => ({
+jest.mock('../../src/models/apiKeys', () => ({
   validateApiKey: jest.fn()
 }));
 

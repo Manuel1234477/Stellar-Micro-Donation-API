@@ -18,6 +18,7 @@ const memoValidator = require('../utils/memoValidator');
 const { calculateAnalyticsFee } = require('../utils/feeCalculator');
 const { sanitizeIdentifier, sanitizeMemo } = require('../utils/sanitizer');
 const { generatePseudonymousId } = require('../utils/anonymization');
+const { withTimeout } = require('../utils/timeoutHandler');
 const { TRANSACTION_STATES } = require('../utils/transactionStateMachine');
 const { ValidationError, NotFoundError, BusinessLogicError, ERROR_CODES } = require('../utils/errors');
 const { PREDEFINED_TAGS } = require('../constants/tags');

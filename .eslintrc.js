@@ -16,11 +16,42 @@ module.exports = {
   extends: ['eslint:recommended'],
   plugins: ['no-secrets', ...(hasSecurityPlugin ? ['security'] : []), 'local'],
   parserOptions: {
-    ecmaVersion: 12,
+    ecmaVersion: 2022,
   },
   rules: {
-    // Security rules
-    'no-secrets/no-secrets': 'error',
+    // Unused vars: flag dead variables/imports, but allow intentionally-unused
+    // function arguments (interface/abstract stubs, middleware signatures) and
+    // caught errors. Prefix with `_` to explicitly mark a local as unused.
+    'no-unused-vars': ['error', {
+      args: 'none',
+      caughtErrors: 'none',
+      ignoreRestSiblings: true,
+      varsIgnorePattern: '^_',
+    }],
+
+    // Security rules. no-secrets flags high-entropy strings; the patterns below are
+    // verified non-secrets (doc paths, URLs, SQL/identifier names, env-var doc
+    // strings, OpenAPI examples, the standard RFC 4648 base32 alphabet). Real
+    // random tokens/keys do not match these and are still flagged.
+    'no-secrets/no-secrets': ['error', {
+      ignoreContent: [
+        '\\.md',                                 // documentation file paths
+        'https?://',                             // URLs
+        'idx_recovery_guardians',                // SQL index names
+        'wal_checkpoint',                        // SQLite pragma
+        'buildAndSubmitFeeBumpTransaction',      // method identifier
+        'INVALID_WEBHOOK_SIGNATURE',             // error-code constant
+        'ENCRYPTION_KEY',                        // env-var doc string
+        'REQUIRE_IDEMPOTENCY_KEY',               // env-var doc string
+        'ACCESS_LOG_INCLUDE_HEALTH',             // env-var doc string
+        'snapshotAt=',                           // example query string
+        'stellar_public_key',                    // example placeholder
+        'ABCDEFGHIJKLMNOPQRSTUVWXYZ234567',      // RFC 4648 base32 alphabet
+        '^eyJ',                                  // example JWT (OpenAPI docs)
+        '014_webhook_tls_skip_verify',           // migration name
+        'obj<<',                                 // embedded PDF template
+      ],
+    }],
     ...(hasSecurityPlugin ? {
       'security/detect-object-injection': 'warn',
       'security/detect-non-literal-regexp': 'warn',
@@ -44,12 +75,19 @@ module.exports = {
   },
   overrides: [
     {
-      // Enforce structured logging in all service source files
+      // Enforce structured logging in all service source files. Operational/CLI
+      // scripts (migrations, the env-validation boot check) print to the console
+      // by design and are exempt.
       files: ['src/**/*.js'],
       excludedFiles: [
         'src/scripts/**/*.js',
+        'src/migrations/**/*.js',
+        // Config loads at boot before the logger and the logger itself depends on
+        // config (src/utils/log.js requires ../config), so config must use console.
+        'src/config/**/*.js',
         'src/utils/log.js',
         'src/utils/migrationRunner.js',
+        'src/utils/startupChecks.js',
       ],
       rules: {
         'no-console': 'error',

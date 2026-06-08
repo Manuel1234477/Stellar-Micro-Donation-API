@@ -3,7 +3,10 @@
  * Tests for scheduler failures, execution errors, and edge cases
  */
 
-const RecurringDonationScheduler = require('../../src/services/RecurringDonationScheduler');
+// The module's default export is the singleton instance (consumed as such by
+// stream/admin routes); the class for `new` is exposed via `.Class`.
+const RecurringDonationSchedulerModule = require('../../src/services/RecurringDonationScheduler');
+const RecurringDonationScheduler = RecurringDonationSchedulerModule.Class || RecurringDonationSchedulerModule;
 const Database = require('../../src/utils/database');
 const { getStellarService } = require('../../src/config/stellar');
 
@@ -13,8 +16,8 @@ describe('Recurring Donation Failure Scenarios', () => {
 
   beforeEach(() => {
     process.env.MOCK_STELLAR = 'true';
-    scheduler = new RecurringDonationScheduler();
     stellarService = getStellarService();
+    scheduler = new RecurringDonationScheduler(stellarService);
   });
 
   afterEach(() => {

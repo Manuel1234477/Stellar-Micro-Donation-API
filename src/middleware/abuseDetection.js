@@ -1,4 +1,5 @@
 const abuseDetector = require('../utils/abuseDetector');
+const log = require('../utils/log');
 const AuditLogService = require('../services/AuditLogService');
 
 /**
@@ -30,7 +31,7 @@ function abuseDetectionMiddleware(req, res, next) {
       }
     }).catch(err => {
       // Don't block request if audit logging fails
-      console.error('Audit log failed:', err);
+      log.error('ABUSE_DETECTION', 'Audit log failed', { error: err && err.message });
     });
   }
 

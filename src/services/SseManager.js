@@ -104,14 +104,6 @@ class SseManager {
   }
 
   /**
-   * Return total number of connected clients for a specific API key.
-   * @param {string} apiKey
-   */
-  connectionCount(apiKey) {
-    return this.connectionCountForKey(apiKey);
-  }
-
-  /**
    * Return connection count for a specific API key.
    * @param {string} apiKey
    */

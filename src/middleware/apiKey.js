@@ -10,7 +10,7 @@
  */
 
 const { securityConfig } = require("../config/securityConfig");
-const { validateKey, incrementQuota } = require("../models/apiKeys");
+const { validateKey} = require("../models/apiKeys");
 const { verifyAccessToken } = require("../services/JwtService");
 const log = require("../utils/log");
 const AuditLogService = require("../services/AuditLogService");

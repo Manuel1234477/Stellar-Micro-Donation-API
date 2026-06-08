@@ -147,7 +147,7 @@ describe('DonationService – currency conversion', () => {
     jest.resetModules();
 
     // Stub PriceOracleService
-    jest.mock('../src/services/PriceOracleService', () => ({
+    jest.mock('../../src/services/PriceOracleService', () => ({
       convertToXLM: jest.fn(),
       getRates: jest.fn(),
       getCacheInfo: jest.fn(),

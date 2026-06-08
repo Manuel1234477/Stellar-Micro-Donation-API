@@ -9,7 +9,6 @@ const {
   formatPatternError,
   formatRequiredError,
   formatNullError,
-  formatUnknownFieldsError,
   formatCustomError,
   formatSegmentError,
 } = require('../utils/validationErrorFormatter');

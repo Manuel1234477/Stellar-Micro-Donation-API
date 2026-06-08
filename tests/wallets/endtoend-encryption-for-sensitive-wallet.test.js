@@ -34,7 +34,7 @@ function freshRequire(modulePath, envOverrides = {}) {
 
   // Bust cache for the module and its local deps
   const abs = require.resolve(modulePath);
-  [abs, require.resolve('../src/utils/kms'), require.resolve('../src/utils/encryption')].forEach(
+  [abs, require.resolve('../../src/utils/kms'), require.resolve('../../src/utils/encryption')].forEach(
     (p) => { try { delete require.cache[p]; } catch (_) {} }
   );
 
@@ -58,11 +58,11 @@ describe('kms.js', () => {
     process.env.ENCRYPTION_KEY = TEST_KEY;
     process.env.KMS_PROVIDER = 'local';
     // Clear module cache so env changes take effect
-    delete require.cache[require.resolve('../src/utils/kms')];
+    delete require.cache[require.resolve('../../src/utils/kms')];
   });
 
   afterEach(() => {
-    delete require.cache[require.resolve('../src/utils/kms')];
+    delete require.cache[require.resolve('../../src/utils/kms')];
   });
 
   describe('getProvider()', () => {
@@ -74,14 +74,14 @@ describe('kms.js', () => {
 
     it('returns "aws" when KMS_PROVIDER=aws', () => {
       process.env.KMS_PROVIDER = 'aws';
-      delete require.cache[require.resolve('../src/utils/kms')];
+      delete require.cache[require.resolve('../../src/utils/kms')];
       const { getProvider } = require('../../src/utils/kms');
       expect(getProvider()).toBe('aws');
     });
 
     it('falls back to "local" for unknown provider', () => {
       process.env.KMS_PROVIDER = 'vault';
-      delete require.cache[require.resolve('../src/utils/kms')];
+      delete require.cache[require.resolve('../../src/utils/kms')];
       const { getProvider } = require('../../src/utils/kms');
       expect(getProvider()).toBe('local');
     });
@@ -120,7 +120,7 @@ describe('kms.js', () => {
 
     it('throws when ENCRYPTION_KEY is missing', async () => {
       delete process.env.ENCRYPTION_KEY;
-      delete require.cache[require.resolve('../src/utils/kms')];
+      delete require.cache[require.resolve('../../src/utils/kms')];
       const { generateDEK, encryptDEK } = require('../../src/utils/kms');
       await expect(encryptDEK(generateDEK())).rejects.toThrow('ENCRYPTION_KEY');
     });
@@ -161,12 +161,12 @@ describe('kms.js', () => {
         DecryptCommand: jest.fn().mockImplementation((input) => ({ _type: 'Decrypt', ...input })),
       }), { virtual: true });
 
-      delete require.cache[require.resolve('../src/utils/kms')];
+      delete require.cache[require.resolve('../../src/utils/kms')];
     });
 
     afterEach(() => {
       jest.dontMock('@aws-sdk/client-kms');
-      delete require.cache[require.resolve('../src/utils/kms')];
+      delete require.cache[require.resolve('../../src/utils/kms')];
       delete process.env.KMS_KEY_ID;
       delete process.env.AWS_REGION;
     });
@@ -194,7 +194,7 @@ describe('kms.js', () => {
 
     it('throws when KMS_KEY_ID is missing', async () => {
       delete process.env.KMS_KEY_ID;
-      delete require.cache[require.resolve('../src/utils/kms')];
+      delete require.cache[require.resolve('../../src/utils/kms')];
       const { generateDEK, encryptDEK } = require('../../src/utils/kms');
       await expect(encryptDEK(generateDEK())).rejects.toThrow('KMS_KEY_ID');
     });
@@ -210,13 +210,13 @@ describe('encryption.js — envelope encryption', () => {
   beforeEach(() => {
     process.env.ENCRYPTION_KEY = TEST_KEY;
     process.env.KMS_PROVIDER = 'local';
-    delete require.cache[require.resolve('../src/utils/kms')];
-    delete require.cache[require.resolve('../src/utils/encryption')];
+    delete require.cache[require.resolve('../../src/utils/kms')];
+    delete require.cache[require.resolve('../../src/utils/encryption')];
   });
 
   afterEach(() => {
-    delete require.cache[require.resolve('../src/utils/kms')];
-    delete require.cache[require.resolve('../src/utils/encryption')];
+    delete require.cache[require.resolve('../../src/utils/kms')];
+    delete require.cache[require.resolve('../../src/utils/encryption')];
   });
 
   describe('encryptWithDEK()', () => {

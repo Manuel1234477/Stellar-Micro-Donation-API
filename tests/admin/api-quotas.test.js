@@ -9,7 +9,7 @@ const db = require('../../src/utils/database');
 const WebhookService = require('../../src/services/WebhookService');
 
 // Mock WebhookService
-jest.mock('../src/services/WebhookService', () => ({
+jest.mock('../../src/services/WebhookService', () => ({
   deliver: jest.fn().mockResolvedValue({}),
   initTable: jest.fn().mockResolvedValue({}),
 }));

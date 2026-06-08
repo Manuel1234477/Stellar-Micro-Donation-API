@@ -7,14 +7,14 @@
 // Jest requires mock factory variables to be prefixed with "mock"
 const mockConvertToXLM = jest.fn();
 
-jest.mock('../src/services/PriceOracleService', () => ({
+jest.mock('../../src/services/PriceOracleService', () => ({
   convertToXLM: (...args) => mockConvertToXLM(...args),
   getRates: jest.fn(),
   SUPPORTED_CURRENCIES: ['usd', 'eur', 'gbp'],
   invalidateCache: jest.fn(),
 }));
 
-jest.mock('../src/routes/models/transaction', () => ({
+jest.mock('../../src/routes/models/transaction', () => ({
   create: jest.fn((data) => ({ id: '1', ...data })),
   getAll: jest.fn(() => []),
   getById: jest.fn(),

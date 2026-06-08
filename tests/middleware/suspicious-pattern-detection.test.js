@@ -9,7 +9,7 @@ const suspiciousPatternDetector = require('../../src/utils/suspiciousPatternDete
 const log = require('../../src/utils/log');
 
 // Mock logger to capture alerts
-jest.mock('../src/utils/log');
+jest.mock('../../src/utils/log');
 
 describe('Suspicious Pattern Detection', () => {
   beforeEach(() => {

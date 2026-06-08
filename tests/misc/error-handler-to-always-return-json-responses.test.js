@@ -12,7 +12,7 @@ const express = require('express');
 // We import the real app for integration-level checks and build minimal
 // fixture apps for edge-case scenarios that are hard to trigger via routes.
 
-jest.mock('../src/config/stellar', () => ({
+jest.mock('../../src/config/stellar', () => ({
   getStellarService: () => ({
     getContractEvents: async () => [],
   }),

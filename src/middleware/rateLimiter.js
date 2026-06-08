@@ -9,6 +9,8 @@
  * Protects Stellar network from spam and database from brute-force attacks.
  */
 
+const log = require('../utils/log');
+
 let rateLimit;
 try {
   rateLimit = require('express-rate-limit');
@@ -66,7 +68,7 @@ const donationRateLimiter = rateLimit({
         resetTime: req.rateLimit.resetTime
       }
     }).catch(err => {
-      console.error('Audit log failed:', err);
+      log.error('RATE_LIMITER', 'Audit log failed', { error: err.message || err });
     });
 
     res.status(429).json({
@@ -139,7 +141,7 @@ const verificationRateLimiter = rateLimit({
         resetTime: req.rateLimit.resetTime
       }
     }).catch(err => {
-      console.error('Audit log failed:', err);
+      log.error('RATE_LIMITER', 'Audit log failed', { error: err.message || err });
     });
 
     res.set('X-RateLimit-Identifier', isKeyBased ? 'api-key' : 'ip');
@@ -186,7 +188,7 @@ const batchRateLimiter = rateLimit({
       resource: req.path,
       reason: 'Batch donation rate limit exceeded',
       details: { limit: 1, window: '60s', identifier, resetTime: req.rateLimit.resetTime }
-    }).catch(err => console.error('Audit log failed:', err));
+    }).catch(err => log.error('RATE_LIMITER', 'Audit log failed', { error: err.message || err }));
 
     res.status(429).json({
       success: false,
@@ -299,7 +301,7 @@ const authTokenRateLimiter = rateLimit({
         window: '60s',
         resetTime: req.rateLimit.resetTime
       }
-    }).catch(err => console.error('Audit log failed:', err));
+    }).catch(err => log.error('RATE_LIMITER', 'Audit log failed', { error: err.message || err }));
 
     res.set('Retry-After', String(retryAfter));
     res.status(429).json({
@@ -350,7 +352,7 @@ const authRefreshRateLimiter = rateLimit({
         window: '60s',
         resetTime: req.rateLimit.resetTime
       }
-    }).catch(err => console.error('Audit log failed:', err));
+    }).catch(err => log.error('RATE_LIMITER', 'Audit log failed', { error: err.message || err }));
 
     res.set('Retry-After', String(retryAfter));
     res.status(429).json({
@@ -492,7 +494,7 @@ module.exports = {
           resetTime: req.rateLimit.resetTime
         }
       }).catch(err => {
-        console.error('Audit log failed:', err);
+        log.error('RATE_LIMITER', 'Audit log failed', { error: err.message || err });
       });
 
       res.set('X-RateLimit-Identifier', isKeyBased ? 'api-key' : 'ip');

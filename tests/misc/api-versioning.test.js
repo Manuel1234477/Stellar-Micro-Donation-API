@@ -1,5 +1,5 @@
 const request = require('supertest');
-jest.mock('../src/services/AuditLogService', () => ({
+jest.mock('../../src/services/AuditLogService', () => ({
   log: jest.fn().mockResolvedValue(true)
 }));
 const app = require('../../src/routes/app');

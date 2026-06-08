@@ -13,7 +13,6 @@
 const SseManager = require('../services/SseManager');
 const StatsService = require('../routes/services/StatsService');
 const donationEvents = require('../events/donationEvents');
-const Transaction = require('../routes/models/transaction');
 const Wallet = require('../routes/models/wallet');
 const log = require('../utils/log');
 
@@ -28,26 +27,6 @@ const ANON_NAME = 'Anonymous Donor';
 
 // ─── Window helpers ───────────────────────────────────────────────────────────
 
-/**
- * Return the start-of-window Date for a given window string.
- *
- * @param {string} window - 'daily' | 'weekly' | 'all-time'
- * @returns {Date|null} Start date, or null for all-time
- */
-function windowStart(window) {
-  const now = new Date();
-  if (window === 'daily') {
-    const d = new Date(now);
-    d.setHours(0, 0, 0, 0);
-    return d;
-  }
-  if (window === 'weekly') {
-    const d = new Date(now);
-    d.setDate(d.getDate() - 7);
-    return d;
-  }
-  return null; // all-time
-}
 
 // ─── Anonymization ────────────────────────────────────────────────────────────
 

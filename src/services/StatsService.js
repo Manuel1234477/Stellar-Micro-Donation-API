@@ -10,7 +10,7 @@
  */
 
 const Transaction = require('../routes/models/transaction');
-const log = require('../utils/log');
+const { generatePseudonymousId, isPseudonymousId } = require('../utils/anonymization');
 
 class StatsService {
   /**
@@ -352,7 +352,7 @@ class StatsService {
 
     const totalInXLM = +feesByAsset.reduce((s, a) => s + a.totalFeesInXLM, 0).toFixed(7);
     const totalTransactions = transactions.length;
-    const totalFeesXLM = feesByAsset.find(a => a.asset === 'XLM');
+    const _totalFeesXLM = feesByAsset.find(a => a.asset === 'XLM');
 
     return {
       feesByAsset,

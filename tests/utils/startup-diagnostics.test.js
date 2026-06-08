@@ -8,14 +8,14 @@ const config = require('../../src/config');
 const log = require('../../src/utils/log');
 
 // Mock the log module to capture log calls
-jest.mock('../src/utils/log', () => ({
+jest.mock('../../src/utils/log', () => ({
   info: jest.fn(),
   error: jest.fn(),
   debug: jest.fn()
 }));
 
 // Mock the database module
-jest.mock('../src/utils/database', () => ({
+jest.mock('../../src/utils/database', () => ({
   get: jest.fn()
 }));
 
@@ -24,7 +24,7 @@ describe('Startup Diagnostics', () => {
     jest.clearAllMocks();
     
     // Mock config to avoid environment dependencies
-    jest.doMock('../src/config', () => ({
+    jest.doMock('../../src/config', () => ({
       server: {
         env: 'test',
         isProduction: false,
@@ -206,13 +206,13 @@ describe('Startup Diagnostics', () => {
       const mockError = jest.fn();
       const mockDebug = jest.fn();
 
-      jest.doMock('../src/utils/log', () => ({
+      jest.doMock('../../src/utils/log', () => ({
         info: mockInfo,
         error: mockError,
         debug: mockDebug
       }));
 
-      jest.doMock('../src/utils/database', () => ({
+      jest.doMock('../../src/utils/database', () => ({
         get: jest.fn().mockRejectedValue(new Error('Database unavailable'))
       }));
 
@@ -267,7 +267,7 @@ describe('Startup Diagnostics', () => {
   describe('Data Sanitization', () => {
     test('should sanitize URLs when credentials', () => {
       // Create a fresh config mock for this test
-      jest.doMock('../src/config', () => ({
+      jest.doMock('../../src/config', () => ({
         server: {
           env: 'test',
           isProduction: false,
@@ -322,7 +322,7 @@ describe('Startup Diagnostics', () => {
 
     test('should sanitize file paths', () => {
       // Create a fresh config mock for this test
-      jest.doMock('../src/config', () => ({
+      jest.doMock('../../src/config', () => ({
         server: {
           env: 'test',
           isProduction: false,
