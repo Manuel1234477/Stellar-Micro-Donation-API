@@ -157,7 +157,23 @@ module.exports = async function createTestTables(Database) {
     createdAt DATETIME DEFAULT CURRENT_TIMESTAMP,
     updatedAt DATETIME DEFAULT CURRENT_TIMESTAMP,
     deleted_at DATETIME DEFAULT NULL,
-    tenant_id TEXT NOT NULL DEFAULT 'default'
+    tenant_id TEXT NOT NULL DEFAULT 'default',
+    notified_milestones TEXT DEFAULT '[]',
+    last_milestone_notification DATETIME,
+    closed_at DATETIME
+  )`);
+  await Database.run(`CREATE TABLE IF NOT EXISTS campaign_milestones (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    campaign_id INTEGER NOT NULL,
+    title TEXT NOT NULL,
+    description TEXT,
+    target_amount REAL NOT NULL,
+    status TEXT NOT NULL DEFAULT 'pending',
+    verified_at DATETIME,
+    verified_by TEXT,
+    fund_release_tx TEXT,
+    createdAt DATETIME DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (campaign_id) REFERENCES campaigns(id)
   )`);
   await Database.run(`CREATE TABLE IF NOT EXISTS escrow_pledges (
     id INTEGER PRIMARY KEY AUTOINCREMENT,

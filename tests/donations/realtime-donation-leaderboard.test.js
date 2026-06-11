@@ -1,82 +1,52 @@
 /**
  * Real-time Donation Leaderboard Tests
  * Tests for leaderboard endpoints, caching, and SSE functionality
- * Run with: npm test -- implement-realtime-donation-leaderboard.test.js
+ * Run with: npm test -- realtime-donation-leaderboard.test.js
+ *
+ * HTTP endpoints are exercised through the real app at /api/v1/leaderboard.
+ * Leaderboard reads are intentionally guest-accessible (the guest role has
+ * stats:read), so no API key is required for GET requests.
  */
 
+const http = require('http');
 const request = require('supertest');
 const app = require('../../src/app');
 const StatsService = require('../../src/services/LeaderboardStatsService');
 const Transaction = require('../../src/models/transaction');
 const Cache = require('../../src/utils/cache');
-const donationEvents = require('../../src/events/donationEvents');
 const SseManager = require('../../src/services/SseManager');
-const fs = require('fs');
-const path = require('path');
 
-// Test database path
-const testDbPath = path.join(__dirname, '../data/test-leaderboard-donations.json');
+// Helper function to create test transactions.
+// Use `'field' in data` so callers can explicitly pass null (anonymous donor)
+// without the default kicking in.
+const createTransaction = (data) => {
+  return Transaction.create({
+    id: data.id || `tx-${Date.now()}-${Math.random().toString(36).slice(2)}`,
+    amount: 'amount' in data ? data.amount : 100,
+    donor: 'donor' in data ? data.donor : 'GA1234567890',
+    recipient: 'recipient' in data ? data.recipient : 'GB1234567890',
+    status: data.status || 'confirmed',
+    timestamp: data.timestamp || new Date().toISOString(),
+    memo: data.memo || '',
+    tags: data.tags || []
+  });
+};
 
-// Mock Stellar Service (no real Stellar network required)
-const MockStellarService = require('../../src/services/MockStellarService');
+const clearState = () => {
+  Transaction._clearAllData();
+  StatsService.invalidateLeaderboardCache();
+  Cache.clear();
+  SseManager._reset();
+};
 
 describe('Leaderboard Feature - Integration Tests', () => {
-  let mockStellarService;
-
-  beforeAll(async () => {
-    // Initialize mock stellar service
-    mockStellarService = new MockStellarService();
-  });
-
-  beforeEach(() => {
-    // Set up test database path
-    Transaction.getDbPath = () => testDbPath;
-
-    // Clean up test database before each test
-    if (fs.existsSync(testDbPath)) {
-      fs.unlinkSync(testDbPath);
-    }
-
-    // Clear leaderboard cache
-    StatsService.invalidateLeaderboardCache();
-    Cache.clear();
-
-    // Reset SSE clients for testing
-    SseManager._reset();
-  });
-
-  afterEach(() => {
-    // Clean up test database after each test
-    if (fs.existsSync(testDbPath)) {
-      fs.unlinkSync(testDbPath);
-    }
-
-    // Clear leaderboard cache
-    StatsService.invalidateLeaderboardCache();
-    Cache.clear();
-
-    // Reset SSE clients
-    SseManager._reset();
-  });
-
-  // Helper function to create test transactions
-  const createTransaction = (data) => {
-    return Transaction.create({
-      id: data.id || `tx-${Date.now()}-${Math.random().toString(36).slice(2)}`,
-      amount: data.amount || 100,
-      donor: data.donor || 'GA1234567890',
-      recipient: data.recipient || 'GB1234567890',
-      status: data.status || 'confirmed',
-      timestamp: data.timestamp || new Date().toISOString(),
-      memo: data.memo || '',
-      tags: data.tags || []
-    });
-  };
+  beforeEach(clearState);
+  afterEach(clearState);
 
   describe('GET /leaderboard/donors', () => {
     test('should return empty leaderboard when no transactions exist', async () => {
       const response = await request(app)
-        .get('/leaderboard/donors')
+        .get('/api/v1/leaderboard/donors')
         .expect('Content-Type', /json/);
 
       expect(response.body.success).toBe(true);
@@ -101,7 +71,7 @@ describe('Leaderboard Feature - Integration Tests', () => {
       });
 
       const response = await request(app)
-        .get('/leaderboard/donors')
+        .get('/api/v1/leaderboard/donors')
         .expect('Content-Type', /json/);
 
       expect(response.body.success).toBe(true);
@@ -134,7 +104,7 @@ describe('Leaderboard Feature - Integration Tests', () => {
       });
 
       const response = await request(app)
-        .get('/leaderboard/donors?period=daily')
+        .get('/api/v1/leaderboard/donors?period=daily')
         .expect('Content-Type', /json/);
 
       expect(response.body.success).toBe(true);
@@ -154,7 +124,7 @@ describe('Leaderboard Feature - Integration Tests', () => {
       });
 
       const response = await request(app)
-        .get('/leaderboard/donors?period=weekly')
+        .get('/api/v1/leaderboard/donors?period=weekly')
         .expect('Content-Type', /json/);
 
       expect(response.body.success).toBe(true);
@@ -163,7 +133,7 @@ describe('Leaderboard Feature - Integration Tests', () => {
 
     test('should filter by period: monthly', async () => {
       const response = await request(app)
-        .get('/leaderboard/donors?period=monthly')
+        .get('/api/v1/leaderboard/donors?period=monthly')
         .expect('Content-Type', /json/);
 
       expect(response.body.success).toBe(true);
@@ -171,17 +141,17 @@ describe('Leaderboard Feature - Integration Tests', () => {
     });
 
     test('should respect custom limit parameter', async () => {
-      // Create 10 transactions from same donor
+      // Create transactions from 10 different donors
       for (let i = 0; i < 10; i++) {
         createTransaction({
-          donor: 'GA1111111111',
+          donor: `GA${String(i).padStart(10, '0')}`,
           amount: 100,
           status: 'confirmed'
         });
       }
 
       const response = await request(app)
-        .get('/leaderboard/donors?limit=5')
+        .get('/api/v1/leaderboard/donors?limit=5')
         .expect('Content-Type', /json/);
 
       expect(response.body.success).toBe(true);
@@ -191,7 +161,7 @@ describe('Leaderboard Feature - Integration Tests', () => {
 
     test('should reject invalid period parameter', async () => {
       const response = await request(app)
-        .get('/leaderboard/donors?period=invalid')
+        .get('/api/v1/leaderboard/donors?period=invalid')
         .expect(400);
 
       expect(response.body.success).toBe(false);
@@ -200,7 +170,7 @@ describe('Leaderboard Feature - Integration Tests', () => {
 
     test('should reject limit exceeding maximum', async () => {
       const response = await request(app)
-        .get('/leaderboard/donors?limit=200')
+        .get('/api/v1/leaderboard/donors?limit=200')
         .expect(400);
 
       expect(response.body.success).toBe(false);
@@ -223,7 +193,7 @@ describe('Leaderboard Feature - Integration Tests', () => {
       });
 
       const response = await request(app)
-        .get('/leaderboard/donors')
+        .get('/api/v1/leaderboard/donors')
         .expect('Content-Type', /json/);
 
       expect(response.body.success).toBe(true);
@@ -235,7 +205,7 @@ describe('Leaderboard Feature - Integration Tests', () => {
   describe('GET /leaderboard/recipients', () => {
     test('should return empty leaderboard when no transactions exist', async () => {
       const response = await request(app)
-        .get('/leaderboard/recipients')
+        .get('/api/v1/leaderboard/recipients')
         .expect('Content-Type', /json/);
 
       expect(response.body.success).toBe(true);
@@ -258,7 +228,7 @@ describe('Leaderboard Feature - Integration Tests', () => {
       });
 
       const response = await request(app)
-        .get('/leaderboard/recipients')
+        .get('/api/v1/leaderboard/recipients')
         .expect('Content-Type', /json/);
 
       expect(response.body.success).toBe(true);
@@ -270,7 +240,7 @@ describe('Leaderboard Feature - Integration Tests', () => {
 
     test('should filter by period parameter', async () => {
       const response = await request(app)
-        .get('/leaderboard/recipients?period=weekly')
+        .get('/api/v1/leaderboard/recipients?period=weekly')
         .expect('Content-Type', /json/);
 
       expect(response.body.success).toBe(true);
@@ -279,7 +249,7 @@ describe('Leaderboard Feature - Integration Tests', () => {
 
     test('should reject invalid period parameter', async () => {
       const response = await request(app)
-        .get('/leaderboard/recipients?period=invalid')
+        .get('/api/v1/leaderboard/recipients?period=invalid')
         .expect(400);
 
       expect(response.body.success).toBe(false);
@@ -289,13 +259,25 @@ describe('Leaderboard Feature - Integration Tests', () => {
 
   describe('GET /leaderboard/stream', () => {
     test('should set SSE headers', async () => {
-      const response = await request(app)
-        .get('/leaderboard/stream')
-        .expect('Content-Type', /text\/event-stream/);
+      // The stream endpoint holds the connection open, so use a raw HTTP
+      // request and destroy it once headers arrive.
+      const headers = await new Promise((resolve, reject) => {
+        const server = http.createServer(app);
+        server.listen(0, () => {
+          const port = server.address().port;
+          const req = http.request({ port, path: '/api/v1/leaderboard/stream' }, res => {
+            const h = res.headers;
+            req.destroy();
+            server.close(() => resolve(h));
+          });
+          req.on('error', reject);
+          req.end();
+        });
+      });
 
-      expect(response.headers['content-type']).toContain('text/event-stream');
-      expect(response.headers['cache-control']).toBe('no-cache, no-store, must-revalidate');
-      expect(response.headers['connection']).toBe('keep-alive');
+      expect(headers['content-type']).toContain('text/event-stream');
+      expect(headers['cache-control']).toBe('no-cache, no-store, must-revalidate');
+      expect(headers['connection']).toBe('keep-alive');
     });
   });
 
@@ -471,7 +453,7 @@ describe('Leaderboard Feature - Integration Tests', () => {
   describe('Error Handling', () => {
     test('should handle missing donor gracefully', () => {
       // Transaction with no donor field
-      const tx = Transaction.create({
+      createTransaction({
         amount: 100,
         donor: undefined,
         recipient: 'GB1111111111',
@@ -485,7 +467,7 @@ describe('Leaderboard Feature - Integration Tests', () => {
     });
 
     test('should handle missing recipient gracefully', () => {
-      const tx = Transaction.create({
+      createTransaction({
         amount: 100,
         donor: 'GA1111111111',
         recipient: undefined,
@@ -514,18 +496,19 @@ describe('Leaderboard Feature - Integration Tests', () => {
   });
 
   describe('Security and Validation', () => {
-    test('should require authentication when leaderboard endpoints', async () => {
-      // Make request without authentication header
+    test('should allow unauthenticated read access (guest role has stats:read)', async () => {
+      // Leaderboard reads are public by design — attachUserRole assigns
+      // unauthenticated requests the guest role, which has stats:read.
       const response = await request(app)
-        .get('/leaderboard/donors')
-        .expect(401);
+        .get('/api/v1/leaderboard/donors')
+        .expect(200);
 
-      expect(response.body.success).toBe(false);
+      expect(response.body.success).toBe(true);
     });
 
     test('should validate limit is a positive integer', async () => {
       const response = await request(app)
-        .get('/leaderboard/donors?limit=-1')
+        .get('/api/v1/leaderboard/donors?limit=-1')
         .expect(400);
 
       expect(response.body.success).toBe(false);
@@ -534,7 +517,7 @@ describe('Leaderboard Feature - Integration Tests', () => {
 
     test('should validate limit is not zero', async () => {
       const response = await request(app)
-        .get('/leaderboard/donors?limit=0')
+        .get('/api/v1/leaderboard/donors?limit=0')
         .expect(400);
 
       expect(response.body.success).toBe(false);
@@ -560,7 +543,7 @@ describe('Leaderboard SSE Integration', () => {
     };
 
     // Add a client
-    const client = SseManager.addClient('test-client-1', 'test-key-1', {}, mockRes);
+    SseManager.addClient('test-client-1', 'test-key-1', {}, mockRes);
 
     // Broadcast an event
     SseManager.broadcast('test.event', { data: 'test' });
@@ -604,20 +587,8 @@ describe('Leaderboard SSE Integration', () => {
 });
 
 describe('Leaderboard Performance', () => {
-  beforeEach(() => {
-    Transaction.getDbPath = () => testDbPath;
-    if (fs.existsSync(testDbPath)) {
-      fs.unlinkSync(testDbPath);
-    }
-    StatsService.invalidateLeaderboardCache();
-  });
-
-  afterEach(() => {
-    if (fs.existsSync(testDbPath)) {
-      fs.unlinkSync(testDbPath);
-    }
-    StatsService.invalidateLeaderboardCache();
-  });
+  beforeEach(clearState);
+  afterEach(clearState);
 
   test('should handle large number of transactions efficiently', () => {
     // Create 100 transactions from 20 different donors
@@ -633,7 +604,7 @@ describe('Leaderboard Performance', () => {
     }
 
     const startTime = Date.now();
-    const leaderboard = StatsService.getDonorLeaderboard('all', 10);
+    const leaderboard = StatsService.getDonorLeaderboard('all', 100);
     const endTime = Date.now();
 
     expect(leaderboard.length).toBe(20);

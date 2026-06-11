@@ -9,35 +9,41 @@
  * - Campaign status transitions and lifecycle
  */
 
-const request = require('supertest');
-const { EventEmitter } = require('events');
+const http = require('http');
 const Database = require('../../src/utils/database');
 const DonationService = require('../../src/services/DonationService');
 const WebhookService = require('../../src/services/WebhookService');
 const MockStellarService = require('../../src/services/MockStellarService');
 
-// Mock the EventSource for SSE testing
-class MockEventSource extends EventEmitter {
-  constructor(url, options) {
-    super();
-    this.url = url;
-    this.options = options;
-    this.readyState = 0; // CONNECTING
-    
-    setTimeout(() => {
-      this.readyState = 1; // OPEN
-      this.emit('open');
-    }, 10);
-  }
-
-  close() {
-    this.readyState = 2; // CLOSED
-    this.emit('close');
-  }
-}
-
 describe('Donation Goal Tracking with Real-Time Progress', () => {
   let app, donationService, campaignId;
+
+  // SSE responses never end, so supertest can't await them. Open a raw HTTP
+  // connection, collect output until the response ends or `ms` elapses, then
+  // destroy the connection.
+  function collectSse(path, headers = {}, ms = 400) {
+    return new Promise((resolve, reject) => {
+      const server = http.createServer(app);
+      server.listen(0, () => {
+        const port = server.address().port;
+        const req = http.request({ port, path, headers }, res => {
+          let body = '';
+          let finished = false;
+          const finish = () => {
+            if (finished) return;
+            finished = true;
+            req.destroy();
+            server.close(() => resolve({ status: res.statusCode, headers: res.headers, body }));
+          };
+          res.on('data', chunk => { body += chunk; });
+          res.on('end', finish);
+          setTimeout(finish, ms);
+        });
+        req.on('error', reject);
+        req.end();
+      });
+    });
+  }
 
   beforeAll(async () => {
     // Initialize test app
@@ -233,9 +239,10 @@ describe('Donation Goal Tracking with Real-Time Progress', () => {
 
   describe('SSE Progress Stream', () => {
     test('should establish SSE connection when campaign progress', async () => {
-      const response = await request(app)
-        .get(`/api/campaigns/${campaignId}/progress/stream`)
-        .set('X-API-Key', 'test-key-123');
+      const response = await collectSse(
+        `/api/v1/campaigns/${campaignId}/progress/stream`,
+        { 'x-api-key': 'test-key-1' }
+      );
 
       expect(response.status).toBe(200);
       expect(response.headers['content-type']).toBe('text/event-stream');
@@ -244,8 +251,7 @@ describe('Donation Goal Tracking with Real-Time Progress', () => {
     });
 
     test('should reject SSE connection without API key', async () => {
-      const response = await request(app)
-        .get(`/api/campaigns/${campaignId}/progress/stream`);
+      const response = await collectSse(`/api/v1/campaigns/${campaignId}/progress/stream`);
 
       expect(response.status).toBe(401);
     });
@@ -257,65 +263,58 @@ describe('Donation Goal Tracking with Real-Time Progress', () => {
         [campaignId]
       );
 
-      const response = await request(app)
-        .get(`/api/campaigns/${campaignId}/progress/stream`)
-        .set('X-API-Key', 'test-key-123')
-        .timeout(500);
+      const response = await collectSse(
+        `/api/v1/campaigns/${campaignId}/progress/stream`,
+        { 'x-api-key': 'test-key-1' }
+      );
 
       // Response should contain initial state
-      expect(response.text).toContain('progress_percentage');
+      expect(response.body).toContain('progress_percentage');
     });
 
     test('should return 404 when non-existent campaign', async () => {
-      const response = await request(app)
-        .get('/api/campaigns/99999/progress/stream')
-        .set('X-API-Key', 'test-key-123');
+      const response = await collectSse(
+        '/api/v1/campaigns/99999/progress/stream',
+        { 'x-api-key': 'test-key-1' }
+      );
 
       expect(response.status).toBe(404);
-      expect(response.body.success).toBe(false);
+      expect(JSON.parse(response.body).success).toBe(false);
     });
 
     test('should enforce connection limit per API key', async () => {
-      const apiKey = 'test-key-limit';
       const maxConnections = require('../../src/services/SseManager').MAX_CONNECTIONS_PER_KEY;
 
       // Try to exceed connection limit
       const promises = [];
       for (let i = 0; i < maxConnections + 1; i++) {
         promises.push(
-          request(app)
-            .get(`/api/campaigns/${campaignId}/progress/stream`)
-            .set('X-API-Key', apiKey)
-            .timeout(100)
+          collectSse(`/api/v1/campaigns/${campaignId}/progress/stream`, { 'x-api-key': 'test-key-1' })
         );
       }
 
       const results = await Promise.allSettled(promises);
       const successCount = results.filter(r => r.status === 'fulfilled' && r.value.status === 200).length;
-      
+
       expect(successCount).toBeLessThanOrEqual(maxConnections);
     });
 
     test('should send heartbeat periodically', async () => {
-      let heartbeatReceived = false;
-      
-      // This test is more of an integration test - in real scenario,
-      // the EventSource would receive heartbeat comments
-      const response = await request(app)
-        .get(`/api/campaigns/${campaignId}/progress/stream`)
-        .set('X-API-Key', 'test-key-123')
-        .timeout(1000);
+      // The heartbeat interval is 30s, so just verify the connection is
+      // established and streaming.
+      const response = await collectSse(
+        `/api/v1/campaigns/${campaignId}/progress/stream`,
+        { 'x-api-key': 'test-key-1' }
+      );
 
-      // In a real SSE test, we'd check for ": heartbeat" comments
-      // For now, we just verify the connection is established
       expect(response.status).toBe(200);
     });
 
     test('should include event type in SSE message', async () => {
-      const response = await request(app)
-        .get(`/api/campaigns/${campaignId}/progress/stream`)
-        .set('X-API-Key', 'test-key-123')
-        .timeout(500);
+      const response = await collectSse(
+        `/api/v1/campaigns/${campaignId}/progress/stream`,
+        { 'x-api-key': 'test-key-1' }
+      );
 
       // Response should be in SSE format
       expect(response.headers['content-type']).toBe('text/event-stream');
@@ -535,22 +534,18 @@ describe('Donation Goal Tracking with Real-Time Progress', () => {
       expect(campaign.status).toBe('closed'); // Should still be closed at 100%
     });
 
-    test('should include progress in SSE data', (done) => {
-      const mockResponse = new EventEmitter();
-      mockResponse.write = jest.fn((data) => {
-        if (data.includes('progress_percentage')) {
-          expect(data).toContain('"progress_percentage"');
-          done();
-        }
-      });
-      mockResponse.setHeader = jest.fn();
-      mockResponse.status = 200;
-      mockResponse.headers = {
-        'content-type': 'text/event-stream'
-      };
+    test('should include progress in SSE data', async () => {
+      await Database.run(
+        'UPDATE campaigns SET current_amount = 500 WHERE id = ?',
+        [campaignId]
+      );
 
-      // This is a simplified test - in production, you'd use a real HTTP client
-      // to test SSE connections
+      const response = await collectSse(
+        `/api/v1/campaigns/${campaignId}/progress/stream`,
+        { 'x-api-key': 'test-key-1' }
+      );
+
+      expect(response.body).toContain('"progress_percentage"');
     });
   });
 });

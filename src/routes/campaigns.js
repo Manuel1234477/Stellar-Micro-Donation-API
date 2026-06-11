@@ -249,8 +249,11 @@ router.get('/:id/progress/stream', requireApiKey, asyncHandler(async (req, res, 
     return next(error);
   }
 
-  // Check connection limit
-  if (SseManager.connectionCountForKey(keyId) >= SseManager.MAX_CONNECTIONS_PER_KEY) {
+  // Register with the SSE manager up front: addClient checks the per-key
+  // connection limit and registers atomically, so concurrent connects can't
+  // all slip past a separate count check while this handler awaits.
+  const { limitExceeded } = SseManager.addClient(clientId, keyId, { campaignId }, res);
+  if (limitExceeded) {
     return res.status(429).json({
       success: false,
       error: `Too many connections for this API key. Maximum: ${SseManager.MAX_CONNECTIONS_PER_KEY}`
@@ -323,28 +326,6 @@ router.get('/:id/progress/stream', requireApiKey, asyncHandler(async (req, res, 
     }
   };
 
-  const _milestoneHandler = (data) => {
-    if (data.campaign_id === parseInt(campaignId)) {
-      try {
-        res.write(`event: milestone_reached\ndata: ${JSON.stringify(data)}\n\n`);
-      } catch (error) {
-        log.error('SSE', 'Failed to send milestone event', { campaignId, error: error.message });
-      }
-    }
-  };
-
-  // Note: In a production system, you'd use a proper message queue or event bus
-  // For now, we'll use the DonationService's event system
-  donationEvents.registerHook('campaign.goal_reached', (data) => {
-    if (data.campaign_id === parseInt(campaignId)) {
-      try {
-        res.write(`event: goal_reached\ndata: ${JSON.stringify(data)}\n\n`);
-      } catch (error) {
-        log.error('SSE', 'Failed to send goal_reached event', { campaignId, error: error.message });
-      }
-    }
-  });
-
   // Handle client disconnect
   req.on('close', () => {
     clearInterval(heartbeatInterval);
@@ -357,10 +338,6 @@ router.get('/:id/progress/stream', requireApiKey, asyncHandler(async (req, res, 
     SseManager.removeClient(clientId);
     log.error('SSE', 'Client connection error', { clientId, error: error.message });
   });
-
-  // Add client to SSE manager
-  const filter = { campaignId };
-  SseManager.addClient(clientId, keyId, filter, res);
 }));
 
 // ─── All-or-Nothing Crowdfunding Routes ──────────────────────────────────────
@@ -560,21 +537,24 @@ router.get('/:id/progress', requireApiKey, cacheMiddleware('campaign-progress', 
       return res.status(404).json({ success: false, error: 'Campaign not found' });
     }
 
-    // Compute raised from SUM of confirmed donations (not current_amount)
-    const raisedRow = await Database.get(
-      `SELECT COALESCE(SUM(amount), 0) AS raised, MAX(timestamp) AS lastDonationAt
+    // Raised comes from current_amount, which DonationService maintains as
+    // donations are recorded. (The transactions table has no status column —
+    // every non-deleted row is a recorded donation.)
+    const raised = Number(campaign.current_amount) || 0;
+
+    const lastDonationRow = await Database.get(
+      `SELECT MAX(timestamp) AS lastDonationAt
        FROM transactions
-       WHERE campaign_id = ? AND status = 'completed' AND deleted_at IS NULL`,
+       WHERE campaign_id = ? AND deleted_at IS NULL`,
       [campaignId]
     );
-    const raised = raisedRow ? Number(raisedRow.raised) : 0;
-    const lastDonationAt = raisedRow && raisedRow.lastDonationAt ? raisedRow.lastDonationAt : null;
+    const lastDonationAt = lastDonationRow && lastDonationRow.lastDonationAt ? lastDonationRow.lastDonationAt : null;
 
-    // Count unique donors (confirmed donations only)
+    // Count unique donors
     const donorCountRow = await Database.get(
       `SELECT COUNT(DISTINCT senderId) AS donorCount
        FROM transactions
-       WHERE campaign_id = ? AND status = 'completed' AND deleted_at IS NULL`,
+       WHERE campaign_id = ? AND deleted_at IS NULL`,
       [campaignId]
     );
     const donorCount = donorCountRow ? donorCountRow.donorCount : 0;
@@ -601,6 +581,30 @@ router.get('/:id/progress', requireApiKey, cacheMiddleware('campaign-progress', 
       daysRemaining = msRemaining > 0 ? Math.ceil(msRemaining / (1000 * 60 * 60 * 24)) : 0;
     }
 
+    // Milestone rollup (table only exists once the milestones migration ran)
+    let milestones = { total: 0, verified: 0, pending: 0, totalReleased: 0 };
+    try {
+      const milestoneRow = await Database.get(
+        `SELECT COUNT(*) AS total,
+                COALESCE(SUM(CASE WHEN status = 'verified' THEN 1 ELSE 0 END), 0) AS verified,
+                COALESCE(SUM(CASE WHEN status = 'pending' THEN 1 ELSE 0 END), 0) AS pending,
+                COALESCE(SUM(CASE WHEN status = 'verified' THEN target_amount ELSE 0 END), 0) AS totalReleased
+         FROM campaign_milestones
+         WHERE campaign_id = ?`,
+        [campaignId]
+      );
+      if (milestoneRow) {
+        milestones = {
+          total: milestoneRow.total,
+          verified: milestoneRow.verified,
+          pending: milestoneRow.pending,
+          totalReleased: milestoneRow.totalReleased,
+        };
+      }
+    } catch (_) {
+      // campaign_milestones table not present — report empty rollup
+    }
+
     res.json({
       success: true,
       data: {
@@ -615,7 +619,11 @@ router.get('/:id/progress', requireApiKey, cacheMiddleware('campaign-progress', 
         // backward-compatible aliases
         goalAmount: goal,
         raisedAmount: raised,
+        currentAmount: raised,
         percentage: Math.round(percentComplete),
+        progressPercent: Math.round(percentComplete),
+        remaining: Math.max(0, goal - raised),
+        milestones,
       },
     });
   } catch (error) {
