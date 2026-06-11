@@ -8,7 +8,7 @@ const ENCRYPTED_FIELDS = ['label', 'notes'];
 
 function getEncryptionService() {
   // Lazy-require to avoid circular deps and allow tests to override env
-  return require('../../services/EncryptionService');
+  return require('../services/EncryptionService');
 }
 
 function encryptWalletFields(wallet) {

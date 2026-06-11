@@ -1,6 +1,6 @@
 const request = require('supertest');
-const app = require('../../src/routes/app');
-const Transaction = require('../../src/routes/models/transaction');
+const app = require('../../src/app');
+const Transaction = require('../../src/models/transaction');
 const StellarSdk = require('stellar-sdk');
 
 describe('Stellar XDR Inspection (Task #423)', () => {

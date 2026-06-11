@@ -30,7 +30,7 @@ describe('SEP-0010 authentication', () => {
     });
 
     // Create the app after configuring env/service
-    app = require('../../src/routes/app');
+    app = require('../../src/app');
 
     clientKeypair = StellarSdk.Keypair.random();
   });

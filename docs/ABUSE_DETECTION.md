@@ -59,7 +59,7 @@ Located in `src/utils/abuseDetector.js`:
 The middleware automatically tracks all requests:
 
 ```javascript
-// In src/routes/app.js
+// In src/app.js
 app.use(abuseDetectionMiddleware);
 ```
 

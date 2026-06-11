@@ -13,7 +13,7 @@
 
 const express = require('express');
 const router = express.Router();
-const StatsService = require('../routes/services/StatsService');
+const StatsService = require('../services/LeaderboardStatsService');
 const { checkPermission } = require('../middleware/rbac');
 const { PERMISSIONS } = require('../utils/permissions');
 const AuditLogService = require('../services/AuditLogService');

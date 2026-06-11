@@ -69,7 +69,7 @@ async function loadAppWithDatabase(envOverrides = {}) {
   jest.resetModules();
   applyTestEnvironment(envOverrides);
 
-  const app = require('../../src/routes/app');
+  const app = require('../../src/app');
   const Database = require('../../src/utils/database');
 
   await Database.initialize();

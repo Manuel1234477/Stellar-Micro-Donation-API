@@ -4,7 +4,7 @@
  */
 
 const request = require('supertest');
-const app = require('../../src/routes/app');
+const app = require('../../src/app');
 
 describe('Permission Integration Tests', () => {
   describe('Donation Routes', () => {

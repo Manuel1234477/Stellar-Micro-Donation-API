@@ -1,5 +1,5 @@
-const StatsService = require('../../src/routes/services/StatsService');
-const Transaction = require('../../src/routes/models/transaction');
+const StatsService = require('../../src/services/LeaderboardStatsService');
+const Transaction = require('../../src/models/transaction');
 
 describe('Wallet Analytics - Statistics Service Tests', () => {
   beforeEach(() => {

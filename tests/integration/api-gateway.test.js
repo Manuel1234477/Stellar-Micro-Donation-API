@@ -30,7 +30,7 @@ jest.mock('../../src/services/HealthCheckService', () => ({
   })
 }));
 
-const app = require('../../src/routes/app');
+const app = require('../../src/app');
 
 describe('API Gateway Integration Support', () => {
   beforeEach(() => {

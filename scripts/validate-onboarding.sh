@@ -60,7 +60,7 @@ echo "🔑 Checking key service files..."
 test_check "DonationService.js exists" "test -f src/services/DonationService.js"
 test_check "WalletService.js exists" "test -f src/services/WalletService.js"
 test_check "stellarErrorHandler.js exists" "test -f src/utils/stellarErrorHandler.js"
-test_check "app.js exists" "test -f src/routes/app.js"
+test_check "app.js exists" "test -f src/app.js"
 echo ""
 
 # Package.json script checks

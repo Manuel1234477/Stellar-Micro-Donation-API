@@ -52,7 +52,7 @@ npm run init-db
 
 # 5. Run with PM2 (process manager)
 npm install -g pm2
-pm2 start src/routes/app.js --name stellar-api
+pm2 start src/app.js --name stellar-api
 pm2 save
 pm2 startup
 ```
@@ -71,7 +71,7 @@ RUN npm ci --omit=dev
 COPY . .
 RUN npm run init-db
 EXPOSE 3000
-CMD ["node", "src/routes/app.js"]
+CMD ["node", "src/app.js"]
 ```
 
 ```bash

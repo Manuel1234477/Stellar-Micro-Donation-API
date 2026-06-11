@@ -16,7 +16,7 @@ const express = require('express');
 const request = require('supertest');
 const StatsService = require('../../src/services/StatsService');
 const Cache = require('../../src/utils/cache');
-const Transaction = require('../../src/routes/models/transaction');
+const Transaction = require('../../src/models/transaction');
 const donationEvents = require('../../src/events/donationEvents');
 
 // ─── helpers ────────────────────────────────────────────────────────────────

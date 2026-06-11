@@ -54,7 +54,7 @@ describe('Transaction.getCursorPaginated — date range filtering', () => {
     fs.writeFileSync(tmpPath, JSON.stringify(transactions, null, 2));
     process.env.DB_JSON_PATH = tmpPath;
 
-    Transaction = require('../../src/routes/models/transaction');
+    Transaction = require('../../src/models/transaction');
   });
 
   afterEach(() => {

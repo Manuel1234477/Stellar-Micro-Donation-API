@@ -28,7 +28,7 @@ describe('Admin Crowdfunding Campaign Management', () => {
     process.env.MOCK_STELLAR = 'true';
     process.env.NODE_ENV = 'test';
 
-    app = require('../../src/routes/app');
+    app = require('../../src/app');
     Database = require('../../src/utils/database');
 
     // Ensure campaign_milestones table exists (may not be migrated in test DB)

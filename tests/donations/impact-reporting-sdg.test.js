@@ -22,7 +22,7 @@ const path = require('path');
 const os = require('os');
 const fs = require('fs');
 
-const Transaction = require('../../src/routes/models/transaction');
+const Transaction = require('../../src/models/transaction');
 const impactRouter = require('../../src/routes/impact');
 const donationRouter = require('../../src/routes/donation');
 const { attachUserRole } = require('../../src/middleware/rbac');

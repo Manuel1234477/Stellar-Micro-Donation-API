@@ -5,7 +5,7 @@
  */
 
 const request = require('supertest');
-const app = require('../../src/routes/app');
+const app = require('../../src/app');
 const Database = require('../../src/utils/database');
 const LimitService = require('../../src/services/LimitService');
 const encryption = require('../../src/utils/encryption');

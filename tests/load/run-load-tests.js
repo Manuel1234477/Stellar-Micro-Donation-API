@@ -38,7 +38,7 @@ async function main() {
   console.log(`Concurrency: ${concurrency} VUs | Iterations: ${iterations} per scenario\n`);
 
   // Load the Express app in mock mode
-  const app = require('../../src/routes/app');
+  const app = require('../../src/app');
 
   const runner = new LoadTestRunner(app, { concurrency, iterations, thinkTimeMs: 10 });
 

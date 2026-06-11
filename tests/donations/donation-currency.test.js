@@ -14,7 +14,7 @@ jest.mock('../../src/services/PriceOracleService', () => ({
   invalidateCache: jest.fn(),
 }));
 
-jest.mock('../../src/routes/models/transaction', () => ({
+jest.mock('../../src/models/transaction', () => ({
   create: jest.fn((data) => ({ id: '1', ...data })),
   getAll: jest.fn(() => []),
   getById: jest.fn(),

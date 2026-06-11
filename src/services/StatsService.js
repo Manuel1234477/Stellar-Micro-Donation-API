@@ -9,7 +9,7 @@
  * donor/recipient analytics, and summary reports for business intelligence.
  */
 
-const Transaction = require('../routes/models/transaction');
+const Transaction = require('../models/transaction');
 const { generatePseudonymousId, isPseudonymousId } = require('../utils/anonymization');
 
 class StatsService {
@@ -488,7 +488,7 @@ class StatsService {
    * }}
    */
   static getMemoCollisionStats(startDate = null, endDate = null) {
-    const Transaction = require('../routes/models/transaction');
+    const Transaction = require('../models/transaction');
     let transactions = Transaction.getAll();
 
     if (startDate || endDate) {
@@ -532,7 +532,7 @@ class StatsService {
    * }}
    */
   static getOverpaymentStats(startDate = null, endDate = null) {
-    const Transaction = require('../routes/models/transaction');
+    const Transaction = require('../models/transaction');
     let transactions = Transaction.getAll();
 
     // Apply optional date filter
@@ -725,7 +725,7 @@ class StatsService {
     const { start, end, granularity: autoGranularity } = StatsService.parsePeriod(period);
     const granularity = granularityOverride || autoGranularity;
 
-    const Transaction = require('../routes/models/transaction');
+    const Transaction = require('../models/transaction');
     const transactions = Transaction.getByDateRange(start, end);
 
     const totalAmount = transactions.reduce((s, tx) => s + (parseFloat(tx.amount) || 0), 0);
@@ -789,7 +789,7 @@ class StatsService {
    * @returns {object} Breakdown with anonymous and identified totals
    */
   static getAnonymousBreakdown(startDate, endDate) {
-    const Transaction = require('../routes/models/transaction');
+    const Transaction = require('../models/transaction');
     const transactions = Transaction.getByDateRange(startDate, endDate);
     let anonymousCount = 0;
     let anonymousAmount = 0;

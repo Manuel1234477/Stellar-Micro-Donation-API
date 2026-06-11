@@ -25,7 +25,7 @@ const fs = require('fs');
 const TEST_DB_PATH = path.join(__dirname, '../data/test-anonymous-donations.json');
 process.env.DB_JSON_PATH = TEST_DB_PATH;
 
-const Transaction = require('../../src/routes/models/transaction');
+const Transaction = require('../../src/models/transaction');
 
 function clearDb() {
   if (fs.existsSync(TEST_DB_PATH)) fs.unlinkSync(TEST_DB_PATH);

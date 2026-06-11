@@ -11,9 +11,9 @@
  */
 
 const SseManager = require('../services/SseManager');
-const StatsService = require('../routes/services/StatsService');
+const StatsService = require('./LeaderboardStatsService');
 const donationEvents = require('../events/donationEvents');
-const Wallet = require('../routes/models/wallet');
+const Wallet = require('../models/wallet');
 const log = require('../utils/log');
 
 /** Event name for leaderboard updates */

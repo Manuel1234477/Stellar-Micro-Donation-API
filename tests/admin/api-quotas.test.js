@@ -24,7 +24,7 @@ beforeAll(async () => {
   process.env.API_KEYS = 'test-key-123';
   
   // Import app after env is set
-  app = require('../../src/routes/app');
+  app = require('../../src/app');
   
   // Create test API keys
   testApiKey = await createApiKey({

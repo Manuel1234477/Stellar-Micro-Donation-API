@@ -12,7 +12,7 @@ let app;
 beforeAll(async () => {
   process.env.NODE_ENV = 'test';
   process.env.MOCK_STELLAR = 'true';
-  app = require('../../src/routes/app');
+  app = require('../../src/app');
 });
 
 afterAll(async () => {

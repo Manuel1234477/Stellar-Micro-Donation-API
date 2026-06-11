@@ -33,8 +33,8 @@ afterAll(() => {
 const MockStellarService = require('../../src/services/MockStellarService');
 const TransactionSyncService = require('../../src/services/TransactionSyncService');
 const TransactionSyncScheduler = require('../../src/services/TransactionSyncScheduler');
-const Wallet = require('../../src/routes/models/wallet');
-const Transaction = require('../../src/routes/models/transaction');
+const Wallet = require('../../src/models/wallet');
+const Transaction = require('../../src/models/transaction');
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 

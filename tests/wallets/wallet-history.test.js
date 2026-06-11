@@ -74,7 +74,7 @@ jest.mock('../../src/services/TransactionSyncService', () => {
 // ── Mock Transaction model ───────────────────────────────────────────────────
 const mockGetByStellarTxId = jest.fn(() => null);
 const mockCreate = jest.fn((data) => ({ id: 999, ...data }));
-jest.mock('../../src/routes/models/transaction', () => ({
+jest.mock('../../src/models/transaction', () => ({
   getByStellarTxId: (...args) => mockGetByStellarTxId(...args),
   create: (...args) => mockCreate(...args),
 }));

@@ -8,7 +8,7 @@ const request = require('supertest');
 const StellarSdk = require('stellar-sdk');
 
 const donationRouter = require('../../src/routes/donation');
-const Transaction = require('../../src/routes/models/transaction');
+const Transaction = require('../../src/models/transaction');
 const { attachUserRole } = require('../../src/middleware/rbac');
 const { getStellarService } = require('../../src/config/stellar');
 const { resetMockStellarService } = require('../helpers/testIsolation');

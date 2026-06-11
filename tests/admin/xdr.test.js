@@ -1,7 +1,7 @@
 const request = require('supertest');
-const app = require('../../src/routes/app');
+const app = require('../../src/app');
 const { createApiKey } = require('../../src/models/apiKeys');
-const Transaction = require('../../src/routes/models/transaction');
+const Transaction = require('../../src/models/transaction');
 const StellarSdk = require('stellar-sdk');
 const db = require('../../src/utils/database');
 

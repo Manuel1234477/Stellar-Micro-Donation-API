@@ -4,7 +4,7 @@
  */
 
 const request = require('supertest');
-const app = require('../../src/routes/app');
+const app = require('../../src/app');
 const apiKeysModel = require('../../src/models/apiKeys');
 const { checkRateLimit, buildRateLimitHeaders, clearStore, DEFAULT_RATE_LIMIT, DEFAULT_WINDOW_SECONDS } = require('../../src/middleware/perKeyRateLimit');
 

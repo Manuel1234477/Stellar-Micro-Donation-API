@@ -152,7 +152,7 @@ describe('POST /donations/verify — HTTP endpoint validation', () => {
       batchRateLimiter: (req, res, next) => next(),
     }));
 
-    app = require('../../src/routes/app');
+    app = require('../../src/app');
     request = require('supertest');
   });
 

@@ -23,7 +23,7 @@ const { validateSchema } = require('../middleware/schemaValidation');
 const { cacheMiddleware } = require('../middleware/caching');
 const { validateDataEntry } = require('../middleware/validateDataEntry');
 const { toWalletResponse } = require('../utils/responseSanitizer');
-const Wallet = require('./models/wallet');
+const Wallet = require('../models/wallet');
 const { STROOPS_PER_XLM } = require('../constants');
 const WalletService = require('../services/WalletService');
 const AuditLogService = require('../services/AuditLogService');
@@ -497,7 +497,7 @@ router.get('/:id/history', checkPermission(PERMISSIONS.WALLETS_READ), walletIdSc
     );
 
     // Persist new transactions to DB
-    const Transaction = require('./models/transaction');
+    const Transaction = require('../models/transaction');
     for (const tx of horizonTxs) {
       if (!Transaction.getByStellarTxId(tx.id)) {
         Transaction.create({

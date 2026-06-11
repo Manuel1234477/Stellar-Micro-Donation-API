@@ -15,7 +15,7 @@ const { ValidationError, NotFoundError, ERROR_CODES } = require('../utils/errors
 const { TRANSACTION_STATES } = require('../utils/transactionStateMachine');
 const AuditLogService = require('../services/AuditLogService');
 const ReceiptService = require('../services/ReceiptService');
-const Transaction = require('./models/transaction');
+const Transaction = require('../models/transaction');
 const asyncHandler = require('../utils/asyncHandler');
 const { payloadSizeLimiter, ENDPOINT_LIMITS } = require('../middleware/payloadSizeLimiter');
 

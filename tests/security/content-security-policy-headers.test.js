@@ -177,31 +177,31 @@ describe('security headers on multiple endpoints', () => {
 describe('helmet config in app.js', () => {
   it('app.js requires helmet', () => {
     const fs = require('fs');
-    const src = fs.readFileSync('src/routes/app.js', 'utf8');
+    const src = fs.readFileSync('src/app.js', 'utf8');
     expect(src).toMatch(/require\(['"]helmet['"]\)/);
   });
 
   it('app.js calls app.use(helmet(', () => {
     const fs = require('fs');
-    const src = fs.readFileSync('src/routes/app.js', 'utf8');
+    const src = fs.readFileSync('src/app.js', 'utf8');
     expect(src).toMatch(/app\.use\(helmet\(/);
   });
 
   it('app.js sets frameguard DENY', () => {
     const fs = require('fs');
-    const src = fs.readFileSync('src/routes/app.js', 'utf8');
+    const src = fs.readFileSync('src/app.js', 'utf8');
     expect(src).toMatch(/frameguard.*deny/i);
   });
 
   it('app.js sets referrerPolicy no-referrer', () => {
     const fs = require('fs');
-    const src = fs.readFileSync('src/routes/app.js', 'utf8');
+    const src = fs.readFileSync('src/app.js', 'utf8');
     expect(src).toMatch(/no-referrer/);
   });
 
   it('app.js sets hsts with maxAge', () => {
     const fs = require('fs');
-    const src = fs.readFileSync('src/routes/app.js', 'utf8');
+    const src = fs.readFileSync('src/app.js', 'utf8');
     expect(src).toMatch(/maxAge/);
   });
 });

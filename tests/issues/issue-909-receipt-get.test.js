@@ -25,7 +25,7 @@ process.env.DB_JSON_PATH = tmpDbPath;
 const requireApiKey = require('../../src/middleware/apiKey');
 const { attachUserRole } = require('../../src/middleware/rbac');
 const receiptRouter = require('../../src/routes/receipt');
-const Transaction = require('../../src/routes/models/transaction');
+const Transaction = require('../../src/models/transaction');
 
 function createApp() {
   const app = express();

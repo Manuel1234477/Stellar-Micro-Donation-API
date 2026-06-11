@@ -15,7 +15,7 @@ const router = express.Router();
 const requireApiKey = require('../middleware/apiKey');
 const { checkPermission } = require('../middleware/rbac');
 const { PERMISSIONS } = require('../utils/permissions');
-const Transaction = require('./models/transaction');
+const Transaction = require('../models/transaction');
 const { SDG_CATEGORIES} = require('../services/ImpactMetricService');
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────

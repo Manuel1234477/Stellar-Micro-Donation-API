@@ -10,7 +10,7 @@ process.env.MOCK_STELLAR = 'true';
 process.env.API_KEYS = 'test-key-1,test-key-2';
 
 const request = require('supertest');
-const Transaction = require('../../src/routes/models/transaction');
+const Transaction = require('../../src/models/transaction');
 const { getStellarService } = require('../../src/config/stellar');
 const { resetMockStellarService } = require('../helpers/testIsolation');
 

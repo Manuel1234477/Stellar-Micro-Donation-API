@@ -16,7 +16,7 @@ const MOCK_PENDING = [
   { id: '2', amount: 5,  donor: 'GDEF', recipient: 'GXYZ', stellarTxId: 'hash2', statusUpdatedAt: NEW_TS, feeBumpCount: 0 },
 ];
 
-jest.mock('../../src/routes/models/transaction', () => ({
+jest.mock('../../src/models/transaction', () => ({
   getByStatus: jest.fn((s) => s === 'pending' ? MOCK_PENDING : []),
   getAll: jest.fn(() => []),
 }));
@@ -107,7 +107,7 @@ describe('GET /donations/pending (#795)', () => {
   });
 
   it('returns empty data array (not 404) when no pending donations', async () => {
-    const Transaction = require('../../src/routes/models/transaction');
+    const Transaction = require('../../src/models/transaction');
     Transaction.getByStatus.mockReturnValueOnce([]);
     const res = await request(buildApp('admin')).get('/donations/pending');
     expect(res.status).toBe(200);

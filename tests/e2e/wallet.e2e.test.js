@@ -16,7 +16,7 @@
 'use strict';
 
 const request = require('supertest');
-const app = require('../../src/routes/app');
+const app = require('../../src/app');
 const { createTestnetService, generateKeypair, createFundedAccount, waitForBalance } = require('./helpers/testnet');
 
 // API key configured in tests/e2e/setup.js

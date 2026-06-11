@@ -16,7 +16,7 @@ const express = require('express');
 const walletRouter = require('../../src/routes/wallet');
 const { getStellarService } = require('../../src/config/stellar');
 const { attachUserRole } = require('../../src/middleware/rbac');
-const Wallet = require('../../src/routes/models/wallet');
+const Wallet = require('../../src/models/wallet');
 
 // Mock https so the verify endpoint's inline require('https') is intercepted
 jest.mock('https', () => ({ get: jest.fn() }));

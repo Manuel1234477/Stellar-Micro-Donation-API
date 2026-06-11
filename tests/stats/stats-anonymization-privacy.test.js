@@ -14,11 +14,11 @@
 const express = require('express');
 const request = require('supertest');
 const StatsService = require('../../src/services/StatsService');
-const Transaction = require('../../src/routes/models/transaction');
+const Transaction = require('../../src/models/transaction');
 const { generatePseudonymousId, isPseudonymousId } = require('../../src/utils/anonymization');
 
 // Mock Transaction model
-jest.mock('../../src/routes/models/transaction');
+jest.mock('../../src/models/transaction');
 
 describe('Stats Anonymization Privacy', () => {
   const DONOR_WALLET = 'GBRPYHIL2CI3WHZDTOOQFC6EB4KJJGUJJVNHX3XCRSZ3ZBOJXLUBXVQ';

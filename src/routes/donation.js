@@ -197,7 +197,7 @@ const StatsService = require('../services/StatsService');
 const { calculateCostBreakdown } = require('../utils/costBreakdown');
 const LimitService = require('../services/LimitService');
 
-const Transaction = require('./models/transaction');
+const Transaction = require('../models/transaction');
 const { buildErrorResponse } = require('../utils/validationErrorFormatter');
 
 const statsByTagQuerySchema = validateSchema({

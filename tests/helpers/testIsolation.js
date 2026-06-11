@@ -3,7 +3,7 @@
  * Ensures tests are fully isolated and independent
  */
 
-const Transaction = require('../../src/routes/models/transaction');
+const Transaction = require('../../src/models/transaction');
 const Database = require('../../src/utils/database');
 
 /**

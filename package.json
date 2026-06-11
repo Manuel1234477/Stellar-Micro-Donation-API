@@ -2,9 +2,9 @@
   "name": "stellar-micro-donation-api",
   "version": "1.0.0",
   "description": "Micro-donation API using Stellar blockchain",
-  "main": "src/routes/app.js",
+  "main": "src/app.js",
   "scripts": {
-    "start": "npm run validate-env && node src/routes/app.js",
+    "start": "npm run validate-env && node src/app.js",
     "validate-env": "node src/utils/startupChecks.js",
     "check": "node src/utils/startupChecks.js",
     "init-db": "node src/scripts/initDB.js",

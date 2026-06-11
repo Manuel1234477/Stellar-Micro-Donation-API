@@ -1,13 +1,13 @@
 const fs = require('fs');
 const path = require('path');
 const { v4: uuidv4 } = require('uuid');
-const donationEvents = require('../../events/donationEvents');
+const donationEvents = require('../events/donationEvents');
 const {
   TRANSACTION_STATES,
   normalizeState,
   assertValidState,
   assertValidTransition,
-} = require('../../utils/transactionStateMachine');
+} = require('../utils/transactionStateMachine');
 
 class Transaction {
   static getDbPath() {

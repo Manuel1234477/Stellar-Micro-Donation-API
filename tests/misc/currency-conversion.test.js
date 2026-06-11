@@ -156,7 +156,7 @@ describe('DonationService – currency conversion', () => {
 
     priceOracle = require('../../src/services/PriceOracleService');
     DonationService = require('../../src/services/DonationService');
-    Transaction = require('../../src/routes/models/transaction');
+    Transaction = require('../../src/models/transaction');
     Transaction._clearAllData();
 
     donationService = new DonationService({});

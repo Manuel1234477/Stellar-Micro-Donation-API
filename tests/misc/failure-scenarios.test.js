@@ -4,7 +4,7 @@
  */
 
 const { getStellarService } = require('../../src/config/stellar');
-const Transaction = require('../../src/routes/models/transaction');
+const Transaction = require('../../src/models/transaction');
 const DonationValidator = require('../../src/utils/donationValidator').Class || require('../../src/utils/donationValidator');
 
 describe('Failure Scenarios - Comprehensive Error Tests', () => {

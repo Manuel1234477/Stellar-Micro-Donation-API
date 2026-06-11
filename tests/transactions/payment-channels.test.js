@@ -15,7 +15,7 @@ process.env.MOCK_STELLAR = 'true';
 process.env.NODE_ENV = 'test';
 
 const request = require('supertest');
-const app = require('../../src/routes/app');
+const app = require('../../src/app');
 const { issueAccessToken } = require('../../src/services/JwtService');
 const { buildStateMessage, signState } = require('../../src/services/PaymentChannelService');
 

@@ -1,5 +1,5 @@
 const TransactionReconciliationService = require('../../src/services/TransactionReconciliationService');
-const Transaction = require('../../src/routes/models/transaction');
+const Transaction = require('../../src/models/transaction');
 const { TRANSACTION_STATES } = require('../../src/utils/transactionStateMachine');
 const path = require('path');
 const os = require('os');

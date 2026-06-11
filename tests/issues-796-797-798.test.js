@@ -367,7 +367,7 @@ describe('#797 — POST /donations/:id/refund', () => {
 describe('#798 — Consistent sort order', () => {
   describe('WalletService.getPaginatedWallets', () => {
     const WalletService = require('../src/services/WalletService');
-    const Wallet = require('../src/routes/models/wallet');
+    const Wallet = require('../src/models/wallet');
 
     afterEach(() => jest.restoreAllMocks());
 
@@ -429,7 +429,7 @@ describe('#798 — Consistent sort order', () => {
 
     test('default sort is id:asc', () => {
       const WalletService = require('../src/services/WalletService');
-      const Wallet = require('../src/routes/models/wallet');
+      const Wallet = require('../src/models/wallet');
       jest.spyOn(Wallet, 'getAll').mockReturnValue([
         { id: '2', address: 'G2', createdAt: '2024-01-02T00:00:00Z' },
         { id: '1', address: 'G1', createdAt: '2024-01-01T00:00:00Z' },

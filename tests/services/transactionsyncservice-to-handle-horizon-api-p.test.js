@@ -1,11 +1,11 @@
 const StellarSdk = require('stellar-sdk');
 const TransactionSyncService = require('../../src/services/TransactionSyncService');
-const Wallet = require('../../src/routes/models/wallet');
-const Transaction = require('../../src/routes/models/transaction');
+const Wallet = require('../../src/models/wallet');
+const Transaction = require('../../src/models/transaction');
 const log = require('../../src/utils/log');
 
-jest.mock('../../src/routes/models/wallet');
-jest.mock('../../src/routes/models/transaction');
+jest.mock('../../src/models/wallet');
+jest.mock('../../src/models/transaction');
 jest.mock('../../src/utils/log');
 
 const mockServer = {

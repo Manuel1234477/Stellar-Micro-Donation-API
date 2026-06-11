@@ -9,7 +9,7 @@ const express = require('express');
 const donationRouter = require('../../src/routes/donation');
 const statsRouter = require('../../src/routes/stats');
 const tagsRouter = require('../../src/routes/tags');
-const Transaction = require('../../src/routes/models/transaction');
+const Transaction = require('../../src/models/transaction');
 const { getStellarService } = require('../../src/config/stellar');
 const { PREDEFINED_TAGS } = require('../../src/constants/tags');
 

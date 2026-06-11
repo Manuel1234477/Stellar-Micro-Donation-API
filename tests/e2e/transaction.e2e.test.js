@@ -19,7 +19,7 @@
 
 const request = require('supertest');
 const { v4: uuid } = require('uuid');
-const app = require('../../src/routes/app');
+const app = require('../../src/app');
 const {
   createTestnetService,
   createFundedAccount,

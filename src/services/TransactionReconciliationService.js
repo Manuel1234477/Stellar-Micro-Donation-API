@@ -15,7 +15,7 @@
  */
 
 const Database = require('../utils/database');
-const Transaction = require('../routes/models/transaction');
+const Transaction = require('../models/transaction');
 const { TRANSACTION_STATES } = require('../utils/transactionStateMachine');
 const log = require('../utils/log');
 const WebhookService = require('./WebhookService');

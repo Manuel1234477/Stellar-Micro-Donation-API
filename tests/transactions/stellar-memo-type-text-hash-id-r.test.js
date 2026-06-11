@@ -287,7 +287,7 @@ describe('POST /donations memoType field', () => {
     const express = require('express');
     const { attachUserRole } = require('../../src/middleware/rbac');
     const donationRouter = require('../../src/routes/donation');
-    const Transaction = require('../../src/routes/models/transaction');
+    const Transaction = require('../../src/models/transaction');
 
     // Clear any stale data
     Transaction._clearAllData && Transaction._clearAllData();

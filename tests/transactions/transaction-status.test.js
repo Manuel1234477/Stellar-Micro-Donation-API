@@ -4,7 +4,7 @@
  * Run with: npm test -- transaction-status.test.js
  */
 
-const Transaction = require('../../src/routes/models/transaction');
+const Transaction = require('../../src/models/transaction');
 const MockStellarService = require('../../src/services/MockStellarService');
 const fs = require('fs');
 const path = require('path');

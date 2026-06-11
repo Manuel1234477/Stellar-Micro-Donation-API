@@ -114,10 +114,10 @@ describe('Wallet model — field encryption', () => {
     process.env.ENCRYPTION_KEY_VERSION = '1';
 
     // Bust module cache so env changes take effect and use temp file
-    delete require.cache[require.resolve('../../src/routes/models/wallet')];
+    delete require.cache[require.resolve('../../src/models/wallet')];
     delete require.cache[require.resolve('../../src/services/EncryptionService')];
 
-    Wallet = require('../../src/routes/models/wallet');
+    Wallet = require('../../src/models/wallet');
     // Point to temp file
     Wallet._testDbPath = tmpFile;
     const origLoad = Wallet.loadWallets.bind(Wallet);
@@ -136,7 +136,7 @@ describe('Wallet model — field encryption', () => {
     delete process.env.ENCRYPTION_KEY_1;
     delete process.env.ENCRYPTION_KEY_VERSION;
     jest.restoreAllMocks();
-    delete require.cache[require.resolve('../../src/routes/models/wallet')];
+    delete require.cache[require.resolve('../../src/models/wallet')];
     delete require.cache[require.resolve('../../src/services/EncryptionService')];
   });
 
@@ -180,9 +180,9 @@ describe('Wallet model — field encryption', () => {
   it('passes through plaintext label when no key configured', () => {
     delete process.env.ENCRYPTION_KEY_1;
     delete process.env.ENCRYPTION_KEY;
-    delete require.cache[require.resolve('../../src/routes/models/wallet')];
+    delete require.cache[require.resolve('../../src/models/wallet')];
     delete require.cache[require.resolve('../../src/services/EncryptionService')];
-    Wallet = require('../../src/routes/models/wallet');
+    Wallet = require('../../src/models/wallet');
     jest.spyOn(Wallet, 'loadWallets').mockReturnValue([]);
     jest.spyOn(Wallet, 'saveWallets').mockImplementation((data) => {
       fs.writeFileSync(tmpFile, JSON.stringify(data));
@@ -219,11 +219,11 @@ describe('POST /admin/encryption/rotate', () => {
     process.env.ENCRYPTION_KEY_2 = 'rotate-key-v2';
     process.env.ENCRYPTION_KEY_VERSION = '1';
 
-    delete require.cache[require.resolve('../../src/routes/models/wallet')];
+    delete require.cache[require.resolve('../../src/models/wallet')];
     delete require.cache[require.resolve('../../src/services/EncryptionService')];
     delete require.cache[require.resolve('../../src/routes/admin/encryption')];
 
-    Wallet = require('../../src/routes/models/wallet');
+    Wallet = require('../../src/models/wallet');
     jest.spyOn(Wallet, 'loadWallets').mockImplementation(() => {
       if (!fs.existsSync(tmpFile)) return [];
       return JSON.parse(fs.readFileSync(tmpFile, 'utf8'));
@@ -239,7 +239,7 @@ describe('POST /admin/encryption/rotate', () => {
     delete process.env.ENCRYPTION_KEY_2;
     delete process.env.ENCRYPTION_KEY_VERSION;
     jest.restoreAllMocks();
-    ['../src/routes/models/wallet', '../src/services/EncryptionService', '../src/routes/admin/encryption']
+    ['../src/models/wallet', '../src/services/EncryptionService', '../src/routes/admin/encryption']
       .forEach(m => { try { delete require.cache[require.resolve(m)]; } catch (_) {} });
   });
 

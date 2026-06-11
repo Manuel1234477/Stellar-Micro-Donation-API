@@ -84,7 +84,7 @@ const sanitizeString = (str) => {
  */
 const walletExists = (id) => {
   if (!id && id !== 0) return false;
-  const User = require('../routes/models/user');
+  const User = require('../models/user');
   const user = User.getById(id);
   return user !== null && user !== undefined;
 };
@@ -94,7 +94,7 @@ const walletExists = (id) => {
  */
 const walletAddressExists = (address) => {
   if (!address) return false;
-  const User = require('../routes/models/user');
+  const User = require('../models/user');
   const user = User.getByWallet(address);
   return user !== null && user !== undefined;
 };
@@ -105,7 +105,7 @@ const walletAddressExists = (address) => {
 const transactionExists = (id) => {
   if (!id && id !== 0) return false;
   if (id === 0) return false;
-  const Transaction = require('../routes/models/transaction');
+  const Transaction = require('../models/transaction');
   const tx = Transaction.getById(id);
   return tx !== null && tx !== undefined;
 };

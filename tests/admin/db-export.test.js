@@ -30,7 +30,7 @@ describe('POST /admin/db/export - Database Export', () => {
     process.env.MOCK_STELLAR = 'true';
     process.env.NODE_ENV = 'test';
 
-    app = require('../../src/routes/app');
+    app = require('../../src/app');
     
     // Create test API keys
     const Database = require('../../src/utils/database');

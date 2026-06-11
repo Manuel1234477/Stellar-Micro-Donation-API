@@ -14,7 +14,7 @@ const path = require('path');
 const fs = require('fs');
 const walletRouter = require('../../src/routes/wallet');
 const { attachUserRole } = require('../../src/middleware/rbac');
-const Wallet = require('../../src/routes/models/wallet');
+const Wallet = require('../../src/models/wallet');
 const BulkWalletImportService = require('../../src/services/BulkWalletImportService');
 const StellarSdk = require('stellar-sdk');
 

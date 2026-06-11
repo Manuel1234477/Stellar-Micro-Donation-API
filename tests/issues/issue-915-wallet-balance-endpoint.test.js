@@ -17,7 +17,7 @@ jest.mock('../../src/config/serviceContainer', () => ({
 }));
 
 const mockWalletGetById = jest.fn();
-jest.mock('../../src/routes/models/wallet', () => ({
+jest.mock('../../src/models/wallet', () => ({
   getById: (...a) => mockWalletGetById(...a),
   getByAddress: jest.fn(),
   getAll: jest.fn().mockReturnValue([]),

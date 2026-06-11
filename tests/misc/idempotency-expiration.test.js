@@ -3,7 +3,7 @@
  */
 
 const request = require('supertest');
-const app = require('../../src/routes/app');
+const app = require('../../src/app');
 const IdempotencyService = require('../../src/services/IdempotencyService');
 const Database = require('../../src/utils/database');
 const apiKeysModel = require('../../src/models/apiKeys');

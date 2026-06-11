@@ -349,7 +349,7 @@ describe('Documented route files exist in source', () => {
     'src/routes/stream.js',
     'src/routes/stats.js',
     'src/routes/transaction.js',
-    'src/routes/app.js',
+    'src/app.js',
   ];
 
   test.each(routeFiles)('%s exists', (filePath) => {

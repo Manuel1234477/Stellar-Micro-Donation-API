@@ -10,7 +10,7 @@
  * (max 3 attempts), and hard fee cap enforcement (0.1 XLM).
  */
 
-const Transaction = require('../routes/models/transaction');
+const Transaction = require('../models/transaction');
 const { TRANSACTION_STATES } = require('../utils/transactionStateMachine');
 const { NotFoundError, BusinessLogicError, ERROR_CODES } = require('../utils/errors');
 const log = require('../utils/log');

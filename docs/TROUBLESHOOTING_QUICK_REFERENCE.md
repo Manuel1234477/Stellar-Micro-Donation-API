@@ -106,10 +106,10 @@ tail -f logs/app.log
 ### Debug Startup
 ```bash
 # With Node.js inspector
-node --inspect src/routes/app.js
+node --inspect src/app.js
 
 # With ndb (install first)
-ndb src/routes/app.js
+ndb src/app.js
 ```
 
 ### Test Components

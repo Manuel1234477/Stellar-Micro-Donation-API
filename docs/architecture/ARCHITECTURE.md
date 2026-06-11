@@ -11,7 +11,7 @@
                      ▼
 ┌─────────────────────────────────────────────────────────────┐
 │                    EXPRESS APP                               │
-│              (src/routes/app.js)                            │
+│              (src/app.js)                            │
 │  - Middleware setup                                         │
 │  - Route registration                                       │
 │  - Error handling                                           │

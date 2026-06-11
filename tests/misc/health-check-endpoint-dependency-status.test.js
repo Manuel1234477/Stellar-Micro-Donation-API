@@ -6,7 +6,7 @@
  */
 
 const request = require('supertest');
-const app = require('../../src/routes/app');
+const app = require('../../src/app');
 const HealthCheckService = require('../../src/services/HealthCheckService');
 const Database = require('../../src/utils/database');
 

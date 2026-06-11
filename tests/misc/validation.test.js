@@ -195,7 +195,7 @@ describe('Validation Utilities - Unit Tests', () => {
 
   describe('walletExists', () => {
     const { walletExists } = require('../../src/utils/validators');
-    const User = require('../../src/routes/models/user');
+    const User = require('../../src/models/user');
 
     beforeEach(() => {
       // Mock User.getById
@@ -236,7 +236,7 @@ describe('Validation Utilities - Unit Tests', () => {
 
   describe('walletAddressExists', () => {
     const { walletAddressExists } = require('../../src/utils/validators');
-    const User = require('../../src/routes/models/user');
+    const User = require('../../src/models/user');
 
     beforeEach(() => {
       jest.spyOn(User, 'getByWallet');
@@ -278,7 +278,7 @@ describe('Validation Utilities - Unit Tests', () => {
 
   describe('transactionExists', () => {
     const { transactionExists } = require('../../src/utils/validators');
-    const Transaction = require('../../src/routes/models/transaction');
+    const Transaction = require('../../src/models/transaction');
 
     beforeEach(() => {
       jest.spyOn(Transaction, 'getById');

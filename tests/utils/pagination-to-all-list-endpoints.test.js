@@ -5,9 +5,9 @@ const request = require('supertest');
 const tempDonationsPath = path.join(__dirname, 'tmp-pagination-donations.json');
 process.env.DB_JSON_PATH = tempDonationsPath;
 
-const app = require('../../src/routes/app');
-const Transaction = require('../../src/routes/models/transaction');
-const Wallet = require('../../src/routes/models/wallet');
+const app = require('../../src/app');
+const Transaction = require('../../src/models/transaction');
+const Wallet = require('../../src/models/wallet');
 const Database = require('../../src/utils/database');
 const { encodeCursor } = require('../../src/utils/pagination');
 

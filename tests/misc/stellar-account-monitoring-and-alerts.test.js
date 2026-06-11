@@ -22,7 +22,7 @@ jest.mock('../../src/config/stellar', () => ({
   port: undefined,
 }));
 
-const app = require('../../src/routes/app');
+const app = require('../../src/app');
 const { setMonitorService } = require('../../src/routes/monitors');
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────

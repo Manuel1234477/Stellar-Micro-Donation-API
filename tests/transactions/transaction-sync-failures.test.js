@@ -4,7 +4,7 @@
  */
 
 const TransactionSyncService = require('../../src/services/TransactionSyncService');
-const Transaction = require('../../src/routes/models/transaction');
+const Transaction = require('../../src/models/transaction');
 
 describe('Transaction Sync Failure Scenarios', () => {
   let syncService;

@@ -14,7 +14,7 @@
  */
 
 const request = require('supertest');
-const app = require('../../src/routes/app');
+const app = require('../../src/app');
 const FeeService = require('../../src/services/FeeService');
 const Database = require('../../src/utils/database');
 

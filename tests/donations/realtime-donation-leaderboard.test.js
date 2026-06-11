@@ -5,9 +5,9 @@
  */
 
 const request = require('supertest');
-const app = require('../../src/routes/app');
-const StatsService = require('../../src/routes/services/StatsService');
-const Transaction = require('../../src/routes/models/transaction');
+const app = require('../../src/app');
+const StatsService = require('../../src/services/LeaderboardStatsService');
+const Transaction = require('../../src/models/transaction');
 const Cache = require('../../src/utils/cache');
 const donationEvents = require('../../src/events/donationEvents');
 const SseManager = require('../../src/services/SseManager');

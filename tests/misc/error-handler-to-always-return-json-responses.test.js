@@ -21,7 +21,7 @@ jest.mock('../../src/config/stellar', () => ({
   port: undefined,
 }));
 
-const app = require('../../src/routes/app');
+const app = require('../../src/app');
 
 // ─── Helper: build a minimal Express app with the same error handler logic ───
 function buildFixtureApp(routeSetup) {
@@ -29,7 +29,7 @@ function buildFixtureApp(routeSetup) {
   a.use(express.json());
   routeSetup(a);
 
-  // Mirror the hardened error handler from src/routes/app.js
+  // Mirror the hardened error handler from src/app.js
   // eslint-disable-next-line no-unused-vars
   a.use((err, req, res, _next) => {
     const status =

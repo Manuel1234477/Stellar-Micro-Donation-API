@@ -1,5 +1,5 @@
 const request = require('supertest');
-const app = require('../../src/routes/app');
+const app = require('../../src/app');
 const apiKeysModel = require('../../src/models/apiKeys');
 const db = require('../../src/utils/database');
 

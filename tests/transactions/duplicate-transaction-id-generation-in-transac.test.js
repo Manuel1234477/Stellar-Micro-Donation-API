@@ -1,4 +1,4 @@
-const Transaction = require('../../src/routes/models/transaction');
+const Transaction = require('../../src/models/transaction');
 const { v4: uuidv4 } = require('uuid');
 
 describe('Transaction UUID ID Generation', () => {

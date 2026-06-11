@@ -24,7 +24,7 @@ describe('Admin Operations - Integration Tests', () => {
     process.env.MOCK_STELLAR = 'true';
     process.env.NODE_ENV = 'test';
 
-    app = require('../../src/routes/app');
+    app = require('../../src/app');
 
     const Database = require('../../src/utils/database');
     await Database.run('DELETE FROM api_keys WHERE name IN (?, ?)', ['admin-combined-test', 'user-combined-test']);

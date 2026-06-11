@@ -1,4 +1,4 @@
-const Transaction = require('../../src/routes/models/transaction');
+const Transaction = require('../../src/models/transaction');
 const path = require('path');
 
 describe('Transaction Model Fee Bump Fields', () => {
@@ -109,7 +109,7 @@ describe('MockStellarService.buildAndSubmitFeeBumpTransaction()', () => {
 
 describe('FeeBumpService', () => {
   const FeeBumpService = require('../../src/services/FeeBumpService');
-  const Transaction = require('../../src/routes/models/transaction');
+  const Transaction = require('../../src/models/transaction');
   const path = require('path');
   const fs = require('fs');
 
@@ -406,7 +406,7 @@ describe('FeeBumpService', () => {
 describe('POST /admin/transactions/:id/fee-bump', () => {
   const express = require('express');
   const request = require('supertest');
-  const Transaction = require('../../src/routes/models/transaction');
+  const Transaction = require('../../src/models/transaction');
   const path = require('path');
   const fs = require('fs');
 

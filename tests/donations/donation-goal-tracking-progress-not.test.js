@@ -41,7 +41,7 @@ describe('Donation Goal Tracking with Real-Time Progress', () => {
 
   beforeAll(async () => {
     // Initialize test app
-    app = require('../../src/routes/app');
+    app = require('../../src/app');
     donationService = new DonationService(new MockStellarService());
   });
 

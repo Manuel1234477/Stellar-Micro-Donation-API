@@ -160,7 +160,7 @@ describe('Integration - Service + Middleware + Endpoints', () => {
     testApp.use('/admin', (req, res, next) => next()); // Skip rbac for test
 
     // Add full app routes for test
-    const appRoutes = require('../../src/routes/app');
+    const appRoutes = require('../../src/app');
     testApp.use('/admin/blocked-ips', appRoutes._router || appRoutes); // Mock
   });
 

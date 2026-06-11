@@ -56,7 +56,7 @@ Created centralized error handling middleware that:
 
 ### 5. Application Integration
 
-Updated `src/routes/app.js` to:
+Updated `src/app.js` to:
 - Import error handler middleware
 - Register 404 handler
 - Register global error handler (must be last)
@@ -157,7 +157,7 @@ Created three documentation files:
 5. `UNIFIED_ERROR_HANDLING_SUMMARY.md` - This summary
 
 ### Files Modified
-1. `src/routes/app.js` - Integrated error middleware
+1. `src/app.js` - Integrated error middleware
 2. `src/routes/donation.js` - Migrated to new error system
 3. `src/services/MockStellarService.js` - Uses error classes
 4. `src/utils/database.js` - Wraps errors properly

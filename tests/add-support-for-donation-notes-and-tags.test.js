@@ -6,7 +6,7 @@
 process.env.MOCK_STELLAR = 'true';
 process.env.API_KEYS = 'test-key-1,test-key-2,admin-key';
 
-const Transaction = require('../src/routes/models/transaction');
+const Transaction = require('../src/models/transaction');
 const { PREDEFINED_TAGS } = require('../src/constants/tags');
 
 describe('Donation Notes and Tags - Issue #363', () => {

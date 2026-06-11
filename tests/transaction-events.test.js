@@ -1,4 +1,4 @@
-const Transaction = require('../src/routes/models/transaction');
+const Transaction = require('../src/models/transaction');
 const donationEvents = require('../src/events/donationEvents');
 
 describe('Transaction lifecycle event emission', () => {

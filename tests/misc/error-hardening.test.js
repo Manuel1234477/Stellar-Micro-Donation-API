@@ -5,7 +5,7 @@
  */
 
 const request = require('supertest');
-const app = require('../../src/routes/app');
+const app = require('../../src/app');
 
 describe('Error Message Hardening', () => {
   let originalEnv;

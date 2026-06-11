@@ -1,7 +1,7 @@
 'use strict';
 
 const request = require('supertest');
-const app = require('../src/routes/app');
+const app = require('../src/app');
 const { matchingService } = require('../src/routes/corporateMatching');
 
 // Reset service state before each test

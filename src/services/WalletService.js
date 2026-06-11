@@ -9,7 +9,7 @@
  * and transaction retrieval. Separates data access from HTTP controllers.
  */
 
-const Wallet = require('../routes/models/wallet');
+const Wallet = require('../models/wallet');
 const Database = require('../utils/database');
 const { sanitizeLabel, sanitizeName, sanitizeStellarAddress } = require('../utils/sanitizer');
 const { ValidationError, NotFoundError, ERROR_CODES } = require('../utils/errors');

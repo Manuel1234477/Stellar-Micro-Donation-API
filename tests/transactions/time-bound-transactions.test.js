@@ -10,10 +10,10 @@
  */
 
 const request = require('supertest');
-const app = require('../../src/routes/app');
+const app = require('../../src/app');
 const Database = require('../../src/utils/database');
 const { getStellarService } = require('../../src/config/stellar');
-const Transaction = require('../../src/routes/models/transaction');
+const Transaction = require('../../src/models/transaction');
 const encryption = require('../../src/utils/encryption');
 
 // Test API Key with donations permission

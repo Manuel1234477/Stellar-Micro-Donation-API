@@ -439,7 +439,7 @@ describe('Logging Hook', () => {
 
 ```javascript
 const request = require('supertest');
-const app = require('./routes/app');
+const app = require('./app');
 const donationEvents = require('./events/donationEvents');
 
 describe('Donation Creation with Hooks', () => {
@@ -634,7 +634,7 @@ console.log(`${hooks.length} hooks registered`);
 2. **Verify registration timing**: Register hooks before events are emitted
    ```javascript
    // Register hooks during app initialization
-   // src/routes/app.js or a dedicated hooks initialization file
+   // src/app.js or a dedicated hooks initialization file
    ```
 
 3. **Check for errors**: Look for error logs from hook execution

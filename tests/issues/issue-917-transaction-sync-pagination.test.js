@@ -39,12 +39,12 @@ jest.mock('stellar-sdk', () => ({
 }));
 
 const mockWallet = { id: 'w1', address: 'GPUBKEY123', last_cursor: null };
-jest.mock('../../src/routes/models/wallet', () => ({
+jest.mock('../../src/models/wallet', () => ({
   getByAddress: jest.fn().mockReturnValue(mockWallet),
   update: jest.fn(),
 }));
 
-jest.mock('../../src/routes/models/transaction', () => ({
+jest.mock('../../src/models/transaction', () => ({
   getByStellarTxId: jest.fn().mockReturnValue(null),
   create: jest.fn().mockImplementation((data) => data),
 }));
@@ -79,7 +79,7 @@ describe('Issue #917 — TransactionSyncService pagination', () => {
     });
 
     it('stores records idempotently (skips existing)', async () => {
-      const Transaction = require('../../src/routes/models/transaction');
+      const Transaction = require('../../src/models/transaction');
       Transaction.getByStellarTxId.mockReturnValueOnce({ id: 'existing' });
 
       const page1 = makePage(2, 1);

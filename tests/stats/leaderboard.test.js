@@ -2,8 +2,8 @@
 
 const express = require('express');
 const request = require('supertest');
-const Transaction = require('../../src/routes/models/transaction');
-const Wallet = require('../../src/routes/models/wallet');
+const Transaction = require('../../src/models/transaction');
+const Wallet = require('../../src/models/wallet');
 const LeaderboardSSE = require('../../src/services/LeaderboardSSE');
 const { TRANSACTION_STATES } = require('../../src/utils/transactionStateMachine');
 
@@ -67,7 +67,7 @@ beforeEach(() => {
   Transaction._clearAllData();
   Wallet._clearAllData();
   // Clear leaderboard cache between tests
-  const StatsService = require('../../src/routes/services/StatsService');
+  const StatsService = require('../../src/services/LeaderboardStatsService');
   StatsService.invalidateLeaderboardCache();
 });
 
@@ -96,7 +96,7 @@ describe('computeLeaderboard', () => {
   it('returns donors and recipients for daily window', () => {
     confirmedTx('alice', 'charity1', 10, 0); // today
     confirmedTx('bob', 'charity1', 5, 2);    // 2 days ago — outside daily window
-    const StatsService = require('../../src/routes/services/StatsService');
+    const StatsService = require('../../src/services/LeaderboardStatsService');
     StatsService.invalidateLeaderboardCache();
     const result = LeaderboardSSE.computeLeaderboard('daily');
     expect(result.window).toBe('daily');
@@ -107,7 +107,7 @@ describe('computeLeaderboard', () => {
 
   it('returns donors and recipients for weekly window', () => {
     confirmedTx('alice', 'charity1', 10, 3); // 3 days ago — within weekly
-    const StatsService = require('../../src/routes/services/StatsService');
+    const StatsService = require('../../src/services/LeaderboardStatsService');
     StatsService.invalidateLeaderboardCache();
     const result = LeaderboardSSE.computeLeaderboard('weekly');
     expect(result.window).toBe('weekly');
@@ -123,7 +123,7 @@ describe('computeLeaderboard', () => {
     const wallet = Wallet.create({ address: 'alice' });
     Wallet.update(wallet.id, { leaderboard_visibility: false });
     confirmedTx('alice', 'charity1', 10);
-    const StatsService = require('../../src/routes/services/StatsService');
+    const StatsService = require('../../src/services/LeaderboardStatsService');
     StatsService.invalidateLeaderboardCache();
     const result = LeaderboardSSE.computeLeaderboard('all-time');
     const donorNames = result.donors.map(d => d.donor);
@@ -135,7 +135,7 @@ describe('computeLeaderboard', () => {
     const wallet = Wallet.create({ address: 'charity1' });
     Wallet.update(wallet.id, { leaderboard_visibility: false });
     confirmedTx('alice', 'charity1', 10);
-    const StatsService = require('../../src/routes/services/StatsService');
+    const StatsService = require('../../src/services/LeaderboardStatsService');
     StatsService.invalidateLeaderboardCache();
     const result = LeaderboardSSE.computeLeaderboard('all-time');
     const recipientNames = result.recipients.map(r => r.recipient);
@@ -147,7 +147,7 @@ describe('computeLeaderboard', () => {
     const wallet = Wallet.create({ address: 'alice' });
     Wallet.update(wallet.id, { leaderboard_visibility: true });
     confirmedTx('alice', 'charity1', 10);
-    const StatsService = require('../../src/routes/services/StatsService');
+    const StatsService = require('../../src/services/LeaderboardStatsService');
     StatsService.invalidateLeaderboardCache();
     const result = LeaderboardSSE.computeLeaderboard('all-time');
     expect(result.donors.map(d => d.donor)).toContain('alice');
@@ -205,7 +205,7 @@ describe('GET /leaderboard/snapshot', () => {
     const wallet = Wallet.create({ address: 'alice' });
     Wallet.update(wallet.id, { leaderboard_visibility: false });
     confirmedTx('alice', 'charity1', 10);
-    const StatsService = require('../../src/routes/services/StatsService');
+    const StatsService = require('../../src/services/LeaderboardStatsService');
     StatsService.invalidateLeaderboardCache();
     const res = await request(app).get('/leaderboard/snapshot?window=all-time');
     const names = res.body.data.donors.map(d => d.donor);
@@ -226,7 +226,7 @@ describe('GET /leaderboard/stream', () => {
 
   it('sends initial rank_change event', async () => {
     confirmedTx('alice', 'charity1', 10);
-    const StatsService = require('../../src/routes/services/StatsService');
+    const StatsService = require('../../src/services/LeaderboardStatsService');
     StatsService.invalidateLeaderboardCache();
     const res = await request(app).get('/leaderboard/stream?window=all-time');
     const parsed = JSON.parse(res.text.replace(/^data: /, '').trim());
@@ -290,7 +290,7 @@ describe('PATCH /wallets/:id/leaderboard-visibility', () => {
   it('opted-out wallet is anonymized in subsequent leaderboard', async () => {
     const wallet = Wallet.create({ address: 'alice' });
     confirmedTx('alice', 'charity1', 10);
-    const StatsService = require('../../src/routes/services/StatsService');
+    const StatsService = require('../../src/services/LeaderboardStatsService');
     StatsService.invalidateLeaderboardCache();
 
     await request(app)

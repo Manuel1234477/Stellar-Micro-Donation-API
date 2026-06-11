@@ -40,7 +40,7 @@ const MockStellarService = require('../../src/services/MockStellarService');
 const { attachUserRole } = require('../../src/middleware/rbac');
 const { getStellarService } = require('../../src/config/stellar');
 const donationRouter = require('../../src/routes/donation');
-const Transaction = require('../../src/routes/models/transaction');
+const Transaction = require('../../src/models/transaction');
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 

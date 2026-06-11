@@ -36,7 +36,7 @@ const {
   decodeStellarSecretKey,
 } = require('../../src/utils/memoEncryption');
 
-const Transaction = require('../../src/routes/models/transaction');
+const Transaction = require('../../src/models/transaction');
 
 const recipientKp = StellarSdk.Keypair.random();
 const recipientPub = recipientKp.publicKey();

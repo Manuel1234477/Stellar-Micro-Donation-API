@@ -5,7 +5,7 @@
  */
 
 const DonationValidator = require('../../src/utils/donationValidator');
-const Transaction = require('../../src/routes/models/transaction');
+const Transaction = require('../../src/models/transaction');
 const fs = require('fs');
 const path = require('path');
 

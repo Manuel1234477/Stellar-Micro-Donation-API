@@ -236,7 +236,7 @@ describe('GET /stats/overpayments', () => {
     process.env.DB_JSON_PATH = tmpDb;
     process.env.NODE_ENV = 'test';
 
-    app = require('../../src/routes/app');
+    app = require('../../src/app');
   });
 
   afterEach(() => {

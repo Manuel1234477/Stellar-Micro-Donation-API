@@ -20,7 +20,7 @@ const { getStellarService } = require('../../src/config/stellar');
 const AuditLogService = require('../../src/services/AuditLogService');
 const { TRANSACTION_STATES } = require('../../src/utils/transactionStateMachine');
 const { ValidationError, BusinessLogicError, NotFoundError } = require('../../src/utils/errors');
-const Transaction = require('../../src/routes/models/transaction');
+const Transaction = require('../../src/models/transaction');
 
 // Test setup
 let app;

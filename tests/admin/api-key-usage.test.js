@@ -15,7 +15,7 @@ jest.mock('../../src/config/stellar', () => ({
   port: undefined,
 }));
 
-const app = require('../../src/routes/app');
+const app = require('../../src/app');
 const { setUsageService } = require('../../src/routes/apiKeyUsage');
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────

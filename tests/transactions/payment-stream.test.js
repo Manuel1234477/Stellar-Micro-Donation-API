@@ -4,7 +4,7 @@ jest.useFakeTimers();
 
 const MockStellarService = require('../../src/services/MockStellarService');
 const PaymentStreamService = require('../../src/services/PaymentStreamService');
-const Transaction = require('../../src/routes/models/transaction');
+const Transaction = require('../../src/models/transaction');
 const { WebhookService } = require('../../src/services/WebhookService');
 
 const PUBLIC_KEY = 'GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA';

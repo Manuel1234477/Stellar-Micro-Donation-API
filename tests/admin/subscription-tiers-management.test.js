@@ -29,7 +29,7 @@ describe('/admin/subscriptions/tiers - Subscription Tier Management', () => {
     process.env.MOCK_STELLAR = 'true';
     process.env.NODE_ENV = 'test';
 
-    app = require('../../src/routes/app');
+    app = require('../../src/app');
 
     const Database = require('../../src/utils/database');
     await Database.run('DELETE FROM api_keys WHERE name IN (?, ?)', ['admin-tier-test', 'user-tier-test']);

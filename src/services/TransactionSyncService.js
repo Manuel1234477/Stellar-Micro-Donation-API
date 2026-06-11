@@ -12,8 +12,8 @@
 const StellarSdk = require('stellar-sdk');
 
 // Internal modules
-const Transaction = require('../routes/models/transaction');
-const Wallet = require('../routes/models/wallet');
+const Transaction = require('../models/transaction');
+const Wallet = require('../models/wallet');
 const { HORIZON_URLS } = require('../constants');
 const log = require('../utils/log');
 

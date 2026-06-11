@@ -3,14 +3,14 @@ const express = require('express');
 const walletRouter = require('../../src/routes/wallet');
 const WalletService = require('../../src/services/WalletService');
 const Cache = require('../../src/utils/cache');
-const Wallet = require('../../src/routes/models/wallet');
+const Wallet = require('../../src/models/wallet');
 const TransactionReconciliationService = require('../../src/services/TransactionReconciliationService');
-const Transaction = require('../../src/routes/models/transaction');
+const Transaction = require('../../src/models/transaction');
 const Database = require('../../src/utils/database');
 const { TRANSACTION_STATES } = require('../../src/utils/transactionStateMachine');
 
-jest.mock('../../src/routes/models/wallet');
-jest.mock('../../src/routes/models/transaction');
+jest.mock('../../src/models/wallet');
+jest.mock('../../src/models/transaction');
 jest.mock('../../src/utils/database');
 jest.mock('../../src/middleware/rbac', () => ({
   checkPermission: () => (req, res, next) => next(),

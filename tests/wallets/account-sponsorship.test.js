@@ -4,7 +4,7 @@ const express = require('express');
 const request = require('supertest');
 const MockStellarService = require('../../src/services/MockStellarService');
 const WalletService = require('../../src/services/WalletService');
-const Wallet = require('../../src/routes/models/wallet');
+const Wallet = require('../../src/models/wallet');
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 

@@ -13,7 +13,7 @@ let adminKey;
 beforeAll(async () => {
   process.env.NODE_ENV = 'test';
   process.env.MOCK_STELLAR = 'true';
-  app = require('../../src/routes/app');
+  app = require('../../src/app');
   
   adminKey = await createApiKey({
     name: 'Admin Key',

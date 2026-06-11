@@ -30,7 +30,7 @@ process.env.API_KEYS = 'test-receipt-key';
 const request = require('supertest');
 const express = require('express');
 const ReceiptService = require('../../src/services/ReceiptService');
-const Transaction = require('../../src/routes/models/transaction');
+const Transaction = require('../../src/models/transaction');
 
 // ── Fixtures ──────────────────────────────────────────────────────────────────
 

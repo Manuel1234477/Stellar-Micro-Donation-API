@@ -300,7 +300,7 @@ describe('GET /stats/memo-collisions', () => {
     tmpDb = path.join(os.tmpdir(), `memo-stats-${Date.now()}.json`);
     process.env.DB_JSON_PATH = tmpDb;
     process.env.NODE_ENV = 'test';
-    app = require('../../src/routes/app');
+    app = require('../../src/app');
   });
 
   afterEach(() => {

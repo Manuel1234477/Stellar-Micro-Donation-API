@@ -86,7 +86,7 @@ class PaymentStreamService {
 
     // Create transaction record immediately (no reconciliation wait)
     try {
-      const Transaction = require('../routes/models/transaction');
+      const Transaction = require('../models/transaction');
       Transaction.create({
         idempotencyKey: payment.id || payment.transactionId,
         senderId: payment.from || payment.source,

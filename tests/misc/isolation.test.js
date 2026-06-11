@@ -11,7 +11,7 @@ const {
   createIsolatedEnvironment,
   setupTestIsolation
 } = require('../helpers/testIsolation');
-const Transaction = require('../../src/routes/models/transaction');
+const Transaction = require('../../src/models/transaction');
 const MockStellarService = require('../../src/services/MockStellarService');
 const Database = require('../../src/utils/database');
 

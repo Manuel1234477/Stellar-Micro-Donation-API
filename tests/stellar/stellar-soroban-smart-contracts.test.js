@@ -19,7 +19,7 @@ jest.mock('../../src/config/stellar', () => ({
   useMockStellar: true,
 }));
 
-const app = require('../../src/routes/app');
+const app = require('../../src/app');
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 function freshMock() {

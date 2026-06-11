@@ -8,7 +8,7 @@
 
 const { parse } = require('csv-parse/sync');
 const StellarSdk = require('stellar-sdk');
-const Wallet = require('../routes/models/wallet');
+const Wallet = require('../models/wallet');
 
 const DEFAULT_MAX_ROWS = 1000;
 

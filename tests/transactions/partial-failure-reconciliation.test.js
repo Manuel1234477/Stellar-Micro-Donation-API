@@ -17,7 +17,7 @@
 
 process.env.MOCK_STELLAR = 'true';
 
-const Transaction = require('../../src/routes/models/transaction');
+const Transaction = require('../../src/models/transaction');
 const { getStellarService } = require('../../src/config/stellar');
 const TransactionReconciliationService = require('../../src/services/TransactionReconciliationService');
 const { TRANSACTION_STATES } = require('../../src/utils/transactionStateMachine');

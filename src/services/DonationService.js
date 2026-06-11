@@ -10,7 +10,7 @@
  */
 
 const Database = require('../utils/database');
-const Transaction = require('../routes/models/transaction');
+const Transaction = require('../models/transaction');
 const encryption = require('../utils/encryption');
 const { STROOPS_PER_XLM } = require('../constants');
 const donationValidator = require('../utils/donationValidator');
@@ -925,7 +925,7 @@ class DonationService {
       transaction.memoSuspicious = collisionResult.suspicious;
       transaction.memoCollisionReason = collisionResult.reason;
       // Persist the updated flags
-      const Transaction_ = require('../routes/models/transaction');
+      const Transaction_ = require('../models/transaction');
       const all = Transaction_.loadTransactions();
       const idx = all.findIndex(t => t.id === transaction.id);
       if (idx !== -1) {

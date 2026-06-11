@@ -14,13 +14,13 @@ jest.mock('../../src/events/donationEvents', () => ({
   on: jest.fn()
 }));
 
-jest.mock('../../src/routes/models/transaction', () => ({
+jest.mock('../../src/models/transaction', () => ({
   getById: jest.fn(),
   create: jest.fn(),
   update: jest.fn()
 }));
 
-jest.mock('../../src/routes/models/user', () => ({
+jest.mock('../../src/models/user', () => ({
   getById: jest.fn(),
   getByWallet: jest.fn()
 }));

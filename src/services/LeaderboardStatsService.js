@@ -1,5 +1,5 @@
 const Transaction = require('../models/transaction');
-const Cache = require('../../utils/cache');
+const Cache = require('../utils/cache');
 
 /**
  * Leaderboard cache TTL in milliseconds (1 minute)

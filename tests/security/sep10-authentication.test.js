@@ -44,7 +44,7 @@ describe('SEP-0010 extended authentication', () => {
       sequence: '1',
     });
 
-    app = require('../../src/routes/app');
+    app = require('../../src/app');
     clientKeypair = StellarSdk.Keypair.random();
   });
 

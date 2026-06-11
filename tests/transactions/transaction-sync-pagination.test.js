@@ -5,11 +5,11 @@
  */
 
 const TransactionSyncService = require('../../src/services/TransactionSyncService');
-const Transaction = require('../../src/routes/models/transaction');
-const Wallet = require('../../src/routes/models/wallet');
+const Transaction = require('../../src/models/transaction');
+const Wallet = require('../../src/models/wallet');
 
-jest.mock('../../src/routes/models/transaction');
-jest.mock('../../src/routes/models/wallet');
+jest.mock('../../src/models/transaction');
+jest.mock('../../src/models/wallet');
 
 const PUBLIC_KEY = 'GTEST1234567890ABCDEF';
 

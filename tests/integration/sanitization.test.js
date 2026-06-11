@@ -6,8 +6,8 @@ const request = require('supertest');
 const express = require('express');
 const donationRoutes = require('../../src/routes/donation');
 const walletRoutes = require('../../src/routes/wallet');
-const Transaction = require('../../src/routes/models/transaction');
-const Wallet = require('../../src/routes/models/wallet');
+const Transaction = require('../../src/models/transaction');
+const Wallet = require('../../src/models/wallet');
 
 // Mock dependencies
 jest.mock('../../src/utils/database');

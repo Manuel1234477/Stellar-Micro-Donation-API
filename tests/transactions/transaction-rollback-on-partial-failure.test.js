@@ -12,7 +12,7 @@
  */
 
 const request = require('supertest');
-const app = require('../../src/routes/app');
+const app = require('../../src/app');
 const Database = require('../../src/utils/database');
 const MockStellarService = require('../../src/services/MockStellarService');
 const TransactionReconciliationService = require('../../src/services/TransactionReconciliationService');

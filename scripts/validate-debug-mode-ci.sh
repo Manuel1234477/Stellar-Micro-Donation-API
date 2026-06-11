@@ -64,7 +64,7 @@ echo "📋 4. Linting Modified Files..."
 MODIFIED_FILES=(
   "src/utils/log.js"
   "src/config/envValidation.js"
-  "src/routes/app.js"
+  "src/app.js"
   "src/middleware/logger.js"
   "src/config/stellar.js"
   "src/routes/donation.js"

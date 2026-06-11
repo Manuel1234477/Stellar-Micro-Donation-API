@@ -15,7 +15,7 @@ const crypto = require('crypto');
 
 describe('Issue #65 — Donation Tags', () => {
   const { validateTag, PREDEFINED_TAGS } = require('../src/constants/tags');
-  const Transaction = require('../src/routes/models/transaction');
+  const Transaction = require('../src/models/transaction');
 
   beforeEach(() => Transaction._clearAllData());
 

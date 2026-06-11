@@ -20,7 +20,7 @@
 process.env.MOCK_STELLAR = 'true';
 process.env.API_KEYS = 'test-key-1';
 
-const Transaction = require('../../src/routes/models/transaction');
+const Transaction = require('../../src/models/transaction');
 const Database = require('../../src/utils/database');
 const { getStellarService } = require('../../src/config/stellar');
 const DonationService = require('../../src/services/DonationService');

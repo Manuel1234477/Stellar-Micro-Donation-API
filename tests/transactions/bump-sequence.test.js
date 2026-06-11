@@ -50,7 +50,7 @@ jest.mock('../../src/config/serviceContainer', () => ({
   getStellarService: jest.fn(() => ({ bumpSequence: mockBumpSequence })),
 }));
 
-jest.mock('../../src/routes/models/wallet', () => ({
+jest.mock('../../src/models/wallet', () => ({
   getById: jest.fn(),
   getAll: jest.fn(() => []),
   getByAddress: jest.fn(),
@@ -71,7 +71,7 @@ jest.mock('../../src/middleware/payloadSizeLimiter', () => ({
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
-const Wallet = require('../../src/routes/models/wallet');
+const Wallet = require('../../src/models/wallet');
 const AuditLogService = require('../../src/services/AuditLogService');
 
 function buildApp() {
@@ -327,7 +327,7 @@ describe('POST /wallets/:id/bump-sequence — admin auth required', () => {
     jest.doMock('../../src/config/serviceContainer', () => ({
       getStellarService: jest.fn(() => ({ bumpSequence: jest.fn() })),
     }));
-    jest.doMock('../../src/routes/models/wallet', () => ({
+    jest.doMock('../../src/models/wallet', () => ({
       getById: jest.fn(() => ({ id: '1', address: 'GABC' })),
       getAll: jest.fn(() => []),
       getByAddress: jest.fn(),

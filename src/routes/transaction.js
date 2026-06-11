@@ -133,7 +133,7 @@
 
 const express = require('express');
 const router = express.Router();
-const Transaction = require('./models/transaction');
+const Transaction = require('../models/transaction');
 const TransactionSyncService = require('../services/TransactionSyncService');
 const MultiSigService = require('../services/MultiSigService');
 const { buildErrorResponse } = require('../utils/validationErrorFormatter');

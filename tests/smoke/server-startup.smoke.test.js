@@ -73,7 +73,7 @@ function httpGet(url) {
 beforeAll(async () => {
   serverProcess = spawn(
     process.execPath, // node binary
-    [path.join(__dirname, '../../src/routes/app.js')],
+    [path.join(__dirname, '../../src/app.js')],
     {
       env: {
         ...process.env,

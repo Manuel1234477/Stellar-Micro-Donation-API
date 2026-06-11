@@ -218,7 +218,7 @@ describe('GET /admin/db/pool-status', () => {
     process.env.NODE_ENV = 'test';
     await resetDb();
     const supertest = require('supertest');
-    const app = require('../../src/routes/app');
+    const app = require('../../src/app');
     request = supertest(app);
   });
 

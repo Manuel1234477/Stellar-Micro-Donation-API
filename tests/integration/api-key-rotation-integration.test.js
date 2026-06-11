@@ -3,7 +3,7 @@
  * Tests POST /api-keys/:id/rotate endpoint and related header behaviour
  */
 const request = require('supertest');
-const app = require('../../src/routes/app');
+const app = require('../../src/app');
 const apiKeysModel = require('../../src/models/apiKeys');
 const db = require('../../src/utils/database');
 

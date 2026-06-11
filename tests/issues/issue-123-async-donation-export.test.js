@@ -29,7 +29,7 @@ describe('Issue #123: Async Donation Export', () => {
     await DonationExportService.initialize();
 
     // Create test app
-    app = require('../../src/routes/app');
+    app = require('../../src/app');
 
     // Create admin API key
     await Database.run(`

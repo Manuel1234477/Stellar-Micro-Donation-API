@@ -467,10 +467,10 @@ npm start
 
 ```bash
 # Start with Node.js debugger
-node --inspect src/routes/app.js
+node --inspect src/app.js
 
 # Or with ndb (install first: npm install -g ndb)
-ndb src/routes/app.js
+ndb src/app.js
 ```
 
 ### 3. Test Individual Components
@@ -529,7 +529,7 @@ tail -n 100 logs/app.log
       "name": "Debug API",
       "type": "node",
       "request": "launch",
-      "program": "${workspaceFolder}/src/routes/app.js",
+      "program": "${workspaceFolder}/src/app.js",
       "env": {
         "DEBUG_MODE": "true",
         "LOG_VERBOSE": "true"

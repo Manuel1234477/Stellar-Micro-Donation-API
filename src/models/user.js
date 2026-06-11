@@ -2,7 +2,7 @@
  * User Model - Data Access Layer
  */
 
-const users = require('../../../data/users.json');
+const users = require('../../data/users.json');
 
 class User {
   static getById(id) {

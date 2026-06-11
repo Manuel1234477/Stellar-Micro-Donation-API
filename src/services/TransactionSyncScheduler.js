@@ -10,7 +10,7 @@
  * Partial failures are logged and skipped — the scheduler continues to the next wallet.
  */
 
-const Wallet = require('../routes/models/wallet');
+const Wallet = require('../models/wallet');
 const TransactionSyncService = require('./TransactionSyncService');
 const log = require('../utils/log');
 
