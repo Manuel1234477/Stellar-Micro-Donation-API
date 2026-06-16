@@ -46,7 +46,7 @@
     "graphql-ws": "^6.0.7",
     "helmet": "^8.2.0",
     "maxmind": "^5.0.6",
-    "multer": "^2.1.1",
+    "multer": "^2.2.0",
     "nodemailer": "^8.0.9",
     "pdfkit": "^0.18.0",
     "prom-client": "^15.1.3",
