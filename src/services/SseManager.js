@@ -1,15 +1,16 @@
 /**
  * SseManager
- * Manages SSE connections for streaming endpoints (transaction feed,
- * leaderboard, campaign progress). Clients are keyed by clientId.
- * Supports filtering by walletAddress / status / amount / campaignId / window,
- * heartbeats, per-key connection limits, and a bounded event replay buffer
- * for Last-Event-ID reconnection.
+ * Manages SSE connections. Events are published through the PubSubAdapter so
+ * they reach clients connected to any instance (cross-instance fan-out).
+ * Single-instance behaviour is preserved when no shared backend is configured.
  */
 
-const MAX_CONNECTIONS_PER_KEY = 5;
+const { getPubSubAdapter } = require('./PubSubAdapter');
+
+const MAX_CONNECTIONS_PER_KEY = parseInt(process.env.SSE_MAX_CONNECTIONS_PER_KEY || '5');
 const HEARTBEAT_INTERVAL_MS = 30_000;
-const EVENT_BUFFER_SIZE = 100;
+const EVENT_BUFFER_SIZE = parseInt(process.env.SSE_EVENT_BUFFER_SIZE || '100');
+const SSE_CHANNEL = 'sse:broadcast';
 
 class SseManager {
   constructor() {
@@ -23,6 +24,11 @@ class SseManager {
     this.MAX_CONNECTIONS_PER_KEY = MAX_CONNECTIONS_PER_KEY;
     this.HEARTBEAT_INTERVAL_MS = HEARTBEAT_INTERVAL_MS;
     this.EVENT_BUFFER_SIZE = EVENT_BUFFER_SIZE;
+
+    // Subscribe to cross-instance broadcasts
+    getPubSubAdapter().subscribe(SSE_CHANNEL, ({ event, data, id }) => {
+      this._deliverLocally(event, data, id);
+    });
   }
 
   /**
@@ -76,18 +82,26 @@ class SseManager {
 
   /**
    * Broadcast a generic SSE event to all matching clients.
-   * The event is recorded in the replay buffer so reconnecting clients can
-   * catch up via Last-Event-ID.
+   * Publishes through the PubSubAdapter so all instances receive it.
    * @param {string} event
    * @param {object} data
    */
   broadcast(event, data) {
     const id = this._nextEventId++;
+    // Record in replay buffer (bounded)
     this._eventBuffer.push({ id, event, data });
     if (this._eventBuffer.length > EVENT_BUFFER_SIZE) {
       this._eventBuffer.shift();
     }
+    // Publish cross-instance; the subscription in the constructor delivers locally
+    getPubSubAdapter().publish(SSE_CHANNEL, { event, data, id }).catch(() => {
+      // If publish fails, still deliver locally
+      this._deliverLocally(event, data, id);
+    });
+  }
 
+  /** Deliver an event to local clients only (called from pub/sub handler). */
+  _deliverLocally(event, data, id) {
     const payload = this._formatSse(event, data, id);
     for (const client of this._clients.values()) {
       if (this._matches(client.filters, data)) {

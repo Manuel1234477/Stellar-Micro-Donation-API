@@ -9,11 +9,11 @@
  *   npm run migrate:reencrypt
  *
  * The script:
- *   1. Loads all transactions from data/donations.json
+ *   1. Loads all transactions from SQLite (donations_store table)
  *   2. Identifies memos using old key versions (versioned format "v<n>:…")
  *   3. Decrypts each memo with the recipient's Stellar key
  *   4. Re-encrypts with the current active key version
- *   5. Saves the updated transactions back to data/donations.json
+ *   5. Saves the updated transactions back via the Transaction model
  *
  * Requirements:
  *   - The current active key version must be set in data/memo-keys/keys.json
@@ -28,29 +28,11 @@
 
 'use strict';
 
-const fs = require('fs');
-const path = require('path');
 const memoKeyManager = require('../utils/memoKeyManager');
 const MemoEncryptionService = require('../services/MemoEncryptionService');
-
-const DONATIONS_PATH = process.env.DB_JSON_PATH ||
-  path.join(__dirname, '../../data/donations.json');
+const Transaction = require('../models/transaction');
 
 const DRY_RUN = process.env.DRY_RUN === 'true';
-
-function loadTransactions() {
-  if (!fs.existsSync(DONATIONS_PATH)) return [];
-  try {
-    return JSON.parse(fs.readFileSync(DONATIONS_PATH, 'utf8'));
-  } catch (err) {
-    console.error('Failed to load transactions:', err.message);
-    process.exit(1);
-  }
-}
-
-function saveTransactions(transactions) {
-  fs.writeFileSync(DONATIONS_PATH, JSON.stringify(transactions, null, 2));
-}
 
 function loadRecipientSecrets() {
   if (!process.env.RECIPIENT_SECRETS) return {};
@@ -71,7 +53,9 @@ async function main() {
   console.log(`Active key version: ${activeVersion}`);
   console.log(`Key versions in store: ${allVersions.map(k => `v${k.version}${k.retiredAt ? ' (retired)' : ' (active)'}`).join(', ')}`);
 
-  const transactions = loadTransactions();
+  // Load from in-memory store (seeded from SQLite on startup)
+  await Transaction._reloadFromDb();
+  const transactions = Transaction.getAll({ includeDeleted: true });
   const recipientSecrets = loadRecipientSecrets();
 
   const toReencrypt = [];
@@ -81,7 +65,6 @@ async function main() {
   for (const tx of transactions) {
     if (!tx.memoEnvelope) continue;
 
-    // Only process versioned memos
     if (typeof tx.memoEnvelope !== 'string' || !/^v\d+:/.test(tx.memoEnvelope)) {
       skipped.push({ id: tx.id, reason: 'legacy format (not versioned)' });
       continue;
@@ -120,7 +103,6 @@ async function main() {
 
   let succeeded = 0;
   let failed = 0;
-  const updatedTransactions = [...transactions];
 
   for (const { tx, keyVersion } of toReencrypt) {
     const recipientSecret = recipientSecrets[tx.recipient];
@@ -131,25 +113,27 @@ async function main() {
     }
 
     try {
-      // Decrypt with old key version
       const plaintext = MemoEncryptionService.decryptMemoForRecipient(
         tx.memoEnvelope,
         recipientSecret
       );
 
-      // Re-encrypt with current active key version
       const { memoEnvelope: newVersionedMemo, encryptionMetadata } =
         MemoEncryptionService.encryptMemoForRecipient(plaintext, tx.recipient);
 
       if (!DRY_RUN) {
-        const idx = updatedTransactions.findIndex(t => t.id === tx.id);
-        if (idx !== -1) {
-          updatedTransactions[idx] = {
-            ...updatedTransactions[idx],
-            memoEnvelope: newVersionedMemo,
-            encryptionMetadata,
-          };
-        }
+        // Update via model so the change is persisted to SQLite
+        const Database = require('../utils/database');
+        await Database.run(
+          `UPDATE donations_store
+             SET data = json_patch(data, ?), status_updated_at = ?
+           WHERE id = ?`,
+          [
+            JSON.stringify({ memoEnvelope: newVersionedMemo, encryptionMetadata }),
+            new Date().toISOString(),
+            tx.id,
+          ]
+        );
       }
 
       console.log(`  [OK] tx ${tx.id}: re-encrypted from v${keyVersion} → v${activeVersion}`);
@@ -158,11 +142,6 @@ async function main() {
       console.error(`  [FAIL] tx ${tx.id}: ${err.message}`);
       failed++;
     }
-  }
-
-  if (!DRY_RUN && succeeded > 0) {
-    saveTransactions(updatedTransactions);
-    console.log(`\nSaved ${succeeded} re-encrypted memo(s) to ${DONATIONS_PATH}`);
   }
 
   console.log(`\nResult: ${succeeded} succeeded, ${failed} failed`);

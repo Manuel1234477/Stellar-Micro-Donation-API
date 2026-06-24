@@ -286,7 +286,6 @@ const buildConfig = (env, isProduction, isTest) => {
   const database = {
     type: process.env.DB_TYPE || 'sqlite',
     path: process.env.DB_PATH || './donations.db',
-    jsonPath: process.env.DB_JSON_PATH || path.join(__dirname, '../../data/donations.json'),
   };
 
   // API Keys configuration

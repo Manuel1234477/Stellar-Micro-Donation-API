@@ -19,6 +19,7 @@ jobs:
       - run: ENCRYPTION_KEY=0000000000000000000000000000000000000000000000000000000000000000 API_KEYS=ci_key npm run validate-env
       - run: npm run test:coverage:ci
       - run: npm run openapi:check
+      - run: npm run check:no-json-persistence
       - run: npm audit --audit-level=high
 
   smoke:

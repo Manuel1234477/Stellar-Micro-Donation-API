@@ -33,5 +33,4 @@ module.exports = {
   useMockStellar: process.env.USE_MOCK_STELLAR === 'true',
   port: process.env.PORT || 3000,
   ...activeEnv,
-  dbPath: process.env.DB_JSON_PATH || path.join(__dirname, '../../data/donations.json'),
 };

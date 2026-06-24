@@ -80,22 +80,22 @@ const sanitizeString = (str) => {
 };
 
 /**
- * Check if a wallet/user exists by ID
+ * Check if a wallet/user exists by ID (async)
  */
-const walletExists = (id) => {
+const walletExists = async (id) => {
   if (!id && id !== 0) return false;
   const User = require('../models/user');
-  const user = User.getById(id);
+  const user = await User.getById(id);
   return user !== null && user !== undefined;
 };
 
 /**
- * Check if a wallet address exists
+ * Check if a wallet address exists (async)
  */
-const walletAddressExists = (address) => {
+const walletAddressExists = async (address) => {
   if (!address) return false;
   const User = require('../models/user');
-  const user = User.getByWallet(address);
+  const user = await User.getByWallet(address);
   return user !== null && user !== undefined;
 };
 
