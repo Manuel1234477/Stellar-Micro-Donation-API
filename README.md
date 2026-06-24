@@ -129,6 +129,19 @@ npm start
 
 See [Debug Mode Documentation](docs/features/DEBUG_MODE.md) for details.
 
+### Quick API Testing
+
+Get started with the API immediately using:
+
+**Option 1: Postman/Insomnia Collection**
+- Import [Stellar-Micro-Donation-API.postman_collection.json](examples/Stellar-Micro-Donation-API.postman_collection.json) into Postman or Insomnia
+- Set the `API_KEY` variable with your API key
+- All core flows are pre-configured (wallet management, donations, recurring donations, statistics, SSE)
+
+**Option 2: Curl Commands**
+- See [API_CURL_EXAMPLES.md](examples/API_CURL_EXAMPLES.md) for copy-paste curl commands
+- Covers all core flows with examples and troubleshooting tips
+
 ## ⚙️ Runtime Configuration
 
 For comprehensive documentation of runtime environment assumptions, timeouts, retry logic, persistence requirements, background services, and operational procedures, see:

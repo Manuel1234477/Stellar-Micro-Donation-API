@@ -1,0 +1,374 @@
+{
+  "info": {
+    "name": "Stellar Micro-Donation API",
+    "description": "Runnable collection for testing the core donation API flows",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "auth": {
+    "type": "apiKey",
+    "apiKey": [
+      {
+        "key": "value",
+        "value": "{{API_KEY}}",
+        "type": "string"
+      },
+      {
+        "key": "key",
+        "value": "X-API-Key",
+        "type": "string"
+      }
+    ]
+  },
+  "item": [
+    {
+      "name": "1. Wallet Management",
+      "item": [
+        {
+          "name": "Create Wallet",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "X-API-Key",
+                "value": "{{API_KEY}}"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"publicKey\": \"{{WALLET_PUBLIC_KEY}}\",\n  \"name\": \"My Donation Wallet\",\n  \"metadata\": {\n    \"region\": \"US\",\n    \"donorType\": \"individual\"\n  }\n}"
+            },
+            "url": {
+              "raw": "{{BASE_URL}}/wallets",
+              "host": ["{{BASE_URL}}"],
+              "path": ["wallets"]
+            }
+          }
+        },
+        {
+          "name": "Get Wallet Transactions",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "X-API-Key",
+                "value": "{{API_KEY}}"
+              }
+            ],
+            "url": {
+              "raw": "{{BASE_URL}}/wallets/{{WALLET_PUBLIC_KEY}}/transactions",
+              "host": ["{{BASE_URL}}"],
+              "path": ["wallets", "{{WALLET_PUBLIC_KEY}}", "transactions"]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "2. One-Time Donations",
+      "item": [
+        {
+          "name": "Create Donation",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "X-API-Key",
+                "value": "{{API_KEY}}"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"senderId\": \"{{DONOR_PUBLIC_KEY}}\",\n  \"recipientId\": \"{{RECIPIENT_PUBLIC_KEY}}\",\n  \"amount\": \"50.00\",\n  \"memo\": \"Education fund donation\",\n  \"sdgCategories\": [\"04\"]\n}"
+            },
+            "url": {
+              "raw": "{{BASE_URL}}/donations",
+              "host": ["{{BASE_URL}}"],
+              "path": ["donations"]
+            }
+          }
+        },
+        {
+          "name": "Get Recent Donations",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "X-API-Key",
+                "value": "{{API_KEY}}"
+              }
+            ],
+            "url": {
+              "raw": "{{BASE_URL}}/donations/recent?limit=10",
+              "host": ["{{BASE_URL}}"],
+              "path": ["donations", "recent"],
+              "query": [
+                {
+                  "key": "limit",
+                  "value": "10"
+                }
+              ]
+            }
+          }
+        },
+        {
+          "name": "Verify Donation",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "X-API-Key",
+                "value": "{{API_KEY}}"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"transactionHash\": \"{{TRANSACTION_HASH}}\"\n}"
+            },
+            "url": {
+              "raw": "{{BASE_URL}}/donations/verify",
+              "host": ["{{BASE_URL}}"],
+              "path": ["donations", "verify"]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "3. Recurring Donations",
+      "item": [
+        {
+          "name": "Create Recurring Donation",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "X-API-Key",
+                "value": "{{API_KEY}}"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"donorId\": \"{{DONOR_PUBLIC_KEY}}\",\n  \"recipientId\": \"{{RECIPIENT_PUBLIC_KEY}}\",\n  \"amount\": \"25.00\",\n  \"frequency\": \"monthly\",\n  \"startDate\": \"2026-07-01\"\n}"
+            },
+            "url": {
+              "raw": "{{BASE_URL}}/stream/create",
+              "host": ["{{BASE_URL}}"],
+              "path": ["stream", "create"]
+            }
+          }
+        },
+        {
+          "name": "List Recurring Donation Schedules",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "X-API-Key",
+                "value": "{{API_KEY}}"
+              }
+            ],
+            "url": {
+              "raw": "{{BASE_URL}}/stream/schedules",
+              "host": ["{{BASE_URL}}"],
+              "path": ["stream", "schedules"]
+            }
+          }
+        },
+        {
+          "name": "Cancel Recurring Donation",
+          "request": {
+            "method": "DELETE",
+            "header": [
+              {
+                "key": "X-API-Key",
+                "value": "{{API_KEY}}"
+              }
+            ],
+            "url": {
+              "raw": "{{BASE_URL}}/stream/schedules/{{SCHEDULE_ID}}",
+              "host": ["{{BASE_URL}}"],
+              "path": ["stream", "schedules", "{{SCHEDULE_ID}}"]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "4. Statistics & Analytics",
+      "item": [
+        {
+          "name": "Get Daily Statistics",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "X-API-Key",
+                "value": "{{API_KEY}}"
+              }
+            ],
+            "url": {
+              "raw": "{{BASE_URL}}/stats/daily",
+              "host": ["{{BASE_URL}}"],
+              "path": ["stats", "daily"]
+            }
+          }
+        },
+        {
+          "name": "Get Weekly Statistics",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "X-API-Key",
+                "value": "{{API_KEY}}"
+              }
+            ],
+            "url": {
+              "raw": "{{BASE_URL}}/stats/weekly",
+              "host": ["{{BASE_URL}}"],
+              "path": ["stats", "weekly"]
+            }
+          }
+        },
+        {
+          "name": "Get Summary Analytics",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "X-API-Key",
+                "value": "{{API_KEY}}"
+              }
+            ],
+            "url": {
+              "raw": "{{BASE_URL}}/stats/summary",
+              "host": ["{{BASE_URL}}"],
+              "path": ["stats", "summary"]
+            }
+          }
+        },
+        {
+          "name": "Get Donor Statistics",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "X-API-Key",
+                "value": "{{API_KEY}}"
+              }
+            ],
+            "url": {
+              "raw": "{{BASE_URL}}/stats/donors",
+              "host": ["{{BASE_URL}}"],
+              "path": ["stats", "donors"]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "5. Server-Sent Events (SSE) Stream",
+      "item": [
+        {
+          "name": "Subscribe to Real-Time Transaction Stream",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "X-API-Key",
+                "value": "{{API_KEY}}"
+              }
+            ],
+            "url": {
+              "raw": "{{BASE_URL}}/stream/transactions",
+              "host": ["{{BASE_URL}}"],
+              "path": ["stream", "transactions"]
+            }
+          }
+        },
+        {
+          "name": "Subscribe to Leaderboard Updates",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "X-API-Key",
+                "value": "{{API_KEY}}"
+              }
+            ],
+            "url": {
+              "raw": "{{BASE_URL}}/stream/leaderboard",
+              "host": ["{{BASE_URL}}"],
+              "path": ["stream", "leaderboard"]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "Health Check",
+      "request": {
+        "method": "GET",
+        "header": [],
+        "url": {
+          "raw": "{{BASE_URL}}/health",
+          "host": ["{{BASE_URL}}"],
+          "path": ["health"]
+        }
+      }
+    }
+  ],
+  "variable": [
+    {
+      "key": "BASE_URL",
+      "value": "http://localhost:3000/api",
+      "type": "string"
+    },
+    {
+      "key": "API_KEY",
+      "value": "your-api-key-here",
+      "type": "string"
+    },
+    {
+      "key": "DONOR_PUBLIC_KEY",
+      "value": "GBUQWP3BOUZX34ULNQG23RQ6F4BWFIreqclmnz4QSY47PCNQRICKS57",
+      "type": "string"
+    },
+    {
+      "key": "RECIPIENT_PUBLIC_KEY",
+      "value": "GCEZWJG7SSHQUUP7IBRN23JQCQR53ROE44TSBROAM4TOBJOJJU5YV2Z2",
+      "type": "string"
+    },
+    {
+      "key": "WALLET_PUBLIC_KEY",
+      "value": "GBUQWP3BOUZX34ULNQG23RQ6F4BWFIРЕQCLMNZ4QSY47PCNQRICKS57",
+      "type": "string"
+    },
+    {
+      "key": "TRANSACTION_HASH",
+      "value": "tx-hash-from-verify-response",
+      "type": "string"
+    },
+    {
+      "key": "SCHEDULE_ID",
+      "value": "1",
+      "type": "string"
+    }
+  ]
+}
