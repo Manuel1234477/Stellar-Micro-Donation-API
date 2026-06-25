@@ -72,9 +72,17 @@ function buildSwaggerCspValue(reportUri) {
  * @returns {import('express').RequestHandler}
  */
 function createCspMiddleware(options = {}) {
-  const reportOnly = options.reportOnly !== undefined
+  const isProduction = process.env.NODE_ENV === 'production';
+
+  let reportOnly = options.reportOnly !== undefined
     ? options.reportOnly
     : process.env.CSP_REPORT_ONLY === 'true';
+
+  // CSP must always be enforced in production - report-only mode provides no protection
+  if (isProduction && reportOnly) {
+    log.warn('CSP', 'CSP_REPORT_ONLY=true is not allowed in production — enforcing CSP');
+    reportOnly = false;
+  }
 
   const reportUri = options.reportUri !== undefined
     ? options.reportUri

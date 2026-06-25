@@ -172,6 +172,133 @@ describe('security headers on multiple endpoints', () => {
   });
 });
 
+// === Regression: real csp.js middleware
+
+const {
+  createCspMiddleware,
+  createPathBasedCspMiddleware,
+} = require('../../src/middleware/csp');
+
+/**
+ * Build a minimal Express app using the real CSP middleware factory.
+ * Mirrors the stack in src/bootstrap/middleware.js.
+ */
+function buildRealCspApp(cspOptions = {}) {
+  const helmetApp = express();
+  helmetApp.use(helmet({
+    contentSecurityPolicy: false,
+    frameguard: { action: 'deny' },
+    noSniff: true,
+    referrerPolicy: { policy: 'no-referrer' },
+    hsts: { maxAge: 31536000, includeSubDomains: true, preload: true },
+    xssFilter: false,
+    hidePoweredBy: true,
+  }));
+  helmetApp.use(createPathBasedCspMiddleware(cspOptions));
+  helmetApp.get('/api/v1/health', (_req, res) => res.json({ status: 'ok' }));
+  helmetApp.get('/docs', (_req, res) => res.json({ docs: true }));
+  return helmetApp;
+}
+
+describe('CSP middleware — enforcement mode', () => {
+  const origEnv = process.env.NODE_ENV;
+  const origFlag = process.env.CSP_REPORT_ONLY;
+
+  afterEach(() => {
+    process.env.NODE_ENV = origEnv;
+    if (origFlag === undefined) delete process.env.CSP_REPORT_ONLY;
+    else process.env.CSP_REPORT_ONLY = origFlag;
+  });
+
+  it('enforces CSP by default (header name is Content-Security-Policy)', async () => {
+    delete process.env.CSP_REPORT_ONLY;
+    const cspApp = buildRealCspApp();
+    const res = await request(cspApp).get('/api/v1/health');
+    expect(res.headers['content-security-policy']).toBeDefined();
+    expect(res.headers['content-security-policy-report-only']).toBeUndefined();
+  });
+
+  it('switches to report-only when CSP_REPORT_ONLY=true in non-production', async () => {
+    process.env.NODE_ENV = 'development';
+    process.env.CSP_REPORT_ONLY = 'true';
+    const cspApp = buildRealCspApp();
+    const res = await request(cspApp).get('/api/v1/health');
+    expect(res.headers['content-security-policy-report-only']).toBeDefined();
+    expect(res.headers['content-security-policy']).toBeUndefined();
+  });
+
+  it('always enforces CSP in production even when CSP_REPORT_ONLY=true', async () => {
+    process.env.NODE_ENV = 'production';
+    process.env.CSP_REPORT_ONLY = 'true';
+    const cspApp = buildRealCspApp();
+    const res = await request(cspApp).get('/api/v1/health');
+    expect(res.headers['content-security-policy']).toBeDefined();
+    expect(res.headers['content-security-policy-report-only']).toBeUndefined();
+  });
+
+  it("API routes include default-src 'none'", async () => {
+    delete process.env.CSP_REPORT_ONLY;
+    const cspApp = buildRealCspApp();
+    const res = await request(cspApp).get('/api/v1/health');
+    expect(res.headers['content-security-policy']).toMatch(/default-src\s+'none'/);
+  });
+
+  it("API routes include frame-ancestors 'none'", async () => {
+    delete process.env.CSP_REPORT_ONLY;
+    const cspApp = buildRealCspApp();
+    const res = await request(cspApp).get('/api/v1/health');
+    expect(res.headers['content-security-policy']).toMatch(/frame-ancestors\s+'none'/);
+  });
+
+  it('/docs uses relaxed CSP (default-src self) not strict none', async () => {
+    delete process.env.CSP_REPORT_ONLY;
+    const cspApp = buildRealCspApp();
+    const res = await request(cspApp).get('/docs');
+    expect(res.headers['content-security-policy']).toMatch(/default-src\s+'self'/);
+  });
+});
+
+describe('Full security header regression', () => {
+  let headerApp;
+
+  beforeAll(() => {
+    delete process.env.CSP_REPORT_ONLY;
+    headerApp = buildRealCspApp();
+  });
+
+  const endpoints = ['/api/v1/health', '/docs'];
+
+  it.each(endpoints)('Content-Security-Policy present on %s', async (path) => {
+    const res = await request(headerApp).get(path);
+    expect(res.headers['content-security-policy']).toBeDefined();
+  });
+
+  it.each(endpoints)('X-Frame-Options DENY on %s', async (path) => {
+    const res = await request(headerApp).get(path);
+    expect(res.headers['x-frame-options']).toBe('DENY');
+  });
+
+  it.each(endpoints)('X-Content-Type-Options nosniff on %s', async (path) => {
+    const res = await request(headerApp).get(path);
+    expect(res.headers['x-content-type-options']).toBe('nosniff');
+  });
+
+  it.each(endpoints)('Referrer-Policy no-referrer on %s', async (path) => {
+    const res = await request(headerApp).get(path);
+    expect(res.headers['referrer-policy']).toBe('no-referrer');
+  });
+
+  it.each(endpoints)('HSTS present on %s', async (path) => {
+    const res = await request(headerApp).get(path);
+    expect(res.headers['strict-transport-security']).toBeDefined();
+  });
+
+  it.each(endpoints)('X-Powered-By absent on %s', async (path) => {
+    const res = await request(headerApp).get(path);
+    expect(res.headers['x-powered-by']).toBeUndefined();
+  });
+});
+
 // ─── helmet config matches app.js ────────────────────────────────────────────
 
 describe('helmet config in app.js', () => {
