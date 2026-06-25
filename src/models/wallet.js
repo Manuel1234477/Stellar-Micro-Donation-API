@@ -1,13 +1,15 @@
-const fs = require('fs');
-const path = require('path');
+/**
+ * Wallet Model - Data Access Layer (SQLite-backed)
+ * No longer reads from or writes to data/wallets.json.
+ */
 
-const WALLETS_DB_PATH = process.env.WALLETS_JSON_PATH || './data/wallets.json';
+const { v4: uuidv4 } = require('uuid');
+const Database = require('../utils/database');
 
 /** Encrypted field names on wallet records */
 const ENCRYPTED_FIELDS = ['label', 'notes'];
 
 function getEncryptionService() {
-  // Lazy-require to avoid circular deps and allow tests to override env
   return require('../services/EncryptionService');
 }
 
@@ -32,116 +34,120 @@ function decryptWalletFields(wallet) {
       try { result[field] = svc.decryptField(result[field]); } catch (_) { /* leave as-is */ }
     }
   }
+  // Normalise leaderboard_visibility back to boolean
+  if (result.leaderboard_visibility !== undefined) {
+    result.leaderboard_visibility = result.leaderboard_visibility !== 0;
+  }
   return result;
 }
 
+function rowToWallet(row) {
+  if (!row) return null;
+  return decryptWalletFields({ ...row });
+}
+
 class Wallet {
-  static ensureDbDir() {
-    const dir = path.dirname(WALLETS_DB_PATH);
-    if (!fs.existsSync(dir)) {
-      fs.mkdirSync(dir, { recursive: true });
-    }
-  }
-
-  static loadWallets() {
-    this.ensureDbDir();
-    if (!fs.existsSync(WALLETS_DB_PATH)) {
-      return [];
-    }
-    try {
-      const data = fs.readFileSync(WALLETS_DB_PATH, 'utf8');
-      return JSON.parse(data);
-    } catch (error) {
-      return [];
-    }
-  }
-
-  static saveWallets(wallets) {
-    this.ensureDbDir();
-    fs.writeFileSync(WALLETS_DB_PATH, JSON.stringify(wallets, null, 2));
-  }
-
-  // Test helper for integration suites: wipe all persisted wallet data.
-  static _clearAllData() {
-    this.saveWallets([]);
-  }
-
-  static create(walletData) {
-    const wallets = this.loadWallets();
-    const newWallet = {
-      id: Date.now().toString(),
-      address: walletData.address,
-      label: walletData.label || null,
-      ownerName: walletData.ownerName || null,
-      createdAt: new Date().toISOString(),
-      deletedAt: null, // Initialized for soft-delete support
-      last_synced_at: null,
-      last_cursor: null,
-      ...walletData
-    };
-    wallets.push(encryptWalletFields(newWallet));
-    this.saveWallets(wallets);
-    return newWallet;
-  }
-
-  /**
-   * Returns only wallets that have NOT been soft-deleted
-   */
-  static getAll() {
-    const wallets = this.loadWallets();
-    return wallets.filter(w => !w.deletedAt).map(decryptWalletFields);
-  }
-
-  /**
-   * Returns a specific wallet only if not soft-deleted.
-   * Ids are stored as strings (Date.now().toString()); accept numeric input.
-   */
-  static getById(id) {
-    const wallets = this.loadWallets();
-    return decryptWalletFields(wallets.find(w => String(w.id) === String(id) && !w.deletedAt));
-  }
-
-  /**
-   * Returns a specific address only if not soft-deleted
-   */
-  static getByAddress(address) {
-    const wallets = this.loadWallets();
-    return decryptWalletFields(wallets.find(w => w.address === address && !w.deletedAt));
-  }
-
-  /**
-   * Internal method for admin/cleanup to see deleted records
-   */
-  static getAllDeleted() {
-    const wallets = this.loadWallets();
-    return wallets.filter(w => !!w.deletedAt);
-  }
-
-  static update(id, updates) {
-    const wallets = this.loadWallets();
-    const index = wallets.findIndex(w => String(w.id) === String(id) && !w.deletedAt);
-    if (index === -1) return null;
-
-    wallets[index] = encryptWalletFields({
-      ...wallets[index],
-      ...updates,
-      updatedAt: new Date().toISOString()
+  static async create(walletData) {
+    const id = walletData.id || uuidv4();
+    const now = new Date().toISOString();
+    const record = encryptWalletFields({
+      ...walletData,
+      id,
+      createdAt: walletData.createdAt || now,
+      deletedAt: null,
+      last_synced_at: walletData.last_synced_at || null,
+      last_cursor: walletData.last_cursor || null,
     });
-    this.saveWallets(wallets);
-    return decryptWalletFields(wallets[index]);
+
+    await Database.run(
+      `INSERT INTO wallets
+         (id, address, label, ownerName, notes, leaderboard_visibility, last_synced_at, last_cursor, createdAt, updatedAt, deletedAt)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [
+        record.id,
+        record.address,
+        record.label || null,
+        record.ownerName || null,
+        record.notes || null,
+        record.leaderboard_visibility !== false ? 1 : 0,
+        record.last_synced_at || null,
+        record.last_cursor || null,
+        record.createdAt,
+        record.updatedAt || null,
+        null,
+      ]
+    );
+
+    return rowToWallet(record);
   }
 
-  /**
-   * Soft delete: sets the deletedAt timestamp instead of removing from array
-   */
-  static softDelete(id) {
-    const wallets = this.loadWallets();
-    const index = wallets.findIndex(w => String(w.id) === String(id));
-    if (index === -1) return false;
+  static async getAll() {
+    const rows = await Database.all('SELECT * FROM wallets WHERE deletedAt IS NULL');
+    return rows.map(rowToWallet);
+  }
 
-    wallets[index].deletedAt = new Date().toISOString();
-    this.saveWallets(wallets);
-    return true;
+  static async getById(id) {
+    const row = await Database.get(
+      'SELECT * FROM wallets WHERE id = ? AND deletedAt IS NULL',
+      [String(id)]
+    );
+    return rowToWallet(row);
+  }
+
+  static async getByAddress(address) {
+    const row = await Database.get(
+      'SELECT * FROM wallets WHERE address = ? AND deletedAt IS NULL',
+      [address]
+    );
+    return rowToWallet(row);
+  }
+
+  static async getAllDeleted() {
+    const rows = await Database.all('SELECT * FROM wallets WHERE deletedAt IS NOT NULL');
+    return rows.map(rowToWallet);
+  }
+
+  static async update(id, updates) {
+    const existing = await this.getById(id);
+    if (!existing) return null;
+
+    const merged = encryptWalletFields({
+      ...existing,
+      ...updates,
+      updatedAt: new Date().toISOString(),
+    });
+
+    await Database.run(
+      `UPDATE wallets SET
+         label = ?, ownerName = ?, notes = ?, leaderboard_visibility = ?,
+         last_synced_at = ?, last_cursor = ?, updatedAt = ?
+       WHERE id = ? AND deletedAt IS NULL`,
+      [
+        merged.label || null,
+        merged.ownerName || null,
+        merged.notes || null,
+        merged.leaderboard_visibility !== false ? 1 : 0,
+        merged.last_synced_at || null,
+        merged.last_cursor || null,
+        merged.updatedAt,
+        String(id),
+      ]
+    );
+
+    return rowToWallet(merged);
+  }
+
+  static async softDelete(id) {
+    const result = await Database.run(
+      'UPDATE wallets SET deletedAt = ? WHERE id = ? AND deletedAt IS NULL',
+      [new Date().toISOString(), String(id)]
+    );
+    return (result && result.changes > 0) || false;
+  }
+
+  /** Test helper — wipe all wallet data. */
+  static async _clearAllData() {
+    await Database.run('DELETE FROM wallets');
   }
 }
 

@@ -17,6 +17,7 @@ const Database = require('../utils/database');
 const log = require('../utils/log');
 const { ValidationError, NotFoundError } = require('../utils/errors');
 const { ERROR_CODES } = require('../utils/errors');
+const { serialize: csvSerialize } = require('../utils/csvSerializer');
 
 const EXPORT_DIR = path.join(__dirname, '../../data/exports');
 const EXPORT_RETENTION_MS = 24 * 60 * 60 * 1000; // 24 hours
@@ -306,23 +307,7 @@ class DonationExportService {
       'timestamp',
       'transactionHash',
     ];
-
-    const csvEscape = (value) => {
-      if (value === null || value === undefined) return '';
-      const str = String(value);
-      if (str.includes('"') || str.includes(',') || str.includes('\n')) {
-        return `"${str.replace(/"/g, '""')}"`;
-      }
-      return str;
-    };
-
-    const rows = [headers.join(',')];
-    for (const donation of donations) {
-      const row = headers.map((h) => csvEscape(donation[h])).join(',');
-      rows.push(row);
-    }
-
-    return rows.join('\n');
+    return csvSerialize(headers, donations);
   }
 
   /**

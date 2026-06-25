@@ -1,18 +1,27 @@
 /**
- * User Model - Data Access Layer
+ * User Model - Data Access Layer (SQLite-backed)
+ * No longer reads from data/users.json — all lookups go through SQLite.
  */
 
-const users = require('../../data/users.json');
+const Database = require('../utils/database');
 
 class User {
-  static getById(id) {
+  static async getById(id) {
     if (!id) return null;
-    return users.find(u => u.id === id) || null;
+    const row = await Database.get(
+      'SELECT * FROM users WHERE id = ? AND deleted_at IS NULL',
+      [id]
+    );
+    return row || null;
   }
 
-  static getByWallet(address) {
+  static async getByWallet(address) {
     if (!address) return null;
-    return users.find(u => u.wallet === address || u.publicKey === address) || null;
+    const row = await Database.get(
+      'SELECT * FROM users WHERE publicKey = ? AND deleted_at IS NULL',
+      [address]
+    );
+    return row || null;
   }
 }
 

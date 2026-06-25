@@ -233,7 +233,6 @@ router.get('/:id/progress/stream', requireApiKey, asyncHandler(async (req, res, 
   const log = require('../utils/log');
   const { v4: uuidv4 } = require('uuid');
   const SseManager = require('../services/SseManager');
-  const donationEvents = require('../events/donationEvents');
   
   const campaignId = req.params.id;
   const clientId = uuidv4();

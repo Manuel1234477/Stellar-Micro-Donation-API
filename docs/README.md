@@ -147,6 +147,7 @@ docs/
 - [Deployment Guide](deployment/MIGRATION_GUIDE.md)
 - [Deployment Checklist](deployment/DELIVERY_CHECKLIST.md)
 - [Troubleshooting](deployment/PULL_TROUBLESHOOTING.md)
+- [Kubernetes Liveness & Readiness Probes](KUBERNETES_PROBES.md)
 
 ### For Features
 - [Idempotency](features/IDEMPOTENCY.md) ⭐ NEW

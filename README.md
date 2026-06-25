@@ -74,7 +74,7 @@ For detailed architecture documentation, see:
 
 ### Prerequisites
 
-- Node.js (v14 or higher)
+- Node.js (v20 or higher)
 - npm or yarn
 - SQLite3
 
@@ -128,6 +128,19 @@ npm start
 ```
 
 See [Debug Mode Documentation](docs/features/DEBUG_MODE.md) for details.
+
+### Quick API Testing
+
+Get started with the API immediately using:
+
+**Option 1: Postman/Insomnia Collection**
+- Import [Stellar-Micro-Donation-API.postman_collection.json](examples/Stellar-Micro-Donation-API.postman_collection.json) into Postman or Insomnia
+- Set the `API_KEY` variable with your API key
+- All core flows are pre-configured (wallet management, donations, recurring donations, statistics, SSE)
+
+**Option 2: Curl Commands**
+- See [API_CURL_EXAMPLES.md](examples/API_CURL_EXAMPLES.md) for copy-paste curl commands
+- Covers all core flows with examples and troubleshooting tips
 
 ## ⚙️ Runtime Configuration
 
@@ -452,10 +465,86 @@ Having issues? We've got you covered!
 - **Port in use?** Kill process: `kill -9 $(lsof -ti:3000)`
 - **Dependencies broken?** Fresh install: `rm -rf node_modules package-lock.json && npm install`
 
-### Common Issues
-- Missing `.env` file → `cp .env.example .env`
-- API keys required → Add `API_KEYS=dev_key_123` to `.env`
-- Use mock mode for development → `MOCK_STELLAR=true`
+### Common Issues and Fixes
+
+#### `Error: ENCRYPTION_KEY is required in production`
+The server refuses to start without an encryption key when `NODE_ENV=production`.
+
+```bash
+# Generate a key
+npm run generate-key
+# Copy the output into .env
+ENCRYPTION_KEY=<64-char hex output>
+```
+
+If you are running locally, set `NODE_ENV=development` to skip enforcement, or provide a key regardless (recommended).
+
+#### Server exits immediately with "No valid API keys configured"
+`API_KEYS` is missing or empty. Add at least one key to `.env`:
+
+```env
+API_KEYS=dev_key_1234567890
+```
+
+To use the database-backed key system instead (recommended for production):
+
+```bash
+npm run keys:create -- --name "My Key" --role user --expires 365
+```
+
+#### Database not initialized / `SQLITE_ERROR: no such table`
+Run the init script before the first start:
+
+```bash
+npm run init-db
+```
+
+If the database exists but is missing new tables introduced by a migration, run:
+
+```bash
+npm run migrate
+```
+
+#### Port 3000 already in use
+Kill whatever process owns the port:
+
+```bash
+kill -9 $(lsof -ti:3000)
+```
+
+Or change the port in `.env`:
+
+```env
+PORT=3001
+```
+
+#### Optional integrations failing silently
+
+The following integrations are **completely optional**. If their env vars are absent the feature is disabled and the API continues working:
+
+| Integration | Required vars | Fallback behaviour |
+|-------------|---------------|--------------------|
+| CoinGecko price oracle | `COINGECKO_API_KEY` | Public rate-limited endpoint is used |
+| IPFS certificate pinning | `PINATA_API_KEY`, `PINATA_SECRET_KEY` | Certificates stored in local memory only |
+| Email receipts (SMTP) | `SMTP_HOST`, `SMTP_USER`, `SMTP_PASS`, `SMTP_FROM` | Email delivery skipped/graceful failure |
+| Geographic IP blocking | `GEO_BLOCKED_COUNTRIES`, `MAXMIND_DB_PATH` | All IPs allowed; no geo rules applied |
+| KMS key wrapping | `KMS_KEY_ID`, `AWS_REGION` | Software-only encryption is used |
+| Webhooks (external) | `WEBHOOK_SECRET` | Outbound webhooks still fire; no signature |
+
+To confirm which integrations are active at runtime, call `GET /health` — the response includes dependency status.
+
+#### Missing `.env` file
+```bash
+cp .env.example .env
+# Then edit .env — at minimum set ENCRYPTION_KEY and API_KEYS
+```
+
+#### Mock mode for local development
+Avoid needing a real Stellar account during development:
+
+```env
+MOCK_STELLAR=true
+```
 
 ### Get Help
 - **[Full Troubleshooting Guide](docs/DEVELOPER_TROUBLESHOOTING_GUIDE.md)** - Comprehensive solutions
@@ -468,6 +557,139 @@ Enable detailed logging for troubleshooting:
 ```bash
 DEBUG_MODE=true LOG_VERBOSE=true npm start
 ```
+
+---
+
+## ⚙️ Environment Variable Reference
+
+All variables are read from the `.env` file in the project root (see `.env.example`).
+
+### Server
+
+| Variable | Required | Default | Description |
+|----------|----------|---------|-------------|
+| `PORT` | No | `3000` | Port the HTTP server listens on (1–65535) |
+| `NODE_ENV` | No | `development` | Runtime environment (`development` \| `production` \| `test`) |
+
+### Authentication
+
+| Variable | Required | Default | Description |
+|----------|----------|---------|-------------|
+| `API_KEYS` | **Yes** (legacy) | — | Comma-separated list of accepted API keys. Not needed when using database-backed keys exclusively. |
+
+### Encryption
+
+| Variable | Required | Default | Description |
+|----------|----------|---------|-------------|
+| `ENCRYPTION_KEY` | **Yes** in production | — | 64-character hex string (32 bytes) used to encrypt sensitive data. Generate with `npm run generate-key`. Changing this makes previously-encrypted data unrecoverable. |
+
+### Stellar Network
+
+| Variable | Required | Default | Description |
+|----------|----------|---------|-------------|
+| `STELLAR_NETWORK` | No | `testnet` | Target network: `testnet` \| `mainnet` \| `futurenet` |
+| `MOCK_STELLAR` | No | `true` | When `true`, no outbound Stellar calls are made. Recommended for local dev and CI. |
+| `HORIZON_URL` | No | network default | Override the Horizon API endpoint |
+
+### Database
+
+| Variable | Required | Default | Description |
+|----------|----------|---------|-------------|
+| `DB_PATH` | No | `./data/stellar_donations.db` | Path to the SQLite file |
+| `DB_POOL_SIZE` | No | `5` | Number of pooled SQLite connections |
+| `DB_ACQUIRE_TIMEOUT` | No | `10000` | Milliseconds to wait for a connection before timing out |
+
+### CORS
+
+| Variable | Required | Default | Description |
+|----------|----------|---------|-------------|
+| `CORS_ALLOWED_ORIGINS` | No | `http://localhost:3000,...` | Comma-separated allowed origins for browser clients |
+| `CORS_ALLOWED_METHODS` | No | standard verbs | Override allowed HTTP methods |
+| `CORS_ALLOWED_HEADERS` | No | standard headers | Override allowed request headers |
+| `CORS_MAX_AGE` | No | `86400` | Preflight cache duration in seconds |
+
+### Logging
+
+| Variable | Required | Default | Description |
+|----------|----------|---------|-------------|
+| `DEBUG_MODE` | No | `false` | Enable verbose debug logging. **Never enable in production.** |
+| `LOG_TO_FILE` | No | `false` | Write logs to files in addition to stdout |
+| `LOG_DIR` | No | `./logs` | Directory for log files (used when `LOG_TO_FILE=true`) |
+| `LOG_VERBOSE` | No | `false` | Include request/response bodies in console output |
+
+### Donation Limits
+
+| Variable | Required | Default | Description |
+|----------|----------|---------|-------------|
+| `MIN_DONATION_AMOUNT` | No | `0.01` | Minimum donation amount in XLM |
+| `MAX_DONATION_AMOUNT` | No | `10000` | Maximum donation amount in XLM |
+| `MAX_DAILY_DONATION_PER_DONOR` | No | `0` (no limit) | Daily cap per donor in XLM |
+
+### Rate Limiting
+
+| Variable | Required | Default | Description |
+|----------|----------|---------|-------------|
+| `RATE_LIMIT` | No | `100` | Maximum requests per IP per window |
+| `AUTH_TOKEN_RATE_LIMIT` | No | `10` | Auth token endpoint requests per minute per IP |
+| `AUTH_REFRESH_RATE_LIMIT` | No | `20` | Auth refresh endpoint requests per minute per IP |
+
+### Optional Integrations
+
+All variables in this section are **optional**. Omitting them disables the integration gracefully.
+
+#### CoinGecko (Price Oracle)
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `COINGECKO_API_KEY` | — | API key for XLM/fiat rates. Without it the public (rate-limited) endpoint is used. |
+
+#### IPFS Certificate Pinning (Pinata)
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `PINATA_API_KEY` | — | Pinata API key for IPFS certificate pinning |
+| `PINATA_SECRET_KEY` | — | Pinata secret key |
+| `IPFS_GATEWAY_URL` | `https://gateway.pinata.cloud/ipfs` | Public IPFS gateway base URL |
+
+#### Email Receipts (SMTP)
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `SMTP_HOST` | — | SMTP relay hostname |
+| `SMTP_PORT` | `587` | SMTP port |
+| `SMTP_SECURE` | `false` | Use TLS (`true`) or STARTTLS (`false`) |
+| `SMTP_USER` | — | SMTP authentication username |
+| `SMTP_PASS` | — | SMTP authentication password |
+| `SMTP_FROM` | — | Sender address (must be verified with your provider) |
+
+#### Geographic IP Blocking
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `GEO_BLOCKED_COUNTRIES` | — | Comma-separated ISO country codes to block (e.g. `RU,IR,KP`) |
+| `GEO_ALLOWED_COUNTRIES` | — | Comma-separated ISO country codes to always allow (overrides blocked list) |
+| `GEO_ALLOWED_IPS` | — | Comma-separated IPs / CIDR ranges that bypass geo-blocking |
+| `MAXMIND_DB_PATH` | `./data/GeoLite2-Country.mmdb` | Path to MaxMind GeoLite2 database file |
+
+#### KMS Key Wrapping
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `KMS_KEY_ID` | — | AWS KMS key ID or ARN for envelope encryption |
+| `AWS_REGION` | — | AWS region for KMS calls |
+
+#### Webhooks
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `WEBHOOK_SECRET` | — | HMAC secret used to sign outbound webhook payloads |
+| `SIGNED_URL_EXPIRY_MS` | `3600000` (1 hour) | Expiry for signed export download URLs |
+
+#### Service Account
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `SERVICE_SECRET_KEY` | — | Stellar secret key for service-side signing. **Never commit a real key.** |
 
 ## 🔧 Configuration
 
@@ -496,6 +718,7 @@ The scheduler runs automatically when the server starts and checks for due donat
 - **[Stellar Failure Simulation](docs/STELLAR_FAILURE_SIMULATION.md)** - Network failure testing guide
 - **[API Flow Diagram](API%20flow%20diagram.txt)** - API request flow
 - **[Mock Stellar Guide](MOCK_STELLAR_GUIDE.md)** - Using mock Stellar service
+- **[Kubernetes Probes](docs/KUBERNETES_PROBES.md)** - Liveness and readiness probe configuration
 
 ### Development & Deployment
 - **[Pre-Deployment Checklist](docs/guides/PRE_DEPLOYMENT_CHECKLIST.md)** - Production deployment verification

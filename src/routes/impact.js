@@ -17,8 +17,25 @@ const { checkPermission } = require('../middleware/rbac');
 const { PERMISSIONS } = require('../utils/permissions');
 const Transaction = require('../models/transaction');
 const { SDG_CATEGORIES} = require('../services/ImpactMetricService');
+const { serialize: csvSerialize } = require('../utils/csvSerializer');
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
+
+/**
+ * Escape CSV field to prevent formula injection.
+ * Prepends a single quote to fields starting with =, +, -, or @
+ * @param {string} field
+ * @returns {string}
+ */
+function escapeCsvFormula(field) {
+  if (!field) return '';
+  const str = String(field);
+  // Prevent formula injection by prepending ' to fields starting with formula chars
+  if (/^[=+\-@]/.test(str)) {
+    return "'" + str;
+  }
+  return str;
+}
 
 /**
  * Filter transactions by optional date range.
@@ -146,7 +163,7 @@ router.post('/report/export', requireApiKey, checkPermission(PERMISSIONS.DONATIO
       const lines = [
         'SDG Code,Goal,Title,Total Amount (XLM),Donation Count',
         ...breakdown.map(s =>
-          `${s.code},${s.goal},"${s.title}",${s.totalAmount.toFixed(7)},${s.count}`
+          `${escapeCsvFormula(s.code)},${escapeCsvFormula(s.goal)},"${escapeCsvFormula(s.title)}",${s.totalAmount.toFixed(7)},${s.count}`
         ),
         '',
         `Total,,All SDGs,${totalAmount.toFixed(7)},${txs.length}`,
@@ -154,7 +171,7 @@ router.post('/report/export', requireApiKey, checkPermission(PERMISSIONS.DONATIO
 
       res.setHeader('Content-Type', 'text/csv');
       res.setHeader('Content-Disposition', `attachment; filename="impact-report-${Date.now()}.csv"`);
-      return res.send(lines.join('\n'));
+      return res.send(csvSerialize(headers, rows));
     }
 
     // PDF: return a minimal text-based PDF

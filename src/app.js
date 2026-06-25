@@ -949,8 +949,19 @@ async function startServer() {
   }
 }
 
+/**
+ * Export createApp function for route collection and testing.
+ * This creates a fully configured Express app with all routes mounted,
+ * but without starting the HTTP server or background services.
+ */
+function createApp() {
+  return app;
+}
+
 if (require.main === module) {
   startServer();
 }
 
 module.exports = app;
+module.exports.createApp = createApp;
+module.exports.startServer = startServer;

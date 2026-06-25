@@ -169,7 +169,30 @@ const options = {
 };
 
 /** @type {object} Generated OpenAPI 3.0 specification */
-const spec = swaggerJsdoc(options);
+let spec = swaggerJsdoc(options);
+
+/**
+ * Ensure deterministic ordering of all keys in the spec (byte-stable output).
+ * This guarantees the serialized JSON is identical across runs.
+ * @param {object} obj - Object to sort keys
+ * @returns {object} Object with keys sorted recursively
+ */
+function sortObjectKeys(obj) {
+  if (Array.isArray(obj)) {
+    return obj.map(sortObjectKeys);
+  } else if (obj !== null && typeof obj === 'object') {
+    return Object.keys(obj)
+      .sort()
+      .reduce((result, key) => {
+        result[key] = sortObjectKeys(obj[key]);
+        return result;
+      }, {});
+  }
+  return obj;
+}
+
+// Sort spec keys for byte-stable output
+spec = sortObjectKeys(spec);
 
 /** Express middleware array for serving Swagger UI */
 const swaggerUiMiddleware = swaggerUi.serve;
@@ -182,4 +205,4 @@ const swaggerUiSetup = swaggerUi.setup(spec, {
   customSiteTitle: 'Stellar Micro-Donation API Docs',
 });
 
-module.exports = { spec, swaggerUiMiddleware, swaggerUiSetup };
+module.exports = { spec, swaggerUiMiddleware, swaggerUiSetup, sortObjectKeys };

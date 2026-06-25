@@ -1,79 +1,63 @@
 /**
- * HSM Signing Provider (Stub)
- * 
- * RESPONSIBILITY: Sign transactions using Hardware Security Module
- * OWNER: Security Team
- * 
- * Stub implementation demonstrating HSM integration pattern.
- * Production implementation would use PKCS#11 library.
+ * HSM Signing Provider
+ *
+ * IMPORTANT: This provider is NOT yet implemented (PKCS#11 integration pending).
+ * Selecting it will throw a HsmNotImplementedError at startup so operators
+ * receive an explicit failure instead of a silent fallback to software signing.
+ *
+ * There is NO automatic fallback to software signing. Any fallback must be an
+ * explicit, separately-configured opt-in.
+ *
+ * PKCS#11 implementation checklist (for the future implementer):
+ *   [ ] Load PKCS#11 library via HSM_LIBRARY_PATH
+ *   [ ] Open session with HSM_SLOT_ID + HSM_PIN
+ *   [ ] Locate signing key by HSM_KEY_IDENTIFIER
+ *   [ ] Sign the Stellar transaction hash (CKM_ECDSA)
+ *   [ ] Assert private key is non-extractable (CKA_EXTRACTABLE = false)
+ *   [ ] Handle CKR_SESSION_HANDLE_INVALID / token disconnect — re-open session
+ *   [ ] Serialise concurrent sign requests (one session per slot)
+ *   [ ] Verify produced signature against Stellar SDK before returning
+ *   [ ] Implement health check as a real test-sign or session ping
  */
+
+'use strict';
 
 const SigningProvider = require('./SigningProvider');
-const log = require('../../utils/log');
 
-/**
- * HSM-based signing provider using PKCS#11 interface
- * This is a stub implementation showing the integration pattern
- */
+class HsmNotImplementedError extends Error {
+  constructor() {
+    super(
+      'HSM signing provider is not yet implemented. ' +
+      'Configure SIGNING_PROVIDER=software to use software signing, ' +
+      'or implement the PKCS#11 integration before enabling HSM in production.'
+    );
+    this.name = 'HsmNotImplementedError';
+    this.code = 'HSM_NOT_IMPLEMENTED';
+  }
+}
+
 class HSMSigningProvider extends SigningProvider {
   constructor(config = {}) {
     super();
-    this.libraryPath = config.libraryPath || process.env.HSM_LIBRARY_PATH;
-    this.slotId = config.slotId || process.env.HSM_SLOT_ID;
-    this.pin = config.pin || process.env.HSM_PIN;
-    
-    log.info('HSM_PROVIDER', 'Initialized HSM signing provider (stub)', {
-      libraryPath: this.libraryPath,
-      slotId: this.slotId,
-    });
+    // Fail immediately at construction time so the error surfaces at startup,
+    // not at the moment a payment is being signed.
+    throw new HsmNotImplementedError();
   }
 
-  /**
-   * Sign a transaction using HSM
-   * @param {Transaction} transaction - Built Stellar transaction
-   * @param {string} keyIdentifier - HSM key identifier
-   * @returns {Promise<Transaction>} Signed transaction
-   */
-  async sign(transaction, keyIdentifier) {
-    // TODO: Implement PKCS#11 signing
-    // 1. Connect to HSM using libraryPath
-    // 2. Open session with slotId and pin
-    // 3. Find key by keyIdentifier
-    // 4. Sign transaction hash with HSM key
-    // 5. Attach signature to transaction
-    
-    throw new Error('HSM signing not yet implemented - stub only');
+  // The methods below are never reached; they exist for documentation only.
+
+  async sign(_transaction, _keyIdentifier) {
+    throw new HsmNotImplementedError();
   }
 
-  /**
-   * Get public key from HSM
-   * @param {string} keyIdentifier - HSM key identifier
-   * @returns {Promise<string>} Stellar public key
-   */
-  async getPublicKey(keyIdentifier) {
-    // TODO: Implement HSM public key retrieval
-    // 1. Connect to HSM
-    // 2. Find key by keyIdentifier
-    // 3. Extract public key
-    // 4. Convert to Stellar format
-    
-    throw new Error('HSM public key retrieval not yet implemented - stub only');
+  async getPublicKey(_keyIdentifier) {
+    throw new HsmNotImplementedError();
   }
 
-  /**
-   * Check HSM connectivity and configuration
-   * @returns {Promise<boolean>} True if HSM is accessible
-   */
   async healthCheck() {
-    // TODO: Implement HSM health check
-    // 1. Verify library path exists
-    // 2. Connect to HSM
-    // 3. Verify slot is accessible
-    // 4. Test authentication with PIN
-    
-    log.warn('HSM_PROVIDER', 'Health check not implemented - returning false');
     return false;
   }
 }
 
 module.exports = HSMSigningProvider;
+module.exports.HsmNotImplementedError = HsmNotImplementedError;

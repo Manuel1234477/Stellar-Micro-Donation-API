@@ -366,16 +366,16 @@ class WebhookService {
       attempts
     });
 
-    // In a real implementation, this would send an email
-    // For now, we just log it
-    // TODO: Integrate with email service
-    const notification = {
-      to: webhook.owner_email,
-      subject: `Webhook Delivery Failed: ${webhook.url}`,
-      body: `Your webhook (ID: ${webhook.id}) at ${webhook.url} has failed after ${attempts} attempts.\n\nEvent: ${event}\nLast Error: ${lastError}\n\nPlease check your endpoint and consider updating the webhook configuration.`
-    };
-
-    log.info('WEBHOOK_SERVICE', 'Owner notification prepared', notification);
+    try {
+      const WebhookEmailNotificationService = require('./WebhookEmailNotificationService');
+      const emailService = new WebhookEmailNotificationService();
+      await emailService.notifyWebhookAutoDisabled(webhook, attempts, lastError);
+    } catch (err) {
+      log.error('WEBHOOK_SERVICE', 'Failed to send notification email', {
+        webhookId: webhook.id,
+        error: err.message,
+      });
+    }
   }
 
   /**

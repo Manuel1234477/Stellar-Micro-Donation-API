@@ -55,11 +55,13 @@ function checkEncryptionKey() {
   const isProduction = (process.env.NODE_ENV || '').toLowerCase() === 'production';
 
   if (!key || !key.trim()) {
-    fail('ENCRYPTION_KEY', 'not set — run `npm run generate-key` and add it to your .env file');
+    fail('ENCRYPTION_KEY', 'required but not set — run `npm run generate-key`');
     return false;
   }
-  if (key.length < 32) {
-    fail('ENCRYPTION_KEY', `too short (${key.length} chars, minimum 32)`);
+  const trimmedKey = key.trim();
+  
+  if (trimmedKey.length !== 64) {
+    fail('ENCRYPTION_KEY', `must be exactly 64 hex characters (32 bytes), got ${trimmedKey.length} — run `npm run generate-key``);
     return false;
   }
 

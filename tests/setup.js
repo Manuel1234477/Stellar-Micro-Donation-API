@@ -5,6 +5,47 @@ process.env.NODE_ENV = 'test';
 // Fixed test key — must be set before any module that imports securityConfig is loaded
 process.env.ENCRYPTION_KEY = process.env.ENCRYPTION_KEY || 'test_encryption_key_fixed_32bytes_hex_value_here_00';
 
+// ─── Guard: block accidental access to the shared data/ directory ─────────────
+// Any test that reads or writes a path under <repo>/data/ without going through
+// the env-var-controlled paths is a potential source of flakiness. We intercept
+// fs.readFileSync / writeFileSync and throw an actionable error so the problem
+// surfaces immediately rather than silently corrupting state.
+{
+  const fs = require('fs');
+  const path = require('path');
+  const REPO_DATA_DIR = path.resolve(__dirname, '..', 'data');
+
+  function assertNotSharedData(filePath) {
+    if (typeof filePath !== 'string') return;
+    const resolved = path.resolve(filePath);
+    if (resolved.startsWith(REPO_DATA_DIR + path.sep) || resolved === REPO_DATA_DIR) {
+      throw new Error(
+        `[TEST ISOLATION] Direct access to ${filePath} is forbidden in tests.\n` +
+        'Use process.env.DB_PATH / DB_JSON_PATH / WALLETS_JSON_PATH instead.\n' +
+        'Each Jest worker already has a private copy in a temp directory.'
+      );
+    }
+  }
+
+  const _readFileSync = fs.readFileSync.bind(fs);
+  fs.readFileSync = function(p, ...args) {
+    assertNotSharedData(p);
+    return _readFileSync(p, ...args);
+  };
+
+  const _writeFileSync = fs.writeFileSync.bind(fs);
+  fs.writeFileSync = function(p, ...args) {
+    assertNotSharedData(p);
+    return _writeFileSync(p, ...args);
+  };
+
+  const _appendFileSync = fs.appendFileSync.bind(fs);
+  fs.appendFileSync = function(p, ...args) {
+    assertNotSharedData(p);
+    return _appendFileSync(p, ...args);
+  };
+}
+
 // ─── Per-worker storage isolation ─────────────────────────────────────────────
 // Every Jest worker gets its own SQLite database (copied from the template
 // that globalSetup built) and its own JSON/key stores. Without this,
@@ -68,6 +109,34 @@ try {
   const dedup = require('../src/middleware/deduplication');
   if (dedup && typeof dedup.clearCache === 'function') dedup.clearCache();
 } catch (_) {}
+
+// 6. Idempotency store — in-memory request record persists across files
+try {
+  const idempotency = require('../src/middleware/idempotency');
+  if (idempotency && typeof idempotency.clearStore === 'function') idempotency.clearStore();
+  else if (idempotency && idempotency.store instanceof Map) idempotency.store.clear();
+} catch (_) {}
+
+// 7. Feature-flag cache — evaluated flags are cached module-level
+try {
+  const featureFlags = require('../src/utils/featureFlags');
+  if (featureFlags && typeof featureFlags.resetCache === 'function') featureFlags.resetCache();
+} catch (_) {}
+
+// ─── Ensure fake timers are always restored after every test ─────────────────
+// Time-dependent tests (rate-limit windows, scheduler intervals) that call
+// jest.useFakeTimers() must restore real timers on teardown. This afterEach
+// acts as a safety net so a test that forgets to call jest.useRealTimers()
+// does not leak a fake clock into subsequent tests in the same worker.
+if (typeof afterEach === 'function') {
+  afterEach(() => {
+    // Only restore if fake timers are currently active to avoid a Jest warning
+    // when real timers are already in use.
+    try {
+      jest.useRealTimers();
+    } catch (_) {}
+  });
+}
 
 // Polyfill for legacy test patterns
 if (typeof jest !== 'undefined') {

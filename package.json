@@ -3,6 +3,10 @@
   "version": "1.0.0",
   "description": "Micro-donation API using Stellar blockchain",
   "main": "src/app.js",
+  "engines": {
+    "node": ">=20.0.0",
+    "npm": ">=10.0.0"
+  },
   "scripts": {
     "start": "npm run validate-env && node src/app.js",
     "validate-env": "node src/utils/startupChecks.js",
@@ -31,14 +35,16 @@
     "rotate-kek": "node src/scripts/rotateKEK.js",
     "validate:rbac": "node scripts/validate-rbac.js",
     "openapi:generate": "node scripts/generate-openapi.js",
-    "openapi:check": "node scripts/check-openapi-sync.js",
+    "openapi:check": "node scripts/check-openapi-sync.js && node scripts/verify-route-coverage.js",
     "test:load": "node tests/load/run-load-tests.js",
     "test:load:jest": "jest tests/implement-load-testing-suite.test.js --testTimeout=60000 --forceExit",
     "test:smoke": "jest --config jest.config.smoke.js --forceExit",
     "changelog": "node scripts/generate-changelog.js",
-    "changelog:write": "node scripts/generate-changelog.js --write"
+    "changelog:write": "node scripts/generate-changelog.js --write",
+    "check:no-json-persistence": "node scripts/check-no-json-persistence.js"
   },
   "dependencies": {
+    "ajv": "^8.12.0",
     "csv-parse": "^6.2.1",
     "dotenv": "^17.4.2",
     "express": "^4.18.2",

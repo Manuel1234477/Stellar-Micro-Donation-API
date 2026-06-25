@@ -17,6 +17,7 @@ const AuditLogService = require("../services/AuditLogService");
 const { verify: verifySignature } = require("../utils/requestSigner");
 const { isIpAllowed } = require("../utils/ipAllowlist");
 const { defaultStore: nonceStore } = require("../utils/nonceStore");
+const { safeEqual } = require("../utils/safeEqual");
 const WebhookService = require("../services/WebhookService");
 
 /**
@@ -318,34 +319,39 @@ const requireApiKey = async (req, res, next) => {
     }
 
     // Stage 2: Attempt Legacy Fallback (Static keys defined in environment variables)
-    if (legacyKeys.length > 0 && legacyKeys.includes(apiKey)) {
-      log.warn("API_KEY_AUTH", "Using legacy environment-based API key", {
-        message:
-          "Consider migrating to database-backed keys for rotation support",
-      });
+    if (legacyKeys.length > 0) {
+      // Use constant-time comparison to prevent timing attacks
+      for (const legacyKey of legacyKeys) {
+        if (safeEqual(apiKey, legacyKey)) {
+          log.warn("API_KEY_AUTH", "Using legacy environment-based API key", {
+            message:
+              "Consider migrating to database-backed keys for rotation support",
+          });
 
-      // Audit log: Legacy key usage
-      AuditLogService.log({
-        category: AuditLogService.CATEGORY.AUTHENTICATION,
-        action: AuditLogService.ACTION.LEGACY_KEY_USED,
-        severity: AuditLogService.SEVERITY.MEDIUM,
-        result: 'SUCCESS',
-        requestId: req.id,
-        ipAddress: req.ip,
-        resource: req.path,
-        details: {
-          role: 'user',
-          isLegacy: true,
-          warning: 'Consider migrating to database-backed keys'
+          // Audit log: Legacy key usage
+          AuditLogService.log({
+            category: AuditLogService.CATEGORY.AUTHENTICATION,
+            action: AuditLogService.ACTION.LEGACY_KEY_USED,
+            severity: AuditLogService.SEVERITY.MEDIUM,
+            result: 'SUCCESS',
+            requestId: req.id,
+            ipAddress: req.ip,
+            resource: req.path,
+            details: {
+              role: 'user',
+              isLegacy: true,
+              warning: 'Consider migrating to database-backed keys'
+            }
+          }).catch(() => {});
+
+          req.apiKey = {
+            role: "user",
+            isLegacy: true,
+          };
+
+          return next();
         }
-      }).catch(() => {});
-
-      req.apiKey = {
-        role: "user",
-        isLegacy: true,
-      };
-
-      return next();
+      }
     }
 
     // Stage 3: Rejection (Key is either invalid, revoked, or expired)
@@ -375,10 +381,14 @@ const requireApiKey = async (req, res, next) => {
     log.error("API_KEY_AUTH", "Error validating API key", {
       error: error.message,
     });
-    // Fall back to legacy key check on DB error
-    if (legacyKeys.length > 0 && legacyKeys.includes(apiKey)) {
-      req.apiKey = { role: 'user', isLegacy: true };
-      return next();
+    // Fall back to legacy key check on DB error using constant-time comparison
+    if (legacyKeys.length > 0) {
+      for (const legacyKey of legacyKeys) {
+        if (safeEqual(apiKey, legacyKey)) {
+          req.apiKey = { role: 'user', isLegacy: true };
+          return next();
+        }
+      }
     }
     return res.status(500).json({
       success: false,

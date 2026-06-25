@@ -1,796 +1,204 @@
-openapi: 3.0.0
-info:
-  title: Stellar Micro-Donation API
-  version: 1.0.0
-  description: API for managing micro-donations on the Stellar blockchain network.
-servers:
-  - url: /
-    description: Current server
 components:
-  securitySchemes:
-    ApiKeyAuth:
-      type: apiKey
-      in: header
-      name: x-api-key
-      description: API key passed in the x-api-key header. Obtain via `npm run keys:create`.
+  headers:
+    XRequestID:
+      description: >-
+        Unique identifier for the request. Include this in support requests to correlate client activity with server
+        logs. If you supply a valid UUID v4 in the `X-Request-ID` request header the server echoes it back; otherwise
+        the server generates one automatically.
+      schema:
+        example: 550e8400-e29b-41d4-a716-446655440000
+        format: uuid
+        type: string
+    XSchemaVersion:
+      description: >-
+        Request body schema version. Specify the schema version for request body validation. Defaults to version 1 if
+        not provided. Supported versions are listed in the X-Schema-Version-Supported response header. Use this header
+        to maintain backward compatibility when the API evolves.
+      schema:
+        example: 1.0.0
+        type: string
+  responses:
+    NotFound:
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/NotFoundError'
+      description: Resource not found
+    Unauthorized:
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/UnauthorizedError'
+      description: Missing or invalid API key
+    ValidationError:
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ValidationError'
+      description: Validation error
   schemas:
     Error:
-      type: object
       properties:
-        success:
-          type: boolean
-          example: false
         error:
-          type: object
           properties:
-            message:
-              type: string
-              example: Validation failed
             code:
-              type: string
               example: VALIDATION_ERROR
+              type: string
+            message:
+              example: Validation failed
+              type: string
+          type: object
+        success:
+          example: false
+          type: boolean
+      type: object
+    NotFoundError:
+      properties:
+        error:
+          properties:
+            code:
+              example: NOT_FOUND
+              type: string
+            message:
+              example: Resource not found
+              type: string
+          type: object
+        success:
+          example: false
+          type: boolean
+      type: object
+    PaginationMeta:
+      properties:
+        direction:
+          enum:
+            - next
+            - prev
+          example: next
+          type: string
+        limit:
+          example: 20
+          type: integer
+        next_cursor:
+          example: eyJ0aW1lc3RhbXAiOiIyMDI0LTAxLTAxVDAwOjAwOjAwLjAwMFoiLCJpZCI6IjEifQ==
+          nullable: true
+          type: string
+        prev_cursor:
+          example: null
+          nullable: true
+          type: string
+      type: object
+    UnauthorizedError:
+      properties:
+        error:
+          properties:
+            code:
+              example: UNAUTHORIZED
+              type: string
+            message:
+              example: Invalid or missing API key
+              type: string
+          type: object
+        success:
+          example: false
+          type: boolean
+      type: object
     ValidationError:
       allOf:
         - $ref: '#/components/schemas/Error'
-        - type: object
-          properties:
+        - properties:
             error:
-              type: object
               properties:
                 code:
-                  type: string
                   example: VALIDATION_ERROR
-                message:
                   type: string
-                  example: Invalid request parameters
                 details:
-                  type: array
                   items:
-                    type: object
                     properties:
                       field:
                         type: string
                       message:
                         type: string
-    UnauthorizedError:
-      type: object
-      properties:
-        success:
-          type: boolean
-          example: false
-        error:
-          type: object
-          properties:
-            code:
-              type: string
-              example: UNAUTHORIZED
-            message:
-              type: string
-              example: Invalid or missing API key
-    NotFoundError:
-      type: object
-      properties:
-        success:
-          type: boolean
-          example: false
-        error:
-          type: object
-          properties:
-            code:
-              type: string
-              example: NOT_FOUND
-            message:
-              type: string
-              example: Resource not found
-    PaginationMeta:
-      type: object
-      properties:
-        limit:
-          type: integer
-          example: 20
-        direction:
-          type: string
-          enum:
-            - next
-            - prev
-          example: next
-        next_cursor:
-          type: string
-          nullable: true
-          example: eyJ0aW1lc3RhbXAiOiIyMDI0LTAxLTAxVDAwOjAwOjAwLjAwMFoiLCJpZCI6IjEifQ==
-        prev_cursor:
-          type: string
-          nullable: true
-          example: null
-  responses:
-    Unauthorized:
-      description: Missing or invalid API key
-      content:
-        application/json:
-          schema:
-            $ref: '#/components/schemas/UnauthorizedError'
-    NotFound:
-      description: Resource not found
-      content:
-        application/json:
-          schema:
-            $ref: '#/components/schemas/NotFoundError'
-    ValidationError:
-      description: Validation error
-      content:
-        application/json:
-          schema:
-            $ref: '#/components/schemas/ValidationError'
-security:
-  - ApiKeyAuth: []
-paths:
-  /donations:
-    post:
-      tags:
-        - Donations
-      summary: Create a new donation
-      security:
-        - ApiKeyAuth: []
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              type: object
-              required:
-                - senderSecret
-                - recipientPublicKey
-                - amount
-              properties:
-                senderSecret:
-                  type: string
-                  description: Stellar secret key of the sender
-                recipientPublicKey:
-                  type: string
-                  description: Stellar public key of the recipient
-                amount:
-                  type: number
-                  description: Amount in XLM
-                memo:
-                  type: string
-                  description: Optional transaction memo
-      responses:
-        '201':
-          description: Donation created successfully
-        '400':
-          description: Validation error
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/Error'
-        '401':
-          description: Unauthorized
-    get:
-      tags:
-        - Donations
-      summary: List all donations
-      security:
-        - ApiKeyAuth: []
-      parameters:
-        - in: query
-          name: limit
-          schema:
-            type: integer
-          description: Maximum number of results
-        - in: query
-          name: cursor
-          schema:
-            type: string
-          description: Pagination cursor
-      responses:
-        '200':
-          description: List of donations
-        '401':
-          description: Unauthorized
-  /donations/{id}:
-    get:
-      tags:
-        - Donations
-      summary: Get a specific donation
-      security:
-        - ApiKeyAuth: []
-      parameters:
-        - in: path
-          name: id
-          required: true
-          schema:
-            type: integer
-      responses:
-        '200':
-          description: Donation details
-        '404':
-          description: Donation not found
-  /donations/{id}/status:
-    patch:
-      tags:
-        - Donations
-      summary: Update donation status
-      security:
-        - ApiKeyAuth: []
-      parameters:
-        - in: path
-          name: id
-          required: true
-          schema:
-            type: integer
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              type: object
-              required:
-                - status
-              properties:
-                status:
-                  type: string
-                  enum:
-                    - pending
-                    - completed
-                    - failed
-      responses:
-        '200':
-          description: Status updated
-        '404':
-          description: Donation not found
-  /donations/verify:
-    post:
-      tags:
-        - Donations
-      summary: Verify a transaction on the blockchain
-      security:
-        - ApiKeyAuth: []
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              type: object
-              required:
-                - transactionHash
-              properties:
-                transactionHash:
-                  type: string
-      responses:
-        '200':
-          description: Verification result
-  /donations/limits:
-    get:
-      tags:
-        - Donations
-      summary: Get donation amount limits
-      security:
-        - ApiKeyAuth: []
-      responses:
-        '200':
-          description: Donation limits
-  /donations/recent:
-    get:
-      tags:
-        - Donations
-      summary: Get recent donations
-      security:
-        - ApiKeyAuth: []
-      parameters:
-        - in: query
-          name: limit
-          schema:
-            type: integer
-            default: 10
-      responses:
-        '200':
-          description: Recent donations
-  /wallets:
-    post:
-      tags:
-        - Wallets
-      summary: Create wallet metadata
-      security:
-        - ApiKeyAuth: []
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              type: object
-              required:
-                - publicKey
-              properties:
-                publicKey:
-                  type: string
-                  description: Stellar public key
-                label:
-                  type: string
-      responses:
-        '201':
-          description: Wallet created
-        '400':
-          description: Validation error
-    get:
-      tags:
-        - Wallets
-      summary: List all wallets
-      security:
-        - ApiKeyAuth: []
-      responses:
-        '200':
-          description: List of wallets
-  /wallets/{id}:
-    get:
-      tags:
-        - Wallets
-      summary: Get a specific wallet
-      security:
-        - ApiKeyAuth: []
-      parameters:
-        - in: path
-          name: id
-          required: true
-          schema:
-            type: integer
-      responses:
-        '200':
-          description: Wallet details
-        '404':
-          description: Wallet not found
-    patch:
-      tags:
-        - Wallets
-      summary: Update wallet metadata
-      security:
-        - ApiKeyAuth: []
-      parameters:
-        - in: path
-          name: id
-          required: true
-          schema:
-            type: integer
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              type: object
-              properties:
-                label:
-                  type: string
-      responses:
-        '200':
-          description: Wallet updated
-  /wallets/{publicKey}/transactions:
-    get:
-      tags:
-        - Wallets
-      summary: Get all transactions for a wallet
-      security:
-        - ApiKeyAuth: []
-      parameters:
-        - in: path
-          name: publicKey
-          required: true
-          schema:
-            type: string
-      responses:
-        '200':
-          description: Transaction list
-  /stream/create:
-    post:
-      tags:
-        - Stream
-      summary: Create a recurring donation schedule
-      security:
-        - ApiKeyAuth: []
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              type: object
-              required:
-                - donorPublicKey
-                - recipientPublicKey
-                - amount
-                - frequency
-              properties:
-                donorPublicKey:
-                  type: string
-                recipientPublicKey:
-                  type: string
-                amount:
-                  type: number
-                frequency:
-                  type: string
-                  enum:
-                    - daily
-                    - weekly
-                    - monthly
-      responses:
-        '201':
-          description: Schedule created
-        '400':
-          description: Validation error
-  /stream/schedules:
-    get:
-      tags:
-        - Stream
-      summary: List all recurring donation schedules
-      security:
-        - ApiKeyAuth: []
-      responses:
-        '200':
-          description: List of schedules
-  /stream/schedules/{id}:
-    get:
-      tags:
-        - Stream
-      summary: Get a specific schedule
-      security:
-        - ApiKeyAuth: []
-      parameters:
-        - in: path
-          name: id
-          required: true
-          schema:
-            type: integer
-      responses:
-        '200':
-          description: Schedule details
-        '404':
-          description: Schedule not found
-    delete:
-      tags:
-        - Stream
-      summary: Cancel a recurring donation schedule
-      security:
-        - ApiKeyAuth: []
-      parameters:
-        - in: path
-          name: id
-          required: true
-          schema:
-            type: integer
-      responses:
-        '200':
-          description: Schedule cancelled
-        '404':
-          description: Schedule not found
-  /transactions:
-    get:
-      tags:
-        - Transactions
-      summary: Get paginated transactions
-      security:
-        - ApiKeyAuth: []
-      parameters:
-        - in: query
-          name: limit
-          schema:
-            type: integer
-            default: 20
-        - in: query
-          name: cursor
-          schema:
-            type: string
-      responses:
-        '200':
-          description: Paginated transaction list
-  /transactions/sync:
-    post:
-      tags:
-        - Transactions
-      summary: Sync wallet transactions from Stellar network
-      security:
-        - ApiKeyAuth: []
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              type: object
-              required:
-                - publicKey
-              properties:
-                publicKey:
-                  type: string
-      responses:
-        '200':
-          description: Sync completed
-  /transactions/multisig:
-    post:
-      tags:
-        - Transactions
-      summary: Create a pending multi-sig transaction
-      security:
-        - ApiKeyAuth: []
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              type: object
-              required:
-                - transaction_xdr
-                - network_passphrase
-                - required_signers
-                - signer_keys
-              properties:
-                transaction_xdr:
-                  type: string
-                network_passphrase:
-                  type: string
-                required_signers:
-                  type: integer
-                  minimum: 2
-                signer_keys:
+                    type: object
                   type: array
-                  items:
-                    type: string
-      responses:
-        '201':
-          description: Multi-sig transaction created
-  /transactions/multisig/collect:
-    post:
-      tags:
-        - Transactions
-      summary: Collect a signature for a pending multi-sig transaction
-      security:
-        - ApiKeyAuth: []
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
+                message:
+                  example: Invalid request parameters
+                  type: string
               type: object
-              required:
-                - id
-                - signer
-                - signed_xdr
-              properties:
-                id:
-                  type: integer
-                signer:
-                  type: string
-                signed_xdr:
-                  type: string
-      responses:
-        '200':
-          description: Signature collected; submitted if threshold met
-        '400':
-          description: Insufficient signatures
-          content:
-            application/json:
-              schema:
-                type: object
-                properties:
-                  success:
-                    type: boolean
-                    example: false
-                  error:
-                    type: object
-                    properties:
-                      code:
-                        type: string
-                        example: INSUFFICIENT_SIGNATURES
-                      required:
-                        type: integer
-                      collected:
-                        type: integer
-                      remaining:
-                        type: integer
-  /stats/daily:
-    get:
-      tags:
-        - Statistics
-      summary: Get daily donation statistics
-      security:
-        - ApiKeyAuth: []
-      responses:
-        '200':
-          description: Daily stats
-  /stats/weekly:
-    get:
-      tags:
-        - Statistics
-      summary: Get weekly donation statistics
-      security:
-        - ApiKeyAuth: []
-      responses:
-        '200':
-          description: Weekly stats
-  /stats/summary:
-    get:
-      tags:
-        - Statistics
-      summary: Get summary analytics
-      security:
-        - ApiKeyAuth: []
-      responses:
-        '200':
-          description: Summary analytics
-  /stats/donors:
-    get:
-      tags:
-        - Statistics
-      summary: Get donor statistics
-      security:
-        - ApiKeyAuth: []
-      responses:
-        '200':
-          description: Donor stats
-  /stats/recipients:
-    get:
-      tags:
-        - Statistics
-      summary: Get recipient statistics
-      security:
-        - ApiKeyAuth: []
-      responses:
-        '200':
-          description: Recipient stats
-  /liquidity-pools/deposit:
-    post:
-      tags:
-        - LiquidityPools
-      summary: Deposit assets into a Stellar liquidity pool
-      security:
-        - ApiKeyAuth: []
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              type: object
-              required:
-                - secret
-                - assetA
-                - assetB
-                - maxAmountA
-                - maxAmountB
-              properties:
-                secret:
-                  type: string
-                  description: Source account secret key
-                assetA:
-                  type: object
-                  description: First asset (e.g. {type:"native"} or {type:"credit_alphanum4",code:"USDC",issuer:"G..."})
-                assetB:
-                  type: object
-                  description: Second asset
-                maxAmountA:
-                  type: string
-                  description: Maximum amount of assetA to deposit
-                maxAmountB:
-                  type: string
-                  description: Maximum amount of assetB to deposit
-      responses:
-        '200':
-          description: Deposit successful
-          content:
-            application/json:
-              schema:
-                type: object
-                properties:
-                  success:
-                    type: boolean
-                  data:
-                    type: object
-                    properties:
-                      poolId:
-                        type: string
-                      sharesReceived:
-                        type: string
-                      transactionId:
-                        type: string
-                      ledger:
-                        type: integer
-        '400':
-          description: Validation error
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/Error'
-        '401':
-          description: Unauthorized
-  /liquidity-pools/withdraw:
-    post:
-      tags:
-        - LiquidityPools
-      summary: Withdraw assets from a Stellar liquidity pool
-      security:
-        - ApiKeyAuth: []
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              type: object
-              required:
-                - secret
-                - poolId
-                - amount
-              properties:
-                secret:
-                  type: string
-                poolId:
-                  type: string
-                amount:
-                  type: string
-                  description: Number of pool shares to redeem
-      responses:
-        '200':
-          description: Withdrawal successful
-        '400':
-          description: Validation error
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/Error'
-        '401':
-          description: Unauthorized
-  /liquidity-pools/{id}/earnings:
-    get:
-      tags:
-        - LiquidityPools
-      summary: Get earnings for a liquidity pool
-      security:
-        - ApiKeyAuth: []
-      parameters:
-        - in: path
-          name: id
-          required: true
-          schema:
-            type: string
-          description: Pool ID
-      responses:
-        '200':
-          description: Pool earnings
-        '404':
-          description: Pool not found
+          type: object
+  securitySchemes:
+    ApiKeyAuth:
+      description: API key passed in the x-api-key header. Obtain via `npm run keys:create`.
+      in: header
+      name: x-api-key
+      type: apiKey
+info:
+  description: API for managing micro-donations on the Stellar blockchain network.
+  title: Stellar Micro-Donation API
+  version: 1.0.0
+openapi: 3.0.0
+paths:
   /admin/audit-logs/export:
     post:
-      tags:
-        - AuditLogExport
-      summary: Queue an async audit log export job
-      security:
-        - ApiKeyAuth: []
       requestBody:
-        required: true
         content:
           application/json:
             schema:
-              type: object
               properties:
-                startDate:
-                  type: string
-                  format: date-time
                 endDate:
-                  type: string
                   format: date-time
+                  type: string
                 eventType:
                   type: string
                 format:
-                  type: string
+                  default: json
                   enum:
                     - json
                     - csv
-                  default: json
+                  type: string
+                startDate:
+                  format: date-time
+                  type: string
+              type: object
+        required: true
       responses:
         '202':
           description: Export job queued
         '400':
           description: Validation error
-  /admin/audit-logs/export/{jobId}/status:
-    get:
-      tags:
-        - AuditLogExport
-      summary: Poll export job status
       security:
         - ApiKeyAuth: []
+      summary: Queue an async audit log export job
+      tags:
+        - AuditLogExport
+  /admin/audit-logs/export/{jobId}/download:
+    get:
+      parameters:
+        - in: path
+          name: jobId
+          required: true
+          schema:
+            type: string
+        - in: query
+          name: format
+          schema:
+            enum:
+              - json
+              - csv
+            type: string
+      responses:
+        '200':
+          description: Signed download URL
+        '202':
+          description: Export not yet complete
+        '404':
+          description: Job not found
+      security:
+        - ApiKeyAuth: []
+      summary: Get signed download URL for completed export
+      tags:
+        - AuditLogExport
+  /admin/audit-logs/export/{jobId}/status:
+    get:
       parameters:
         - in: path
           name: jobId
@@ -802,45 +210,658 @@ paths:
           description: Job status
         '404':
           description: Job not found
-  /admin/audit-logs/export/{jobId}/download:
-    get:
-      tags:
-        - AuditLogExport
-      summary: Get signed download URL for completed export
       security:
         - ApiKeyAuth: []
+      summary: Poll export job status
+      tags:
+        - AuditLogExport
+  /donations:
+    get:
+      parameters:
+        - description: Maximum number of results
+          in: query
+          name: limit
+          schema:
+            type: integer
+        - description: Pagination cursor
+          in: query
+          name: cursor
+          schema:
+            type: string
+      responses:
+        '200':
+          description: List of donations
+        '401':
+          description: Unauthorized
+      security:
+        - ApiKeyAuth: []
+      summary: List all donations
+      tags:
+        - Donations
+    post:
+      requestBody:
+        content:
+          application/json:
+            schema:
+              properties:
+                amount:
+                  description: Amount in XLM
+                  type: number
+                memo:
+                  description: Optional transaction memo
+                  type: string
+                recipientPublicKey:
+                  description: Stellar public key of the recipient
+                  type: string
+                senderSecret:
+                  description: Stellar secret key of the sender
+                  type: string
+              required:
+                - senderSecret
+                - recipientPublicKey
+                - amount
+              type: object
+        required: true
+      responses:
+        '201':
+          description: Donation created successfully
+          headers:
+            X-Request-ID:
+              $ref: '#/components/headers/XRequestID'
+        '400':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: Validation error
+        '401':
+          description: Unauthorized
+      security:
+        - ApiKeyAuth: []
+      summary: Create a new donation
+      tags:
+        - Donations
+  /donations/limits:
+    get:
+      responses:
+        '200':
+          description: Donation limits
+      security:
+        - ApiKeyAuth: []
+      summary: Get donation amount limits
+      tags:
+        - Donations
+  /donations/recent:
+    get:
+      parameters:
+        - in: query
+          name: limit
+          schema:
+            default: 10
+            type: integer
+      responses:
+        '200':
+          description: Recent donations
+      security:
+        - ApiKeyAuth: []
+      summary: Get recent donations
+      tags:
+        - Donations
+  /donations/verify:
+    post:
+      requestBody:
+        content:
+          application/json:
+            schema:
+              properties:
+                transactionHash:
+                  type: string
+              required:
+                - transactionHash
+              type: object
+        required: true
+      responses:
+        '200':
+          description: Verification result
+      security:
+        - ApiKeyAuth: []
+      summary: Verify a transaction on the blockchain
+      tags:
+        - Donations
+  /donations/{id}:
+    get:
       parameters:
         - in: path
-          name: jobId
+          name: id
+          required: true
+          schema:
+            type: integer
+      responses:
+        '200':
+          description: Donation details
+        '404':
+          description: Donation not found
+      security:
+        - ApiKeyAuth: []
+      summary: Get a specific donation
+      tags:
+        - Donations
+  /donations/{id}/status:
+    patch:
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: integer
+      requestBody:
+        content:
+          application/json:
+            schema:
+              properties:
+                status:
+                  enum:
+                    - pending
+                    - completed
+                    - failed
+                  type: string
+              required:
+                - status
+              type: object
+        required: true
+      responses:
+        '200':
+          description: Status updated
+        '404':
+          description: Donation not found
+      security:
+        - ApiKeyAuth: []
+      summary: Update donation status
+      tags:
+        - Donations
+  /liquidity-pools/deposit:
+    post:
+      requestBody:
+        content:
+          application/json:
+            schema:
+              properties:
+                assetA:
+                  description: First asset (e.g. {type:"native"} or {type:"credit_alphanum4",code:"USDC",issuer:"G..."})
+                  type: object
+                assetB:
+                  description: Second asset
+                  type: object
+                maxAmountA:
+                  description: Maximum amount of assetA to deposit
+                  type: string
+                maxAmountB:
+                  description: Maximum amount of assetB to deposit
+                  type: string
+                secret:
+                  description: Source account secret key
+                  type: string
+              required:
+                - secret
+                - assetA
+                - assetB
+                - maxAmountA
+                - maxAmountB
+              type: object
+        required: true
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                properties:
+                  data:
+                    properties:
+                      ledger:
+                        type: integer
+                      poolId:
+                        type: string
+                      sharesReceived:
+                        type: string
+                      transactionId:
+                        type: string
+                    type: object
+                  success:
+                    type: boolean
+                type: object
+          description: Deposit successful
+        '400':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: Validation error
+        '401':
+          description: Unauthorized
+      security:
+        - ApiKeyAuth: []
+      summary: Deposit assets into a Stellar liquidity pool
+      tags:
+        - LiquidityPools
+  /liquidity-pools/withdraw:
+    post:
+      requestBody:
+        content:
+          application/json:
+            schema:
+              properties:
+                amount:
+                  description: Number of pool shares to redeem
+                  type: string
+                poolId:
+                  type: string
+                secret:
+                  type: string
+              required:
+                - secret
+                - poolId
+                - amount
+              type: object
+        required: true
+      responses:
+        '200':
+          description: Withdrawal successful
+        '400':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: Validation error
+        '401':
+          description: Unauthorized
+      security:
+        - ApiKeyAuth: []
+      summary: Withdraw assets from a Stellar liquidity pool
+      tags:
+        - LiquidityPools
+  /liquidity-pools/{id}/earnings:
+    get:
+      parameters:
+        - description: Pool ID
+          in: path
+          name: id
           required: true
           schema:
             type: string
-        - in: query
-          name: format
-          schema:
-            type: string
-            enum:
-              - json
-              - csv
       responses:
         '200':
-          description: Signed download URL
-        '202':
-          description: Export not yet complete
+          description: Pool earnings
         '404':
-          description: Job not found
+          description: Pool not found
+      security:
+        - ApiKeyAuth: []
+      summary: Get earnings for a liquidity pool
+      tags:
+        - LiquidityPools
+  /stats/daily:
+    get:
+      responses:
+        '200':
+          description: Daily stats
+      security:
+        - ApiKeyAuth: []
+      summary: Get daily donation statistics
+      tags:
+        - Statistics
+  /stats/donors:
+    get:
+      responses:
+        '200':
+          description: Donor stats
+      security:
+        - ApiKeyAuth: []
+      summary: Get donor statistics
+      tags:
+        - Statistics
+  /stats/recipients:
+    get:
+      responses:
+        '200':
+          description: Recipient stats
+      security:
+        - ApiKeyAuth: []
+      summary: Get recipient statistics
+      tags:
+        - Statistics
+  /stats/summary:
+    get:
+      responses:
+        '200':
+          description: Summary analytics
+      security:
+        - ApiKeyAuth: []
+      summary: Get summary analytics
+      tags:
+        - Statistics
+  /stats/weekly:
+    get:
+      responses:
+        '200':
+          description: Weekly stats
+      security:
+        - ApiKeyAuth: []
+      summary: Get weekly donation statistics
+      tags:
+        - Statistics
+  /stream/create:
+    post:
+      requestBody:
+        content:
+          application/json:
+            schema:
+              properties:
+                amount:
+                  type: number
+                donorPublicKey:
+                  type: string
+                frequency:
+                  enum:
+                    - daily
+                    - weekly
+                    - monthly
+                  type: string
+                recipientPublicKey:
+                  type: string
+              required:
+                - donorPublicKey
+                - recipientPublicKey
+                - amount
+                - frequency
+              type: object
+        required: true
+      responses:
+        '201':
+          description: Schedule created
+        '400':
+          description: Validation error
+      security:
+        - ApiKeyAuth: []
+      summary: Create a recurring donation schedule
+      tags:
+        - Stream
+  /stream/schedules:
+    get:
+      responses:
+        '200':
+          description: List of schedules
+      security:
+        - ApiKeyAuth: []
+      summary: List all recurring donation schedules
+      tags:
+        - Stream
+  /stream/schedules/{id}:
+    delete:
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: integer
+      responses:
+        '200':
+          description: Schedule cancelled
+        '404':
+          description: Schedule not found
+      security:
+        - ApiKeyAuth: []
+      summary: Cancel a recurring donation schedule
+      tags:
+        - Stream
+    get:
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: integer
+      responses:
+        '200':
+          description: Schedule details
+        '404':
+          description: Schedule not found
+      security:
+        - ApiKeyAuth: []
+      summary: Get a specific schedule
+      tags:
+        - Stream
+  /transactions:
+    get:
+      parameters:
+        - in: query
+          name: limit
+          schema:
+            default: 20
+            type: integer
+        - in: query
+          name: cursor
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Paginated transaction list
+      security:
+        - ApiKeyAuth: []
+      summary: Get paginated transactions
+      tags:
+        - Transactions
+  /transactions/multisig:
+    post:
+      requestBody:
+        content:
+          application/json:
+            schema:
+              properties:
+                network_passphrase:
+                  type: string
+                required_signers:
+                  minimum: 2
+                  type: integer
+                signer_keys:
+                  items:
+                    type: string
+                  type: array
+                transaction_xdr:
+                  type: string
+              required:
+                - transaction_xdr
+                - network_passphrase
+                - required_signers
+                - signer_keys
+              type: object
+        required: true
+      responses:
+        '201':
+          description: Multi-sig transaction created
+      security:
+        - ApiKeyAuth: []
+      summary: Create a pending multi-sig transaction
+      tags:
+        - Transactions
+  /transactions/multisig/collect:
+    post:
+      requestBody:
+        content:
+          application/json:
+            schema:
+              properties:
+                id:
+                  type: integer
+                signed_xdr:
+                  type: string
+                signer:
+                  type: string
+              required:
+                - id
+                - signer
+                - signed_xdr
+              type: object
+        required: true
+      responses:
+        '200':
+          description: Signature collected; submitted if threshold met
+        '400':
+          content:
+            application/json:
+              schema:
+                properties:
+                  error:
+                    properties:
+                      code:
+                        example: INSUFFICIENT_SIGNATURES
+                        type: string
+                      collected:
+                        type: integer
+                      remaining:
+                        type: integer
+                      required:
+                        type: integer
+                    type: object
+                  success:
+                    example: false
+                    type: boolean
+                type: object
+          description: Insufficient signatures
+      security:
+        - ApiKeyAuth: []
+      summary: Collect a signature for a pending multi-sig transaction
+      tags:
+        - Transactions
+  /transactions/sync:
+    post:
+      requestBody:
+        content:
+          application/json:
+            schema:
+              properties:
+                publicKey:
+                  type: string
+              required:
+                - publicKey
+              type: object
+        required: true
+      responses:
+        '200':
+          description: Sync completed
+      security:
+        - ApiKeyAuth: []
+      summary: Sync wallet transactions from Stellar network
+      tags:
+        - Transactions
+  /wallets:
+    get:
+      responses:
+        '200':
+          description: List of wallets
+      security:
+        - ApiKeyAuth: []
+      summary: List all wallets
+      tags:
+        - Wallets
+    post:
+      requestBody:
+        content:
+          application/json:
+            schema:
+              properties:
+                label:
+                  type: string
+                publicKey:
+                  description: Stellar public key
+                  type: string
+              required:
+                - publicKey
+              type: object
+        required: true
+      responses:
+        '201':
+          description: Wallet created
+        '400':
+          description: Validation error
+      security:
+        - ApiKeyAuth: []
+      summary: Create wallet metadata
+      tags:
+        - Wallets
+  /wallets/{id}:
+    get:
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: integer
+      responses:
+        '200':
+          description: Wallet details
+        '404':
+          description: Wallet not found
+      security:
+        - ApiKeyAuth: []
+      summary: Get a specific wallet
+      tags:
+        - Wallets
+    patch:
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: integer
+      requestBody:
+        content:
+          application/json:
+            schema:
+              properties:
+                label:
+                  type: string
+              type: object
+        required: true
+      responses:
+        '200':
+          description: Wallet updated
+      security:
+        - ApiKeyAuth: []
+      summary: Update wallet metadata
+      tags:
+        - Wallets
+  /wallets/{publicKey}/transactions:
+    get:
+      parameters:
+        - in: path
+          name: publicKey
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Transaction list
+      security:
+        - ApiKeyAuth: []
+      summary: Get all transactions for a wallet
+      tags:
+        - Wallets
+security:
+  - ApiKeyAuth: []
+servers:
+  - description: Current server
+    url: /
 tags:
-  - name: Donations
-    description: Create and manage donations on the Stellar network
-  - name: Wallets
-    description: Wallet metadata management
-  - name: Stream
-    description: Recurring donation schedules
-  - name: Transactions
-    description: Transaction history and synchronization
-  - name: Statistics
-    description: Donation analytics and statistics
-  - name: LiquidityPools
-    description: Stellar AMM liquidity pool deposit, withdrawal, and earnings
-  - name: AuditLogExport
-    description: Compliance audit log export with async jobs and signed URLs
+  - description: Create and manage donations on the Stellar network
+    name: Donations
+  - description: Wallet metadata management
+    name: Wallets
+  - description: Recurring donation schedules
+    name: Stream
+  - description: Transaction history and synchronization
+    name: Transactions
+  - description: Donation analytics and statistics
+    name: Statistics
+  - description: Stellar AMM liquidity pool deposit, withdrawal, and earnings
+    name: LiquidityPools
+  - description: Compliance audit log export with async jobs and signed URLs
+    name: AuditLogExport

@@ -41,6 +41,12 @@ module.exports = {
   coverageDirectory: 'coverage',
   verbose: true,
   testTimeout: 10000,
+  // Cap parallelism to avoid I/O contention on per-worker SQLite copies while
+  // still exercising true parallelism. Overridden to 2 in test:coverage:ci.
+  maxWorkers: '50%',
+  // Recycle workers that grow too large (e.g. after importing heavy modules)
+  // to avoid OOM in long parallel runs.
+  workerIdleMemoryLimit: '512MB',
   setupFiles: ['<rootDir>/tests/setup.js'],
   globalSetup: '<rootDir>/tests/globalSetup.js',
 };

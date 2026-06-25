@@ -16,6 +16,7 @@ const Database = require('../utils/database');
 const log = require('../utils/log');
 const { ValidationError, NotFoundError, ERROR_CODES } = require('../utils/errors');
 const crypto = require('crypto');
+const { serialize: csvSerialize } = require('../utils/csvSerializer');
 
 /**
  * Export status constants
@@ -170,7 +171,6 @@ class AuditLogExportService {
       return '';
     }
 
-    // CSV headers
     const headers = [
       'id',
       'timestamp',
@@ -183,39 +183,10 @@ class AuditLogExportService {
       'ipAddress',
       'resource',
       'reason',
-      'details'
+      'details',
     ];
 
-    const csvRows = [headers.join(',')];
-
-    // CSV data rows
-    for (const log of logs) {
-      const row = [
-        log.id,
-        log.timestamp,
-        log.category,
-        log.action,
-        log.severity,
-        log.result,
-        log.userId || '',
-        log.requestId || '',
-        log.ipAddress || '',
-        log.resource || '',
-        log.reason || '',
-        JSON.stringify(log.details || {})
-      ].map(field => {
-        // Escape CSV fields
-        const stringField = String(field);
-        if (stringField.includes(',') || stringField.includes('"') || stringField.includes('\n')) {
-          return `"${stringField.replace(/"/g, '""')}"`;
-        }
-        return stringField;
-      });
-
-      csvRows.push(row.join(','));
-    }
-
-    return csvRows.join('\n');
+    return csvSerialize(headers, logs);
   }
 
   /**
