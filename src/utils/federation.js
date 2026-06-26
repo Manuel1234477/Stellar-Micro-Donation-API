@@ -18,6 +18,7 @@
 
 const { Federation } = require('stellar-sdk');
 const log = require('./log');
+const { assertSafeOutboundUrl } = require('./ssrf');
 
 /** Regex for a valid federation address */
 const FEDERATION_ADDRESS_RE = /^[^*\s]+\*[^*\s]+\.[^*\s]+$/;
@@ -59,6 +60,10 @@ async function resolveAddress(address, { _resolverFn } = {}) {
   }
 
   log.debug('FEDERATION', 'Resolving federation address', { address });
+
+  // SSRF: validate the home domain before fetching stellar.toml / querying federation server
+  const domain = address.split('*')[1];
+  await assertSafeOutboundUrl(`https://${domain}/.well-known/stellar.toml`);
 
   try {
     let result;

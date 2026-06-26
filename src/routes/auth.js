@@ -21,6 +21,7 @@ const log = require('../utils/log');
 const asyncHandler = require('../utils/asyncHandler');
 const { payloadSizeLimiter, ENDPOINT_LIMITS } = require('../middleware/payloadSizeLimiter');
 const { authTokenRateLimiter, authRefreshRateLimiter } = require('../middleware/rateLimiter');
+const bruteForce = require('../utils/bruteForceProtection');
 
 const stellarService = getStellarService();
 const sep10Config = config.sep10 || {};
@@ -43,12 +44,13 @@ const sep10Service = serverSigningKey
  * Exchange a valid API key for a JWT access token + refresh token pair.
  * Requires: X-API-Key header
  */
-router.post('/token/apikey', requireApiKey, payloadSizeLimiter(ENDPOINT_LIMITS.auth), asyncHandler(async (req, res) => {
+router.post('/token/apikey', bruteForce.middleware(), requireApiKey, payloadSizeLimiter(ENDPOINT_LIMITS.auth), asyncHandler(async (req, res) => {
   try {
     const apiKeyId = req.apiKey.id || 0;
     const claims = { role: req.apiKey.role || 'user' };
     const { accessToken, refreshToken, familyId } = await issueTokenPair(apiKeyId, claims);
 
+    bruteForce.recordSuccess(req.ip || 'unknown');
     log.info('AUTH', 'Token pair issued', { apiKeyId, familyId });
 
     return res.status(200).json({
@@ -61,6 +63,7 @@ router.post('/token/apikey', requireApiKey, payloadSizeLimiter(ENDPOINT_LIMITS.a
       },
     });
   } catch (err) {
+    bruteForce.recordFailure(req.ip || 'unknown');
     log.error('AUTH', 'Failed to issue token pair', { error: err.message });
     return res.status(500).json({ success: false, error: { code: 'INTERNAL_ERROR', message: 'Failed to issue tokens' } });
   }
@@ -71,7 +74,7 @@ router.post('/token/apikey', requireApiKey, payloadSizeLimiter(ENDPOINT_LIMITS.a
  * Rotate a refresh token. Returns a new access token + refresh token.
  * Body: { refreshToken: string }
  */
-router.post('/refresh', authRefreshRateLimiter, payloadSizeLimiter(ENDPOINT_LIMITS.auth), asyncHandler(async (req, res) => {
+router.post('/refresh', bruteForce.middleware(), authRefreshRateLimiter, payloadSizeLimiter(ENDPOINT_LIMITS.auth), asyncHandler(async (req, res) => {
   const { refreshToken } = req.body || {};
 
   if (!refreshToken || typeof refreshToken !== 'string') {
@@ -85,12 +88,14 @@ router.post('/refresh', authRefreshRateLimiter, payloadSizeLimiter(ENDPOINT_LIMI
     const result = await rotateRefreshToken(refreshToken);
 
     if (!result) {
+      bruteForce.recordFailure(req.ip || 'unknown');
       return res.status(401).json({
         success: false,
         error: { code: 'INVALID_REFRESH_TOKEN', message: 'Refresh token is invalid or expired' },
       });
     }
 
+    bruteForce.recordSuccess(req.ip || 'unknown');
     return res.status(200).json({
       success: true,
       data: {
@@ -102,12 +107,14 @@ router.post('/refresh', authRefreshRateLimiter, payloadSizeLimiter(ENDPOINT_LIMI
     });
   } catch (err) {
     if (err.code === 'TOKEN_REUSE_DETECTED' || err.code === 'TOKEN_FAMILY_REVOKED') {
+      bruteForce.recordFailure(req.ip || 'unknown');
       return res.status(401).json({
         success: false,
         error: { code: 'TOKEN_REUSE_DETECTED', message: 'Refresh token reuse detected. All sessions have been revoked.' },
       });
     }
     if (err.code === 'TOKEN_REVOKED') {
+      bruteForce.recordFailure(req.ip || 'unknown');
       return res.status(401).json({
         success: false,
         error: { code: 'TOKEN_REVOKED', message: 'Refresh token has been revoked' },
@@ -153,7 +160,7 @@ router.get('/challenge', asyncHandler(async (req, res) => {
  * Verifies a signed SEP-0010 challenge and returns a JWT access token.
  * Body: { transaction: '<signed_tx_xdr>' }
  */
-router.post('/token', authTokenRateLimiter, payloadSizeLimiter(ENDPOINT_LIMITS.auth), asyncHandler(async (req, res) => {
+router.post('/token', bruteForce.middleware(), authTokenRateLimiter, payloadSizeLimiter(ENDPOINT_LIMITS.auth), asyncHandler(async (req, res) => {
   if (!sep10Service) {
     return res.status(501).json({
       success: false,
@@ -174,6 +181,7 @@ router.post('/token', authTokenRateLimiter, payloadSizeLimiter(ENDPOINT_LIMITS.a
   try {
     const account = await sep10Service.verifyChallenge(signedTx);
     const accessToken = sep10Service.issueAuthToken(account);
+    bruteForce.recordSuccess(req.ip || 'unknown');
     return res.status(200).json({
       success: true,
       data: {
@@ -184,6 +192,7 @@ router.post('/token', authTokenRateLimiter, payloadSizeLimiter(ENDPOINT_LIMITS.a
       },
     });
   } catch (err) {
+    bruteForce.recordFailure(req.ip || 'unknown');
     log.error('AUTH', 'Challenge verification failed', { error: err.message });
     return res.status(401).json({ success: false, error: { code: 'INVALID_CHALLENGE', message: err.message } });
   }

@@ -74,6 +74,8 @@ process.env.MOCK_STELLAR = 'true';
 process.env.API_KEYS = 'test-key-1';
 
 const crypto = require('crypto');
+const http = require('http');
+const https = require('https');
 const request = require('supertest');
 const express = require('express');
 const WebhookService = require('../../src/services/WebhookService');
@@ -239,9 +241,53 @@ describe('WebhookService HMAC signing', () => {
     expect(sig).toBe(expected);
   });
 
+  it('_sign can include timestamp in the signed payload', () => {
+    const body = '{"event":"transaction.confirmed"}';
+    const secret = 'test-secret';
+    const timestamp = '2026-06-25T12:00:00.000Z';
+    const sig = WebhookService._sign(body, secret, timestamp);
+    const expected = crypto.createHmac('sha256', secret).update(`${timestamp}.${body}`).digest('hex');
+    expect(sig).toBe(expected);
+  });
+
   it('different secrets produce different signatures', () => {
     const body = '{"event":"test"}';
     expect(WebhookService._sign(body, 'secret-a')).not.toBe(WebhookService._sign(body, 'secret-b'));
+  });
+
+  it('_httpPost includes signature and timestamp headers', async () => {
+    const body = '{"event":"test"}';
+    const signature = 'deadbeef';
+    const timestamp = '2026-06-25T12:00:00.000Z';
+    const req = {
+      on: jest.fn().mockReturnThis(),
+      write: jest.fn(),
+      end: jest.fn(),
+      destroy: jest.fn(),
+    };
+
+    const requestSpy = jest.spyOn(https, 'request').mockImplementation((options, callback) => {
+      process.nextTick(() => callback({ statusCode: 200, resume: jest.fn() }));
+      return req;
+    });
+
+    await expect(
+      WebhookService._httpPost('https://example.com/hook', body, signature, timestamp, {}, false)
+    ).resolves.toEqual({ delivered: true, statusCode: 200 });
+
+    expect(requestSpy).toHaveBeenCalledWith(
+      expect.objectContaining({
+        headers: expect.objectContaining({
+          'X-Signature': `sha256=${signature}`,
+          'X-Signature-Timestamp': timestamp,
+          'X-Webhook-Signature': `sha256=${signature}`,
+          'X-Webhook-Timestamp': timestamp,
+        }),
+      }),
+      expect.any(Function)
+    );
+
+    requestSpy.mockRestore();
   });
 });
 

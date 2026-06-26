@@ -284,6 +284,11 @@ function mountRoutes(app, services = {}) {
   });
 
   // ── Admin table-driven routes ─────────────────────────────────────────────
+  // Apply requireApiKey + requireAdmin (which includes TOTP) to the entire
+  // /admin tree via a single router-level guard so no admin route can be
+  // accidentally left unprotected.
+  app.use('/admin', requireApiKey, rbac.requireAdmin());
+
   for (const [path, router] of ADMIN_ROUTES) {
     app.use(path, router);
   }

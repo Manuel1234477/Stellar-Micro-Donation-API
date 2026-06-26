@@ -99,6 +99,11 @@ const SENSITIVE_PATTERNS = [
   'cookie',
   'csrf',
   'xsrf',
+
+  // HTTP headers
+  'x-api-key',
+  'x_api_key',
+  'memo',
 ];
 
 /**

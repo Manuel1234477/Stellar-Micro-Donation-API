@@ -15,6 +15,7 @@
 
 const https = require('https');
 const log = require('./log');
+const { assertSafeOutboundUrl } = require('./ssrf');
 
 const GATEWAY_URL = process.env.IPFS_GATEWAY_URL || 'https://gateway.pinata.cloud/ipfs';
 const PINATA_ENDPOINT = 'api.pinata.cloud';
@@ -60,6 +61,9 @@ async function pinToIPFS(json) {
   if (!apiKey || !secretKey) {
     throw new Error('Pinata credentials not configured');
   }
+
+  // SSRF: validate the Pinata endpoint (catches operator-supplied IPFS_GATEWAY_URL overrides)
+  await assertSafeOutboundUrl(`https://${PINATA_ENDPOINT}/pinning/pinJSONToIPFS`);
 
   const body = JSON.stringify({
     pinataContent: json,

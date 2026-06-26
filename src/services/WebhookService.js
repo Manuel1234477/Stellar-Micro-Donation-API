@@ -15,6 +15,7 @@ const crypto = require('crypto');
 const { URL } = require('url');
 const log = require('../utils/log');
 const EncryptionService = require('./EncryptionService');
+const { assertSafeOutboundUrl } = require('../utils/ssrf');
 
 const MAX_RETRIES = 3;
 const MAX_CONSECUTIVE_FAILURES = 5;
@@ -158,6 +159,15 @@ class WebhookService {
         breakGlass,
         nodeEnv: process.env.NODE_ENV,
       });
+    }
+
+    // SSRF protection — validate host is not private/loopback/metadata
+    if (parsedUrl.protocol === 'https:') {
+      try {
+        await assertSafeOutboundUrl(url);
+      } catch (ssrfErr) {
+        const e = new Error(ssrfErr.message); e.status = 400; throw e;
+      }
     }
 
     // Always generate a 32-byte random secret server-side; never accept caller-supplied secrets
@@ -566,10 +576,11 @@ class WebhookService {
    */
   async _deliverWithRetry(webhook, event, payload, attempt) {
     const correlationHeaders = generateCorrelationHeaders();
+    const timestamp = new Date().toISOString();
     const body = JSON.stringify({
       event,
       data: payload,
-      timestamp: new Date().toISOString(),
+      timestamp,
       correlationContext: {
         correlationId: correlationHeaders['X-Correlation-ID'],
         traceId: correlationHeaders['X-Trace-ID'],
@@ -579,7 +590,7 @@ class WebhookService {
     const plaintextSecret = webhook.secret
       ? EncryptionService.decryptField(webhook.secret)
       : '';
-    const signature = WebhookService._sign(body, plaintextSecret);
+    const signature = WebhookService._sign(body, plaintextSecret, timestamp);
 
     try {
       const result = await WebhookService._httpPost(webhook.url, body, signature, correlationHeaders, !!webhook.tls_skip_verify, webhook.id);
@@ -628,16 +639,20 @@ class WebhookService {
 
   /**
    * Compute HMAC-SHA256 signature for a payload.
+   * If a timestamp is provided, sign over timestamp + '.' + raw body.
    * @param {string} body
    * @param {string} secret
+   * @param {string} [timestamp]
    * @returns {string}
    */
-  static _sign(body, secret) {
-    return crypto.createHmac('sha256', secret).update(body).digest('hex');
+  static _sign(body, secret, timestamp) {
+    const payload = timestamp ? `${timestamp}.${body}` : body;
+    return crypto.createHmac('sha256', secret).update(payload).digest('hex');
   }
 
   /**
    * POST a JSON body to a URL with a timeout.
+   * Validates the URL against SSRF rules before every request (DNS rebinding protection).
    * @private
    */
   static _httpPost(url, body, signature, correlationHeaders = {}, tlsSkipVerify = false, webhookId = null) {
@@ -678,10 +693,12 @@ class WebhookService {
           'Content-Type': 'application/json',
           'Content-Length': Buffer.byteLength(body),
           'User-Agent': 'Stella-Donation-API/1.0',
+          'X-Signature': `sha256=${signature}`,
+          'X-Signature-Timestamp': timestamp,
           'X-Webhook-Signature': `sha256=${signature}`,
+          'X-Webhook-Timestamp': timestamp,
           ...correlationHeaders,
         },
-        // Explicitly enforce TLS verification regardless of NODE_TLS_REJECT_UNAUTHORIZED
         rejectUnauthorized: !tlsSkipVerify,
         timeout: 10000,
       };

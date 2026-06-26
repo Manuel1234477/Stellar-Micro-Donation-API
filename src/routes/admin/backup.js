@@ -99,8 +99,13 @@ router.get('/backups/:backupId/download', checkPermission(PERMISSIONS.ADMIN_ALL)
       return res.status(400).json({ success: false, error: { code: 'VALIDATION_ERROR', message: 'Invalid backupId' } });
     }
 
-    const backupDir = backupService.backupDir;
-    const filePath = path.join(backupDir, `${backupId}.enc`);
+    const backupDir = path.resolve(backupService.backupDir);
+    const filePath = path.resolve(backupDir, `${backupId}.enc`);
+
+    // Containment check: resolved path must stay within backupDir
+    if (!filePath.startsWith(backupDir + path.sep) && filePath !== backupDir) {
+      return res.status(400).json({ success: false, error: { code: 'VALIDATION_ERROR', message: 'Invalid backupId' } });
+    }
 
     if (!fs.existsSync(filePath)) {
       return res.status(404).json({ success: false, error: { code: 'NOT_FOUND', message: 'Backup not found' } });

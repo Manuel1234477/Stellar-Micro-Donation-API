@@ -245,7 +245,18 @@ class BackupService {
   async restore(backupId) {
     log.info('BACKUP', 'Starting database restore', { backupId });
 
-    const filePath = path.join(this.backupDir, `${backupId}.enc`);
+    // Reject backupId values that contain path separators or traversal sequences
+    if (typeof backupId !== 'string' || !/^[\w.-]+$/.test(backupId)) {
+      throw new Error(`Invalid backupId: ${backupId}`);
+    }
+
+    const resolvedDir = path.resolve(this.backupDir);
+    const filePath = path.resolve(resolvedDir, `${backupId}.enc`);
+
+    // Containment check: resolved path must stay within backupDir
+    if (!filePath.startsWith(resolvedDir + path.sep) && filePath !== resolvedDir) {
+      throw new Error(`Path traversal detected in backupId: ${backupId}`);
+    }
 
     if (!fs.existsSync(filePath)) {
       throw new Error(`Backup not found: ${backupId}`);

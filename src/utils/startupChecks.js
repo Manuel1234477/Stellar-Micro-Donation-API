@@ -136,6 +136,95 @@ async function checkDatabase() {
   }
 }
 
+/** Secrets that must each be >= 32 bytes (64 hex chars or 32+ raw chars) */
+const SIGNING_SECRETS = [
+  'EXPORT_SIGNING_SECRET',
+  'ANONYMOUS_DONATION_SECRET',
+  'JWT_SECRET',
+];
+
+const KNOWN_PLACEHOLDERS = [
+  'changeme', 'secret', 'password', 'change_me', 'change-me',
+  'your-secret', 'your_secret', 'placeholder', 'example', 'todo', 'fixme',
+];
+
+function isWeakSecret(val) {
+  if (!val || val.trim().length === 0) return true;
+  const v = val.trim();
+  // Minimum 32 bytes: hex string needs 64 chars, others need 32 chars
+  const byteLen = /^[0-9a-f]+$/i.test(v) ? v.length / 2 : v.length;
+  if (byteLen < 32) return true;
+  const lower = v.toLowerCase();
+  if (KNOWN_PLACEHOLDERS.some(p => lower.includes(p))) return true;
+  if (PLACEHOLDER_KEY_PATTERNS.some(re => re.test(v))) return true;
+  return false;
+}
+
+/** Check — signing/encryption secrets meet minimum strength and are not duplicated */
+function checkSecretStrength() {
+  const isProduction = (process.env.NODE_ENV || '').toLowerCase() === 'production';
+  let allOk = true;
+  const presentSecrets = new Map(); // value -> name, for duplicate detection
+
+  // Include ENCRYPTION_KEY in cross-role duplicate check
+  const encKey = process.env.ENCRYPTION_KEY;
+  if (encKey) presentSecrets.set(encKey.trim(), 'ENCRYPTION_KEY');
+
+  for (const name of SIGNING_SECRETS) {
+    const val = process.env[name];
+    if (!val) {
+      // Only warn in dev; these are optional integrations
+      if (isProduction) {
+        warn(name, `not set — this secret is required in production`);
+      }
+      continue;
+    }
+    if (isWeakSecret(val)) {
+      fail(name, `weak or placeholder secret detected — must be >= 32 bytes and not a known placeholder`);
+      allOk = false;
+      continue;
+    }
+    const trimmed = val.trim();
+    const duplicate = presentSecrets.get(trimmed);
+    if (duplicate) {
+      fail(name, `identical to ${duplicate} — secrets must be unique across roles`);
+      allOk = false;
+      continue;
+    }
+    presentSecrets.set(trimmed, name);
+    pass(name, 'strength OK');
+  }
+
+  return allOk;
+}
+
+/** Check — unsafe dev flags must not be enabled in production (#1116) */
+function checkUnsafeFlags() {
+  const isProduction = (process.env.NODE_ENV || '').toLowerCase() === 'production';
+
+  const UNSAFE_FLAGS = [
+    { env: 'DISABLE_RATE_LIMIT', value: 'true' },
+    { env: 'CORS_ALLOW_ALL',     value: 'true' },
+    { env: 'DEBUG_MODE',         value: 'true' },
+    { env: 'DRY_RUN',            value: 'true' },
+  ];
+
+  let allOk = true;
+  for (const { env, value } of UNSAFE_FLAGS) {
+    const active = (process.env[env] || '').toLowerCase() === value;
+    if (!active) continue;
+    if (isProduction) {
+      fail(env, `${env}=${value} is not allowed in production — disable it before deploying`);
+      allOk = false;
+    } else {
+      warn(env, `${env}=${value} is active — safe for local dev only, never enable in production`);
+    }
+  }
+
+  if (allOk && isProduction) pass('Unsafe flags', 'none active in production');
+  return allOk;
+}
+
 /** Check 4 — CORS configuration safety */
 function checkCorsConfig() {
   const nodeEnv = process.env.NODE_ENV || 'development';
@@ -298,6 +387,8 @@ async function run({ exitOnFailure = false } = {}) {
     corsOk,
     checkEncryptionKey(),
     checkApiKeys(),
+    checkSecretStrength(),   // #1117
+    checkUnsafeFlags(),      // #1116
     await checkDatabase(),
     await checkStellarNetwork(),
     checkDatabasePermissions(),

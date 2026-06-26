@@ -708,6 +708,7 @@ The scheduler runs automatically when the server starts and checks for due donat
 
 ### Getting Started
 - **[API Examples](docs/API_EXAMPLES.md)** - Complete request/response examples for all endpoints
+- **[Webhook verification](docs/WEBHOOK_VERIFICATION.md)** - Verify outbound webhook authenticity with timestamped HMAC signatures
 - **[Quick Start Guide](QUICK_START.md)** - Getting started quickly
 - **[Troubleshooting Guide](docs/DEVELOPER_TROUBLESHOOTING_GUIDE.md)** - Solutions for common issues
 - **[Quick Reference](docs/TROUBLESHOOTING_QUICK_REFERENCE.md)** - Fast fixes for common problems
