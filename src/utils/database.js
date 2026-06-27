@@ -489,6 +489,14 @@ class Database {
         db.configure('busyTimeout', TIMEOUT_DEFAULTS.DATABASE);
       }
 
+      // #1155: enforce FK constraints on every connection (SQLite resets per connection)
+      await new Promise((resolve, reject) => {
+        db.run('PRAGMA foreign_keys=ON', (err) => {
+          if (err) reject(new DatabaseError('Failed to enable foreign key enforcement', err));
+          else resolve();
+        });
+      });
+
       const connectionRecord = {
         id: state.nextConnectionId++,
         db,
@@ -918,6 +926,51 @@ class Database {
    */
   static async all(sql, params = []) {
     return this.query(sql, params);
+  }
+
+  /**
+   * Execute multiple writes atomically in a single DB transaction.
+   * Acquires one connection, runs BEGIN, calls fn(db), then COMMITs.
+   * Rolls back and re-throws on any error so callers get a clean abort.
+   *
+   * @param {Function} fn - Async callback receiving the raw sqlite3 db handle.
+   *   Use db.run / db.get / db.all directly inside fn (promisified as needed).
+   * @returns {Promise<*>} The value returned by fn.
+   */
+  static async runTransaction(fn) {
+    const lease = await this.acquireConnection();
+    const db = lease.db;
+
+    /** Promisify a single db.run call on the acquired connection */
+    const run = (sql, params = []) => new Promise((resolve, reject) => {
+      db.run(sql, params, function callback(err) {
+        if (err) reject(Database.mapDatabaseError(err, 'Transaction statement failed'));
+        else resolve({ id: this.lastID, changes: this.changes });
+      });
+    });
+
+    /** Promisify a single db.get call */
+    const get = (sql, params = []) => new Promise((resolve, reject) => {
+      db.get(sql, params, (err, row) => {
+        if (err) reject(Database.mapDatabaseError(err, 'Transaction query failed'));
+        else resolve(row);
+      });
+    });
+
+    try {
+      await run('BEGIN');
+      let result;
+      try {
+        result = await fn({ run, get });
+        await run('COMMIT');
+      } catch (err) {
+        try { await run('ROLLBACK'); } catch (_) { /* best-effort rollback */ }
+        throw err;
+      }
+      return result;
+    } finally {
+      await lease.release();
+    }
   }
 
   /**
