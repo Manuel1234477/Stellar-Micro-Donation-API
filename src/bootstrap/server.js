@@ -48,6 +48,7 @@ const { logStartupDiagnostics, logShutdownDiagnostics } = require('../utils/star
 const replayDetectionMiddleware = require('../middleware/replayDetection');
 const log = require('../utils/log');
 const state = require('./state');
+const timerRegistry = require('../utils/timerRegistry');
 
 const PORT = config.server.port;
 
@@ -155,7 +156,14 @@ async function startServer(app, overrideServices = {}) {
           sseManager.start();
 
           runCleanup();
-          cleanupInterval = setInterval(runCleanup, 24 * 60 * 60 * 1000);
+          cleanupInterval = timerRegistry.createInterval(runCleanup, 24 * 60 * 60 * 1000, 'cleanup-job');
+          cleanupInterval.unref();
+
+          // Load persisted circuit-breaker state and start cross-instance sync
+          if (stellarService.circuitBreaker) {
+            await stellarService.circuitBreaker.loadState();
+            stellarService.circuitBreaker.startSync();
+          }
         }
 
         networkStatusService.on('network.degraded', (status) => {
@@ -208,7 +216,8 @@ async function startServer(app, overrideServices = {}) {
       log.info('SHUTDOWN', `Received ${signal}, starting graceful shutdown`);
       logShutdownDiagnostics(signal);
 
-      clearInterval(cleanupInterval);
+      // Clear all registered background timers (cleanupInterval, replayCleanupTimer, service intervals)
+      timerRegistry.clearAll();
 
       const timeoutMs = parseInt(
         process.env.SHUTDOWN_TIMEOUT_MS || process.env.SHUTDOWN_TIMEOUT || '30000',
@@ -216,6 +225,7 @@ async function startServer(app, overrideServices = {}) {
       );
 
       let forcedExit = false;
+      // eslint-disable-next-line local/no-bare-timers
       const forceExitTimer = setTimeout(() => {
         forcedExit = true;
         log.error('SHUTDOWN', `Forced shutdown after ${timeoutMs}ms timeout`, {
@@ -248,13 +258,14 @@ async function startServer(app, overrideServices = {}) {
 
         // 4. Wait for all in-flight requests to drain
         await new Promise((resolve) => {
+          // eslint-disable-next-line local/no-bare-timers
           const waitInterval = setInterval(() => {
-            if (forcedExit) { clearInterval(waitInterval); return resolve(); }
+            if (forcedExit) { clearInterval(waitInterval); return resolve(); } // eslint-disable-line local/no-bare-timers
             if (state.inFlightRequests > 0) {
               log.info('SHUTDOWN', `Waiting for ${state.inFlightRequests} in-flight request(s)…`);
               return;
             }
-            clearInterval(waitInterval);
+            clearInterval(waitInterval); // eslint-disable-line local/no-bare-timers
             log.info('SHUTDOWN', 'All in-flight requests completed.');
             resolve();
           }, 500);
@@ -303,9 +314,10 @@ async function startServer(app, overrideServices = {}) {
           log.error('SHUTDOWN', 'Error shutting down NetworkStatusService', { error: err.message });
         }
 
-        if (replayCleanupTimer) {
-          clearInterval(replayCleanupTimer);
-          log.info('SHUTDOWN', 'Replay detection cleanup timer stopped');
+        // Stop circuit-breaker DB sync (timerRegistry already cleared the handle,
+        // but call stopSync() so the reference is nulled out cleanly)
+        if (stellarService.circuitBreaker) {
+          stellarService.circuitBreaker.stopSync();
         }
 
         // 8. Checkpoint SQLite WAL (must happen before DB close, after all writes)

@@ -20,6 +20,7 @@
 const crypto = require('crypto');
 const Database = require('../utils/database');
 const log = require('../utils/log');
+const timerRegistry = require('../utils/timerRegistry');
 
 /** Returns days from env var; 0 means disabled; negative/invalid falls back to default. */
 function parseDays(envVar, defaultDays) {
@@ -312,18 +313,19 @@ class RetentionService {
     next.setUTCHours(h, m, 0, 0);
     if (next <= now) next.setUTCDate(next.getUTCDate() + 1);
     const delay = next.getTime() - now.getTime();
-    this._timer = setTimeout(() => {
+    this._timer = timerRegistry.createTimeout(() => {
       this.runAll().catch(err =>
         log.error('RETENTION_SERVICE', 'Scheduled run failed', { error: err.message })
       );
       this._timer = null;
       this._scheduleNext();
-    }, delay);
+    }, delay, 'retention-service-daily');
+    this._timer.unref();
   }
 
   stop() {
     if (this._timer) {
-      clearTimeout(this._timer);
+      this._timer.clear();
       this._timer = null;
     }
   }

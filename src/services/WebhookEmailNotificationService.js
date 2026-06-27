@@ -239,7 +239,7 @@ This is an automated notification from Stellar Micro-Donation API.
         });
 
         // Schedule retry
-        setTimeout(() => {
+        setTimeout(() => { // eslint-disable-line local/no-bare-timers
           this._sendNotificationWithRetry(
             notificationId,
             webhook,

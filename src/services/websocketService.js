@@ -219,10 +219,10 @@ function attach(server) {
     });
   });
 
-  // Heartbeat interval
-  const heartbeat = setInterval(() => runHeartbeat(wss.clients), HEARTBEAT_MS);
+  // Heartbeat interval — cleared when the WebSocket server closes (tied to wss lifetime)
+  const heartbeat = setInterval(() => runHeartbeat(wss.clients), HEARTBEAT_MS); // eslint-disable-line local/no-bare-timers
 
-  wss.on('close', () => clearInterval(heartbeat));
+  wss.on('close', () => clearInterval(heartbeat)); // eslint-disable-line local/no-bare-timers
 
   log.info('WS', 'WebSocket balance streaming attached at /ws/balances');
   return wss;

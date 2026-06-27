@@ -27,7 +27,7 @@ async function runCheck(name, checkFn) {
     await Promise.race([
       checkFn(),
       new Promise((_, reject) =>
-        setTimeout(() => reject(new Error(`${name} check timed out after ${DEPENDENCY_TIMEOUT_MS}ms`)), DEPENDENCY_TIMEOUT_MS)
+        setTimeout(() => reject(new Error(`${name} check timed out after ${DEPENDENCY_TIMEOUT_MS}ms`)), DEPENDENCY_TIMEOUT_MS) // eslint-disable-line local/no-bare-timers
       ),
     ]);
     return { status: 'healthy', responseTime: Date.now() - start };

@@ -333,7 +333,7 @@ class SequenceCacheService {
 
               if (attempt < this.maxRetryCount) {
                 // Exponential backoff
-                await new Promise(sleep => setTimeout(sleep, Math.pow(2, attempt) * 100));
+                await new Promise(sleep => setTimeout(sleep, Math.pow(2, attempt) * 100)); // eslint-disable-line local/no-bare-timers
               }
             }
           }

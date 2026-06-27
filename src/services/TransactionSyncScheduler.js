@@ -13,6 +13,8 @@
 const Wallet = require('../models/wallet');
 const TransactionSyncService = require('./TransactionSyncService');
 const log = require('../utils/log');
+const timerRegistry = require('../utils/timerRegistry');
+const leaderElection = require('../utils/leaderElection');
 
 /** Default sync interval: 15 minutes */
 const DEFAULT_INTERVAL_MS = 15 * 60 * 1000;
@@ -49,7 +51,12 @@ class TransactionSyncScheduler {
       intervalMs: this.intervalMs,
     });
     this._runSync();
-    this.intervalId = setInterval(() => this._runSync(), this.intervalMs);
+    this.intervalId = timerRegistry.createInterval(
+      () => this._runSync(),
+      this.intervalMs,
+      'tx-sync-scheduler'
+    );
+    this.intervalId.unref();
   }
 
   /**
@@ -60,7 +67,7 @@ class TransactionSyncScheduler {
     if (!this.isRunning) return;
     this.isRunning = false;
     if (this.intervalId) {
-      clearInterval(this.intervalId);
+      this.intervalId.clear();
       this.intervalId = null;
     }
     log.info('TX_SYNC_SCHEDULER', 'Scheduler stopped');
@@ -94,11 +101,25 @@ class TransactionSyncScheduler {
    * @returns {Promise<{wallets: number, synced: number, errors: number, completedAt: string}>}
    */
   async _runSync() {
+    const isLeader = await leaderElection.acquireLease(
+      'tx_sync_scheduler',
+      this.intervalMs * 2
+    );
+    if (!isLeader) {
+      log.debug('TX_SYNC_SCHEDULER', 'Skipping sync tick — lease held by another instance', {
+        instanceId: leaderElection.instanceId,
+      });
+      return { wallets: 0, synced: 0, errors: 0, skipped: true };
+    }
+
     const wallets = Wallet.getAll();
     let totalSynced = 0;
     let errorCount = 0;
 
-    log.info('TX_SYNC_SCHEDULER', 'Starting sync pass', { walletCount: wallets.length });
+    log.info('TX_SYNC_SCHEDULER', 'Starting sync pass', {
+      walletCount: wallets.length,
+      instanceId: leaderElection.instanceId,
+    });
 
     for (const wallet of wallets) {
       try {

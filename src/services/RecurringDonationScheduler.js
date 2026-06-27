@@ -34,6 +34,8 @@ const {
   withAsyncContext,
   getCorrelationSummary,
 } = require('../utils/correlation');
+const timerRegistry = require('../utils/timerRegistry');
+const leaderElection = require('../utils/leaderElection');
 
 class RecurringDonationScheduler {
   /**
@@ -90,7 +92,12 @@ class RecurringDonationScheduler {
 
     // Run immediately, then on each interval tick
     this.processSchedules();
-    this.intervalId = setInterval(() => this.processSchedules(), this.checkInterval);
+    this.intervalId = timerRegistry.createInterval(
+      () => this.processSchedules(),
+      this.checkInterval,
+      'recurring-donation-scheduler'
+    );
+    this.intervalId.unref();
 
     const correlation = getCorrelationSummary();
     log.info("RECURRING_SCHEDULER", "Scheduler started", {
@@ -106,9 +113,9 @@ class RecurringDonationScheduler {
    */
   pause() {
     if (!this.isRunning) return;
-    
+
     if (this.intervalId) {
-      clearInterval(this.intervalId);
+      this.intervalId.clear();
       this.intervalId = null;
     }
 
@@ -122,9 +129,14 @@ class RecurringDonationScheduler {
    */
   resume() {
     if (!this.isRunning || this.intervalId) return;
-    
+
     this.processSchedules();
-    this.intervalId = setInterval(() => this.processSchedules(), this.checkInterval);
+    this.intervalId = timerRegistry.createInterval(
+      () => this.processSchedules(),
+      this.checkInterval,
+      'recurring-donation-scheduler'
+    );
+    this.intervalId.unref();
 
     const { correlationId, traceId } = getCorrelationSummary();
     log.info('RECURRING_SCHEDULER', 'Scheduler resumed', { correlationId, traceId });
@@ -169,8 +181,10 @@ class RecurringDonationScheduler {
     if (!this.isRunning) return;
 
     return withBackgroundContext('scheduler_stop', () => {
-      clearInterval(this.intervalId);
-      this.intervalId = null;
+      if (this.intervalId) {
+        this.intervalId.clear();
+        this.intervalId = null;
+      }
       this.isRunning = false;
 
       const { correlationId, traceId } = getCorrelationSummary();
@@ -192,8 +206,10 @@ class RecurringDonationScheduler {
   async stopGracefully(timeoutMs = 30000) {
     if (!this.isRunning) return { waited: 0, interrupted: 0 };
 
-    clearInterval(this.intervalId);
-    this.intervalId = null;
+    if (this.intervalId) {
+      this.intervalId.clear();
+      this.intervalId = null;
+    }
     this.isRunning = false;
 
     const { correlationId, traceId } = getCorrelationSummary();
@@ -218,9 +234,10 @@ class RecurringDonationScheduler {
 
     const deadline = Date.now() + timeoutMs;
     await new Promise((resolve) => {
+      // eslint-disable-next-line local/no-bare-timers
       const check = setInterval(() => {
         if (this.executingSchedules.size === 0 || Date.now() >= deadline) {
-          clearInterval(check);
+          clearInterval(check); // eslint-disable-line local/no-bare-timers
           resolve();
         }
       }, 100);
@@ -276,6 +293,20 @@ class RecurringDonationScheduler {
    */
   async processSchedules() {
     if (!this.isRunning) {
+      return;
+    }
+
+    // Acquire leader-election lease: only one instance across the cluster processes each tick.
+    // TTL = 2× checkInterval so the lock expires if we crash before the next renewal.
+    const isLeader = await leaderElection.acquireLease(
+      'recurring_donation_scheduler',
+      this.checkInterval * 2
+    );
+    if (!isLeader) {
+      log.debug('RECURRING_SCHEDULER', 'Skipping tick — lease held by another instance', {
+        instanceId: leaderElection.instanceId,
+      });
+      recurringDonationsSkippedTotal.inc({ reason: 'not_leader' }, 1);
       return;
     }
 
@@ -861,7 +892,7 @@ class RecurringDonationScheduler {
    * @returns {Promise<void>}
    */
   sleep(ms) {
-    return new Promise(resolve => setTimeout(resolve, ms));
+    return new Promise(resolve => setTimeout(resolve, ms)); // eslint-disable-line local/no-bare-timers
   }
 
   /**

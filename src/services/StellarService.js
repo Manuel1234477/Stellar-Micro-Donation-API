@@ -189,18 +189,25 @@ class StellarService extends StellarServiceInterface {
       createHttpClient: () => this._createHttpClient(),
     });
 
-    // Timeout configuration
+    // Timeout configuration (overridable via env vars or constructor config)
     this.timeouts = {
-      api: config.apiTimeout || TIMEOUT_DEFAULTS.STELLAR_API,
-      submit: config.submitTimeout || TIMEOUT_DEFAULTS.STELLAR_SUBMIT,
-      stream: config.streamTimeout || TIMEOUT_DEFAULTS.STELLAR_STREAM,
+      api: config.apiTimeout || parseInt(process.env.HORIZON_API_TIMEOUT_MS, 10) || TIMEOUT_DEFAULTS.STELLAR_API,
+      submit: config.submitTimeout || parseInt(process.env.HORIZON_SUBMIT_TIMEOUT_MS, 10) || TIMEOUT_DEFAULTS.STELLAR_SUBMIT,
+      stream: config.streamTimeout || parseInt(process.env.HORIZON_STREAM_TIMEOUT_MS, 10) || TIMEOUT_DEFAULTS.STELLAR_STREAM,
+    };
+
+    // Retry policy — centralised and configurable (applies to all Horizon calls)
+    this.retryPolicy = {
+      maxAttempts: config.maxRetryAttempts ?? parseInt(process.env.HORIZON_MAX_RETRY_ATTEMPTS, 10) || 3,
+      baseDelayMs:  config.retryBaseDelayMs  ?? parseInt(process.env.HORIZON_RETRY_BASE_DELAY_MS, 10) || 200,
+      maxDelayMs:   config.retryMaxDelayMs   ?? parseInt(process.env.HORIZON_RETRY_MAX_DELAY_MS, 10) || 2_000,
     };
 
     // Circuit breaker — protects all Horizon API calls
     this.circuitBreaker = new CircuitBreaker({
-      failureThreshold: config.circuitBreakerThreshold ?? 5,
-      windowMs: config.circuitBreakerWindowMs ?? 60_000,
-      cooldownMs: config.circuitBreakerCooldownMs ?? 30_000,
+      failureThreshold: config.circuitBreakerThreshold ?? parseInt(process.env.HORIZON_CB_FAILURE_THRESHOLD, 10) || 5,
+      windowMs:  config.circuitBreakerWindowMs  ?? parseInt(process.env.HORIZON_CB_WINDOW_MS, 10) || 60_000,
+      cooldownMs: config.circuitBreakerCooldownMs ?? parseInt(process.env.HORIZON_CB_COOLDOWN_MS, 10) || 30_000,
       name: 'horizon',
     });
   }
@@ -301,63 +308,53 @@ class StellarService extends StellarServiceInterface {
   }
 
   /**
-   * Check if an error is a transient network error that can be retried
+   * Classify whether an error is retryable.
+   *
+   * Retryable: network errors, timeouts, 408, 429 (rate-limit), 502, 503, 504.
+   * Non-retryable: 4xx client errors (except 408/429), validation failures, etc.
+   *
    * @private
-   * @param {Error} error - Error to check
-   * @returns {boolean} True if error is transient and retryable
+   * @param {Error} error
+   * @returns {boolean}
    */
   _isTransientNetworkError(error) {
-    // Timeout errors are retryable
-    if (error instanceof TimeoutError) {
-      return true;
-    }
+    if (error instanceof TimeoutError) return true;
 
-    const message = error && error.message ? error.message : '';
-    const code = error && error.code ? error.code : '';
-    const status = error && error.response && error.response.status ? error.response.status : null;
+    const message = (error && error.message) ? error.message : '';
+    const code    = (error && error.code) ? error.code : '';
+    const status  = error && error.response && error.response.status
+      ? error.response.status
+      : null;
 
-    if (status === 503 || status === 504) {
-      return true;
-    }
+    // HTTP status codes that warrant retry
+    const retryableStatuses = new Set([408, 429, 502, 503, 504]);
+    if (retryableStatuses.has(status)) return true;
 
     const messageTokens = [
-      'ENOTFOUND',
-      'ECONNREFUSED',
-      'ETIMEDOUT',
-      'EHOSTUNREACH',
-      'ECONNRESET',
-      'socket hang up',
-      'Network Error',
-      'network timeout',
-      'timed out'
+      'ENOTFOUND', 'ECONNREFUSED', 'ETIMEDOUT', 'EHOSTUNREACH', 'ECONNRESET',
+      'socket hang up', 'Network Error', 'network timeout', 'timed out',
     ];
+    if (messageTokens.some(token => message.includes(token))) return true;
 
-    if (messageTokens.some(token => message.includes(token))) {
-      return true;
-    }
-
-    const codeTokens = [
-      'ENOTFOUND',
-      'ECONNREFUSED',
-      'ETIMEDOUT',
-      'EHOSTUNREACH',
-      'ECONNRESET'
-    ];
-
+    const codeTokens = ['ENOTFOUND', 'ECONNREFUSED', 'ETIMEDOUT', 'EHOSTUNREACH', 'ECONNRESET'];
     return codeTokens.includes(code);
   }
 
   /**
-   * Calculate exponential backoff delay for retry attempts
+   * Exponential backoff with ±20 % jitter.
+   * Parameters come from this.retryPolicy so they are centrally configurable.
+   *
    * @private
-   * @param {number} attempt - Current attempt number (1-indexed)
+   * @param {number} attempt - 1-indexed attempt number
    * @returns {number} Delay in milliseconds
    */
   _getBackoffDelay(attempt) {
-    const base = 200;
-    const max = 2000;
-    const delay = base * Math.pow(2, attempt - 1);
-    return Math.min(delay, max);
+    const { baseDelayMs, maxDelayMs } = this.retryPolicy;
+    const exp = baseDelayMs * Math.pow(2, attempt - 1);
+    const capped = Math.min(exp, maxDelayMs);
+    // ±20 % jitter to prevent thundering-herd retries against a degraded Horizon
+    const jitter = capped * (Math.random() * 0.4 - 0.2);
+    return Math.max(0, Math.round(capped + jitter));
   }
 
   /**
@@ -373,7 +370,7 @@ class StellarService extends StellarServiceInterface {
    * @throws {Error} If all retry attempts fail or error is not transient
    */
   async _executeWithRetry(operation, operationName = 'stellar_operation', timeout = null) {
-    const maxAttempts = 3;
+    const maxAttempts = this.retryPolicy.maxAttempts;
     const timeoutMs = timeout || this.timeouts.api;
     let lastError = null;
 
@@ -423,7 +420,7 @@ class StellarService extends StellarServiceInterface {
           delay,
           error: error.message
         });
-        await new Promise(resolve => setTimeout(resolve, delay));
+        await new Promise(resolve => setTimeout(resolve, delay)); // eslint-disable-line local/no-bare-timers
       }
     }
 

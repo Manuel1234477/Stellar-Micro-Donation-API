@@ -14,6 +14,7 @@ const log = require('../utils/log');
 const crypto = require('crypto');
 const { sanitizeForLogging } = require('../utils/sanitizer');
 const { maskSensitiveData } = require('../utils/dataMasker');
+const timerRegistry = require('../utils/timerRegistry');
 const { ValidationError, ERROR_CODES } = require('../utils/errors');
 const {
   buildCursorWhereClause,
@@ -428,7 +429,7 @@ class AuditLogService {
       await Promise.race([
         writeEntries(),
         new Promise((_, reject) =>
-          setTimeout(() => reject(new Error('flush timeout')), FLUSH_TIMEOUT_MS)
+          setTimeout(() => reject(new Error('flush timeout')), FLUSH_TIMEOUT_MS) // eslint-disable-line local/no-bare-timers
         ),
       ]);
     } catch (err) {
@@ -444,12 +445,12 @@ class AuditLogService {
    */
   static startAutoFlush() {
     if (_autoFlushTimer) return;
-    _autoFlushTimer = setInterval(() => {
+    _autoFlushTimer = timerRegistry.createInterval(() => {
       if (_pendingBuffer.length > 0) {
         AuditLogService.flush().catch(() => {});
       }
-    }, BUFFER_FLUSH_INTERVAL_MS);
-    if (_autoFlushTimer.unref) _autoFlushTimer.unref();
+    }, BUFFER_FLUSH_INTERVAL_MS, 'audit-log-auto-flush');
+    _autoFlushTimer.unref();
   }
 
   /**
@@ -458,7 +459,7 @@ class AuditLogService {
    */
   static stopAutoFlush() {
     if (_autoFlushTimer) {
-      clearInterval(_autoFlushTimer);
+      _autoFlushTimer.clear();
       _autoFlushTimer = null;
     }
   }

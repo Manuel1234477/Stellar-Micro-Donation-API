@@ -6,8 +6,18 @@ const Database = require('../utils/database');
 const AuditLogService = require('../services/AuditLogService');
 const DonationExportService = require('../services/DonationExportService');
 const log = require('../utils/log');
+const leaderElection = require('../utils/leaderElection');
+
+const CLEANUP_INTERVAL_MS = 24 * 60 * 60 * 1000; // 24 hours
+const LOCK_NAME = 'cleanup_job';
 
 async function runCleanup() {
+  const isLeader = await leaderElection.acquireLease(LOCK_NAME, CLEANUP_INTERVAL_MS * 2);
+  if (!isLeader) {
+    log.debug('CLEANUP_JOB', 'Skipping cleanup tick — lease held by another instance');
+    return;
+  }
+
   log.info('CLEANUP_JOB', 'Starting soft delete cleanup job');
 
   try {

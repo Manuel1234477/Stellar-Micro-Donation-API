@@ -10,6 +10,7 @@
 
 const db = require('../utils/database');
 const log = require('../utils/log');
+const timerRegistry = require('../utils/timerRegistry');
 
 const RETENTION_DAYS = parseInt(process.env.AUDIT_LOG_RETENTION_DAYS || '90', 10);
 const DEFAULT_INTERVAL_MS = 24 * 60 * 60 * 1000; // 24 hours
@@ -83,11 +84,12 @@ class AuditLogRetentionService {
 
   start() {
     if (this._timer) return;
-    this._timer = setInterval(() => {
+    this._timer = timerRegistry.createInterval(() => {
       this.runRetention().catch(err =>
         log.error('AUDIT_RETENTION', 'Retention job failed', { error: err.message })
       );
-    }, this.intervalMs);
+    }, this.intervalMs, 'audit-log-retention');
+    this._timer.unref();
     log.info('AUDIT_RETENTION', 'Retention service started', {
       retentionDays: RETENTION_DAYS,
       intervalHours: this.intervalMs / 3600000
@@ -96,7 +98,7 @@ class AuditLogRetentionService {
 
   stop() {
     if (this._timer) {
-      clearInterval(this._timer);
+      this._timer.clear();
       this._timer = null;
     }
   }

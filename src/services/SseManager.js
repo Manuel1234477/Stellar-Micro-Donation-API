@@ -6,6 +6,7 @@
  */
 
 const { getPubSubAdapter } = require('./PubSubAdapter');
+const timerRegistry = require('../utils/timerRegistry');
 
 const MAX_CONNECTIONS_PER_KEY = parseInt(process.env.SSE_MAX_CONNECTIONS_PER_KEY || '5');
 const HEARTBEAT_INTERVAL_MS = 30_000;
@@ -37,14 +38,18 @@ class SseManager {
    */
   start() {
     if (this._heartbeatTimer) return;
-    this._heartbeatTimer = setInterval(() => this._sendHeartbeat(), HEARTBEAT_INTERVAL_MS);
-    if (this._heartbeatTimer.unref) this._heartbeatTimer.unref();
+    this._heartbeatTimer = timerRegistry.createInterval(
+      () => this._sendHeartbeat(),
+      HEARTBEAT_INTERVAL_MS,
+      'sse-heartbeat'
+    );
+    this._heartbeatTimer.unref();
   }
 
   /** Stop the heartbeat timer. */
   stop() {
     if (this._heartbeatTimer) {
-      clearInterval(this._heartbeatTimer);
+      this._heartbeatTimer.clear();
       this._heartbeatTimer = null;
     }
   }

@@ -93,6 +93,23 @@ module.exports = {
         'no-console': 'error',
       },
     },
+    {
+      // Background schedulers, jobs, and workers must use timerRegistry so every
+      // handle is tracked and cleared during graceful shutdown. Inline
+      // eslint-disable-next-line comments are allowed for one-shot delays (sleep,
+      // stopGracefully wait loops) that are guaranteed to resolve quickly.
+      files: [
+        'src/services/**/*.js',
+        'src/jobs/**/*.js',
+        'src/workers/**/*.js',
+      ],
+      excludedFiles: [
+        'src/services/MockStellarService.js',
+      ],
+      rules: {
+        'local/no-bare-timers': 'error',
+      },
+    },
   ],
   ignorePatterns: [
     'node_modules/',

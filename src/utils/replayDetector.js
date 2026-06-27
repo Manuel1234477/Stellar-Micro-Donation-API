@@ -1,5 +1,6 @@
 const crypto = require('crypto');
 const log = require('./log');
+const timerRegistry = require('./timerRegistry');
 
 /**
  * TrackingStore - In-memory storage for request fingerprints and timestamps
@@ -209,18 +210,11 @@ function startCleanup(store, config) {
   const intervalMs = config.cleanupIntervalSeconds * 1000;
   const windowMs = config.windowSeconds * 1000;
   
-  const timer = setInterval(() => {
+  const handle = timerRegistry.createInterval(() => {
     try {
-      // Get stats before cleanup (pass config for complete stats)
       const before = store.getStats(config);
-      
-      // Run cleanup
       const cleanupResult = store.cleanup(windowMs);
-      
-      // Get stats after cleanup (pass config for complete stats)
       const after = store.getStats(config);
-      
-      // Log cleanup statistics
       log.info('REPLAY_DETECTION_CLEANUP', 'Replay detection cleanup completed', {
         fingerprintsRemoved: cleanupResult.fingerprintsRemoved,
         timestampsRemoved: cleanupResult.timestampsRemoved,
@@ -228,19 +222,20 @@ function startCleanup(store, config) {
         fingerprintsAfter: after.totalFingerprints,
         timestampsBefore: before.totalTimestamps,
         timestampsAfter: after.totalTimestamps,
-        windowSeconds: config.windowSeconds
+        windowSeconds: config.windowSeconds,
       });
     } catch (error) {
-      // Log error but continue - cleanup failures should not crash the process
       log.error('REPLAY_DETECTION_CLEANUP', 'Cleanup operation failed', {
         error: error.message,
-        stack: error.stack
+        stack: error.stack,
       });
     }
-  }, intervalMs);
-  
-  // Return timer reference for shutdown
-  return timer;
+  }, intervalMs, 'replay-detection-cleanup');
+  handle.unref();
+
+  // Return handle (timerRegistry manages clearing at shutdown;
+  // callers may also call handle.clear() explicitly)
+  return handle;
 }
 
 module.exports = { TrackingStore, computeFingerprint, startCleanup };

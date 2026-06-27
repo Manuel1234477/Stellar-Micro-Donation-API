@@ -19,28 +19,71 @@ const log = require('../utils/log');
 const CACHE_KEY = 'network:fee_stats';
 const CACHE_TTL_MS = 30_000; // 30 seconds
 
+const REQUEST_TIMEOUT_MS = parseInt(process.env.HORIZON_API_TIMEOUT_MS, 10) || 5_000;
+const MAX_RETRY_ATTEMPTS = parseInt(process.env.HORIZON_MAX_RETRY_ATTEMPTS, 10) || 3;
+const RETRY_BASE_DELAY_MS = parseInt(process.env.HORIZON_RETRY_BASE_DELAY_MS, 10) || 200;
+const RETRY_MAX_DELAY_MS = parseInt(process.env.HORIZON_RETRY_MAX_DELAY_MS, 10) || 2_000;
+
+/** HTTP status codes that warrant a retry */
+const RETRYABLE_STATUSES = new Set([408, 429, 502, 503, 504]);
+
+/**
+ * Exponential backoff with ±20 % jitter (mirrors StellarService._getBackoffDelay).
+ * @param {number} attempt - 1-indexed
+ * @returns {number} delay in ms
+ */
+function backoffDelay(attempt) {
+  const exp = RETRY_BASE_DELAY_MS * Math.pow(2, attempt - 1);
+  const capped = Math.min(exp, RETRY_MAX_DELAY_MS);
+  const jitter = capped * (Math.random() * 0.4 - 0.2);
+  return Math.max(0, Math.round(capped + jitter));
+}
+
 /**
  * Fetch JSON from a URL using Node's built-in http/https.
+ * Retries on transient network errors and retryable HTTP status codes.
  * @param {string} url
  * @returns {Promise<Object>}
  */
-function fetchJson(url) {
-  return new Promise((resolve, reject) => {
-    const client = url.startsWith('https') ? https : http;
-    const req = client.get(url, { timeout: 5000 }, (res) => {
-      let data = '';
-      res.on('data', (chunk) => { data += chunk; });
-      res.on('end', () => {
-        try {
-          resolve(JSON.parse(data));
-        } catch (e) {
-          reject(new Error(`Failed to parse Horizon response: ${e.message}`));
-        }
+async function fetchJson(url) {
+  let lastErr;
+  for (let attempt = 1; attempt <= MAX_RETRY_ATTEMPTS; attempt++) {
+    try {
+      const result = await new Promise((resolve, reject) => {
+        const client = url.startsWith('https') ? https : http;
+        const req = client.get(url, { timeout: REQUEST_TIMEOUT_MS }, (res) => {
+          if (RETRYABLE_STATUSES.has(res.statusCode)) {
+            res.resume();
+            reject(Object.assign(new Error(`Horizon returned HTTP ${res.statusCode}`), { statusCode: res.statusCode }));
+            return;
+          }
+          let data = '';
+          res.on('data', (chunk) => { data += chunk; });
+          res.on('end', () => {
+            try { resolve(JSON.parse(data)); }
+            catch (e) { reject(new Error(`Failed to parse Horizon response: ${e.message}`)); }
+          });
+        });
+        req.on('error', reject);
+        req.on('timeout', () => { req.destroy(); reject(new Error('Horizon request timed out')); });
       });
-    });
-    req.on('error', reject);
-    req.on('timeout', () => { req.destroy(); reject(new Error('Horizon request timed out')); });
-  });
+      return result;
+    } catch (err) {
+      lastErr = err;
+      const isRetryable = RETRYABLE_STATUSES.has(err.statusCode) ||
+        ['ECONNREFUSED', 'ETIMEDOUT', 'ECONNRESET', 'ENOTFOUND', 'EHOSTUNREACH'].includes(err.code) ||
+        (err.message && (err.message.includes('timed out') || err.message.includes('ECONNRESET')));
+
+      if (!isRetryable || attempt === MAX_RETRY_ATTEMPTS) throw err;
+
+      const delay = backoffDelay(attempt);
+      log.debug('NETWORK_FEE_SERVICE', 'Retrying Horizon fee_stats request', {
+        attempt, delay, error: err.message,
+      });
+      await new Promise(r => setTimeout(r, delay)); // eslint-disable-line local/no-bare-timers
+    }
+  }
+  throw lastErr;
 }
 
 /**

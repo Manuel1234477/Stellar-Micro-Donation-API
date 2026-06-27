@@ -248,6 +248,7 @@ class PaymentStreamService {
     const delay = Math.min(BASE_BACKOFF_MS * Math.pow(2, attempt), MAX_BACKOFF_MS);
     log.warn('PAYMENT_STREAM', 'Scheduling stream reconnect', { publicKey, attempt, delayMs: delay });
 
+    // eslint-disable-next-line local/no-bare-timers
     const timer = setTimeout(() => {
       log.info('PAYMENT_STREAM', 'Reconnecting stream', { publicKey, attempt });
       // Use the live options stored in the entry (has latest cursor)

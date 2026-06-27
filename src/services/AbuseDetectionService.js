@@ -12,6 +12,7 @@ const fs = require('fs');
 const path = require('path');
 const log = require('../utils/log');
 const { v4: uuidv4 } = require('uuid');
+const timerRegistry = require('../utils/timerRegistry');
 
 const DB_PATH = process.env.ABUSE_DB_PATH || path.join(__dirname, '../../../data/blockedIps.json');
 
@@ -175,12 +176,20 @@ class AbuseDetectionService {
 
   startCleanup() {
     if (process.env.NODE_ENV !== 'test' && process.env.NODE_ENV !== 'testing') {
-      this.cleanupTimer = setInterval(() => this.cleanup(), this.config.cleanupInterval);
+      this.cleanupTimer = timerRegistry.createInterval(
+        () => this.cleanup(),
+        this.config.cleanupInterval,
+        'abuse-detection-cleanup'
+      );
+      this.cleanupTimer.unref();
     }
   }
 
   stop() {
-    if (this.cleanupTimer) clearInterval(this.cleanupTimer);
+    if (this.cleanupTimer) {
+      this.cleanupTimer.clear();
+      this.cleanupTimer = null;
+    }
   }
 }
 

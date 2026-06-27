@@ -630,7 +630,7 @@ class WebhookService {
 
       if (attempt < MAX_RETRIES - 1) {
         const delay = BASE_BACKOFF_MS * Math.pow(2, attempt);
-        await new Promise((r) => setTimeout(r, delay));
+        await new Promise((r) => setTimeout(r, delay)); // eslint-disable-line local/no-bare-timers
         return WebhookService._deliverWithRetry(webhook, event, payload, attempt + 1);
       }
       throw err;

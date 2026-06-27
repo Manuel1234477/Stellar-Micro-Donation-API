@@ -19,6 +19,7 @@ const Transaction = require('../models/transaction');
 const { TRANSACTION_STATES } = require('../utils/transactionStateMachine');
 const log = require('../utils/log');
 const WebhookService = require('./WebhookService');
+const timerRegistry = require('../utils/timerRegistry');
 
 /** Orphan count threshold that triggers an alert */
 const ORPHAN_ALERT_THRESHOLD = parseInt(process.env.ORPHAN_ALERT_THRESHOLD || '1', 10);
@@ -55,9 +56,12 @@ class TransactionReconciliationService {
     this.isRunning = true;
     this.reconcile();
 
-    this.intervalId = setInterval(() => {
-      this.reconcile();
-    }, this.checkInterval);
+    this.intervalId = timerRegistry.createInterval(
+      () => this.reconcile(),
+      this.checkInterval,
+      'tx-reconciliation'
+    );
+    this.intervalId.unref();
 
     log.info('RECONCILIATION', 'Service started', {
       checkIntervalMinutes: this.checkInterval / 60000,
@@ -68,7 +72,10 @@ class TransactionReconciliationService {
   stop() {
     if (!this.isRunning) return;
 
-    clearInterval(this.intervalId);
+    if (this.intervalId) {
+      this.intervalId.clear();
+      this.intervalId = null;
+    }
     this.isRunning = false;
     log.info('RECONCILIATION', 'Service stopped');
   }

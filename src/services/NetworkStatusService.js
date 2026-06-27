@@ -7,6 +7,7 @@
 const EventEmitter = require('events');
 const https = require('https');
 const http = require('http');
+const timerRegistry = require('../utils/timerRegistry');
 
 const POLL_INTERVAL_MS = 30_000;
 const HISTORY_WINDOW_MS = 24 * 60 * 60 * 1000; // 24 hours
@@ -50,13 +51,18 @@ class NetworkStatusService extends EventEmitter {
   start() {
     if (this._timer) return;
     this._poll(); // immediate first poll
-    this._timer = setInterval(() => this._poll(), this.pollIntervalMs);
+    this._timer = timerRegistry.createInterval(
+      () => this._poll(),
+      this.pollIntervalMs,
+      'network-status-poll'
+    );
+    this._timer.unref();
   }
 
   /** Stop polling. */
   stop() {
     if (this._timer) {
-      clearInterval(this._timer);
+      this._timer.clear();
       this._timer = null;
     }
   }
