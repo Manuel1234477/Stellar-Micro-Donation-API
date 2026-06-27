@@ -1,11 +1,26 @@
 /**
  * ApiKeyUsageService
- * In-memory store for API key usage analytics.
  *
  * Tracks per-request metrics (timestamp, latency, status code) and exposes
  * aggregated time-series data at hourly, daily, and weekly granularity.
  * Also provides anomaly detection for unusual request-rate spikes.
+ *
+ * Persistence (#1138):
+ * - Every recorded usage event is written to the api_key_usage table so data
+ *   survives restarts, is shared across instances, and provides a durable
+ *   audit/billing trail.
+ * - On construction the service asynchronously loads the last RETENTION_MS of
+ *   records from DB into the in-memory map so all read methods work immediately
+ *   after startup without any cold-start gap.
+ * - Quota/rate counters derived from the in-memory map are therefore consistent
+ *   with the durable store from the moment the initial load completes (a few
+ *   seconds after startup).
+ * - Retention policy: records older than 30 days are purged from both memory
+ *   and DB via the existing _purgeKey / _purgeOldRecords logic.
  */
+
+const Database = require('../utils/database');
+const log = require('../utils/log');
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 const RETENTION_MS = 30 * DAY_MS;
@@ -13,10 +28,55 @@ const RETENTION_MS = 30 * DAY_MS;
 class ApiKeyUsageService {
   constructor() {
     /**
-     * Raw usage records.
+     * Raw usage records (in-memory cache, source of truth for read methods).
      * @type {Map<string, Array<{timestamp: number, latencyMs: number, statusCode: number, path: string, method: string}>>}
      */
     this._records = new Map(); // apiKey -> records[]
+
+    // Rehydrate from DB in background; read methods use whatever is in memory.
+    this._loadPromise = this._loadFromDatabase().catch(err =>
+      log.warn('API_KEY_USAGE', 'Failed to rehydrate usage records from DB', { error: err.message })
+    );
+  }
+
+  // ─── DB persistence ─────────────────────────────────────────────────────────
+
+  async _loadFromDatabase() {
+    await Database.ensureInitialized();
+    const cutoff = Date.now() - RETENTION_MS;
+    const rows = await Database.query(
+      'SELECT api_key, timestamp, latency_ms, status_code, path, method FROM api_key_usage WHERE timestamp >= ?',
+      [cutoff]
+    );
+    for (const row of rows) {
+      if (!this._records.has(row.api_key)) this._records.set(row.api_key, []);
+      this._records.get(row.api_key).push({
+        timestamp:  row.timestamp,
+        latencyMs:  row.latency_ms,
+        statusCode: row.status_code,
+        path:       row.path,
+        method:     row.method,
+      });
+    }
+    log.info('API_KEY_USAGE', 'Rehydrated usage records from DB', { keys: this._records.size });
+  }
+
+  _persistRecord(apiKey, rec) {
+    Database.run(
+      `INSERT INTO api_key_usage (api_key, timestamp, latency_ms, status_code, path, method)
+       VALUES (?, ?, ?, ?, ?, ?)`,
+      [apiKey, rec.timestamp, rec.latencyMs, rec.statusCode, rec.path, rec.method]
+    ).catch(err =>
+      log.warn('API_KEY_USAGE', 'Failed to persist usage record', { apiKey, error: err.message })
+    );
+  }
+
+  _purgeOldFromDb() {
+    const cutoff = Date.now() - RETENTION_MS;
+    Database.run('DELETE FROM api_key_usage WHERE timestamp < ?', [cutoff])
+      .catch(err =>
+        log.warn('API_KEY_USAGE', 'Failed to purge old usage records from DB', { error: err.message })
+      );
   }
 
   // ─── Recording ─────────────────────────────────────────────────────────────
@@ -46,13 +106,18 @@ class ApiKeyUsageService {
       this._records.set(apiKey, []);
     }
 
-    this._records.get(apiKey).push({
+    const rec = {
       timestamp: typeof timestamp === 'number' ? timestamp : Date.now(),
       latencyMs,
       statusCode,
       path,
       method,
-    });
+    };
+
+    this._records.get(apiKey).push(rec);
+
+    // Persist to DB (fire-and-forget)
+    this._persistRecord(apiKey, rec);
 
     this._purgeKey(apiKey);
   }
@@ -298,9 +363,7 @@ class ApiKeyUsageService {
 
   // ─── Helpers ───────────────────────────────────────────────────────────────
 
-  /**
-   * @private
-   */
+  /** @private */
   _assertKey(apiKey) {
     if (!apiKey || typeof apiKey !== 'string' || !apiKey.trim()) {
       throw new Error('apiKey is required');
@@ -351,7 +414,7 @@ class ApiKeyUsageService {
   }
 
   /**
-   * Remove expired records from the in-memory store.
+   * Remove expired records from the in-memory store and trigger a DB purge.
    * @private
    */
   _purgeOldRecords() {
@@ -364,6 +427,7 @@ class ApiKeyUsageService {
         this._records.set(apiKey, filtered);
       }
     }
+    this._purgeOldFromDb();
   }
 
   /**

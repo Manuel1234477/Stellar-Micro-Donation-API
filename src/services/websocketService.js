@@ -9,12 +9,20 @@
  *   → recv   {"event":"balance_update","wallet":"GA...","new_balance":"100.00","asset":"XLM"}
  *   → send   {"action":"unsubscribe","wallets":["GA..."]}
  *
+ * Cross-instance broadcast (#1136):
+ *   Broadcasts flow through a pluggable WsChannel. The default channel uses
+ *   an in-process EventEmitter (single instance). To enable cross-instance
+ *   delivery set REDIS_URL and install ioredis; then replace the channel
+ *   returned by _createChannel() with a Redis pub/sub adapter that implements
+ *   the same { publish, subscribe } interface.
+ *
  * Opt-out / limits:
  *   MAX_WALLETS_PER_CONNECTION = 50
  *   Heartbeat every 30 s (ping/pong)
  *   Close code 4001 = Unauthorized
  */
 
+const { EventEmitter } = require('events');
 const { WebSocketServer } = require('ws');
 const { validateKey } = require('../models/apiKeys');
 const { securityConfig } = require('../config/securityConfig');
@@ -24,8 +32,39 @@ const log = require('../utils/log');
 const MAX_WALLETS = parseInt(process.env.WS_MAX_WALLETS || '50', 10);
 const HEARTBEAT_MS = parseInt(process.env.WS_HEARTBEAT_MS || '30000', 10);
 
-// Map<walletAddress, Set<WebSocket>>
+// Map<walletAddress, Set<WebSocket>> — local subscriber routing for this instance
 const subscriptions = new Map();
+
+// ── Pub/sub channel abstraction ───────────────────────────────────────────────
+//
+// The channel decouples event producers from local WS delivery so that, in a
+// multi-instance deployment, a Redis-backed channel can be swapped in without
+// changing any other code.  Both instances publish to the channel; both
+// instances' channel subscriptions fan out to their locally-connected clients.
+//
+// Default: in-process EventEmitter (works for a single instance or a local dev
+// environment with no external broker).
+
+function _createChannel() {
+  const emitter = new EventEmitter();
+  return {
+    publish(topic, payload) {
+      emitter.emit(topic, payload);
+    },
+    subscribe(topic, handler) {
+      emitter.on(topic, handler);
+    },
+  };
+}
+
+const channel = _createChannel();
+
+const WS_TOPIC = 'ws:balance_update';
+
+// Fan published events out to locally-connected WebSocket clients
+channel.subscribe(WS_TOPIC, ({ wallet, payload }) => {
+  _broadcastLocal(wallet, payload);
+});
 
 // ── internal helpers ──────────────────────────────────────────────────────────
 
@@ -51,6 +90,16 @@ function removeAllSubs(ws) {
   for (const [wallet, set] of subscriptions) {
     set.delete(ws);
     if (set.size === 0) subscriptions.delete(wallet);
+  }
+}
+
+// Send a balance_update event to all local WS clients subscribed to wallet
+function _broadcastLocal(wallet, payload) {
+  const set = subscriptions.get(wallet);
+  if (!set) return;
+  const msg = JSON.stringify({ event: 'balance_update', wallet, ...payload });
+  for (const ws of set) {
+    if (ws.readyState === ws.constructor.OPEN) ws.send(msg);
   }
 }
 
@@ -101,13 +150,16 @@ function handleMessage(ws, raw) {
 
 // ── broadcast ─────────────────────────────────────────────────────────────────
 
+/**
+ * Publish a balance_update for wallet through the shared channel.
+ * On a single instance this is equivalent to a direct local delivery;
+ * with a Redis-backed channel all instances receive the event.
+ *
+ * @param {string} wallet
+ * @param {Object} payload - e.g. { new_balance, asset }
+ */
 function broadcast(wallet, payload) {
-  const set = subscriptions.get(wallet);
-  if (!set) return;
-  const msg = JSON.stringify({ event: 'balance_update', wallet, ...payload });
-  for (const ws of set) {
-    if (ws.readyState === ws.constructor.OPEN) ws.send(msg);
-  }
+  channel.publish(WS_TOPIC, { wallet, payload });
 }
 
 // ── donation event hook ───────────────────────────────────────────────────────
@@ -159,6 +211,7 @@ function attach(server) {
 
       ws.on('pong', () => { ws._alive = true; });
       ws.on('message', (raw) => handleMessage(ws, raw));
+      // Clean up all subscriptions for this client on disconnect (#1136)
       ws.on('close', () => removeAllSubs(ws));
       ws.on('error', () => removeAllSubs(ws));
 
@@ -175,4 +228,4 @@ function attach(server) {
   return wss;
 }
 
-module.exports = { attach, broadcast, subscriptions, _handleMessage: handleMessage, _authenticate: authenticate, _runHeartbeat: runHeartbeat };
+module.exports = { attach, broadcast, subscriptions, _handleMessage: handleMessage, _authenticate: authenticate, _runHeartbeat: runHeartbeat, _createChannel };

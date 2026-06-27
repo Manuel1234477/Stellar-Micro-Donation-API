@@ -981,7 +981,7 @@ class StellarService extends StellarServiceInterface {
    * @returns {Function} Unsubscribe function
    */
   // eslint-disable-next-line no-unused-vars
-  streamTransactions(publicKey, onTransaction) {
+  streamTransactions(publicKey, onTransaction, { cursor = 'now' } = {}) {
     const streamTimeout = this.timeouts.stream;
     let lastMessageTime = Date.now();
     let timeoutTimer = null;
@@ -1007,7 +1007,7 @@ class StellarService extends StellarServiceInterface {
 
     const closeStream = this.server.transactions()
       .forAccount(publicKey)
-      .cursor('now')
+      .cursor(cursor)
       .stream({
         onmessage: (tx) => {
           lastMessageTime = Date.now();

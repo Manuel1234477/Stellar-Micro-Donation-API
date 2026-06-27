@@ -704,7 +704,7 @@ const anomalyDetectionService = require('../services/AnomalyDetectionService');
 router.get('/:id/anomalies', requireAdmin, apiKeyIdParamSchema, asyncHandler(async (req, res, next) => {
   try {
     const keyId = String(req.params.id);
-    const anomalies = anomalyDetectionService.getAnomalies(keyId);
+    const anomalies = await anomalyDetectionService.getAnomalies(keyId);
     res.status(200).json({ success: true, data: { keyId, anomalies } });
   } catch (error) {
     next(error);

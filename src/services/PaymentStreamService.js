@@ -6,6 +6,19 @@
  * OWNER: Backend Team
  * DEPENDENCIES: StellarService (streamTransactions), WebhookService, Transaction model
  *
+ * Persistence (#1139):
+ * - Stream definitions (public key, webhook URL) and the last processed cursor
+ *   (Stellar paging_token) are persisted to the payment_streams table so streams
+ *   survive restarts and are visible across instances.
+ * - Call loadPersistedStreams() at startup to resume all streams from their
+ *   last checkpoint.
+ * - getStreamStates() returns the DB-backed view for operator observability.
+ *
+ * Cursor/checkpoint semantics:
+ * - The cursor is updated to payment.paging_token after each successfully
+ *   processed payment (at-least-once delivery; idempotency is enforced by the
+ *   Transaction.create idempotencyKey).
+ *
  * Security:
  * - Stream subscriptions are server-initiated; no user-supplied stream URLs.
  * - Replay prevention: each payment is identified by its Stellar transaction ID.
@@ -16,6 +29,7 @@
 'use strict';
 
 const log = require('../utils/log');
+const Database = require('../utils/database');
 
 const MAX_RECONNECT_ATTEMPTS = 10;
 const BASE_BACKOFF_MS = 1000;
@@ -27,9 +41,90 @@ class PaymentStreamService {
    */
   constructor(stellarService) {
     this.stellarService = stellarService;
-    /** @type {Map<string, { stop: Function, reconnectTimer: NodeJS.Timeout|null }>} */
+    /** @type {Map<string, { stop: Function, reconnectTimer: NodeJS.Timeout|null, options: Object }>} */
     this.activeStreams = new Map();
   }
+
+  // ── DB helpers (fire-and-forget) ───────────────────────────────────────────
+
+  _persistStream(publicKey, options) {
+    Database.run(
+      `INSERT INTO payment_streams (public_key, webhook_url, cursor, created_at, updated_at)
+       VALUES (?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+       ON CONFLICT(public_key) DO UPDATE SET
+         webhook_url = excluded.webhook_url,
+         cursor      = COALESCE(excluded.cursor, payment_streams.cursor),
+         updated_at  = CURRENT_TIMESTAMP`,
+      [publicKey, options.webhookUrl || null, options.cursor || null]
+    ).catch(err =>
+      log.warn('PAYMENT_STREAM', 'Failed to persist stream', { publicKey, error: err.message })
+    );
+  }
+
+  _removePersistedStream(publicKey) {
+    Database.run('DELETE FROM payment_streams WHERE public_key = ?', [publicKey])
+      .catch(err =>
+        log.warn('PAYMENT_STREAM', 'Failed to remove persisted stream', { publicKey, error: err.message })
+      );
+  }
+
+  _updateCursor(publicKey, cursor) {
+    Database.run(
+      'UPDATE payment_streams SET cursor = ?, updated_at = CURRENT_TIMESTAMP WHERE public_key = ?',
+      [cursor, publicKey]
+    ).catch(err =>
+      log.warn('PAYMENT_STREAM', 'Failed to update stream cursor', { publicKey, error: err.message })
+    );
+  }
+
+  // ── Startup resumption ─────────────────────────────────────────────────────
+
+  /**
+   * Load all persisted stream definitions from the DB and re-subscribe each
+   * from its last saved cursor. Call once during server startup.
+   *
+   * @returns {Promise<void>}
+   */
+  async loadPersistedStreams() {
+    try {
+      await Database.ensureInitialized();
+      const rows = await Database.query(
+        'SELECT public_key, webhook_url, cursor FROM payment_streams',
+        []
+      );
+      for (const row of rows) {
+        const opts = {};
+        if (row.webhook_url) opts.webhookUrl = row.webhook_url;
+        if (row.cursor)      opts.cursor     = row.cursor;
+        this.subscribe(row.public_key, opts);
+      }
+      log.info('PAYMENT_STREAM', 'Loaded persisted streams', { count: rows.length });
+    } catch (err) {
+      log.error('PAYMENT_STREAM', 'Failed to load persisted streams', { error: err.message });
+    }
+  }
+
+  // ── Observability ──────────────────────────────────────────────────────────
+
+  /**
+   * Return DB-backed stream states (definition + cursor progress).
+   * Visible across all instances.
+   *
+   * @returns {Promise<Array<{public_key, webhook_url, cursor, created_at, updated_at}>>}
+   */
+  async getStreamStates() {
+    try {
+      return await Database.query(
+        'SELECT public_key, webhook_url, cursor, created_at, updated_at FROM payment_streams',
+        []
+      );
+    } catch (err) {
+      log.warn('PAYMENT_STREAM', 'Failed to query stream states', { error: err.message });
+      return [];
+    }
+  }
+
+  // ── Public API ─────────────────────────────────────────────────────────────
 
   /**
    * Subscribe to the payment stream for a wallet address.
@@ -38,20 +133,28 @@ class PaymentStreamService {
    * @param {string} publicKey - Stellar public key to monitor
    * @param {Object} [options]
    * @param {string} [options.webhookUrl] - Webhook URL to notify on incoming payment
+   * @param {string} [options.cursor]     - Stellar paging token to resume from
    */
   subscribe(publicKey, options = {}) {
-    // Clean up any existing subscription first
     this.unsubscribe(publicKey);
 
-    log.info('PAYMENT_STREAM', 'Subscribing to payment stream', { publicKey });
+    log.info('PAYMENT_STREAM', 'Subscribing to payment stream', { publicKey, cursor: options.cursor || 'now' });
 
-    const stop = this.stellarService.streamTransactions(publicKey, (payment) => {
-      this._handlePayment(publicKey, payment, options).catch((err) => {
-        log.error('PAYMENT_STREAM', 'Error handling payment', { publicKey, error: err.message });
-      });
-    });
+    // Keep a mutable reference so _handlePayment can advance the cursor in-memory
+    const liveOptions = { ...options };
 
-    this.activeStreams.set(publicKey, { stop, reconnectTimer: null });
+    const stop = this.stellarService.streamTransactions(
+      publicKey,
+      (payment) => {
+        this._handlePayment(publicKey, payment, liveOptions).catch((err) => {
+          log.error('PAYMENT_STREAM', 'Error handling payment', { publicKey, error: err.message });
+        });
+      },
+      { cursor: liveOptions.cursor || 'now' }
+    );
+
+    this.activeStreams.set(publicKey, { stop, reconnectTimer: null, options: liveOptions });
+    this._persistStream(publicKey, liveOptions);
   }
 
   /**
@@ -66,25 +169,34 @@ class PaymentStreamService {
     if (entry.reconnectTimer) clearTimeout(entry.reconnectTimer);
     if (typeof entry.stop === 'function') entry.stop();
     this.activeStreams.delete(publicKey);
+    this._removePersistedStream(publicKey);
 
     log.info('PAYMENT_STREAM', 'Unsubscribed from payment stream', { publicKey });
   }
 
   /**
-   * Handle an incoming payment: create a transaction record and trigger webhook.
+   * Handle an incoming payment: update cursor, create a transaction record,
+   * and trigger webhook.
    *
    * @param {string} publicKey - Monitored wallet
-   * @param {Object} payment - Payment data from the stream
-   * @param {Object} options - Subscription options
+   * @param {Object} payment   - Payment data from the stream
+   * @param {Object} liveOptions - Subscription options (mutated to track cursor)
    * @returns {Promise<void>}
    */
-  async _handlePayment(publicKey, payment, options) {
+  async _handlePayment(publicKey, payment, liveOptions) {
     log.info('PAYMENT_STREAM', 'Incoming payment detected', {
       publicKey,
       transactionId: payment.id || payment.transactionId,
     });
 
-    // Create transaction record immediately (no reconciliation wait)
+    // Advance cursor so reconnects resume from this position
+    const cursor = payment.paging_token || payment.id || payment.transactionId;
+    if (cursor) {
+      liveOptions.cursor = String(cursor);
+      this._updateCursor(publicKey, String(cursor));
+    }
+
+    // Create transaction record (idempotency key prevents duplicates)
     try {
       const Transaction = require('../models/transaction');
       Transaction.create({
@@ -105,14 +217,14 @@ class PaymentStreamService {
     }
 
     // Trigger webhook if configured
-    if (options.webhookUrl) {
+    if (liveOptions.webhookUrl) {
       try {
         const { WebhookService } = require('./WebhookService');
         await WebhookService.deliver('payment.received', { publicKey, payment });
       } catch (err) {
         log.error('PAYMENT_STREAM', 'Failed to deliver webhook', {
           publicKey,
-          webhookUrl: options.webhookUrl,
+          webhookUrl: liveOptions.webhookUrl,
           error: err.message,
         });
       }
@@ -138,20 +250,23 @@ class PaymentStreamService {
 
     const timer = setTimeout(() => {
       log.info('PAYMENT_STREAM', 'Reconnecting stream', { publicKey, attempt });
-      this.subscribe(publicKey, options);
+      // Use the live options stored in the entry (has latest cursor)
+      const entry = this.activeStreams.get(publicKey);
+      this.subscribe(publicKey, entry ? entry.options : options);
     }, delay);
 
-    // Store timer so unsubscribe can cancel it
     const entry = this.activeStreams.get(publicKey);
     if (entry) {
       entry.reconnectTimer = timer;
     } else {
-      this.activeStreams.set(publicKey, { stop: null, reconnectTimer: timer });
+      this.activeStreams.set(publicKey, { stop: null, reconnectTimer: timer, options });
     }
   }
 
   /**
-   * Get list of actively monitored public keys.
+   * Get list of actively monitored public keys (in-memory, this instance only).
+   * For cross-instance state use getStreamStates().
+   *
    * @returns {string[]}
    */
   getActiveStreams() {
