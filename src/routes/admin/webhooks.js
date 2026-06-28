@@ -18,6 +18,15 @@ const { payloadSizeLimiter, ENDPOINT_LIMITS } = require('../../middleware/payloa
 const { requireAdmin} = require('../../middleware/rbac');
 const WebhookService = require('../../services/WebhookService');
 const Database = require('../../utils/database');
+const { validateSchema } = require('../../middleware/schemaValidation');
+
+const updateWebhookStatusSchema = validateSchema({
+  body: {
+    fields: {
+      status: { type: 'string', required: true, enum: ['active', 'disabled'] },
+    }
+  }
+});
 
 /**
  * GET /admin/webhooks
@@ -160,14 +169,10 @@ router.post('/:id/retry', requireApiKey, requireAdmin(), payloadSizeLimiter(ENDP
  * Update webhook status (disable/enable).
  * Body: { status: "disabled" | "active" }
  */
-router.patch('/:id', requireApiKey, requireAdmin(), payloadSizeLimiter(ENDPOINT_LIMITS.webhook), asyncHandler(async (req, res, next) => {
+router.patch('/:id', requireApiKey, requireAdmin(), updateWebhookStatusSchema, payloadSizeLimiter(ENDPOINT_LIMITS.webhook), asyncHandler(async (req, res, next) => {
   try {
     const webhookId = parseInt(req.params.id, 10);
     const { status } = req.body;
-    
-    if (!status || !['active', 'disabled'].includes(status)) {
-      return res.status(400).json({ success: false, error: 'status must be "active" or "disabled"' });
-    }
     
     // Verify webhook exists
     const webhook = await Database.get('SELECT id FROM webhooks WHERE id = ?', [webhookId]);

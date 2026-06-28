@@ -22,6 +22,15 @@ const PledgeFulfillmentService = require('../../services/PledgeFulfillmentServic
 const WebhookService = require('../../services/WebhookService');
 const AuditLogService = require('../../services/AuditLogService');
 const log = require('../../utils/log');
+const { validateSchema } = require('../../middleware/schemaValidation');
+
+const cancelPledgeSchema = validateSchema({
+  body: {
+    fields: {
+      reason: { type: 'string', required: false, nullable: true },
+    }
+  }
+});
 
 const VALID_STATUSES = ['pending', 'fulfilled', 'cancelled', 'expired'];
 
@@ -150,6 +159,7 @@ router.patch(
 router.patch(
   '/:id/cancel',
   checkPermission(PERMISSIONS.ADMIN_ALL),
+  cancelPledgeSchema,
   asyncHandler(async (req, res, next) => {
     try {
       const { id } = req.params;

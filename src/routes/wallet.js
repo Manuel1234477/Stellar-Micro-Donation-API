@@ -74,22 +74,65 @@ const walletCreateSchema = validateSchema({
   }
 });
 
-// Inflation destination schema for PATCH
-const inflationDestinationSchema = {
-  type: 'object',
-  required: ['destination', 'signedXDR'],
-  properties: {
-    destination: { type: 'string' },
-    signedXDR: { type: 'string' }
+const updateWalletLabelSchema = validateSchema({
+  body: {
+    fields: {
+      label: { type: 'string', required: false, nullable: true, maxLength: 100 },
+    }
   }
-};
+});
+
+const updateWalletSchema = validateSchema({
+  body: {
+    fields: {
+      label: { type: 'string', required: false, nullable: true, maxLength: 100 },
+      ownerName: { type: 'string', required: false, nullable: true, maxLength: 200 },
+    }
+  }
+});
+
+const updateHomeDomainSchema = validateSchema({
+  body: {
+    fields: {
+      domain: { type: 'string', required: true },
+      sourceSecret: { type: 'string', required: true },
+    }
+  }
+});
+
+const updateWalletLimitsSchema = validateSchema({
+  body: {
+    fields: {
+      daily_limit: { type: 'number', required: false, nullable: true },
+      monthly_limit: { type: 'number', required: false, nullable: true },
+      per_transaction_limit: { type: 'number', required: false, nullable: true },
+    }
+  }
+});
+
+const updateLeaderboardVisibilitySchema = validateSchema({
+  body: {
+    fields: {
+      visible: { type: 'boolean', required: true },
+    }
+  }
+});
+
+const inflationDestinationSchema = validateSchema({
+  body: {
+    fields: {
+      destination: { type: 'string', required: true },
+      signedXDR: { type: 'string', required: true },
+    }
+  }
+});
 
 // PATCH /wallets/:id/inflation-destination
 router.patch(
   '/:id/inflation-destination',
   requireAuth,
   requirePermission('wallets:write'),
-  validateSchema(inflationDestinationSchema),
+  inflationDestinationSchema,
   asyncHandler(async (req, res, next) => {
     try {
       const { id } = req.params;
@@ -630,7 +673,7 @@ router.get('/:id', checkPermission(PERMISSIONS.WALLETS_READ), walletIdSchema, ca
  * Body: { "label": "string" } — empty string or null clears the label.
  * Requires wallets:write permission (not admin).
  */
-router.patch('/:id/label', checkPermission(PERMISSIONS.WALLETS_UPDATE), walletIdSchema, payloadSizeLimiter(ENDPOINT_LIMITS.wallet), asyncHandler(async (req, res, next) => {
+router.patch('/:id/label', checkPermission(PERMISSIONS.WALLETS_UPDATE), walletIdSchema, updateWalletLabelSchema, payloadSizeLimiter(ENDPOINT_LIMITS.wallet), asyncHandler(async (req, res, next) => {
   try {
     const { id } = req.params;
     const { label } = req.body;
@@ -676,12 +719,8 @@ router.patch('/:id/label', checkPermission(PERMISSIONS.WALLETS_UPDATE), walletId
  * PATCH /wallets/:id
  * Update wallet metadata (label, ownerName only — publicKey is immutable)
  */
-router.patch('/:id', checkPermission(PERMISSIONS.WALLETS_UPDATE), payloadSizeLimiter(ENDPOINT_LIMITS.wallet), asyncHandler(async (req, res, next) => {
+router.patch('/:id', checkPermission(PERMISSIONS.WALLETS_UPDATE), updateWalletSchema, payloadSizeLimiter(ENDPOINT_LIMITS.wallet), asyncHandler(async (req, res, next) => {
   try {
-    // publicKey is immutable — changing it would break all FK relationships
-    if (req.body.publicKey !== undefined) {
-      return res.status(400).json({ success: false, error: 'Public key cannot be changed' });
-    }
 
     const { label, ownerName } = req.body;
 
@@ -716,7 +755,7 @@ router.patch('/:id', checkPermission(PERMISSIONS.WALLETS_UPDATE), payloadSizeLim
  * Set the home domain on a wallet's Stellar account.
  * Body: { domain: string, sourceSecret: string }
  */
-router.patch('/:id/home-domain', checkPermission(PERMISSIONS.WALLETS_UPDATE), walletIdSchema, payloadSizeLimiter(ENDPOINT_LIMITS.wallet), asyncHandler(async (req, res, next) => {
+router.patch('/:id/home-domain', checkPermission(PERMISSIONS.WALLETS_UPDATE), walletIdSchema, updateHomeDomainSchema, payloadSizeLimiter(ENDPOINT_LIMITS.wallet), asyncHandler(async (req, res, next) => {
   try {
     const { domain, sourceSecret } = req.body;
 
@@ -772,7 +811,7 @@ router.patch('/:id/home-domain', checkPermission(PERMISSIONS.WALLETS_UPDATE), wa
  * Idiomatic alias for PATCH — sets the home domain on a wallet's Stellar account.
  * Body: { domain: string, sourceSecret: string }
  */
-router.put('/:id/home-domain', checkPermission(PERMISSIONS.WALLETS_UPDATE), walletIdSchema, payloadSizeLimiter(ENDPOINT_LIMITS.wallet), asyncHandler(async (req, res, next) => {
+router.put('/:id/home-domain', checkPermission(PERMISSIONS.WALLETS_UPDATE), walletIdSchema, updateHomeDomainSchema, payloadSizeLimiter(ENDPOINT_LIMITS.wallet), asyncHandler(async (req, res, next) => {
   try {
     const { domain, sourceSecret } = req.body;
 
@@ -1001,7 +1040,7 @@ router.get('/:publicKey/transactions', checkPermission(PERMISSIONS.WALLETS_READ)
  * Set per-wallet donation limits (admin only)
  * Body: { daily_limit, monthly_limit, per_transaction_limit } — all optional, positive number or null
  */
-router.patch('/:id/limits', requireAdmin(), payloadSizeLimiter(ENDPOINT_LIMITS.wallet), asyncHandler(async (req, res, next) => {
+router.patch('/:id/limits', requireAdmin(), updateWalletLimitsSchema, payloadSizeLimiter(ENDPOINT_LIMITS.wallet), asyncHandler(async (req, res, next) => {
   try {
     const userId = parseInt(req.params.id, 10);
     if (isNaN(userId) || userId < 1) {
@@ -1066,7 +1105,7 @@ router.patch('/:id/limits', requireAdmin(), payloadSizeLimiter(ENDPOINT_LIMITS.w
  * Opt a wallet in or out of public leaderboard ranking.
  * Body: { visible: boolean }
  */
-router.patch('/:id/leaderboard-visibility', checkPermission(PERMISSIONS.WALLETS_UPDATE), walletIdSchema, payloadSizeLimiter(ENDPOINT_LIMITS.wallet), asyncHandler(async (req, res, next) => {
+router.patch('/:id/leaderboard-visibility', checkPermission(PERMISSIONS.WALLETS_UPDATE), walletIdSchema, updateLeaderboardVisibilitySchema, payloadSizeLimiter(ENDPOINT_LIMITS.wallet), asyncHandler(async (req, res, next) => {
   try {
     const { visible } = req.body || {};
     if (typeof visible !== 'boolean') {

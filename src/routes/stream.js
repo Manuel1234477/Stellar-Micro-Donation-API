@@ -153,6 +153,15 @@ const streamScheduleIdSchema = validateSchema({
   },
 });
 
+const updateScheduleSchema = validateSchema({
+  body: {
+    fields: {
+      amount: { types: ['number', 'numberString'], required: false },
+      frequency: { type: 'string', required: false, enum: ['daily', 'weekly', 'monthly'] },
+    }
+  }
+});
+
 /**
  * POST /stream/create
  * Create a recurring donation schedule
@@ -700,7 +709,7 @@ router.get('/schedules/:id/history', checkPermission(PERMISSIONS.STREAM_READ), s
  * Cancelled/suspended schedules cannot be updated (409).
  * Requires stream:write permission.
  */
-router.patch('/schedules/:id', checkPermission(PERMISSIONS.STREAM_UPDATE), streamScheduleIdSchema, payloadSizeLimiter(ENDPOINT_LIMITS.stream), asyncHandler(async (req, res, next) => {
+router.patch('/schedules/:id', checkPermission(PERMISSIONS.STREAM_UPDATE), streamScheduleIdSchema, updateScheduleSchema, payloadSizeLimiter(ENDPOINT_LIMITS.stream), asyncHandler(async (req, res, next) => {
   try {
     const { amount, frequency } = req.body;
 

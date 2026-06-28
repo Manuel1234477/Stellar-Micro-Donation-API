@@ -22,6 +22,16 @@ const GeoRuleService = require('../../services/GeoRuleService');
 const AuditLogService = require('../../services/AuditLogService');
 const log = require('../../utils/log');
 const { geoBlockMiddleware } = require('../../middleware/geoBlock');
+const { validateSchema } = require('../../middleware/schemaValidation');
+
+const updateGeoRuleSchema = validateSchema({
+  body: {
+    fields: {
+      active: { type: 'boolean', required: false },
+      description: { type: 'string', required: false, nullable: true },
+    }
+  }
+});
 
 const router = express.Router();
 
@@ -124,7 +134,7 @@ router.post('/', ...auth, async (req, res, next) => {
  * Update a geo rule (toggle active, change description).
  * Body: { active?: boolean, description?: string }
  */
-router.patch('/:id', ...auth, async (req, res, next) => {
+router.patch('/:id', ...auth, updateGeoRuleSchema, async (req, res, next) => {
   try {
     const id = parseInt(req.params.id, 10);
     if (!Number.isInteger(id) || id <= 0) {
