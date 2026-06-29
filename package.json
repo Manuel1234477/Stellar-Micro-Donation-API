@@ -44,7 +44,8 @@
     "mutation:watch": "node scripts/run-mutation-tests.js --watch",
     "changelog": "node scripts/generate-changelog.js",
     "changelog:write": "node scripts/generate-changelog.js --write",
-    "check:no-json-persistence": "node scripts/check-no-json-persistence.js"
+    "check:no-json-persistence": "node scripts/check-no-json-persistence.js",
+    "check:test-naming": "node scripts/check-test-naming.js"
   },
   "dependencies": {
     "ajv": "^8.12.0",
