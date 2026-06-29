@@ -27,7 +27,7 @@ jobs:
       LOAD_TEST_ERROR_RATE_MARGIN: '1.0'  # error-rate ceilings are not relaxed
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Set up Node.js
         uses: actions/setup-node@v4
