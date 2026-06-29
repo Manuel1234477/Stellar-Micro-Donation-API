@@ -89,11 +89,18 @@ router.get('/pool-status', checkPermission(PERMISSIONS.ADMIN_ALL), (req, res) =>
 /**
  * GET /admin/db/slow-queries
  * Returns the slowest queries captured during the last 24 hours.
- * Query params: limit (default 50, max 200), threshold (default SLOW_QUERY_WARN_MS)
+ * Query params: limit (default 50, max 100), threshold (default SLOW_QUERY_WARN_MS)
  */
 router.get('/slow-queries', checkPermission(PERMISSIONS.ADMIN_ALL), (req, res, next) => {
   try {
-    const limit = Math.min(200, parseLimit(req.query.limit) || 50);
+    const limit = parseLimit(req.query.limit) || 50;
+    if (limit > 100) {
+      const error = new Error('limit must be at most 100');
+      error.name = 'ValidationError';
+      error.status = 400;
+      error.code = 'INVALID_LIMIT';
+      throw error;
+    }
     const threshold = parseLimit(req.query.threshold);
     
     let queries = Database.getSlowQueries({ limit });

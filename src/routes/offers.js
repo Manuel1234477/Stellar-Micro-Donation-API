@@ -18,6 +18,7 @@ const { checkPermission } = require('../middleware/rbac');
 const { PERMISSIONS } = require('../utils/permissions');
 const { ValidationError } = require('../utils/errors');
 const { getStellarService } = require('../config/stellar');
+const { validateLimit } = require('../utils/pagination');
 
 const stellarService = getStellarService();
 
@@ -135,14 +136,21 @@ router.delete('/:id', requireApiKey, checkPermission(PERMISSIONS.DONATIONS_CREAT
  *   counterAsset - Buying asset  ('XLM' or 'CODE:ISSUER', URL-encoded)
  *
  * Query:
- *   limit {number} - Max bids/asks to return (default 20, max 200)
+ *   limit {number} - Max bids/asks to return (default 20, max 100)
  */
 router.get('/orderbook/:baseAsset/:counterAsset', requireApiKey, checkPermission(PERMISSIONS.DONATIONS_READ), asyncHandler(async (req, res) => {
   try {
     const normBase = normaliseAsset(decodeURIComponent(req.params.baseAsset));
     const normCounter = normaliseAsset(decodeURIComponent(req.params.counterAsset));
 
-    const limit = Math.min(parseInt(req.query.limit, 10) || 20, 200);
+    const limitResult = validateLimit(req.query.limit, { defaultValue: 20 });
+    if (!limitResult.valid) {
+      return res.status(400).json({
+        success: false,
+        error: { code: 'INVALID_LIMIT', message: limitResult.error },
+      });
+    }
+    const limit = limitResult.value;
 
     const result = await stellarService.getOrderBook(normBase, normCounter, limit);
     return res.status(200).json({ success: true, data: result });

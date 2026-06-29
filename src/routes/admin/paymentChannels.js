@@ -14,21 +14,26 @@ const asyncHandler = require('../../utils/asyncHandler');
 const { payloadSizeLimiter, ENDPOINT_LIMITS } = require('../../middleware/payloadSizeLimiter');
 const AuditLogService = require('../../services/AuditLogService');
 const serviceContainer = require('../../config/serviceContainer');
-const { ValidationError, NotFoundError } = require('../../utils/errors');
+const { ValidationError, NotFoundError, ERROR_CODES } = require('../../utils/errors');
+const { validateLimit } = require('../../utils/pagination');
 
 /**
  * GET /admin/payment-channels
  * List all active payment channels with pagination support
  * 
  * @query {string} [status] - Filter by status (open, closing, closed, settled, disputed)
- * @query {number} [limit=50] - Number of results per page
+ * @query {number} [limit=50] - Number of results per page (max 100)
  * @query {number} [offset=0] - Pagination offset
  */
 router.get('/', checkPermission(PERMISSIONS.ADMIN_ALL), asyncHandler(async (req, res) => {
   const paymentChannelService = serviceContainer.getPaymentChannelService();
-  
+
   const { status } = req.query;
-  const limit = parseInt(req.query.limit, 10) || 50;
+  const limitResult = validateLimit(req.query.limit, { defaultValue: 50 });
+  if (!limitResult.valid) {
+    throw new ValidationError(`Invalid limit: ${limitResult.error}`, null, ERROR_CODES.INVALID_LIMIT);
+  }
+  const limit = limitResult.value;
   const offset = parseInt(req.query.offset, 10) || 0;
 
   // Validate status if provided

@@ -138,6 +138,24 @@ function validateSnapshotAt(snapshotAt) {
 }
 
 /**
+ * Validate a `limit` query parameter against the global maximum page size.
+ *
+ * This is the single source of truth for page-size enforcement: every list
+ * endpoint must reject (not silently clamp) a limit that is missing-but-invalid,
+ * non-integer, zero/negative, or above MAX_LIMIT, so a client can never force
+ * an unbounded result set.
+ *
+ * @param {*} rawValue - Raw `limit` query value.
+ * @param {Object} [options]
+ * @param {number} [options.defaultValue] - Value used when limit is omitted (defaults to DEFAULT_LIMIT).
+ * @param {number} [options.max] - Maximum allowed page size (defaults to MAX_LIMIT).
+ * @returns {{valid: boolean, value?: number, error?: string}}
+ */
+function validateLimit(rawValue, { defaultValue = DEFAULT_LIMIT, max = MAX_LIMIT } = {}) {
+  return validateInteger(rawValue, { min: 1, max, default: defaultValue });
+}
+
+/**
  * Parse and validate an optional ISO 8601 snapshotAt timestamp.
  *
  * When provided, callers should add `AND <timestampColumn> <= :snapshotAt` to
@@ -436,6 +454,7 @@ module.exports = {
   encodeCursor,
   decodeCursor,
   validateSnapshotAt,
+  validateLimit,
   parseSnapshotAt,
   parseCursorPaginationQuery,
   createCursorFromItem,

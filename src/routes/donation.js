@@ -184,7 +184,7 @@ const perKeyRateLimit = require('../middleware/perKeyRateLimit');
 const { validateRequiredFields, validateFloat, validateXLMAmount, validateInteger } = require('../utils/validationHelpers');
 const { validateSchema } = require('../middleware/schemaValidation');
 const { validateDateRange } = require('../middleware/validation');
-const { parseCursorPaginationQuery } = require('../utils/pagination');
+const { parseCursorPaginationQuery, validateLimit } = require('../utils/pagination');
 const { payloadSizeLimiter, ENDPOINT_LIMITS } = require('../middleware/payloadSizeLimiter');
 const { parseAssetInput } = require('../utils/stellarAsset');
 const federation = require('../utils/federation');
@@ -1373,7 +1373,14 @@ router.get('/by-campaign/:campaignId', checkPermission(PERMISSIONS.DONATIONS_REA
   try {
     const { campaignId } = req.params;
     const { status, cursor } = req.query;
-    const limit = Math.min(Math.max(parseInt(req.query.limit, 10) || 20, 1), 100);
+    const limitResult = validateLimit(req.query.limit, { defaultValue: 20 });
+    if (!limitResult.valid) {
+      return res.status(400).json({
+        success: false,
+        error: { code: 'INVALID_LIMIT', message: limitResult.error },
+      });
+    }
+    const limit = limitResult.value;
 
     // Verify campaign exists
     const Database = require('../utils/database');
@@ -1483,7 +1490,13 @@ router.get('/recent', checkPermission(PERMISSIONS.DONATIONS_READ), asyncHandler(
           error: { code: 'INVALID_LIMIT', message: 'limit must be a positive integer' },
         });
       }
-      limit = Math.min(parsed, RECENT_MAX_LIMIT);
+      if (parsed > RECENT_MAX_LIMIT) {
+        return res.status(400).json({
+          success: false,
+          error: { code: 'INVALID_LIMIT', message: `limit must be at most ${RECENT_MAX_LIMIT}` },
+        });
+      }
+      limit = parsed;
     }
 
     const cacheKey = `donations:recent:${limit}`;

@@ -10,6 +10,7 @@ const { requireAdmin } = require('../middleware/rbac');
 const AuditLogService = require('../services/AuditLogService');
 const asyncHandler = require('../utils/asyncHandler');
 const { payloadSizeLimiter, ENDPOINT_LIMITS } = require('../middleware/payloadSizeLimiter');
+const { validateLimit } = require('../utils/pagination');
 
 const router = express.Router();
 
@@ -133,7 +134,7 @@ router.get('/:contractId/state', requireApiKey, requireAdmin(), asyncHandler(asy
  * Retrieve stored contract events for a given contract ID.
  *
  * Query params:
- *   limit (optional) — positive integer, maximum number of events to return
+ *   limit (optional) — positive integer, maximum number of events to return (max 100)
  *
  * Responses:
  *   200 { success: true, data: ContractEvent[], count: number }
@@ -144,17 +145,17 @@ router.get('/:id/events', asyncHandler(async (req, res) => {
   let limit;
 
   if (req.query.limit !== undefined) {
-    const parsed = parseInt(req.query.limit, 10);
-    if (!Number.isInteger(parsed) || parsed <= 0 || String(parsed) !== String(req.query.limit)) {
+    const limitResult = validateLimit(req.query.limit);
+    if (!limitResult.valid) {
       return res.status(400).json({
         success: false,
         error: {
           code: 'INVALID_REQUEST',
-          message: 'limit must be a positive integer',
+          message: limitResult.error,
         },
       });
     }
-    limit = parsed;
+    limit = limitResult.value;
   }
 
   try {
