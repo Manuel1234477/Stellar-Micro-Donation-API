@@ -11,15 +11,23 @@ function getStore() {
   return _store;
 }
 
-function buildRateLimitHeaders(limit, remaining, resetAt) {
-  const resetUnix = String(Math.ceil(resetAt / 1000));
+/**
+ * Build standard rate-limit response headers.
+ *
+ * @param {number} limit        - Total request ceiling for the window
+ * @param {number} remaining    - Requests remaining in the current window
+ * @param {number} resetUnixSec - Window reset time as a Unix timestamp in **seconds**
+ * @returns {Object} Header name → string value map
+ */
+function buildRateLimitHeaders(limit, remaining, resetUnixSec) {
+  const resetStr = String(Math.ceil(Number(resetUnixSec)));
   return {
     'RateLimit-Limit': String(limit),
     'RateLimit-Remaining': String(Math.max(0, remaining)),
-    'RateLimit-Reset': resetUnix,
+    'RateLimit-Reset': resetStr,
     'X-RateLimit-Limit': String(limit),
     'X-RateLimit-Remaining': String(Math.max(0, remaining)),
-    'X-RateLimit-Reset': resetUnix,
+    'X-RateLimit-Reset': resetStr,
   };
 }
 
@@ -31,7 +39,8 @@ const perKeyRateLimit = async (req, res, next) => {
   const windowSeconds = keyInfo.rateLimitWindowSeconds || DEFAULT_WINDOW_SECONDS;
 
   const result = await getStore().incrementAndCheck(keyInfo.id, limit, windowSeconds);
-  res.set(buildRateLimitHeaders(limit, result.remaining, result.resetAt));
+  // result.resetAt is in milliseconds; convert to seconds for the header contract
+  res.set(buildRateLimitHeaders(limit, result.remaining, Math.ceil(result.resetAt / 1000)));
 
   if (!result.allowed) {
     const retryAfter = Math.ceil((result.resetAt - Date.now()) / 1000);

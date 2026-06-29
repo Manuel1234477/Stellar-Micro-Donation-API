@@ -1,13 +1,15 @@
-function buildRateLimitHeaders(limit, remaining, resetTime) {
-  const resetUnix = String(Math.ceil(Number(resetTime)));
-  return {
-    'RateLimit-Limit': String(limit),
-    'RateLimit-Remaining': String(Math.max(0, remaining)),
-    'RateLimit-Reset': resetUnix,
-    'X-RateLimit-Limit': String(limit),
-    'X-RateLimit-Remaining': String(Math.max(0, remaining)),
-    'X-RateLimit-Reset': resetUnix,
-  };
-}
+/**
+ * Rate Limit Headers — re-export shim
+ *
+ * The canonical `buildRateLimitHeaders` implementation lives in
+ * `perKeyRateLimit.js`, which owns the per-authenticated-key sliding-window
+ * logic and sets these headers directly on each response.
+ *
+ * This module re-exports the function so that any future consumers can import
+ * from either location without introducing a duplicate implementation.
+ * See docs/RATE_LIMIT_COMPOSITION.md for the full layer description.
+ */
+
+const { buildRateLimitHeaders } = require('./perKeyRateLimit');
 
 module.exports = { buildRateLimitHeaders };

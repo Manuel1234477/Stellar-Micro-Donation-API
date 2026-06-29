@@ -415,7 +415,7 @@ exports.attachUserRole = () => {
 
             // Apply the same default rate limit as DB-backed keys
             const rlResult = checkRateLimit(legacyKeyId, DEFAULT_RATE_LIMIT, DEFAULT_WINDOW_SECONDS);
-            const rlHeaders = buildRateLimitHeaders(rlResult.limit, rlResult.remaining, rlResult.resetAt);
+            const rlHeaders = buildRateLimitHeaders(rlResult.limit, rlResult.remaining, Math.ceil(rlResult.resetAt / 1000));
             res.set(rlHeaders);
             res.set('X-API-Key-Legacy', 'true');
             res.set('Warning', '299 - "Legacy API key in use. Migrate to database-backed keys before 2026-12-31. See docs/MIGRATION_LEGACY_API_KEYS.md"');
