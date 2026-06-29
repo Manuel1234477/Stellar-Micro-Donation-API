@@ -25,6 +25,11 @@ const MAX_AGE = {
   'campaign-progress': 10,
   stats: 120,
   'exchange-rate': 300,
+  donation: 15,        // individual donation records — short TTL, state can change
+  'donation-list': 10, // list endpoints — more volatile
+  'donation-limits': 300, // rarely changes; config-driven
+  'cost-breakdown': 60,   // fee calculation; changes only with network fee updates
+  recurring: 30,       // recurring donation schedules
   default: 60,
 };
 
