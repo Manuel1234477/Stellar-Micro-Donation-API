@@ -10,4 +10,10 @@ function buildRateLimitHeaders(limit, remaining, resetTime) {
   };
 }
 
-module.exports = { buildRateLimitHeaders };
+function calculateRetryAfter(resetTime) {
+  if (!resetTime) return '1';
+  const ms = new Date(resetTime) - Date.now();
+  return String(Math.max(1, Math.ceil(ms / 1000)));
+}
+
+module.exports = { buildRateLimitHeaders, calculateRetryAfter };

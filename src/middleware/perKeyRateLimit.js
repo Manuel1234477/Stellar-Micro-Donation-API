@@ -1,6 +1,7 @@
 'use strict';
 
 const { getRateLimitStore } = require('./RateLimitStore');
+const { buildRateLimitHeaders, calculateRetryAfter } = require('./rateLimitHeaders');
 
 const DEFAULT_RATE_LIMIT = 100;
 const DEFAULT_WINDOW_SECONDS = 60;
@@ -9,18 +10,6 @@ let _store = null;
 function getStore() {
   if (!_store) _store = getRateLimitStore();
   return _store;
-}
-
-function buildRateLimitHeaders(limit, remaining, resetAt) {
-  const resetUnix = String(Math.ceil(resetAt / 1000));
-  return {
-    'RateLimit-Limit': String(limit),
-    'RateLimit-Remaining': String(Math.max(0, remaining)),
-    'RateLimit-Reset': resetUnix,
-    'X-RateLimit-Limit': String(limit),
-    'X-RateLimit-Remaining': String(Math.max(0, remaining)),
-    'X-RateLimit-Reset': resetUnix,
-  };
 }
 
 const perKeyRateLimit = async (req, res, next) => {
@@ -34,11 +23,11 @@ const perKeyRateLimit = async (req, res, next) => {
   res.set(buildRateLimitHeaders(limit, result.remaining, result.resetAt));
 
   if (!result.allowed) {
-    const retryAfter = Math.ceil((result.resetAt - Date.now()) / 1000);
-    res.set('Retry-After', String(retryAfter));
+    const retryAfter = calculateRetryAfter(result.resetAt);
+    res.set('Retry-After', retryAfter);
     return res.status(429).json({
       success: false,
-      error: { code: 'RATE_LIMIT_EXCEEDED', message: 'Rate limit exceeded.', retryAfter },
+      error: { code: 'RATE_LIMIT_EXCEEDED', message: 'Rate limit exceeded.', retryAfter: Number(retryAfter) },
     });
   }
 
