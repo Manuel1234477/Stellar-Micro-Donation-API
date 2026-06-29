@@ -1798,6 +1798,12 @@ router.get('/export/:jobId/download', requireApiKey, checkPermission(PERMISSIONS
  * @deprecated Use POST /donations/export for async export instead
  */
 router.get('/export', requireApiKey, checkPermission(PERMISSIONS.ADMIN_ALL), asyncHandler(async (req, res) => {
+  // RFC 8594 deprecation headers — sunset date is 2026-10-01 (≥ 4 weeks from first deprecation notice)
+  res.setHeader('Deprecation', 'true');
+  res.setHeader('Sunset', 'Wed, 01 Oct 2026 00:00:00 GMT');
+  res.setHeader('Link', '</docs/VERSIONING_STRATEGY.md#deprecation-worked-example-get-donationsexport>; rel="deprecation"');
+  log.warn('DEPRECATION', 'GET /donations/export is deprecated — use POST /donations/export instead. Removal scheduled for v2.0.0 (2026-10-01).');
+
   const { format = 'csv', startDate, endDate, status, senderPublicKey, recipientPublicKey } = req.query;
 
   if (!['csv', 'json'].includes(format)) {
