@@ -29,6 +29,15 @@ const _cache = new Map();
 /** Cache TTL in ms (1 hour) */
 const CACHE_TTL_MS = 60 * 60 * 1000;
 
+/** Maximum number of entries in the federation cache before eviction starts */
+const MAX_CACHE_SIZE = parseInt(process.env.FEDERATION_CACHE_MAX_SIZE, 10) || 5000;
+
+/** How often (ms) to sweep expired entries from the cache */
+const CLEANUP_INTERVAL_MS = parseInt(process.env.FEDERATION_CACHE_CLEANUP_INTERVAL_MS, 10) || 300000;
+
+/** Background cleanup timer handle */
+let _cleanupTimer = null;
+
 /**
  * Check whether a string looks like a federation address.
  * @param {string} value
@@ -78,6 +87,11 @@ async function resolveAddress(address, { _resolverFn } = {}) {
     }
 
     _cache.set(address, { result, expiresAt: Date.now() + CACHE_TTL_MS });
+    // Enforce max cache size — evict oldest entry if over limit
+    if (_cache.size > MAX_CACHE_SIZE) {
+      const oldest = _cache.keys().next().value;
+      if (oldest) _cache.delete(oldest);
+    }
     log.debug('FEDERATION', 'Resolved federation address', { address, account_id: result.account_id });
     return result;
   } catch (error) {
@@ -119,4 +133,40 @@ function getCacheSize() {
   return _cache.size;
 }
 
-module.exports = { isFederationAddress, resolveAddress, resolveRecipient, clearCache, getCacheSize };
+/**
+ * Remove all expired entries from the federation cache.
+ * @returns {number} Number of expired entries removed
+ */
+function cleanupCache() {
+  const now = Date.now();
+  let removed = 0;
+  for (const [address, entry] of _cache) {
+    if (now >= entry.expiresAt) {
+      _cache.delete(address);
+      removed++;
+    }
+  }
+  return removed;
+}
+
+/**
+ * Start periodic background cleanup of expired federation cache entries.
+ * Safe to call multiple times — only one timer runs.
+ */
+function startCacheCleanup() {
+  if (_cleanupTimer) return;
+  _cleanupTimer = setInterval(cleanupCache, CLEANUP_INTERVAL_MS);
+  if (_cleanupTimer.unref) _cleanupTimer.unref();
+}
+
+/**
+ * Stop the background federation cache cleanup timer.
+ */
+function stopCacheCleanup() {
+  if (_cleanupTimer) {
+    clearInterval(_cleanupTimer);
+    _cleanupTimer = null;
+  }
+}
+
+module.exports = { isFederationAddress, resolveAddress, resolveRecipient, clearCache, getCacheSize, cleanupCache, startCacheCleanup, stopCacheCleanup };

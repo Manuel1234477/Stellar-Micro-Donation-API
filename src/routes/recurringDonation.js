@@ -22,6 +22,7 @@ const { VALID_FREQUENCIES, SCHEDULE_STATUS, DONATION_FREQUENCIES } = require('..
 const {
   validateRequiredFields,
   validateFloat,
+  validateXLMAmount,
   validateEnum,
   validateInteger,
 } = require('../utils/validationHelpers');
@@ -74,9 +75,9 @@ router.post('/', checkPermission(PERMISSIONS.STREAM_CREATE), payloadSizeLimiter(
     }
 
     // ── Amount ───────────────────────────────────────────────────────────────
-    const amountResult = validateFloat(amount);
+    const amountResult = validateXLMAmount(amount);
     if (!amountResult.valid) {
-      return res.status(400).json({ success: false, error: `Invalid amount: ${amountResult.error}` });
+      return res.status(422).json({ success: false, error: `Invalid amount: ${amountResult.error}` });
     }
 
     // ── Frequency ────────────────────────────────────────────────────────────
@@ -159,7 +160,7 @@ router.post('/', checkPermission(PERMISSIONS.STREAM_CREATE), payloadSizeLimiter(
       [
         donor.id,
         recipient.id,
-        amountResult.value,
+        amountResult.xlm,
         normalizedFreq,
         customIntervalDays ? parseInt(customIntervalDays, 10) : null,
         maxExecutions ? parseInt(maxExecutions, 10) : null,
@@ -185,7 +186,7 @@ router.post('/', checkPermission(PERMISSIONS.STREAM_CREATE), payloadSizeLimiter(
     log.info('RECURRING_DONATION_ROUTE', 'Schedule created', {
       scheduleId: schedule.id,
       frequency: normalizedFreq,
-      amount: amountResult.value,
+      amount: amountResult.xlm,
     });
 
     return res.status(201).json({

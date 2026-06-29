@@ -137,6 +137,85 @@ function validateInteger(value, options = {}) {
 }
 
 /**
+ * Validate an XLM amount at the input boundary (issue #1158).
+ *
+ * Rules enforced:
+ *  - Input is coerced to a string before any numeric parsing so precision is
+ *    never silently lost by a prior parseFloat/Number call.
+ *  - Regex allows an optional integer part + up to 7 decimal places; no
+ *    exponent notation, no leading/trailing whitespace after trim.
+ *  - The numeric value must be strictly positive (> 0) unless allowZero is set.
+ *  - Optional min / max bounds (in XLM) are applied after parsing.
+ *  - On success, returns both the parsed XLM float and the equivalent integer
+ *    stroops (1 XLM = 10,000,000 stroops) for downstream math.
+ *
+ * @param {*}      value           - Raw input (string or number)
+ * @param {Object} [opts]
+ * @param {boolean}[opts.allowZero=false] - Permit zero amounts
+ * @param {number} [opts.min]      - Minimum XLM amount (inclusive)
+ * @param {number} [opts.max]      - Maximum XLM amount (inclusive)
+ * @returns {{ valid: boolean, xlm?: number, stroops?: number, error?: string, code?: string }}
+ */
+const XLM_AMOUNT_REGEX = /^\d+(\.\d{1,7})?$/;
+const STROOPS_PER_XLM  = 10_000_000;
+
+function validateXLMAmount(value, opts = {}) {
+  const { allowZero = false, min, max } = opts;
+
+  // Coerce to string — reject types that can't represent a numeric literal
+  let raw;
+  if (typeof value === 'string') {
+    raw = value.trim();
+  } else if (typeof value === 'number') {
+    // Reject NaN / Infinity before converting to string
+    if (!Number.isFinite(value)) {
+      return { valid: false, error: 'Amount must be a finite number', code: 'INVALID_AMOUNT' };
+    }
+    // Use toFixed(7) to avoid scientific notation for very small/large numbers
+    raw = value.toFixed(7).replace(/\.?0+$/, '') || '0';
+  } else {
+    return { valid: false, error: 'Amount must be a string or number', code: 'INVALID_AMOUNT' };
+  }
+
+  // Reject empty input
+  if (raw.length === 0) {
+    return { valid: false, error: 'Amount is required', code: 'INVALID_AMOUNT' };
+  }
+
+  // Reject scientific notation, negative prefix, or any non-digit/dot characters
+  if (!XLM_AMOUNT_REGEX.test(raw)) {
+    return {
+      valid: false,
+      error: 'Amount must be a positive decimal number with at most 7 decimal places (e.g. "10.5"). ' +
+             'Scientific notation, negative values, and extra characters are not allowed.',
+      code: 'INVALID_AMOUNT_FORMAT',
+    };
+  }
+
+  const xlm = parseFloat(raw);
+
+  if (!allowZero && xlm <= 0) {
+    return { valid: false, error: 'Amount must be greater than 0', code: 'AMOUNT_TOO_LOW' };
+  }
+  if (allowZero && xlm < 0) {
+    return { valid: false, error: 'Amount must not be negative', code: 'AMOUNT_TOO_LOW' };
+  }
+
+  if (min !== undefined && xlm < min) {
+    return { valid: false, error: `Amount must be at least ${min} XLM`, code: 'AMOUNT_BELOW_MINIMUM' };
+  }
+  if (max !== undefined && xlm > max) {
+    return { valid: false, error: `Amount must be at most ${max} XLM`, code: 'AMOUNT_EXCEEDS_MAXIMUM' };
+  }
+
+  // Compute stroops as an integer (ROUND-HALF-EVEN for the multiply; the
+  // regex guarantees ≤7 dp so Math.round is exact for representable values).
+  const stroops = Math.round(xlm * STROOPS_PER_XLM);
+
+  return { valid: true, xlm, stroops };
+}
+
+/**
  * Validate and parse float with range check
  * @param {*} value - Value to parse
  * @param {Object} options - Validation options
@@ -317,9 +396,11 @@ module.exports = {
   validateNonEmptyString,
   validateInteger,
   validateFloat,
+  validateXLMAmount,
   validateEnum,
   validateDifferent,
   validatePagination,
   validateRole,
   formatUnknownFieldError,
+  STROOPS_PER_XLM,
 };

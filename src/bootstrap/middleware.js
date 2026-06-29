@@ -29,6 +29,7 @@ const { fieldFilterMiddleware } = require('../middleware/fieldFilter');
 const { requestTimeout, TIMEOUTS } = require('../middleware/requestTimeout');
 const apiVersionMiddleware = require('../middleware/apiVersion');
 const requireApiKey = require('../middleware/apiKey');
+const { validatePayloadFields } = require('../middleware/validation');
 const asyncHandler = require('../utils/asyncHandler');
 const log = require('../utils/log');
 const requestCounter = require('../utils/requestCounter');
@@ -145,6 +146,9 @@ function applyMiddleware(app) {
     if (STREAMING_PATH_RE.test(req.path)) return next();
     return requestTimeout(GLOBAL_TIMEOUT_MS)(req, res, next);
   });
+
+  // ─── Mass-assignment protection: reject unknown fields on registered routes ───
+  app.use(validatePayloadFields);
 
   // ─── Schema version negotiation ──────────────────────────────────────────────
   app.use(apiVersionMiddleware);

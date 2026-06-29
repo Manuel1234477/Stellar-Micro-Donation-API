@@ -235,6 +235,13 @@ function mountRoutes(app, services = {}) {
     if (state.isShuttingDown) {
       return res.status(503).json({ status: 'not_ready', reason: 'server is shutting down' });
     }
+    if (!state.isInitialized) {
+      const initErr = state.initializationError;
+      return res.status(503).json({
+        status: 'not_ready',
+        reason: initErr ? `initialization failed: ${initErr}` : 'server still initializing',
+      });
+    }
     try {
       const readiness = await HealthCheckService.getReadiness(
         stellarService, networkStatusService, recurringDonationScheduler

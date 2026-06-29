@@ -489,6 +489,14 @@ class Database {
         db.configure('busyTimeout', TIMEOUT_DEFAULTS.DATABASE);
       }
 
+      // #1155: enforce FK constraints on every connection (SQLite resets per connection)
+      await new Promise((resolve, reject) => {
+        db.run('PRAGMA foreign_keys=ON', (err) => {
+          if (err) reject(new DatabaseError('Failed to enable foreign key enforcement', err));
+          else resolve();
+        });
+      });
+
       const connectionRecord = {
         id: state.nextConnectionId++,
         db,

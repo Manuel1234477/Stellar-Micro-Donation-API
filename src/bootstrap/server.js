@@ -144,6 +144,33 @@ async function startServer(app, overrideServices = {}) {
         await DonationExportService.initialize();
         AuditLogService.startAutoFlush();
 
+        // Verify Horizon connectivity before marking as ready
+        // This ensures the service doesn't accept traffic that depends on Horizon
+        const isMockStellar = process.env.USE_MOCK_STELLAR === 'true' || process.env.MOCK_STELLAR === 'true';
+        if (!isMockStellar && stellarService.server && typeof stellarService.server.root === 'function') {
+          try {
+            await Promise.race([
+              stellarService.server.root(),
+              new Promise((_, reject) =>
+                setTimeout(() => reject(new Error('Horizon root endpoint timed out')), 15000)
+              ),
+            ]);
+            log.info('STARTUP', 'Horizon connectivity verified');
+          } catch (horizonErr) {
+            log.error('STARTUP', 'Horizon connectivity check failed', { error: horizonErr.message });
+            state.initializationError = `Horizon unreachable: ${horizonErr.message}`;
+            process.exit(1);
+          }
+        }
+
+        // Start background cache cleanup timers
+        const Cache = require('../utils/cache');
+        Cache.startCleanup();
+        const { startMemCacheCleanup } = require('../middleware/deduplication');
+        startMemCacheCleanup();
+        const { startCacheCleanup: startFedCacheCleanup } = require('../utils/federation');
+        startFedCacheCleanup();
+
         if (process.env.NODE_ENV !== 'test') {
           const stopQuotaResetJob = startQuotaResetJob();
           server.stopQuotaResetJob = stopQuotaResetJob;
@@ -189,6 +216,8 @@ async function startServer(app, overrideServices = {}) {
           log.error('APP', 'Failed to initialize LeaderboardSSE', { error: err.message });
         }
 
+        // Mark as fully initialized — readiness checks will now return healthy
+        state.isInitialized = true;
         log.info('APP', 'API ready', {
           port: PORT,
           network: config.network,
@@ -205,6 +234,7 @@ async function startServer(app, overrideServices = {}) {
           });
         }
       } catch (initErr) {
+        state.initializationError = initErr.message;
         log.error('APP', 'Background initialization failed', { error: initErr.message });
         process.exit(1);
       }

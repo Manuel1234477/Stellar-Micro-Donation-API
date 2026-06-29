@@ -234,6 +234,34 @@ class DonationService {
     // Check per-recipient velocity limits (before Stellar transaction)
     await DonationVelocityService.checkVelocityLimits(senderId, receiverId, amount);
 
+    // #1157: Idempotency replay — if this key was already committed, return the original
+    if (idempotencyKey) {
+      const existing = await Database.get(
+        'SELECT * FROM transactions WHERE idempotencyKey = ?',
+        [idempotencyKey]
+      );
+      if (existing) {
+        log.info('DONATION_SERVICE', 'Idempotency replay: returning existing transaction', {
+          requestId,
+          idempotencyKey,
+          existingId: existing.id,
+        });
+        const { dailyRemaining, monthlyRemaining } = await LimitService.getRemainingLimits(senderId);
+        return {
+          id: existing.id,
+          stellarTxId: existing.stellar_tx_id,
+          ledger: existing.ledger,
+          amount,
+          sender: sender.publicKey,
+          receiver: receiver.publicKey,
+          timestamp: existing.timestamp,
+          status: TRANSACTION_STATES.SUBMITTED,
+          remainingLimits: { dailyRemaining, monthlyRemaining },
+          replayed: true,
+        };
+      }
+    }
+
     // Sanitize memo to prevent XSS and injection attacks
     const sanitizedMemo = memo ? sanitizeMemo(memo) : undefined;
 

@@ -175,54 +175,59 @@ class TransactionReconciliationService {
     try {
       const result = await this.stellarService.verifyTransaction(tx.stellarTxId);
 
-      if (result.verified && tx.status !== TRANSACTION_STATES.CONFIRMED) {
-        // Try to auto-confirm; if the state machine rejects the transition, flag for manual review
-        try {
-          Transaction.updateStatus(tx.id, TRANSACTION_STATES.CONFIRMED, {
-            transactionId: tx.stellarTxId,
-            ledger: result.transaction && result.transaction.ledger,
-            confirmedAt: new Date().toISOString(),
-          });
+      if (result.verified) {
+        // Check for amount/memo drift against the on-chain record
+        this._checkFieldDrift(tx, result);
 
-          // Invalidate caching for wallets involved in this transaction
-          const Cache = require('../utils/cache');
-          const Database = require('../utils/database');
+        if (tx.status !== TRANSACTION_STATES.CONFIRMED) {
+          // Try to auto-confirm; if the state machine rejects the transition, flag for manual review
           try {
-            if (tx.senderId) {
-              const sender = await Database.get('SELECT publicKey FROM users WHERE id = ?', [tx.senderId]);
-              if (sender) Cache.delete(`wallet_balance_${sender.publicKey}`);
+            Transaction.updateStatus(tx.id, TRANSACTION_STATES.CONFIRMED, {
+              transactionId: tx.stellarTxId,
+              ledger: result.transaction && result.transaction.ledger,
+              confirmedAt: new Date().toISOString(),
+            });
+
+            // Invalidate caching for wallets involved in this transaction
+            const Cache = require('../utils/cache');
+            const Database = require('../utils/database');
+            try {
+              if (tx.senderId) {
+                const sender = await Database.get('SELECT publicKey FROM users WHERE id = ?', [tx.senderId]);
+                if (sender) Cache.delete(`wallet_balance_${sender.publicKey}`);
+              }
+              if (tx.receiverId) {
+                const receiver = await Database.get('SELECT publicKey FROM users WHERE id = ?', [tx.receiverId]);
+                if (receiver) Cache.delete(`wallet_balance_${receiver.publicKey}`);
+              }
+            } catch (cacheErr) {
+              log.warn('RECONCILIATION', 'Failed to clear cache for confirmed transaction', { error: cacheErr.message });
             }
-            if (tx.receiverId) {
-              const receiver = await Database.get('SELECT publicKey FROM users WHERE id = ?', [tx.receiverId]);
-              if (receiver) Cache.delete(`wallet_balance_${receiver.publicKey}`);
-            }
-          } catch (cacheErr) {
-            log.warn('RECONCILIATION', 'Failed to clear cache for confirmed transaction', { error: cacheErr.message });
+
+            log.info('RECONCILIATION', 'Transaction corrected to confirmed', {
+              id: tx.id,
+              stellarTxId: tx.stellarTxId,
+              previousStatus: tx.status,
+            });
+
+            WebhookService.deliver('transaction.confirmed', {
+              id: tx.id,
+              stellarTxId: tx.stellarTxId,
+              previousStatus: tx.status,
+              status: TRANSACTION_STATES.CONFIRMED,
+              ledger: result.transaction && result.transaction.ledger,
+              confirmedAt: new Date().toISOString(),
+            }).catch(err => log.warn('RECONCILIATION', 'Webhook delivery error', { error: err.message }));
+          } catch (stateErr) {
+            // State machine rejected the transition — flag for manual resolution
+            this.flagDiscrepancy(
+              tx.id,
+              `Confirmed on-chain (${tx.stellarTxId}) but DB status is '${tx.status}': ${stateErr.message}`
+            );
           }
 
-          log.info('RECONCILIATION', 'Transaction corrected to confirmed', {
-            id: tx.id,
-            stellarTxId: tx.stellarTxId,
-            previousStatus: tx.status,
-          });
-
-          WebhookService.deliver('transaction.confirmed', {
-            id: tx.id,
-            stellarTxId: tx.stellarTxId,
-            previousStatus: tx.status,
-            status: TRANSACTION_STATES.CONFIRMED,
-            ledger: result.transaction && result.transaction.ledger,
-            confirmedAt: new Date().toISOString(),
-          }).catch(err => log.warn('RECONCILIATION', 'Webhook delivery error', { error: err.message }));
-        } catch (stateErr) {
-          // State machine rejected the transition — flag for manual resolution
-          this.flagDiscrepancy(
-            tx.id,
-            `Confirmed on-chain (${tx.stellarTxId}) but DB status is '${tx.status}': ${stateErr.message}`
-          );
+          return true;
         }
-
-        return true;
       }
 
       return false;
@@ -243,6 +248,53 @@ class TransactionReconciliationService {
 
       throw error;
     }
+  }
+
+  /**
+   * Check for amount or memo drift between the local record and the
+   * on-chain transaction. Flags a discrepancy if they differ.
+   * @param {object} tx - Local transaction record
+   * @param {object} result - On-chain verification result
+   * @private
+   */
+  _checkFieldDrift(tx, result) {
+    const onChainTx = result.transaction;
+    if (!onChainTx) return;
+
+    const onChainAmount = parseFloat(
+      (onChainTx.operations && onChainTx.operations[0] && onChainTx.operations[0].amount) || '0'
+    );
+    const localAmount = parseFloat(tx.amount || '0');
+
+    if (onChainAmount > 0 && localAmount > 0 && Math.abs(onChainAmount - localAmount) > 0.0000001) {
+      this._emitDriftAlert(tx, 'amount', localAmount, onChainAmount);
+    }
+
+    if (tx.memo && onChainTx.memo && tx.memo !== onChainTx.memo) {
+      this._emitDriftAlert(tx, 'memo', tx.memo, onChainTx.memo);
+    }
+  }
+
+  /**
+   * Emit an alert when on-chain data differs from the local record.
+   * @param {object} tx
+   * @param {string} field
+   * @param {*} localValue
+   * @param {*} onChainValue
+   * @private
+   */
+  _emitDriftAlert(tx, field, localValue, onChainValue) {
+    log.error('RECONCILIATION', 'ALERT: Local/on-chain field mismatch detected', {
+      transactionId: tx.id,
+      stellarTxId: tx.stellarTxId || 'unknown',
+      field,
+      localValue,
+      onChainValue,
+    });
+    this.flagDiscrepancy(
+      tx.id,
+      `Field '${field}' mismatch: local=${JSON.stringify(localValue)}, on-chain=${JSON.stringify(onChainValue)}`
+    );
   }
 
   // ─── Orphan detection & compensation ─────────────────────────────────────
@@ -275,7 +327,36 @@ class TransactionReconciliationService {
     // Collect all Stellar transactions from the mock/real service
     const stellarTxs = this._getAllStellarTransactions();
 
-    const orphans = stellarTxs.filter(tx => !knownStellarIds.has(tx.transactionId));
+    // Also fetch Horizon transactions for known wallet addresses
+    let horizonTxs = [];
+    try {
+      const wallets = await Database.query(
+        'SELECT DISTINCT publicKey FROM users WHERE publicKey IS NOT NULL',
+        []
+      );
+      const walletKeys = wallets.map(w => w.publicKey).filter(Boolean);
+      const horizonResults = await Promise.allSettled(
+        walletKeys.map(key => this._fetchHorizonTransactions(key, 20))
+      );
+      const seen = new Set();
+      for (const result of horizonResults) {
+        if (result.status === 'fulfilled') {
+          for (const tx of result.value) {
+            if (!seen.has(tx.transactionId)) {
+              seen.add(tx.transactionId);
+              horizonTxs.push(tx);
+            }
+          }
+        }
+      }
+    } catch (err) {
+      log.warn('RECONCILIATION', 'Failed to fetch Horizon transactions for orphan detection', {
+        error: err.message,
+      });
+    }
+
+    const allKnown = [...stellarTxs, ...horizonTxs];
+    const orphans = allKnown.filter(tx => !knownStellarIds.has(tx.transactionId));
 
     if (orphans.length === 0) {
       return { detected: 0, compensated: 0, orphans: [] };
@@ -380,7 +461,7 @@ class TransactionReconciliationService {
 
   /**
    * Collect all transactions from the Stellar service's in-memory store.
-   * Works with MockStellarService; real implementations would query Horizon.
+   * Works with MockStellarService; falls back to Horizon query for real service.
    *
    * @returns {Array} Flat, deduplicated list of Stellar transaction objects
    * @private
@@ -406,6 +487,42 @@ class TransactionReconciliationService {
       return all;
     }
     return [];
+  }
+
+  /**
+   * Fetch recent transactions for known wallets from Horizon for orphan detection.
+   * Only works with a real StellarService (not mock).
+   * @param {string} publicKey - Stellar public key to query
+   * @param {number} [limit=50] - Max transactions to fetch
+   * @returns {Promise<Array>} List of transaction-like objects
+   * @private
+   */
+  async _fetchHorizonTransactions(publicKey, limit = 50) {
+    if (!this.stellarService || !this.stellarService.server) return [];
+    try {
+      const server = this.stellarService.server;
+      const response = await server.transactions()
+        .forAccount(publicKey)
+        .limit(limit)
+        .order('desc')
+        .call();
+      return (response.records || []).map(tx => ({
+        transactionId: tx.id,
+        hash: tx.hash,
+        source: tx.source_account,
+        destination: (tx.operations && tx.operations[0] && tx.operations[0].to) || tx.source_account,
+        amount: (tx.operations && tx.operations[0] && tx.operations[0].amount) || '0',
+        memo: tx.memo || null,
+        timestamp: tx.created_at,
+      }));
+    } catch (error) {
+      if (error.response && error.response.status === 404) return [];
+      log.warn('RECONCILIATION', 'Failed to fetch Horizon transactions for orphan detection', {
+        publicKey,
+        error: error.message,
+      });
+      return [];
+    }
   }
 
   // ─── Discrepancy management ───────────────────────────────────────────────

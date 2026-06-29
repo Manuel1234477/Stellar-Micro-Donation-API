@@ -94,7 +94,7 @@ const Database = require('../utils/database');
 const { checkPermission } = require('../middleware/rbac');
 const { PERMISSIONS } = require('../utils/permissions');
 const { VALID_FREQUENCIES, SCHEDULE_STATUS } = require('../constants');
-const { validateRequiredFields, validateFloat, validateEnum } = require('../utils/validationHelpers');
+const { validateRequiredFields, validateFloat, validateXLMAmount, validateEnum } = require('../utils/validationHelpers');
 const log = require('../utils/log');
 const { validateSchema } = require('../middleware/schemaValidation');
 const { isValidStellarPublicKey } = require('../utils/validators');
@@ -153,6 +153,15 @@ const streamScheduleIdSchema = validateSchema({
   },
 });
 
+const updateScheduleSchema = validateSchema({
+  body: {
+    fields: {
+      amount: { types: ['number', 'numberString'], required: false },
+      frequency: { type: 'string', required: false, enum: ['daily', 'weekly', 'monthly'] },
+    }
+  }
+});
+
 /**
  * POST /stream/create
  * Create a recurring donation schedule
@@ -175,9 +184,9 @@ router.post('/create', payloadSizeLimiter(ENDPOINT_LIMITS.stream), requestTimeou
     }
 
     // Validate amount
-    const amountValidation = validateFloat(amount);
+    const amountValidation = validateXLMAmount(amount);
     if (!amountValidation.valid) {
-      return res.status(400).json({
+      return res.status(422).json({
         success: false,
         error: `Invalid amount: ${amountValidation.error}`
       });
@@ -257,7 +266,7 @@ router.post('/create', payloadSizeLimiter(ENDPOINT_LIMITS.stream), requestTimeou
       `INSERT INTO recurring_donations
        (donorId, recipientId, amount, frequency, nextExecutionDate, status)
        VALUES (?, ?, ?, ?, ?, ?)`,
-      [donor.id, recipient.id, parseFloat(amount), frequency.toLowerCase(), nextExecutionDate.toISOString(), SCHEDULE_STATUS.ACTIVE]
+      [donor.id, recipient.id, amountValidation.xlm, frequency.toLowerCase(), nextExecutionDate.toISOString(), SCHEDULE_STATUS.ACTIVE]
     );
 
     // Fetch the created schedule
@@ -700,7 +709,7 @@ router.get('/schedules/:id/history', checkPermission(PERMISSIONS.STREAM_READ), s
  * Cancelled/suspended schedules cannot be updated (409).
  * Requires stream:write permission.
  */
-router.patch('/schedules/:id', checkPermission(PERMISSIONS.STREAM_UPDATE), streamScheduleIdSchema, payloadSizeLimiter(ENDPOINT_LIMITS.stream), asyncHandler(async (req, res, next) => {
+router.patch('/schedules/:id', checkPermission(PERMISSIONS.STREAM_UPDATE), streamScheduleIdSchema, updateScheduleSchema, payloadSizeLimiter(ENDPOINT_LIMITS.stream), asyncHandler(async (req, res, next) => {
   try {
     const { amount, frequency } = req.body;
 
@@ -712,9 +721,9 @@ router.patch('/schedules/:id', checkPermission(PERMISSIONS.STREAM_UPDATE), strea
     }
 
     if (amount !== undefined) {
-      const amountValidation = validateFloat(amount);
+      const amountValidation = validateXLMAmount(amount);
       if (!amountValidation.valid) {
-        return res.status(400).json({ success: false, error: `Invalid amount: ${amountValidation.error}` });
+        return res.status(422).json({ success: false, error: `Invalid amount: ${amountValidation.error}` });
       }
     }
 
@@ -742,7 +751,7 @@ router.patch('/schedules/:id', checkPermission(PERMISSIONS.STREAM_UPDATE), strea
     }
 
     const oldValues = { amount: schedule.amount, frequency: schedule.frequency };
-    const newAmount = amount !== undefined ? parseFloat(amount) : schedule.amount;
+    const newAmount = amount !== undefined ? parseFloat(String(amount).trim()) : schedule.amount;
     const newFrequency = frequency !== undefined ? frequency.toLowerCase() : schedule.frequency;
 
     // Recalculate nextExecutionDate if frequency changed

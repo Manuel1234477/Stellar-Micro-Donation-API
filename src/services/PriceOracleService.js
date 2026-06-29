@@ -11,6 +11,7 @@
 
 const https = require('https');
 const log = require('../utils/log');
+const { convertToXLMWithMeta } = require('../utils/currencyConversion');
 
 const SUPPORTED_CURRENCIES = ['usd', 'eur', 'gbp'];
 const CACHE_TTL_MS = 5 * 60 * 1000; // 5 minutes
@@ -84,7 +85,9 @@ async function getRates() {
 }
 
 /**
- * Convert an amount in the given fiat currency to XLM.
+ * Convert an amount in the given fiat currency to XLM using the central
+ * rounding policy (round-half-even, 7 decimal places).
+ *
  * @param {number} amount
  * @param {string} currency  e.g. "USD"
  * @returns {Promise<number>} XLM amount (7 decimal places)
@@ -98,12 +101,16 @@ async function convertToXLM(amount, currency) {
   }
 
   const rates = await getRates();
-  const xlmPerUnit = rates[key]; // e.g. 0.12 USD per 1 XLM  →  1 USD = 1/0.12 XLM
-  if (!xlmPerUnit || xlmPerUnit <= 0) {
+  // rates[key] = price of 1 XLM in that currency (e.g. 0.10 USD/XLM)
+  // rateXLMperUnit = how many XLM 1 unit buys = 1 / rates[key]
+  const xlmPrice = rates[key];
+  if (!xlmPrice || xlmPrice <= 0) {
     throw new Error(`Invalid rate for ${currency}`);
   }
 
-  return parseFloat((amount / xlmPerUnit).toFixed(7));
+  const rateXLMperUnit = 1 / xlmPrice;
+  const { xlm } = convertToXLMWithMeta(amount, currency, rateXLMperUnit, new Date().toISOString());
+  return xlm;
 }
 
 /**

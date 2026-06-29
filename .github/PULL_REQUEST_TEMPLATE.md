@@ -29,5 +29,6 @@ npm test
 - [ ] Lint passes (`npm run lint`)
 - [ ] All tests pass (`npm test`)
 - [ ] `openapi:check` passes (`npm run openapi:check`) — or N/A
+- [ ] `npm audit --audit-level=high` passes — or vulnerability triaged in `SECURITY.md`
 - [ ] Database migration included if schema changed
 - [ ] Documentation updated if behaviour changed

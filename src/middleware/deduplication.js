@@ -24,6 +24,9 @@ const DEFAULT_OPTIONS = {
 
 // In-memory fallback used when the dedup_cache table does not exist yet
 const _memCache = new Map();
+const MEM_CACHE_MAX_SIZE = parseInt(process.env.DEDUP_MEM_CACHE_MAX_SIZE, 10) || 5000;
+const MEM_CACHE_CLEANUP_INTERVAL_MS = parseInt(process.env.DEDUP_MEM_CACHE_CLEANUP_INTERVAL_MS, 10) || 60000;
+let _memCleanupTimer = null;
 
 function _memGet(key) {
   const item = _memCache.get(key);
@@ -34,6 +37,45 @@ function _memGet(key) {
 
 function _memSet(key, value, ttlMs) {
   _memCache.set(key, { value, expiresAt: Date.now() + ttlMs });
+  if (_memCache.size > MEM_CACHE_MAX_SIZE) {
+    const oldest = _memCache.keys().next().value;
+    if (oldest) _memCache.delete(oldest);
+  }
+}
+
+/**
+ * Remove expired entries from the in-memory dedup fallback cache.
+ * @returns {number} Number of entries removed
+ */
+function _memCleanup() {
+  const now = Date.now();
+  let removed = 0;
+  for (const [key, item] of _memCache) {
+    if (now > item.expiresAt) {
+      _memCache.delete(key);
+      removed++;
+    }
+  }
+  return removed;
+}
+
+/**
+ * Start periodic background cleanup for the in-memory dedup fallback cache.
+ */
+function startMemCacheCleanup() {
+  if (_memCleanupTimer) return;
+  _memCleanupTimer = setInterval(_memCleanup, MEM_CACHE_CLEANUP_INTERVAL_MS);
+  if (_memCleanupTimer.unref) _memCleanupTimer.unref();
+}
+
+/**
+ * Stop the background dedup memory cache cleanup timer.
+ */
+function stopMemCacheCleanup() {
+  if (_memCleanupTimer) {
+    clearInterval(_memCleanupTimer);
+    _memCleanupTimer = null;
+  }
 }
 
 /**
@@ -164,4 +206,4 @@ function createDeduplicationMiddleware(options = {}) {
   };
 }
 
-module.exports = { createDeduplicationMiddleware, computeFingerprint };
+module.exports = { createDeduplicationMiddleware, computeFingerprint, startMemCacheCleanup, stopMemCacheCleanup };

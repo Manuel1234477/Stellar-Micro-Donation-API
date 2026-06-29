@@ -31,6 +31,8 @@ class SequenceCacheService {
     this.stellarService = stellarService;
     this.cacheStalenessThresholdMs = config.cacheStalenessThresholdMs || 300000; // 5 minutes
     this.maxRetryCount = config.maxRetryCount || 3;
+    this.maxCacheSize = config.maxCacheSize || 10000;
+    this.cleanupIntervalMs = config.cleanupIntervalMs || 300000;
 
     // Cache structure: { accountAddress: { sequence, lastFamilyCount, fetchedAt, optimisticDeltas: [] } }
     this.cache = new Map();
@@ -48,9 +50,15 @@ class SequenceCacheService {
     // Lock management for preventing concurrent fetches
     this.fetchLocks = new Map();
 
+    // Background cleanup of stale entries
+    this._cleanupTimer = null;
+    this._startCleanup();
+
     log.info('SEQ_CACHE', 'SequenceCacheService initialized', {
       cacheStalenessThresholdMs: this.cacheStalenessThresholdMs,
       maxRetryCount: this.maxRetryCount,
+      maxCacheSize: this.maxCacheSize,
+      cleanupIntervalMs: this.cleanupIntervalMs,
     });
   }
 
@@ -274,6 +282,62 @@ class SequenceCacheService {
       errorCount: this.metrics.totalErrors,
       message: isHealthy ? 'Sequence cache operational' : 'Sequence cache degraded',
     };
+  }
+
+  /**
+   * Remove stale cache entries and enforce max cache size.
+   * @returns {{ removed: number }} Number of entries removed
+   */
+  cleanupStaleEntries() {
+    const now = Date.now();
+    let removed = 0;
+
+    for (const [address, entry] of this.cache) {
+      if (now - entry.fetchedAt > this.cacheStalenessThresholdMs * 2) {
+        this.cache.delete(address);
+        this.fetchLocks.delete(address);
+        removed++;
+      }
+    }
+
+    while (this.cache.size > this.maxCacheSize) {
+      const oldest = this.cache.keys().next().value;
+      if (!oldest) break;
+      this.cache.delete(oldest);
+      this.fetchLocks.delete(oldest);
+      removed++;
+    }
+
+    if (removed > 0) {
+      log.debug('SEQ_CACHE', 'Cleanup removed stale entries', { removed });
+    }
+
+    return { removed };
+  }
+
+  /**
+   * Start background cleanup timer.
+   * @private
+   */
+  _startCleanup() {
+    if (this._cleanupTimer) return;
+    const timerRegistry = require('../utils/timerRegistry');
+    this._cleanupTimer = timerRegistry.createInterval(
+      () => this.cleanupStaleEntries(),
+      this.cleanupIntervalMs,
+      'seq-cache-cleanup'
+    );
+    if (this._cleanupTimer.unref) this._cleanupTimer.unref();
+  }
+
+  /**
+   * Stop background cleanup timer.
+   */
+  stopCleanup() {
+    if (this._cleanupTimer) {
+      clearInterval(this._cleanupTimer);
+      this._cleanupTimer = null;
+    }
   }
 
   /**

@@ -6,4 +6,6 @@
 module.exports = {
   isShuttingDown: false,
   inFlightRequests: 0,
+  isInitialized: false,
+  initializationError: null,
 };

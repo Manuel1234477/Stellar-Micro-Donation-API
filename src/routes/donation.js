@@ -181,7 +181,7 @@ const { ValidationError, ERROR_CODES } = require('../utils/errors');
 const log = require('../utils/log');
 const { donationRateLimiter, verificationRateLimiter, batchRateLimiter } = require('../middleware/rateLimiter');
 const perKeyRateLimit = require('../middleware/perKeyRateLimit');
-const { validateRequiredFields, validateFloat, validateInteger } = require('../utils/validationHelpers');
+const { validateRequiredFields, validateFloat, validateXLMAmount, validateInteger } = require('../utils/validationHelpers');
 const { validateSchema } = require('../middleware/schemaValidation');
 const { validateDateRange } = require('../middleware/validation');
 const { parseCursorPaginationQuery } = require('../utils/pagination');
@@ -306,9 +306,9 @@ router.post('/send', payloadSizeLimiter(ENDPOINT_LIMITS.singleDonation), donatio
       });
     }
 
-    const amountValidation = validateFloat(amount);
+    const amountValidation = validateXLMAmount(amount);
     if (!amountValidation.valid) {
-      return res.status(400).json({
+      return res.status(422).json({
         success: false,
         error: `Invalid amount: ${amountValidation.error}`
       });
@@ -341,7 +341,7 @@ router.post('/send', payloadSizeLimiter(ENDPOINT_LIMITS.singleDonation), donatio
     const result = await donationService.sendCustodialDonation({
       senderId,
       receiverId,
-      amount: amountValidation.value,
+      amount: amountValidation.xlm,
       memo,
       campaign_id,
       idempotencyKey: req.idempotency.key,
@@ -515,9 +515,9 @@ router.post('/', payloadSizeLimiter(ENDPOINT_LIMITS.singleDonation), donationRat
       });
     }
 
-    const amountValidation = validateFloat(amount);
+    const amountValidation = validateXLMAmount(amount);
     if (!amountValidation.valid) {
-      return res.status(400).json({
+      return res.status(422).json({
         error: `Invalid amount: ${amountValidation.error}`
       });
     }
@@ -574,7 +574,7 @@ router.post('/', payloadSizeLimiter(ENDPOINT_LIMITS.singleDonation), donationRat
 
     // Delegate to service
     const transaction = await donationService.createDonationRecord({
-      amount: amountValidation.value,
+      amount: amountValidation.xlm,
       currency: currency || 'XLM',
       donor,
       recipient: resolvedRecipient,
@@ -689,9 +689,9 @@ router.get('/cost-breakdown', checkPermission(PERMISSIONS.DONATIONS_READ), (req,
       );
     }
 
-    const amountValidation = validateFloat(amount);
+    const amountValidation = validateXLMAmount(amount);
     if (!amountValidation.valid) {
-      return res.status(400).json({
+      return res.status(422).json({
         success: false,
         error: `Invalid amount: ${amountValidation.error}`,
       });
@@ -710,7 +710,7 @@ router.get('/cost-breakdown', checkPermission(PERMISSIONS.DONATIONS_READ), (req,
     const usdRate = xlmUsdRate ? parseFloat(xlmUsdRate) || 0 : 0;
 
     const breakdown = calculateCostBreakdown({
-      amount: amountValidation.value,
+      amount: amountValidation.xlm,
       surgeFeeMultiplier: surgeMultiplier,
       platformFeePercent,
       xlmUsdRate: usdRate,
@@ -889,9 +889,9 @@ async function processCustodialDonation(req, res, next) {
       });
     }
 
-    const amountValidation = validateFloat(amount);
+    const amountValidation = validateXLMAmount(amount);
     if (!amountValidation.valid) {
-      return res.status(400).json({ success: false, error: `Invalid amount: ${amountValidation.error}` });
+      return res.status(422).json({ success: false, error: `Invalid amount: ${amountValidation.error}` });
     }
 
     // Validate memo byte length per Stellar MEMO_TEXT spec (max 28 bytes)
@@ -928,7 +928,7 @@ async function processCustodialDonation(req, res, next) {
     if (globalDailyMax > 0) {
       try {
         await withDonorLock(String(senderId), () =>
-          LimitService.checkLimits(senderId, amountValidation.value)
+          LimitService.checkLimits(senderId, amountValidation.xlm)
         );
       } catch (limitErr) {
         if (limitErr && limitErr.details && limitErr.details.limit !== undefined) {
@@ -948,7 +948,7 @@ async function processCustodialDonation(req, res, next) {
     const result = await donationService.sendCustodialDonation({
       senderId,
       receiverId,
-      amount: amountValidation.value,
+      amount: amountValidation.xlm,
       memo: memo || null,
       idempotencyKey: req.idempotency && req.idempotency.key,
       requestId: req.id,
@@ -1067,7 +1067,7 @@ router.post('/batch', requireApiKey, batchRateLimiter, checkPermission(PERMISSIO
         const result = await donationService.sendCustodialDonation({
           senderId: senderIdValidation.value,
           receiverId: receiverIdValidation.value,
-          amount: amountValidation.value,
+          amount: amountValidation.xlm,
           memo: donation.memo || null,
           notes: donation.notes || null,
           tags: donation.tags || null,

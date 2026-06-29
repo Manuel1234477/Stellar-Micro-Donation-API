@@ -4,6 +4,11 @@
 
 const CACHE = new Map();
 
+const DEFAULT_MAX_SIZE = parseInt(process.env.CACHE_MAX_SIZE, 10) || 10000;
+const CLEANUP_INTERVAL_MS = parseInt(process.env.CACHE_CLEANUP_INTERVAL_MS, 10) || 60000;
+
+let _cleanupTimer = null;
+
 class Cache {
   /**
    * Set a value in the cache with a specific TTL
@@ -14,6 +19,11 @@ class Cache {
   static set(key, value, ttlMs) {
     const expiresAt = Date.now() + ttlMs;
     CACHE.set(key, { value, expiresAt });
+
+    if (CACHE.size > DEFAULT_MAX_SIZE) {
+      const oldest = CACHE.keys().next().value;
+      CACHE.delete(oldest);
+    }
   }
 
   /**
@@ -58,6 +68,50 @@ class Cache {
    */
   static clear() {
     CACHE.clear();
+  }
+
+  /**
+   * Remove all expired entries from the cache.
+   * @returns {number} Number of entries removed
+   */
+  static cleanup() {
+    const now = Date.now();
+    let removed = 0;
+    for (const [key, item] of CACHE) {
+      if (now > item.expiresAt) {
+        CACHE.delete(key);
+        removed++;
+      }
+    }
+    return removed;
+  }
+
+  /**
+   * Start periodic background cleanup of expired entries.
+   * Safe to call multiple times — only one timer runs.
+   */
+  static startCleanup() {
+    if (_cleanupTimer) return;
+    _cleanupTimer = setInterval(() => Cache.cleanup(), CLEANUP_INTERVAL_MS);
+    if (_cleanupTimer.unref) _cleanupTimer.unref();
+  }
+
+  /**
+   * Stop the background cleanup timer.
+   */
+  static stopCleanup() {
+    if (_cleanupTimer) {
+      clearInterval(_cleanupTimer);
+      _cleanupTimer = null;
+    }
+  }
+
+  /**
+   * Return the current cache size.
+   * @returns {number}
+   */
+  static getSize() {
+    return CACHE.size;
   }
 }
 
