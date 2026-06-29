@@ -9,6 +9,12 @@
 
 const StellarSdk = require('stellar-sdk');
 const log = require('../utils/log');
+const {
+  horizonPoolAcquireDuration,
+  recordHorizonPoolStatus,
+  recordHorizonPoolCooldownEvent,
+  recordHorizonPoolRecoveryEvent,
+} = require('../utils/metrics');
 
 const DEFAULT_POOL_SIZE = 3;
 const MAX_POOL_SIZE = 10;
@@ -36,6 +42,7 @@ class HorizonPool {
     this._index = 0;          // round-robin cursor
 
     this._init();
+    recordHorizonPoolStatus(this.getStatus());
   }
 
   _init() {
@@ -58,17 +65,22 @@ class HorizonPool {
    * @returns {import('stellar-sdk').Horizon.Server}
    */
   getServer() {
-    this._tryRecover();
+    const endTimer = horizonPoolAcquireDuration.startTimer();
+    try {
+      this._tryRecover();
 
-    const healthyMembers = this._members.filter(m => m.healthy);
-    if (healthyMembers.length === 0) {
-      // All unhealthy — return first member as emergency fallback
-      return this._members[0].server;
+      const healthyMembers = this._members.filter(m => m.healthy);
+      if (healthyMembers.length === 0) {
+        // All unhealthy — return first member as emergency fallback
+        return this._members[0].server;
+      }
+
+      // Round-robin over healthy members
+      this._index = (this._index + 1) % healthyMembers.length;
+      return healthyMembers[this._index % healthyMembers.length].server;
+    } finally {
+      endTimer();
     }
-
-    // Round-robin over healthy members
-    this._index = (this._index + 1) % healthyMembers.length;
-    return healthyMembers[this._index % healthyMembers.length].server;
   }
 
   /**
@@ -80,6 +92,8 @@ class HorizonPool {
     if (member && member.healthy) {
       member.healthy = false;
       member.unhealthyAt = Date.now();
+      recordHorizonPoolCooldownEvent();
+      recordHorizonPoolStatus(this.getStatus());
       log.warn('HORIZON_POOL', 'Pool member marked unhealthy', {
         url: this.horizonUrl,
         healthy: this.healthyCount,
@@ -101,6 +115,8 @@ class HorizonPool {
         this._healthCheck(member).catch(() => {});
         member.healthy = true;
         member.unhealthyAt = null;
+        recordHorizonPoolRecoveryEvent();
+        recordHorizonPoolStatus(this.getStatus());
         log.info('HORIZON_POOL', 'Pool member re-admitted after cooldown', {
           url: this.horizonUrl,
         });
