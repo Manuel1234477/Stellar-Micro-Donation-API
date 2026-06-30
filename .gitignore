@@ -113,3 +113,31 @@ sdk/python/.coverage
 
 # Generated encrypted backup artifacts from backup/restore tests
 data/backups/
+
+# Test snapshots (Jest auto-generates these; do not commit)
+**/__snapshots__/
+*.snap
+
+# Jest cache
+.jest-cache/
+jest_0/
+
+# Temporary test databases
+test-*.db
+*.test.db
+
+# Load test reports
+tests/load/reports/
+
+# Stryker mutation testing output
+.stryker-tmp/
+reports/
+
+# Runtime data / SQLite WAL files
+data/*.db
+data/*.db-shm
+data/*.db-wal
+data/memo-keys/
+
+# Local memory / scratch files (internal agent notes)
+memory/

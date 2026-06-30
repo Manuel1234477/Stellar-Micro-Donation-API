@@ -715,6 +715,8 @@ The scheduler runs automatically when the server starts and checks for due donat
 
 ### Technical Documentation
 - **[Architecture Documentation](docs/ARCHITECTURE.md)** - Detailed system architecture
+- **[Database Schema](docs/DATABASE_SCHEMA.md)** - ER diagram and per-table column reference
+- **[SEP Compliance](docs/SEP_COMPLIANCE.md)** - SEP-10 web auth, SEP-2 federation, and stellar.toml
 - **[Versioning Strategy](docs/VERSIONING_STRATEGY.md)** - SemVer rules, release flow, and breaking change policy
 - **[Stellar Failure Simulation](docs/STELLAR_FAILURE_SIMULATION.md)** - Network failure testing guide
 - **[API Flow Diagram](API%20flow%20diagram.txt)** - API request flow
@@ -729,6 +731,8 @@ The scheduler runs automatically when the server starts and checks for due donat
 ## 🤝 Contributing
 
 Please read our **[Contributing Guide](CONTRIBUTING.md)** before submitting a PR.
+
+For security vulnerabilities, see our **[Security Policy](SECURITY.md)** — please do not open public issues for security reports.
 
 **New to the project?** Check out our [Onboarding Checklist](ONBOARDING_CHECKLIST.md) for a step-by-step guide to getting started!
 
