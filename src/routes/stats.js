@@ -164,11 +164,29 @@ const optionalDateRangeQuerySchema = validateSchema({
     fields: {
       startDate: { type: 'dateString', required: false },
       endDate: { type: 'dateString', required: false },
+      // `from` and `to` are deprecated aliases for `startDate` and `endDate`.
+      // They are still accepted for backwards compatibility but will be
+      // normalised to `startDate`/`endDate` before the handler runs.
       from: { type: 'dateString', required: false },
       to: { type: 'dateString', required: false },
     },
   },
 });
+
+/**
+ * Middleware that normalises the deprecated `from`/`to` query parameters to
+ * `startDate`/`endDate` so the rest of the handler only needs to read one set
+ * of names.  `startDate`/`endDate` take precedence when both are supplied.
+ */
+function normaliseDateAliases(req, _res, next) {
+  if (!req.query.startDate && req.query.from) {
+    req.query.startDate = req.query.from;
+  }
+  if (!req.query.endDate && req.query.to) {
+    req.query.endDate = req.query.to;
+  }
+  next();
+}
 
 const walletAnalyticsSchema = validateSchema({
   params: {
@@ -310,7 +328,8 @@ router.get(
 /**
  * GET /stats/summary
  * Get overall summary statistics
- * Query params: startDate/endDate or from/to (all optional, ISO format)
+ * Query params: startDate, endDate (all optional, ISO format).
+ *   `from` and `to` are accepted as deprecated aliases for `startDate`/`endDate`.
  *
  * Cached with TTL (STATS_SUMMARY_CACHE_TTL_SECONDS, default 60s).
  * Cache key includes query parameters so different filter combinations are independent.
@@ -321,27 +340,27 @@ router.get(
   "/summary",
   checkPermission(PERMISSIONS.STATS_READ),
   auditStatsAccess,
+  normaliseDateAliases,
   optionalDateRangeQuerySchema,
   (req, res, next) => {
     try {
-      const fromParam = req.query.from || req.query.startDate;
-      const toParam = req.query.to || req.query.endDate;
+      const { startDate, endDate } = req.query;
 
       let start, end;
 
-      if (fromParam) {
-        start = new Date(fromParam);
+      if (startDate) {
+        start = new Date(startDate);
         if (isNaN(start.getTime())) {
-          return res.status(400).json({ success: false, error: 'Invalid date format for startDate/from' });
+          return res.status(400).json({ success: false, error: 'Invalid date format for startDate' });
         }
       } else {
         start = new Date(0);
       }
 
-      if (toParam) {
-        end = new Date(toParam);
+      if (endDate) {
+        end = new Date(endDate);
         if (isNaN(end.getTime())) {
-          return res.status(400).json({ success: false, error: 'Invalid date format for endDate/to' });
+          return res.status(400).json({ success: false, error: 'Invalid date format for endDate' });
         }
       } else {
         end = new Date();

@@ -30,6 +30,7 @@ const WalletService = require('../services/WalletService');
 const AuditLogService = require('../services/AuditLogService');
 const log = require('../utils/log');
 const { parseCursorPaginationQuery } = require('../utils/pagination');
+const { toISOStringUTC } = require('../utils/timestampUtils');
 
 const walletService = new WalletService();
 
@@ -569,7 +570,7 @@ router.get('/:id/history', checkPermission(PERMISSIONS.WALLETS_READ), walletIdSc
         stellarTxId: tx.id,
         amount: tx.operations?.[0]?.amount || '0',
         memo: tx.memo || null,
-        timestamp: tx.created_at,
+        timestamp: toISOStringUTC(tx.created_at),
         pagingToken: tx.paging_token,
       })),
       pagination: { nextCursor, hasMore },
@@ -625,7 +626,7 @@ router.get('/:id/history', checkPermission(PERMISSIONS.WALLETS_READ), walletIdSc
       receiver: tx.receiverPublicKey,
       amount: (tx.amount / STROOPS_PER_XLM).toFixed(7),
       memo: tx.memo,
-      timestamp: tx.timestamp,
+      timestamp: toISOStringUTC(tx.timestamp),
     })),
     pagination: { nextCursor, hasMore },
   });
