@@ -50,7 +50,7 @@
     "docs:error-codes": "node scripts/generate-error-codes.js"
   },
   "dependencies": {
-    "ajv": "^8.12.0",
+    "ajv": "^8.20.0",
     "csv-parse": "^6.2.1",
     "dotenv": "^17.4.2",
     "express": "^4.18.2",
