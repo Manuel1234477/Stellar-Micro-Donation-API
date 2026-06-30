@@ -200,3 +200,30 @@ When the PR is ready:
 - Reference the issue with `Closes #<number>` in the PR description.
 - Fill in the PR template (summary, testing notes, breaking changes).
 - Request at least one review before merging.
+
+---
+
+## 9. Security
+
+**Do not open a public GitHub issue for security vulnerabilities.**
+
+See **[SECURITY.md](../SECURITY.md)** for:
+- The private reporting channel (email or GitHub private vulnerability reporting)
+- Supported versions and patching policy
+- Response SLAs
+- Safe-harbor statement for good-faith researchers
+
+---
+
+## 10. Key Documentation
+
+When working on a feature, these docs will save you time:
+
+| Topic | Document |
+|-------|----------|
+| Quickstart (fresh clone → first request) | [docs/quickstart.md](../docs/quickstart.md) |
+| Database schema & ER diagram | [docs/DATABASE_SCHEMA.md](../docs/DATABASE_SCHEMA.md) |
+| SEP-10 web auth & federation | [docs/SEP_COMPLIANCE.md](../docs/SEP_COMPLIANCE.md) |
+| API endpoint examples | [docs/API_EXAMPLES.md](../docs/API_EXAMPLES.md) |
+| Architecture overview | [docs/ARCHITECTURE.md](../docs/ARCHITECTURE.md) |
+| Troubleshooting | [docs/DEVELOPER_TROUBLESHOOTING_GUIDE.md](../docs/DEVELOPER_TROUBLESHOOTING_GUIDE.md) |

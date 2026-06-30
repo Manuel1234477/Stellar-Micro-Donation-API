@@ -127,10 +127,13 @@ docs/
 
 ### For Developers
 - [Quick Start Guide](guides/QUICK_START.md)
+- [Local Dev Quickstart](quickstart.md) ⭐ NEW
 - [Architecture Overview](architecture/ARCHITECTURE.md)
+- [Database Schema & ER Diagram](DATABASE_SCHEMA.md) ⭐ NEW
+- [SEP Compliance (SEP-10, SEP-2)](SEP_COMPLIANCE.md) ⭐ NEW
 - [API Documentation](features/STATS_API.md)
 - [Testing Guide](testing/TEST_COVERAGE_REPORT.md)
-- [Versioning Strategy](VERSIONING_STRATEGY.md) ⭐ NEW
+- [Versioning Strategy](VERSIONING_STRATEGY.md)
 
 ### For Release Management
 - [Versioning Strategy](VERSIONING_STRATEGY.md) — SemVer rules, breaking vs. non-breaking changes, release flow, deprecation policy
@@ -138,6 +141,7 @@ docs/
 - [CI Pipeline](CI_PIPELINE.md)
 
 ### For Security
+- [Security Policy](../SECURITY.md) ⭐ NEW — vulnerability reporting & disclosure
 - [Security Audit](security/DONATION_FLOW_SECURITY_AUDIT.md)
 - [Security Fixes](security/SECURITY_FIXES_IMPLEMENTATION_PLAN.md)
 - [Permission System](testing/PERMISSIONS.md)
