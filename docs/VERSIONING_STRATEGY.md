@@ -236,16 +236,98 @@ When a feature, endpoint, or behaviour is scheduled for removal:
    console.warn('[DEPRECATED] GET /v1/wallets/:id/balance — use GET /v2/wallets/:id/balance instead. Removal scheduled for v2.0.0.');
    ```
 
-3. **Add a `Deprecation` response header** on affected endpoints:
+3. **Add `Deprecation` and `Sunset` response headers** (RFC 8594) on affected endpoints, plus a `Link` header pointing to migration docs:
 
    ```
-   Deprecation: version="v1"
-   Sunset: Mon, 30 Jun 2026 00:00:00 GMT
+   Deprecation: true
+   Sunset: Wed, 01 Oct 2026 00:00:00 GMT
+   Link: </docs/VERSIONING_STRATEGY.md#migration-guide>; rel="deprecation"
    ```
+
+   The `Sunset` date must be at least **4 weeks** after the first deprecation announcement.
 
 4. **Document** the migration path in `CHANGELOG.md` and the relevant `docs/` guide.
 
 5. **Remove** the deprecated code only after the sunset date has passed and the MAJOR version has been released.
+
+### Deprecation checklist
+
+For every endpoint or behaviour that is deprecated, the following must all be done before the MAJOR release:
+
+| Step | Where |
+|------|--------|
+| Add `Deprecation: true` header | route handler |
+| Add `Sunset: <RFC 7231 date>` header | route handler |
+| Add `Link: <url>; rel="deprecation"` header | route handler |
+| Log a server-side `DEPRECATION` warning | route handler |
+| Create a GitHub issue labelled `deprecation` | GitHub |
+| Add a `### Deprecated` entry to `CHANGELOG.md` | `CHANGELOG.md` |
+| Document the migration path in `docs/` | `docs/` |
+
+### Sunset date selection
+
+- Minimum notice period: **4 weeks** from the first public announcement.
+- Recommended: align the sunset date with the next scheduled MAJOR release.
+- Express the date in RFC 7231 format: `DDD, DD MMM YYYY HH:MM:SS GMT`.
+
+---
+
+## Deprecation worked example: `GET /donations/export`
+
+This section is the end-to-end worked example required by issue #1187.
+
+### Background
+
+`GET /donations/export` is a synchronous, streaming export introduced in #919.  
+It was superseded by the async job-based `POST /donations/export` (+ `GET /donations/export/:jobId/download`), which is safer for large datasets and plays well with timeouts and load-balancers.
+
+### What was done
+
+1. **Headers emitted** on every `GET /donations/export` response:
+
+   ```
+   Deprecation: true
+   Sunset: Wed, 01 Oct 2026 00:00:00 GMT
+   Link: </docs/VERSIONING_STRATEGY.md#deprecation-worked-example-get-donationsexport>; rel="deprecation"
+   ```
+
+2. **Server-side warning** logged at `WARN` level whenever the endpoint is called:
+
+   ```
+   [DEPRECATION] GET /donations/export is deprecated — use POST /donations/export instead. Removal scheduled for v2.0.0 (2026-10-01).
+   ```
+
+3. **CHANGELOG.md** entry added under `### Deprecated`.
+
+4. **Sunset date**: 2026-10-01 — at least 4 weeks from the deprecation notice, aligned with the planned v2.0.0 release.
+
+### Migration guide
+
+| Old (deprecated) | New (recommended) |
+|------------------|-------------------|
+| `GET /donations/export?format=csv` | `POST /donations/export` → poll `GET /donations/export/:jobId` → download `GET /donations/export/:jobId/download` |
+
+**Step-by-step migration:**
+
+```bash
+# 1. Start the async export job
+curl -X POST https://api.example.com/donations/export \
+  -H "X-API-Key: $API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{"format":"csv","startDate":"2026-01-01","endDate":"2026-06-30"}'
+# → { "jobId": "abc123", "status": "queued" }
+
+# 2. Poll until complete (status = "done")
+curl https://api.example.com/donations/export/abc123 \
+  -H "X-API-Key: $API_KEY"
+# → { "jobId": "abc123", "status": "done", "downloadUrl": "..." }
+
+# 3. Download the file
+curl "https://api.example.com/donations/export/abc123/download" \
+  -H "X-API-Key: $API_KEY" -o donations.csv
+```
+
+Clients that currently consume the synchronous streaming response should switch to the async flow before 2026-10-01.
 
 ---
 

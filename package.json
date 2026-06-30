@@ -46,7 +46,8 @@
     "changelog:write": "node scripts/generate-changelog.js --write",
     "changelog:check": "node scripts/check-changelog-sync.js",
     "check:no-json-persistence": "node scripts/check-no-json-persistence.js",
-    "check:test-naming": "node scripts/check-test-naming.js"
+    "check:test-naming": "node scripts/check-test-naming.js",
+    "docs:error-codes": "node scripts/generate-error-codes.js"
   },
   "dependencies": {
     "ajv": "^8.12.0",
