@@ -1,4 +1,5 @@
 const crypto = require('crypto');
+const StellarSdk = require('stellar-sdk');
 const { ValidationError, NotFoundError, BusinessLogicError, ERROR_CODES } = require('../../utils/errors');
 const log = require('../../utils/log');
 
@@ -151,9 +152,7 @@ class MockAccounts {
       throw new NotFoundError('Account not found', ERROR_CODES.WALLET_NOT_FOUND);
     }
     this.service._ensureAssetBalances(account);
-    return {
-      balances: [{ asset_type: 'native', balance: account.assetBalances.native }]
-    };
+    return [{ asset_type: 'native', balance: account.assetBalances.native }];
   }
 
   async getAccountInfo(publicKey) {
@@ -234,7 +233,14 @@ class MockAccounts {
   }
 
   isValidAddress(address) {
-    return typeof address === 'string' && /^G[A-Z2-7]{55}$/.test(address);
+    // Mock is more lenient for testing - accepts any string starting with G, or valid Stellar keys
+    return (
+      typeof address === 'string' && 
+      (
+        /^G[A-Z2-7]{55}$/.test(address) || 
+        /^G[A-Z0-9]+$/.test(address)
+      )
+    );
   }
 
   async getHomeDomain(publicKey) {

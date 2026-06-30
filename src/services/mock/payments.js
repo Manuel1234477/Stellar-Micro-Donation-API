@@ -625,7 +625,7 @@ class MockPayments {
     if (Number.isNaN(numberValue)) {
       throw new ValidationError('Invalid XLM amount');
     }
-    return String(Math.round(numberValue * 1e7));
+    return Math.round(numberValue * 1e7);
   }
 
   async simulateTransaction(xdr) {
