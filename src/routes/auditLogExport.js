@@ -17,6 +17,7 @@ const { validateSchema } = require('../middleware/schemaValidation');
 const asyncHandler = require('../utils/asyncHandler');
 const AuditLogService = require('../services/AuditLogService');
 const AuditLogExportService = require('../services/AuditLogExportService');
+const { requestTimeout, TIMEOUTS } = require('../middleware/requestTimeout');
 
 /**
  * Schema for audit log export request
@@ -69,8 +70,10 @@ const exportStatusSchema = validateSchema({
 /**
  * GET /api-keys/:id/audit-log
  * Export audit logs for a specific API key
+ *
+ * Explicit 45s timeout (TIMEOUTS.export) — this generates CSV/JSON synchronously.
  */
-router.get('/:id/audit-log', requireAdmin(), auditLogExportSchema, asyncHandler(async (req, res, next) => {
+router.get('/:id/audit-log', requestTimeout(TIMEOUTS.export), requireAdmin(), auditLogExportSchema, asyncHandler(async (req, res, next) => {
   try {
     const apiKeyId = req.params.id;
     const { startDate, endDate, action, format = 'json' } = req.query;

@@ -24,6 +24,7 @@ const { cacheMiddleware } = require('../middleware/caching');
 const { validateDataEntry } = require('../middleware/validateDataEntry');
 const { toWalletResponse } = require('../utils/responseSanitizer');
 const Wallet = require('../models/wallet');
+const { requestTimeout, TIMEOUTS } = require('../middleware/requestTimeout');
 const { STROOPS_PER_XLM } = require('../constants');
 const WalletService = require('../services/WalletService');
 const AuditLogService = require('../services/AuditLogService');
@@ -425,8 +426,10 @@ router.get('/', checkPermission(PERMISSIONS.WALLETS_READ), cacheMiddleware('wall
  * GET /wallets/:id/balance
  * Returns XLM balance with TTL caching. Use ?refresh=true to force a live query.
  * Requires wallets:read permission.
+ *
+ * Explicit 10s timeout (TIMEOUTS.balance) — bounds the live-refresh Horizon lookup.
  */
-router.get('/:id/balance', checkPermission(PERMISSIONS.WALLETS_READ), walletIdSchema, asyncHandler(async (req, res, next) => {
+router.get('/:id/balance', requestTimeout(TIMEOUTS.balance), checkPermission(PERMISSIONS.WALLETS_READ), walletIdSchema, asyncHandler(async (req, res, next) => {
   try {
     const forceRefresh = req.query.refresh === 'true';
 

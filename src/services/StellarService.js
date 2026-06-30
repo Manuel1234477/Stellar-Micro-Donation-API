@@ -19,6 +19,7 @@ const { STELLAR_NETWORKS, HORIZON_URLS } = require('../constants');
 const StellarErrorHandler = require('../utils/stellarErrorHandler');
 const log = require('../utils/log');
 const { withTimeout, TIMEOUT_DEFAULTS, TimeoutError } = require('../utils/timeoutHandler');
+const { runWithAbortController, getCurrentAbortSignal } = require('../utils/abortContext');
 const { CircuitBreaker } = require('../utils/circuitBreaker');
 const HorizonPool = require('./HorizonPool');
 const {
@@ -246,10 +247,12 @@ class StellarService extends StellarServiceInterface {
           'X-Request-ID': this.correlationId || correlationHeaders['X-Correlation-ID'],
         };
         
+        const signal = getCurrentAbortSignal();
         const response = await fetch(url, {
           method,
           headers: mergedHeaders,
           body: data ? JSON.stringify(data) : undefined,
+          ...(signal ? { signal } : {}),
         });
         
         if (!response.ok) {
@@ -382,8 +385,15 @@ class StellarService extends StellarServiceInterface {
       try {
         // Each attempt goes through the circuit breaker so that failures are
         // counted and the circuit can open mid-retry if the threshold is hit.
+        // The operation runs inside an abort context so that if this attempt's
+        // timeout fires, the underlying HTTP request (see
+        // StellarService._createHttpClient) is actually aborted rather than
+        // left to finish in the background after we've already moved on.
+        const abortController = new AbortController();
         return await this.circuitBreaker.execute(() =>
-          withTimeout(operation(), timeoutMs, operationName)
+          runWithAbortController(abortController, () =>
+            withTimeout(operation(), timeoutMs, operationName, abortController)
+          )
         );
       } catch (error) {
         // Fast-fail immediately when the circuit is open — no retries
@@ -439,6 +449,13 @@ class StellarService extends StellarServiceInterface {
     const txHash = builtTx.hash().toString('hex');
 
     try {
+      // Deliberately not abort-cancelled on timeout: once submitTransaction's
+      // HTTP request has reached Horizon, the transaction may already be
+      // broadcast to the network — aborting the client-side wait can't undo
+      // that. Instead, on timeout we fall through to the verification step
+      // below, which checks whether the transaction actually landed so the
+      // caller (combined with the idempotency-key middleware) never produces
+      // a duplicate submission just because the client timed out waiting.
       const result = await withTimeout(
         this.server.submitTransaction(builtTx),
         this.timeouts.submit,

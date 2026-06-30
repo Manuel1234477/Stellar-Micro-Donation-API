@@ -141,9 +141,16 @@ function applyMiddleware(app) {
   app.use(fieldFilterMiddleware());
 
   // ─── Global request timeout (exempt streaming endpoints) ─────────────────────
+  // Health checks get their own tight budget (TIMEOUTS.health); everything else
+  // falls back to the configured global timeout unless a route sets its own
+  // explicit, tighter requestTimeout() (e.g. donation submission, balance
+  // lookups, exports — see those route files).
   const GLOBAL_TIMEOUT_MS = parseInt(process.env.REQUEST_TIMEOUT_MS, 10) || TIMEOUTS.donation;
   app.use((req, res, next) => {
     if (STREAMING_PATH_RE.test(req.path)) return next();
+    if (req.path.startsWith('/health') || req.path.startsWith('/api/v1/health')) {
+      return requestTimeout(TIMEOUTS.health)(req, res, next);
+    }
     return requestTimeout(GLOBAL_TIMEOUT_MS)(req, res, next);
   });
 

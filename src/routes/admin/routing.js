@@ -13,6 +13,7 @@ const { requireAdmin } = require('../../middleware/rbac');
 const serviceContainer = require('../../config/serviceContainer');
 const asyncHandler = require('../../utils/asyncHandler');
 const { payloadSizeLimiter, ENDPOINT_LIMITS } = require('../../middleware/payloadSizeLimiter');
+const { validateLimit } = require('../../utils/pagination');
 
 /**
  * POST /admin/routing/pools
@@ -164,7 +165,14 @@ router.get('/decisions', requireApiKey, requireAdmin(), asyncHandler(async (req,
   try {
     const { donationId, poolName, strategy } = req.query;
     const page = Math.max(1, parseInt(req.query.page, 10) || 1);
-    const limit = Math.min(100, Math.max(1, parseInt(req.query.limit, 10) || 20));
+    const limitResult = validateLimit(req.query.limit, { defaultValue: 20 });
+    if (!limitResult.valid) {
+      return res.status(400).json({
+        success: false,
+        error: { code: 'INVALID_LIMIT', message: limitResult.error },
+      });
+    }
+    const limit = limitResult.value;
     const repo = serviceContainer.getRoutingDecisionRepo();
 
     let decisions;

@@ -20,6 +20,7 @@ const { PERMISSIONS } = require('../utils/permissions');
 const AuditLogService = require('../services/AuditLogService');
 const SseManager = require('../services/SseManager');
 const LeaderboardSSE = require('../services/LeaderboardSSE');
+const { validateLimit } = require('../utils/pagination');
 
 /** Valid time periods for leaderboard queries */
 const VALID_PERIODS = ['all', 'monthly', 'weekly', 'daily'];
@@ -46,19 +47,16 @@ function validateLeaderboardQuery(query) {
   }
   
   // Validate limit
-  let parsedLimit = DEFAULT_LIMIT;
-  if (limit !== undefined) {
-    parsedLimit = parseInt(limit, 10);
-    if (isNaN(parsedLimit) || parsedLimit < 1 || parsedLimit > MAX_LIMIT) {
-      return { 
-        error: `Invalid limit. Must be a number between 1 and ${MAX_LIMIT}` 
-      };
-    }
+  const limitResult = validateLimit(limit, { defaultValue: DEFAULT_LIMIT, max: MAX_LIMIT });
+  if (!limitResult.valid) {
+    return {
+      error: `Invalid limit. ${limitResult.error}`
+    };
   }
-  
+
   return {
     period: period || 'all',
-    limit: parsedLimit
+    limit: limitResult.value
   };
 }
 
@@ -106,7 +104,12 @@ router.get('/donors', checkPermission(PERMISSIONS.STATS_READ), auditLeaderboardA
         period,
         limit,
         totalEntries: leaderboard.length,
-        generatedAt: new Date().toISOString()
+        generatedAt: new Date().toISOString(),
+        // cachedAt reflects when this data was actually computed; the
+        // leaderboard is served from cache for up to LEADERBOARD_CACHE_TTL_MS
+        // after that, so cachedAt may be earlier than generatedAt.
+        cachedAt: leaderboard.cachedAt || null,
+        ttlMs: StatsService.LEADERBOARD_CACHE_TTL_MS,
       }
     });
   } catch (error) {
@@ -142,7 +145,9 @@ router.get('/recipients', checkPermission(PERMISSIONS.STATS_READ), auditLeaderbo
         period,
         limit,
         totalEntries: leaderboard.length,
-        generatedAt: new Date().toISOString()
+        generatedAt: new Date().toISOString(),
+        cachedAt: leaderboard.cachedAt || null,
+        ttlMs: StatsService.LEADERBOARD_CACHE_TTL_MS,
       }
     });
   } catch (error) {
@@ -165,14 +170,20 @@ router.get('/recipients', checkPermission(PERMISSIONS.STATS_READ), auditLeaderbo
 router.get('/snapshot', checkPermission(PERMISSIONS.STATS_READ), auditLeaderboardAccess, (req, res, next) => {
   try {
     const window = req.query.window || 'all-time';
-    let limit = parseInt(req.query.limit, 10) || DEFAULT_LIMIT;
     if (!LeaderboardSSE.WINDOWS.includes(window)) {
       return res.status(400).json({
         success: false,
         error: { code: 'INVALID_PARAMETER', message: `window must be one of: ${LeaderboardSSE.WINDOWS.join(', ')}` },
       });
     }
-    if (isNaN(limit) || limit < 1 || limit > MAX_LIMIT) limit = DEFAULT_LIMIT;
+    const limitResult = validateLimit(req.query.limit, { defaultValue: DEFAULT_LIMIT, max: MAX_LIMIT });
+    if (!limitResult.valid) {
+      return res.status(400).json({
+        success: false,
+        error: { code: 'INVALID_LIMIT', message: limitResult.error },
+      });
+    }
+    const limit = limitResult.value;
     const snapshot = LeaderboardSSE.getSnapshot(window, limit);
     res.json({ success: true, data: snapshot });
   } catch (err) {

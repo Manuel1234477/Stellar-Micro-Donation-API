@@ -21,6 +21,7 @@ const TIMEOUTS = {
   balance: 10_000,    // 10 s — wallet balance lookups
   default: 15_000,    // 15 s — general fallback
   donation: 30_000,   // 30 s — Stellar transaction submission
+  export: 45_000,     // 45 s — synchronous large exports (CSV/JSON generation)
   stream: 60_000,     // 60 s — recurring-donation schedule creation
 };
 

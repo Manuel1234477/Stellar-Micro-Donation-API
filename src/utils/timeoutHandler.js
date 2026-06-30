@@ -33,13 +33,20 @@ class TimeoutError extends Error {
 }
 
 /**
- * Wrap a promise with a timeout
+ * Wrap a promise with a timeout.
+ *
+ * If `abortController` is supplied, it is aborted when the timeout fires so
+ * the underlying work (e.g. a fetch() request) actually stops instead of
+ * being abandoned to complete in the background after this function has
+ * already rejected.
+ *
  * @param {Promise} promise - Promise to wrap
  * @param {number} timeoutMs - Timeout in milliseconds
  * @param {string} operation - Operation name for error messages
+ * @param {AbortController} [abortController] - Aborted when the timeout fires
  * @returns {Promise} Promise that rejects if timeout is exceeded
  */
-function withTimeout(promise, timeoutMs, operation = 'operation') {
+function withTimeout(promise, timeoutMs, operation = 'operation', abortController = null) {
   return Promise.race([
     promise,
     new Promise((_, reject) => {
@@ -54,9 +61,12 @@ function withTimeout(promise, timeoutMs, operation = 'operation') {
           timeoutMs,
           timestamp: error.timestamp
         });
+        if (abortController) {
+          abortController.abort();
+        }
         reject(error);
       }, timeoutMs);
-      
+
       // Clean up timer without creating an unhandled rejection branch.
       promise.then(
         () => clearTimeout(timer),

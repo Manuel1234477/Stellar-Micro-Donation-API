@@ -125,6 +125,93 @@ const recurringDonationsSkippedTotal = new client.Counter({
   registers: [registry],
 });
 
+// ─── Horizon Connection Pool Metrics ─────────────────────────────────────────
+
+/**
+ * Gauge: configured size of the Horizon connection pool.
+ * @type {client.Gauge}
+ */
+const horizonPoolSize = new client.Gauge({
+  name: 'horizon_pool_size',
+  help: 'Configured size of the Horizon connection pool',
+  registers: [registry],
+});
+
+/**
+ * Gauge: number of currently-healthy pool members.
+ * @type {client.Gauge}
+ */
+const horizonPoolHealthyCount = new client.Gauge({
+  name: 'horizon_pool_healthy_count',
+  help: 'Number of currently healthy Horizon pool members',
+  registers: [registry],
+});
+
+/**
+ * Gauge: number of currently-unhealthy (cooling down) pool members.
+ * @type {client.Gauge}
+ */
+const horizonPoolUnhealthyCount = new client.Gauge({
+  name: 'horizon_pool_unhealthy_count',
+  help: 'Number of currently unhealthy (cooling down) Horizon pool members',
+  registers: [registry],
+});
+
+/**
+ * Counter: total number of times a Horizon pool member was marked unhealthy
+ * and entered cooldown.
+ * @type {client.Counter}
+ */
+const horizonPoolCooldownEventsTotal = new client.Counter({
+  name: 'horizon_pool_cooldown_events_total',
+  help: 'Total number of times a Horizon pool member entered cooldown after a failure',
+  registers: [registry],
+});
+
+/**
+ * Counter: total number of times a Horizon pool member was re-admitted
+ * to rotation after its cooldown elapsed.
+ * @type {client.Counter}
+ */
+const horizonPoolRecoveryEventsTotal = new client.Counter({
+  name: 'horizon_pool_recovery_events_total',
+  help: 'Total number of times a Horizon pool member was re-admitted after cooldown',
+  registers: [registry],
+});
+
+/**
+ * Histogram: time spent acquiring a pool member from getServer().
+ * Near-instant today (round-robin, no queueing), but tracked so a future
+ * blocking/queued pool implementation has an existing saturation signal.
+ * @type {client.Histogram}
+ */
+const horizonPoolAcquireDuration = new client.Histogram({
+  name: 'horizon_pool_acquire_duration_seconds',
+  help: 'Time spent acquiring a Horizon server instance from the pool',
+  buckets: [0.0001, 0.0005, 0.001, 0.005, 0.01, 0.05, 0.1, 0.5],
+  registers: [registry],
+});
+
+/**
+ * Update the Horizon pool gauges from a pool status snapshot.
+ * @param {{ size: number, healthy: number, unhealthy: number }} status
+ */
+function recordHorizonPoolStatus(status) {
+  horizonPoolSize.set(status.size);
+  horizonPoolHealthyCount.set(status.healthy);
+  horizonPoolUnhealthyCount.set(status.unhealthy);
+}
+
+/** Increment the Horizon pool cooldown-event counter. */
+function recordHorizonPoolCooldownEvent() {
+  horizonPoolCooldownEventsTotal.inc();
+}
+
+/** Increment the Horizon pool recovery-event counter. */
+function recordHorizonPoolRecoveryEvent() {
+  horizonPoolRecoveryEventsTotal.inc();
+}
+
 /**
  * Express middleware that records request duration for every response.
  * Normalises dynamic path segments (e.g. /donations/123 → /donations/:id)
@@ -175,4 +262,14 @@ module.exports = {
   recurringDonationsSuspendedTotal,
   recurringDonationsActiveCount,
   recurringDonationsSkippedTotal,
+  // Horizon connection pool metrics
+  horizonPoolSize,
+  horizonPoolHealthyCount,
+  horizonPoolUnhealthyCount,
+  horizonPoolCooldownEventsTotal,
+  horizonPoolRecoveryEventsTotal,
+  horizonPoolAcquireDuration,
+  recordHorizonPoolStatus,
+  recordHorizonPoolCooldownEvent,
+  recordHorizonPoolRecoveryEvent,
 };

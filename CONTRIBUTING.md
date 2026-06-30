@@ -9,11 +9,12 @@ to go from a fresh clone to an open PR.
 
 1. [Local Setup](#1-local-setup)
 2. [Running Tests](#2-running-tests)
-3. [Linting & Security](#3-linting--security)
-4. [Database Migrations](#4-database-migrations)
-5. [OpenAPI Spec](#5-openapi-spec)
-6. [Branch & Commit Conventions](#6-branch--commit-conventions)
-7. [Pre-PR Checklist](#7-pre-pr-checklist)
+3. [Test Naming Convention](#3-test-naming-convention)
+4. [Linting & Security](#4-linting--security)
+5. [Database Migrations](#5-database-migrations)
+6. [OpenAPI Spec](#6-openapi-spec)
+7. [Branch & Commit Conventions](#7-branch--commit-conventions)
+8. [Pre-PR Checklist](#8-pre-pr-checklist)
 
 ---
 
@@ -71,7 +72,30 @@ state between runs. See [Test Isolation Guide](docs/TEST_ISOLATION.md) for detai
 
 ---
 
-## 3. Linting & Security
+## 3. Test Naming Convention
+
+See **[docs/TEST_NAMING_CONVENTION.md](docs/TEST_NAMING_CONVENTION.md)** for the full
+convention and migration plan. The short version:
+
+- Name your test file after the **module it exercises**, not the issue or feature
+  that prompted it.
+- Mirror the `src/` directory structure: `src/routes/donation.js` →
+  `tests/routes/donation.test.js`.
+- Use `.smoke.test.js` for smoke tests in `tests/smoke/` and `.e2e.test.js` for
+  end-to-end tests in `tests/e2e/`.
+
+**Quick check** — run this before opening a PR to ensure no new legacy-named file
+was accidentally created:
+
+```bash
+node scripts/check-test-naming.js
+```
+
+CI runs this check automatically on every PR.
+
+---
+
+## 4. Linting & Security
 
 ```bash
 # ESLint (style + security rules)
@@ -89,7 +113,7 @@ Fix all reported issues before opening a PR — CI will fail otherwise.
 
 ---
 
-## 4. Database Migrations
+## 5. Database Migrations
 
 Migrations live in `src/migrations/` and are applied in version order.
 
@@ -114,7 +138,7 @@ If you add a feature that requires a schema change:
 
 ---
 
-## 5. OpenAPI Spec
+## 6. OpenAPI Spec
 
 The OpenAPI spec at `docs/openapi.json` and `docs/openapi.yaml` must stay in sync
 with the route JSDoc annotations.
@@ -132,7 +156,7 @@ and will fail if the spec is stale.
 
 ---
 
-## 6. Branch & Commit Conventions
+## 7. Branch & Commit Conventions
 
 **Branches**
 
@@ -156,17 +180,18 @@ Breaking changes must include a `BREAKING CHANGE:` footer in the commit body.
 
 ---
 
-## 7. Pre-PR Checklist
+## 8. Pre-PR Checklist
 
 Before pushing and opening a PR, run through this list:
 
 ```bash
-npm run lint            # no ESLint errors
-npm run security:scan   # no new security findings
-npm test                # full suite passes
-npm run check-coverage  # coverage ≥ 80%
-npm run openapi:check   # spec is up to date
-npm run migrate:status  # no pending unapplied migrations
+npm run lint                       # no ESLint errors
+npm run security:scan              # no new security findings
+npm test                           # full suite passes
+npm run check-coverage             # coverage ≥ 80%
+npm run openapi:check              # spec is up to date
+npm run migrate:status             # no pending unapplied migrations
+node scripts/check-test-naming.js  # no new legacy-named test files
 ```
 
 CI enforces all of the above and will block merge if any step fails.

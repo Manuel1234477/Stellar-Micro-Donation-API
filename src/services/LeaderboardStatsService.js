@@ -1,5 +1,10 @@
 const Transaction = require('../models/transaction');
 const Cache = require('../utils/cache');
+const {
+  leaderboardComputeDuration,
+  recordLeaderboardCacheHit,
+  recordLeaderboardCacheMiss,
+} = require('../utils/metrics');
 
 const STROOPS_PER_XLM = 10_000_000n;
 
@@ -17,6 +22,20 @@ const LEADERBOARD_CACHE_TTL_MS = 60_000;
  * Default number of top entries to return
  */
 const DEFAULT_TOP_N = 10;
+
+/**
+ * Attach a non-enumerable `cachedAt` timestamp to a leaderboard array so
+ * callers can report freshness without changing the array's JSON shape
+ * (existing consumers index/iterate it as a plain array of entries).
+ *
+ * @param {Array} leaderboard
+ * @param {string} cachedAt - ISO 8601 timestamp of when the data was computed.
+ * @returns {Array} The same array, with `cachedAt` attached.
+ */
+function withCacheMeta(leaderboard, cachedAt) {
+  Object.defineProperty(leaderboard, 'cachedAt', { value: cachedAt, enumerable: false });
+  return leaderboard;
+}
 
 class StatsService {
   /**
@@ -413,12 +432,15 @@ class StatsService {
    */
   static getDonorLeaderboard(period = 'all', limit = DEFAULT_TOP_N) {
     const cacheKey = `leaderboard:donors:${period}:${limit}`;
-    
+
     // Check cache
     const cached = Cache.get(cacheKey);
     if (cached) {
+      recordLeaderboardCacheHit();
       return cached;
     }
+    recordLeaderboardCacheMiss();
+    const computeTimer = leaderboardComputeDuration.startTimer();
 
     let transactions;
     const { startDate, endDate } = this.getDateRangeForPeriod(period);
@@ -431,7 +453,7 @@ class StatsService {
     }
 
     // Filter confirmed transactions only
-    const confirmedTransactions = transactions.filter(t => 
+    const confirmedTransactions = transactions.filter(t =>
       t.status === 'confirmed' || t.status === 'COMPLETED'
     );
 
@@ -473,6 +495,9 @@ class StatsService {
         period: entry.period,
       }));
 
+    computeTimer();
+    withCacheMeta(leaderboard, new Date().toISOString());
+
     // Cache the result
     Cache.set(cacheKey, leaderboard, LEADERBOARD_CACHE_TTL_MS);
 
@@ -487,12 +512,15 @@ class StatsService {
    */
   static getRecipientLeaderboard(period = 'all', limit = DEFAULT_TOP_N) {
     const cacheKey = `leaderboard:recipients:${period}:${limit}`;
-    
+
     // Check cache
     const cached = Cache.get(cacheKey);
     if (cached) {
+      recordLeaderboardCacheHit();
       return cached;
     }
+    recordLeaderboardCacheMiss();
+    const computeTimer = leaderboardComputeDuration.startTimer();
 
     let transactions;
     const { startDate, endDate } = this.getDateRangeForPeriod(period);
@@ -547,6 +575,9 @@ class StatsService {
         period: entry.period,
       }));
 
+    computeTimer();
+    withCacheMeta(leaderboard, new Date().toISOString());
+
     // Cache the result
     Cache.set(cacheKey, leaderboard, LEADERBOARD_CACHE_TTL_MS);
 
@@ -560,5 +591,7 @@ class StatsService {
     Cache.clearPrefix('leaderboard:');
   }
 }
+
+StatsService.LEADERBOARD_CACHE_TTL_MS = LEADERBOARD_CACHE_TTL_MS;
 
 module.exports = StatsService;

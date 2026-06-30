@@ -19,6 +19,7 @@ const { requireAdmin} = require('../../middleware/rbac');
 const WebhookService = require('../../services/WebhookService');
 const Database = require('../../utils/database');
 const { validateSchema } = require('../../middleware/schemaValidation');
+const { validateLimit } = require('../../utils/pagination');
 
 const updateWebhookStatusSchema = validateSchema({
   body: {
@@ -35,9 +36,13 @@ const updateWebhookStatusSchema = validateSchema({
  */
 router.get('/', requireApiKey, requireAdmin(), asyncHandler(async (req, res, next) => {
   try {
-    const limit = Math.min(100, Math.max(1, parseInt(req.query.limit, 10) || 50));
+    const limitResult = validateLimit(req.query.limit, { defaultValue: 50 });
+    if (!limitResult.valid) {
+      return res.status(400).json({ success: false, error: { code: 'INVALID_LIMIT', message: limitResult.error } });
+    }
+    const limit = limitResult.value;
     const offset = Math.max(0, parseInt(req.query.offset, 10) || 0);
-    
+
     const webhooks = await Database.all(
       `SELECT id, url, events, is_active, created_at FROM webhooks 
        ORDER BY created_at DESC 
@@ -87,9 +92,13 @@ router.get('/', requireApiKey, requireAdmin(), asyncHandler(async (req, res, nex
 router.get('/:id/deliveries', requireApiKey, requireAdmin(), asyncHandler(async (req, res, next) => {
   try {
     const webhookId = parseInt(req.params.id, 10);
-    const limit = Math.min(100, Math.max(1, parseInt(req.query.limit, 10) || 50));
+    const limitResult = validateLimit(req.query.limit, { defaultValue: 50 });
+    if (!limitResult.valid) {
+      return res.status(400).json({ success: false, error: { code: 'INVALID_LIMIT', message: limitResult.error } });
+    }
+    const limit = limitResult.value;
     const offset = Math.max(0, parseInt(req.query.offset, 10) || 0);
-    
+
     // Verify webhook exists
     const webhook = await Database.get('SELECT id FROM webhooks WHERE id = ?', [webhookId]);
     if (!webhook) {
@@ -196,7 +205,11 @@ router.patch('/:id', requireApiKey, requireAdmin(), updateWebhookStatusSchema, p
  */
 router.get('/dead-letter', requireApiKey, requireAdmin(), asyncHandler(async (req, res, next) => {
   try {
-    const limit = Math.min(100, Math.max(1, parseInt(req.query.limit, 10) || 50));
+    const limitResult = validateLimit(req.query.limit, { defaultValue: 50 });
+    if (!limitResult.valid) {
+      return res.status(400).json({ success: false, error: { code: 'INVALID_LIMIT', message: limitResult.error } });
+    }
+    const limit = limitResult.value;
     const offset = Math.max(0, parseInt(req.query.offset, 10) || 0);
     const entries = await WebhookService.listDeadLetters({ limit, offset });
     res.json({ success: true, count: entries.length, data: entries });

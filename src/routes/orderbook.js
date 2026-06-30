@@ -25,6 +25,7 @@ const { ValidationError } = require('../utils/errors');
 const { getStellarService } = require('../config/stellar');
 const log = require('../utils/log');
 const asyncHandler = require('../utils/asyncHandler');
+const { validateLimit } = require('../utils/pagination');
 
 /**
  * Parse and normalise an asset path parameter.
@@ -50,13 +51,20 @@ function parseAsset(raw) {
  *
  * @param {string} baseAsset    - Selling/base asset ('XLM' or 'CODE:ISSUER', URL-encoded)
  * @param {string} counterAsset - Buying/counter asset ('XLM' or 'CODE:ISSUER', URL-encoded)
- * @query  {number} [limit=20]  - Max entries per side (1-200)
+ * @query  {number} [limit=20]  - Max entries per side (1-100)
  */
 router.get('/snapshot', requireApiKey, checkPermission(PERMISSIONS.DONATIONS_READ), asyncHandler(async (req, res, next) => {
   try {
     const base = parseAsset(req.params.baseAsset);
     const counter = parseAsset(req.params.counterAsset);
-    const limit = Math.min(parseInt(req.query.limit, 10) || 20, 200);
+    const limitResult = validateLimit(req.query.limit, { defaultValue: 20 });
+    if (!limitResult.valid) {
+      return res.status(400).json({
+        success: false,
+        error: { code: 'INVALID_LIMIT', message: limitResult.error },
+      });
+    }
+    const limit = limitResult.value;
 
     const stellar = getStellarService();
     const data = await stellar.getOrderBook(base, counter, limit);
