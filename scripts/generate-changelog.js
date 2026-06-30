@@ -23,7 +23,8 @@ const fs = require('fs');
 const path = require('path');
 
 const CHANGELOG_PATH = path.join(__dirname, '..', 'CHANGELOG.md');
-const REPO_URL = 'https://github.com/Manuel1234477/Stellar-Micro-Donation-API';
+const CHANGELOG_JSON_PATH = path.join(__dirname, '..', 'CHANGELOG.json');
+const REPO_URL = 'https://github.com/Manuel1234777/Stellar-Micro-Donation-API';
 
 const TYPE_HEADINGS = {
   feat:     '### Added',
@@ -74,6 +75,82 @@ function parseCommit({ hash, subject, body }) {
   const scopeStr = scope ? scope.replace(/[()]/g, '') : null;
 
   return { type, scope: scopeStr, description, isBreaking, hash: shortHash };
+}
+
+// ── Structured (machine-readable) changelog ───────────────────────────────────
+
+/** Map conventional-commit type → Change_Type enum */
+const TYPE_TO_CHANGE_TYPE = {
+  feat:     'added',
+  fix:      'fixed',
+  perf:     'changed',
+  refactor: 'changed',
+  docs:     'changed',
+  test:     'changed',
+  chore:    'changed',
+  ci:       'changed',
+  build:    'changed',
+  style:    'changed',
+  revert:   'changed',
+  security: 'security',
+  deprecate:'deprecated',
+};
+
+/**
+ * Parse endpoint annotations from commit body.
+ * Supports: "Endpoints: POST /donations, GET /wallets/:id"
+ * @param {string} body
+ * @returns {{ method: string, path: string }[]}
+ */
+function extractAffectedEndpoints(body) {
+  if (!body) return [];
+  const match = body.match(/Endpoints?\s*:\s*([^\n]+)/i);
+  if (!match) return [];
+  return match[1]
+    .split(',')
+    .map(s => s.trim())
+    .filter(Boolean)
+    .map(entry => {
+      const parts = entry.trim().split(/\s+/);
+      if (parts.length < 2) return null;
+      return { method: parts[0].toUpperCase(), path: parts[1] };
+    })
+    .filter(Boolean);
+}
+
+/**
+ * Build a Change_Entry from a raw commit.
+ * @param {{ hash: string, subject: string, body: string }} raw
+ * @param {string} version
+ * @param {string} timestamp  ISO-8601
+ * @returns {object|null}
+ */
+function buildChangeEntry(raw, version, timestamp) {
+  const parsed = parseCommit(raw);
+  if (!parsed) return null;
+  const changeType = TYPE_TO_CHANGE_TYPE[parsed.type] || 'changed';
+  const sunsetMatch = raw.body && raw.body.match(/Sunset\s*:\s*(\S+)/i);
+  const removalMatch = raw.body && raw.body.match(/Removal\s*:\s*(\S+)/i);
+  return {
+    version,
+    type: changeType,
+    description: parsed.description,
+    affectedEndpoints: extractAffectedEndpoints(raw.body),
+    timestamp,
+    commitHash: raw.hash,
+    isBreaking: parsed.isBreaking,
+    ...(sunsetMatch && { sunsetDate: sunsetMatch[1] }),
+    ...(removalMatch && { removalVersion: removalMatch[1] }),
+  };
+}
+
+/**
+ * Atomically write JSON (write to .tmp then rename).
+ */
+function writeStructuredChangelog(filePath, data) {
+  const tmp = filePath + '.tmp';
+  fs.writeFileSync(tmp, JSON.stringify(data, null, 2) + '\n', 'utf8');
+  fs.renameSync(tmp, filePath);
 }
 
 function buildSection(commits, fromTag, toRef = 'HEAD') {
@@ -143,12 +220,12 @@ function main() {
   const section = buildSection(commits, lastTag);
 
   if (shouldWrite) {
+    // ── Write human-readable CHANGELOG.md ──────────────────────────────────
     let existing = '';
     if (fs.existsSync(CHANGELOG_PATH)) {
       existing = fs.readFileSync(CHANGELOG_PATH, 'utf8');
     }
 
-    // Insert after the first heading line (# Changelog\n\n...)
     const insertAfter = '# Changelog\n';
     const idx = existing.indexOf(insertAfter);
     let updated;
@@ -161,6 +238,26 @@ function main() {
 
     fs.writeFileSync(CHANGELOG_PATH, updated, 'utf8');
     console.log(`CHANGELOG.md updated with ${commits.length} commit(s).`);
+
+    // ── Write machine-readable CHANGELOG.json ──────────────────────────────
+    const version = 'Unreleased';
+    const timestamp = new Date().toISOString();
+    const existingJson = fs.existsSync(CHANGELOG_JSON_PATH)
+      ? JSON.parse(fs.readFileSync(CHANGELOG_JSON_PATH, 'utf8'))
+      : { schemaVersion: '1.0.0', changes: [] };
+
+    // Remove any existing Unreleased entries (they get regenerated)
+    const previousReleased = existingJson.changes.filter(c => c.version !== 'Unreleased');
+
+    const newEntries = commits
+      .map(raw => buildChangeEntry(raw, version, timestamp))
+      .filter(Boolean);
+
+    writeStructuredChangelog(CHANGELOG_JSON_PATH, {
+      schemaVersion: '1.0.0',
+      changes: [...newEntries, ...previousReleased],
+    });
+    console.log(`CHANGELOG.json updated with ${newEntries.length} structured entrie(s).`);
   } else {
     console.log(section);
   }

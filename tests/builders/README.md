@@ -10,6 +10,46 @@ Test data builders provide a fluent, readable API for creating test fixtures. Th
 - **Type Safety**: Consistent data structures
 - **Fluent API**: Chain methods for clean, expressive code
 
+## Canonical Reset Helper
+
+> **Always use `resetBetweenTests` instead of writing your own reset logic.**
+
+Every test suite that touches the database or shared in-memory state should call
+the single canonical helper from `tests/helpers/resetState.js`:
+
+```javascript
+const { resetBetweenTests } = require('../helpers/resetState');
+
+beforeEach(resetBetweenTests);   // recommended
+// or
+afterEach(resetBetweenTests);
+```
+
+`resetBetweenTests()` wipes all test-owned SQLite tables and resets in-memory
+singletons (rate limiter, nonce store, abuse detector, etc.) in one call.
+It is aligned with the per-worker storage isolation that `tests/setup.js` sets up.
+
+---
+
+## Unique ID Helpers
+
+To avoid cross-test collisions, **never hard-code public keys, names, or IDs**
+in test fixtures. Use the helpers exported from the builders index instead:
+
+```javascript
+const { uniqueId, uniquePublicKey, uniqueKeyName } = require('../builders');
+
+const id   = uniqueId();                  // 'tid_1_1234567890'   — unique per call
+const pk   = uniquePublicKey();           // 'GTEST…' 56-char mock public key
+const name = uniqueKeyName('api-key');    // 'api-key_2_9876543210'
+```
+
+These are safe to call inside `beforeEach` and at module scope. They combine a
+monotonic counter with `hrtime()` so collisions across concurrent workers are
+practically impossible.
+
+---
+
 ## Available Builders
 
 ### WalletBuilder
@@ -128,6 +168,31 @@ const transactions = new TransactionBuilder()
   .withAmount(100)
   .completed()
   .buildMany(10);
+```
+
+### RecipientBuilder
+
+Creates recipient data objects for donation tests. Produces unique, collision-safe
+public keys so multiple suites never share a recipient row.
+
+```javascript
+const { RecipientBuilder } = require('../builders');
+
+// Single recipient with defaults
+const recipient = RecipientBuilder.create();
+
+// Named charity recipient
+const charity = RecipientBuilder.charity('Save the Oceans');
+
+// Multiple recipients
+const recipients = RecipientBuilder.createMany(5);
+
+// Fluent API
+const recipient = new RecipientBuilder()
+  .withName('Education Fund')
+  .withCategory('education')
+  .withMetadata({ sdgGoal: 4 })
+  .build();
 ```
 
 ### ApiKeyBuilder

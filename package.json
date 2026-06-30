@@ -44,6 +44,7 @@
     "mutation:watch": "node scripts/run-mutation-tests.js --watch",
     "changelog": "node scripts/generate-changelog.js",
     "changelog:write": "node scripts/generate-changelog.js --write",
+    "changelog:check": "node scripts/check-changelog-sync.js",
     "check:no-json-persistence": "node scripts/check-no-json-persistence.js",
     "check:test-naming": "node scripts/check-test-naming.js"
   },
@@ -76,6 +77,7 @@
     "eslint-plugin-local": "file:./eslint-rules",
     "eslint-plugin-no-secrets": "^2.3.3",
     "eslint-plugin-security": "^4.0.0",
+    "fast-check": "^3.22.0",
     "jest": "^30.4.2",
     "madge": "^8.0.0",
     "nodemon": "^3.1.14",

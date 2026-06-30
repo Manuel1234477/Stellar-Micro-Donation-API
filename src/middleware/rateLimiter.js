@@ -10,6 +10,7 @@
  */
 
 const log = require('../utils/log');
+const { calculateRetryAfter } = require('./rateLimitHeaders');
 
 let rateLimit;
 try {
@@ -71,6 +72,7 @@ const donationRateLimiter = rateLimit({
       log.error('RATE_LIMITER', 'Audit log failed', { error: err.message || err });
     });
 
+    res.set('Retry-After', calculateRetryAfter(req.rateLimit.resetTime));
     res.status(429).json({
       success: false,
       error: {
@@ -145,6 +147,7 @@ const verificationRateLimiter = rateLimit({
     });
 
     res.set('X-RateLimit-Identifier', isKeyBased ? 'api-key' : 'ip');
+    res.set('Retry-After', calculateRetryAfter(req.rateLimit.resetTime));
     res.status(429).json({
       success: false,
       error: {
@@ -190,6 +193,7 @@ const batchRateLimiter = rateLimit({
       details: { limit: 1, window: '60s', identifier, resetTime: req.rateLimit.resetTime }
     }).catch(err => log.error('RATE_LIMITER', 'Audit log failed', { error: err.message || err }));
 
+    res.set('Retry-After', calculateRetryAfter(req.rateLimit.resetTime));
     res.status(429).json({
       success: false,
       error: {
@@ -429,6 +433,7 @@ const liveHistoryRateLimiter = rateLimit({
   validate: false,
   skip: () => process.env.NODE_ENV === 'test',
   handler: (req, res) => {
+    res.set('Retry-After', calculateRetryAfter(req.rateLimit?.resetTime));
     res.status(429).json({
       success: false,
       error: {
@@ -458,6 +463,7 @@ module.exports = {
     legacyHeaders: true,
     validate: false,
     handler: (req, res) => {
+      res.set('Retry-After', calculateRetryAfter(req.rateLimit?.resetTime));
       res.status(429).json({
         success: false,
         error: {

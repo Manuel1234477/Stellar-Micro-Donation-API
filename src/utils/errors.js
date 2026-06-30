@@ -40,6 +40,7 @@ const ERROR_CODES = {
   USER_NOT_FOUND:       { code: 'USER_NOT_FOUND',       numeric: 3003 },
   DONATION_NOT_FOUND:   { code: 'DONATION_NOT_FOUND',   numeric: 3004 },
   ENDPOINT_NOT_FOUND:   { code: 'ENDPOINT_NOT_FOUND',   numeric: 3005 },
+  METHOD_NOT_ALLOWED:   { code: 'METHOD_NOT_ALLOWED',   numeric: 3006 },
 
   // Conflict/Duplicate errors (4000-4099)
   DUPLICATE_TRANSACTION: { code: 'DUPLICATE_TRANSACTION', numeric: 4000 },

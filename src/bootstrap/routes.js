@@ -23,6 +23,8 @@ const { payloadSizeLimiter, ENDPOINT_LIMITS } = require('../middleware/payloadSi
 const { healthCheckRateLimiter } = require('../middleware/rateLimiter');
 const { parseCursorPaginationQuery } = require('../utils/pagination');
 const { errorHandler, notFoundHandler } = require('../middleware/errorHandler');
+const { registerMethod, clearRegistry } = require('../middleware/methodRegistry');
+const { optionsHandler, methodNotAllowedHandler } = require('../middleware/methodNotAllowedHandler');
 const HealthCheckService = require('../services/HealthCheckService');
 const AuditLogService = require('../services/AuditLogService');
 const Database = require('../utils/database');
@@ -81,6 +83,35 @@ const UNVERSIONED_PATHS = [
   '/tags', '/leaderboard', '/federation', '/tools', '/auth', '/docs',
   '/transactions', '/claimable-balances', '/liquidity-pools', '/exchange-rates',
 ];
+
+/**
+ * Walk an Express Router's stack and register every route's methods + path
+ * in the global methodRegistry.
+ *
+ * @param {string} prefix   The mount prefix (e.g. "/api/v1/wallets")
+ * @param {object} router   An Express Router instance
+ */
+function populateRegistry(prefix, router) {
+  if (!router || !router.stack) return;
+  for (const layer of router.stack) {
+    if (layer.route) {
+      // Direct route on this router
+      const fullPath = prefix + (layer.route.path === '/' ? '' : layer.route.path);
+      for (const method of Object.keys(layer.route.methods)) {
+        if (method !== '_all') registerMethod(method.toUpperCase(), fullPath);
+      }
+    } else if (layer.name === 'router' && layer.handle && layer.handle.stack) {
+      // Nested sub-router — recurse with extracted path segment
+      const subPrefix = prefix + (layer.regexp.source
+        .replace(/^\^\\\//, '/')
+        .replace(/\\\/\?(?:\(\?.*\))?\$/, '')
+        .replace(/\\\//g, '/')
+        .replace(/\?(?:\(\?.*\))?$/, '')
+        || '');
+      populateRegistry(subPrefix, layer.handle);
+    }
+  }
+}
 
 /**
  * Mount all routes onto the given Express app.
@@ -403,6 +434,41 @@ function mountRoutes(app, services = {}) {
   }
 
   // ── 404 & error handlers (must be last) ──────────────────────────────────
+  // ── Optional changelog endpoint (ENABLE_CHANGELOG_ENDPOINT=true) ───────────
+  if (process.env.ENABLE_CHANGELOG_ENDPOINT === 'true') {
+    const changelogRoutes = require('../routes/changelog');
+    app.use('/api/v1/changelog', changelogRoutes);
+    app.get('/api/v1/changelog', (req, res, next) => next()); // ensure GET / is handled
+  }
+
+  // ── Method registry population ────────────────────────────────────────────
+  // Walk the fully-assembled app stack after all routes are mounted and register
+  // every route's path + methods so the 405 handler knows what's valid.
+  clearRegistry();
+  for (const layer of app._router.stack) {
+    if (layer.name === 'router' && layer.handle && layer.handle.stack) {
+      // Extract the mount prefix from the layer regexp
+      // Express stores it as: /^\\/api\\/v1\\/?(?=\\/|$)/i  → /api/v1
+      const src = layer.regexp.source;
+      const prefix = src
+        .replace(/^\^\\\//, '/')
+        .replace(/\\\/\?(?:\(\?[^)]*\))?\$?$/, '')
+        .replace(/\?(?:\(\?[^)]*\))?$/, '')
+        .replace(/\\\//g, '/');
+      populateRegistry(prefix, layer.handle);
+    } else if (layer.route) {
+      for (const method of Object.keys(layer.route.methods)) {
+        if (method !== '_all') registerMethod(method.toUpperCase(), layer.route.path);
+      }
+    }
+  }
+
+  // ── 405 / OPTIONS pipeline ────────────────────────────────────────────────
+  // optionsHandler: returns 200 + Allow for OPTIONS on known routes
+  // methodNotAllowedHandler: returns 405 + Allow for wrong methods on known routes
+  app.use(optionsHandler);
+  app.use(methodNotAllowedHandler);
+
   app.use(notFoundHandler);
   app.use(errorHandler);
 }
