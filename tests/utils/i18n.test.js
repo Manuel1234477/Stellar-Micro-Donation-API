@@ -142,3 +142,51 @@ describe('errorHandler Content-Language header', () => {
     expect(res._body.error.message).toBe(getMessage('ENDPOINT_NOT_FOUND', 'pt'));
   });
 });
+
+// ---- Orphaned locale files check ----
+describe('src/i18n orphaned locale files guard', () => {
+  test('every file under src/i18n must be required somewhere in src/ or tests/', () => {
+    const fs = require('fs');
+    const path = require('path');
+    const i18nDir = path.join(__dirname, '../../src/i18n');
+
+    if (!fs.existsSync(i18nDir)) {
+      return;
+    }
+
+    const localeFiles = fs.readdirSync(i18nDir).filter((f) => f.endsWith('.js') || f.endsWith('.json'));
+    if (localeFiles.length === 0) return;
+
+    const scanDir = (dir, fileList = []) => {
+      if (!fs.existsSync(dir)) return fileList;
+      const entries = fs.readdirSync(dir, { withFileTypes: true });
+      for (const entry of entries) {
+        const fullPath = path.join(dir, entry.name);
+        if (entry.isDirectory()) {
+          if (entry.name !== 'node_modules' && entry.name !== '.git' && fullPath !== i18nDir) {
+            scanDir(fullPath, fileList);
+          }
+        } else if (entry.isFile() && (entry.name.endsWith('.js') || entry.name.endsWith('.ts') || entry.name.endsWith('.mjs'))) {
+          fileList.push(fullPath);
+        }
+      }
+      return fileList;
+    };
+
+    const rootDir = path.join(__dirname, '../..');
+    const codebaseFiles = [
+      ...scanDir(path.join(rootDir, 'src')),
+      ...scanDir(path.join(rootDir, 'tests')),
+    ];
+
+    const codebaseContent = codebaseFiles.map((f) => fs.readFileSync(f, 'utf8')).join('\n');
+
+    for (const file of localeFiles) {
+      const baseNameWithoutExt = path.basename(file, path.extname(file));
+      const pattern = new RegExp(`i18n/(${file}|${baseNameWithoutExt})`, 'i');
+      const isReferenced = pattern.test(codebaseContent);
+      expect(isReferenced).toBe(true);
+    }
+  });
+});
+
