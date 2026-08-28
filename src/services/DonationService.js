@@ -1086,6 +1086,118 @@ class DonationService {
   }
 
   /**
+   * Create a claimable balance donation
+   * Stores donation as a claimable balance that can be claimed by eligible accounts
+   * @param {Object} params
+   * @returns {Promise<Object>} Transaction record with claimable balance details
+   */
+  async createClaimableDonation({
+    amount,
+    currency = 'XLM',
+    claimants,
+    expiryTimestamp = null,
+    memo = null,
+    memoType = 'text',
+    notes = null,
+    tags = [],
+    donor = null,
+    anonymous = false,
+    idempotencyKey = null,
+    apiKeyId = null,
+    apiKeyRole = 'user',
+    correlationId = null,
+  }) {
+    if (!amount || !claimants || !Array.isArray(claimants) || claimants.length === 0) {
+      throw new ValidationError('amount and non-empty claimants array are required');
+    }
+
+    const normalizedCurrency = currency.toUpperCase();
+    let xlmAmount = amount;
+    if (normalizedCurrency !== 'XLM') {
+      try {
+        xlmAmount = await priceOracle.convertToXLM(amount, normalizedCurrency);
+      } catch (err) {
+        throw new ValidationError(`Currency conversion failed: ${err.message}`);
+      }
+    }
+
+    this.validateDonationAmount(xlmAmount, donor);
+
+    const memoResult = this.validateAndSanitizeMemo(memo);
+    if (!memoResult.valid) {
+      throw new ValidationError(memoResult.error);
+    }
+
+    this._validateTags(tags, apiKeyRole);
+
+    if (idempotencyKey) {
+      const existing = await Database.get(
+        'SELECT data FROM donations_store WHERE idempotency_key = ?',
+        [idempotencyKey]
+      );
+      if (existing) {
+        try {
+          return JSON.parse(existing.data);
+        } catch (_) { /* fall through */ }
+      }
+    }
+
+    const sanitizedDonor = donor ? sanitizeIdentifier(donor) : 'Anonymous';
+    const claimantDestinations = claimants.map(c => c.destination);
+    const predicate = claimants.length > 0 && claimants[0].predicate ? claimants[0].predicate : null;
+
+    try {
+      const stellarResult = await this.stellarService.createClaimableBalance({
+        sourceSecret: this.resolvePaymentSourceSecret(sanitizedDonor),
+        amount: xlmAmount.toString(),
+        claimants,
+        predicate,
+      });
+
+      const transaction = Transaction.create({
+        amount: xlmAmount,
+        originalAmount: normalizedCurrency !== 'XLM' ? amount : undefined,
+        originalCurrency: normalizedCurrency !== 'XLM' ? normalizedCurrency : undefined,
+        donor: sanitizedDonor,
+        recipient: claimantDestinations.join(','),
+        memo: memoResult.sanitized,
+        memoType: memoType || 'text',
+        notes: notes || null,
+        tags: tags || [],
+        apiKeyId: apiKeyId || null,
+        idempotencyKey: idempotencyKey,
+        status: 'claimable',
+        type: 'claimable',
+        stellarTxId: stellarResult.transactionId,
+        stellarLedger: stellarResult.ledger,
+        confirmedAt: new Date().toISOString(),
+        balanceId: stellarResult.balanceId,
+        expiryTimestamp: expiryTimestamp || null,
+        anonymous: anonymous === true,
+      });
+
+      const pubsub = require('../graphql/pubsub');
+      pubsub.publish(pubsub.TOPICS.DONATION_CREATED, {
+        id: transaction.id,
+        donor: transaction.donor,
+        recipient: transaction.recipient,
+        amount: transaction.amount,
+        status: transaction.status,
+        stellarTxId: transaction.stellarTxId,
+        timestamp: transaction.timestamp,
+      });
+
+      return transaction;
+    } catch (error) {
+      log.error('DONATION_SERVICE', 'Failed to create claimable balance', {
+        error: error.message,
+        claimants,
+      });
+      throw error;
+    }
+  }
+
+  /**
    * Record a signer's approval on a donation awaiting multi-sig approval
    * (#1498). Once the configured number of approvals is reached, the
    * donation is submitted to Stellar and its deferred follow-up processing
