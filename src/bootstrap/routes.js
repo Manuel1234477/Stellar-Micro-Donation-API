@@ -54,6 +54,7 @@ const V1_ROUTES = [
   ['/transactions/bump-sequence',     require('../routes/transactions/bump-sequence')],
   ['/claimable-balances',             require('../routes/claimableBalances')],
   ['/liquidity-pools',                require('../routes/liquidity-pools')],
+  ['/impact',                         require('../routes/impact')],
 ];
 
 // ── Admin routes ──────────────────────────────────────────────────────────────
@@ -81,6 +82,7 @@ const ADMIN_ROUTES = [
   ['/admin/feature-flags',            require('../routes/admin/featureFlags')],
   ['/admin/geo-blocking',             require('../routes/admin/geoBlocking')],
   ['/admin/impact-metrics',           require('../routes/admin/impactMetrics')],
+  ['/admin/sdg-mapping',              require('../routes/admin/impactMetrics')],
   ['/admin/matching-programs',        require('../routes/admin/matchingPrograms')],
   ['/admin/reconciliation',           require('../routes/admin/reconciliation')],
   ['/admin/routing',                  require('../routes/admin/routing')],
@@ -96,6 +98,7 @@ const UNVERSIONED_PATHS = [
   '/webhooks', '/campaigns', '/encryption', '/tiers', '/offers', '/orderbook',
   '/tags', '/leaderboard', '/federation', '/tools', '/auth', '/docs',
   '/transactions', '/claimable-balances', '/liquidity-pools', '/exchange-rates',
+  '/impact',
 ];
 
 /**

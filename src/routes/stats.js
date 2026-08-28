@@ -686,6 +686,53 @@ router.get('/anonymous-breakdown', checkPermission(PERMISSIONS.STATS_READ), (req
 });
 
 /**
+ * GET /stats/impact
+ * Get SDG-level impact breakdown
+ */
+router.get('/impact', checkPermission(PERMISSIONS.STATS_READ), (req, res, next) => {
+  try {
+    const { startDate, endDate } = req.query;
+    const Transaction = require('../models/transaction');
+    const { SDG_CATEGORIES } = require('../services/ImpactMetricService');
+
+    const txs = Transaction.getAll().filter(tx => {
+      const ts = new Date(tx.timestamp);
+      if (startDate && ts < new Date(startDate)) return false;
+      if (endDate && ts > new Date(endDate)) return false;
+      return true;
+    });
+
+    const map = {};
+    for (const sdg of SDG_CATEGORIES) {
+      map[sdg.code] = { ...sdg, totalAmount: 0, count: 0 };
+    }
+
+    for (const tx of txs) {
+      const cats = Array.isArray(tx.sdgCategories) ? tx.sdgCategories : [];
+      for (const code of cats) {
+        if (map[code]) {
+          map[code].totalAmount += Number(tx.amount || 0);
+          map[code].count += 1;
+        }
+      }
+    }
+
+    const breakdown = Object.values(map);
+
+    res.json({
+      success: true,
+      data: {
+        breakdown,
+        totalDonations: txs.length,
+        dateRange: { startDate: startDate || null, endDate: endDate || null },
+      },
+    });
+  } catch (error) {
+    next(error);
+  }
+});
+
+/**
  * POST /stats/cache/invalidate
  * Admin endpoint to manually invalidate all stats caches.
  * Requires stats:admin permission.

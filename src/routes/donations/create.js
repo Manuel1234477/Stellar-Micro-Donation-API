@@ -283,7 +283,21 @@ router.post('/', rotationLockMiddleware(), payloadSizeLimiter(ENDPOINT_LIMITS.si
       return await processCustodialDonation(req, res, next);
     }
 
-    const { amount, currency, donor, recipient, memo, memoType, notes, tags, encryptMemo, anonymous, sourceAsset, sourceAmount, sendAsset, receiveAsset, slippageTolerance } = req.body;
+    const { amount, currency, donor, recipient, memo, memoType, notes, tags, encryptMemo, anonymous, sourceAsset, sourceAmount, sendAsset, receiveAsset, slippageTolerance, sdgCategories } = req.body;
+
+    if (sdgCategories !== undefined && sdgCategories !== null) {
+      const { validateSdgCodes } = require('../../services/ImpactMetricService');
+      const sdgValidation = validateSdgCodes(sdgCategories);
+      if (!sdgValidation.valid) {
+        return res.status(400).json({
+          success: false,
+          error: {
+            code: 'VALIDATION_ERROR',
+            message: `Invalid SDG codes: ${sdgValidation.invalid.join(', ')}`,
+          },
+        });
+      }
+    }
 
     if (!amount || !recipient) {
       throw new ValidationError('Missing required fields: amount, recipient', null, ERROR_CODES.MISSING_REQUIRED_FIELD);
@@ -395,6 +409,7 @@ router.post('/', rotationLockMiddleware(), payloadSizeLimiter(ENDPOINT_LIMITS.si
       apiKeyId: req.apiKey ? req.apiKey.id : null,
       apiKeyRole: req.apiKey ? req.apiKey.role : (req.user?.role || 'user'),
       anonymous: anonymous === true,
+      sdgCategories: sdgCategories || [],
       correlationId: req.id,
     });
 
