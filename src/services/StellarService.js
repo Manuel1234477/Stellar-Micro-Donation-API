@@ -283,6 +283,11 @@ class StellarService extends StellarServiceInterface {
   async getBalance(publicKey) { return this.accounts.getBalance(publicKey); }
   async fundTestnetWallet(publicKey) { return this.accounts.fundTestnetWallet(publicKey); }
   async fundWithFriendbot(publicKey) { return this.accounts.fundWithFriendbot(publicKey); }
+  async createSponsoredAccount(sponsorSecret, publicKey) { return this.accounts.createSponsoredAccount(sponsorSecret, publicKey); }
+  async sponsorAccount(sponsorSecret, publicKey) { return this.accounts.sponsorAccount(sponsorSecret, publicKey); }
+  async revokeSponsoredAccount(sponsorSecret, publicKey) { return this.accounts.revokeSponsoredAccount(sponsorSecret, publicKey); }
+  async revokeSponsorship(sponsorSecret, publicKey, entryType) { return this.accounts.revokeSponsorship(sponsorSecret, publicKey, entryType); }
+  async getSponsorshipStatus(publicKey) { return this.accounts.getSponsorshipStatus(publicKey); }
   async isAccountFunded(publicKey) { return this.accounts.isAccountFunded(publicKey); }
   async loadAccount(publicKey) { return this.accounts.loadAccount(publicKey); }
   async getAccountSequence(publicKey) { return this.accounts.getAccountSequence(publicKey); }
@@ -305,6 +310,9 @@ class StellarService extends StellarServiceInterface {
   async sendBatchDonations(sourceSecret, payments) { 
     return this.payments.sendBatchDonations(sourceSecret, payments); 
   }
+  async openChannel(sourceSecret, recipientPublicKey, depositAmount) { return this.channels.openChannel(sourceSecret, recipientPublicKey, depositAmount); }
+  async updateChannel(channelId, newAmount) { return this.channels.updateChannel(channelId, newAmount); }
+  async closeChannel(channelId, escrowSecret, recipientPublicKey, amount) { return this.channels.closeChannel(channelId, escrowSecret, recipientPublicKey, amount); }
   async getTransactionHistory(publicKey, limit = 10) { 
     return this.payments.getTransactionHistory(publicKey, limit); 
   }
