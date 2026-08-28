@@ -180,6 +180,7 @@ async function startServer(app, overrideServices = {}) {
 
           require('../workers/expiryWorker').start();
           require('../workers/donationApprovalExpiryWorker').start();
+          require('../workers/confirmationThresholdWorker').start();
           recurringDonationScheduler.start();
           reconciliationService.start();
           auditLogRetentionService.start();
@@ -341,6 +342,7 @@ async function startServer(app, overrideServices = {}) {
         transactionSyncScheduler.stop();
         require('../workers/expiryWorker').stop();
         require('../workers/donationApprovalExpiryWorker').stop();
+        require('../workers/confirmationThresholdWorker').stop();
 
         if (server.stopQuotaResetJob) {
           server.stopQuotaResetJob();

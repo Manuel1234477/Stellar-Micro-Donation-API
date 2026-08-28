@@ -24,7 +24,7 @@ const { ValidationError, NotFoundError, BusinessLogicError, ERROR_CODES } = requ
 const { PREDEFINED_TAGS } = require('../constants/tags');
 const { paginateCollection } = require('../utils/pagination');
 const { checkConfirmations } = require('../utils/confirmationChecker');
-const { CONFIRMATION_LEDGER_THRESHOLD } = require('../config/confirmationThreshold');
+const { CONFIRMATION_THRESHOLD } = require('../config/confirmationThreshold');
 
 const LimitService = require('./LimitService');
 const DonationVelocityService = require('./DonationVelocityService');
@@ -397,44 +397,85 @@ class DonationService {
       ledger: stellarResult.ledger,
     });
 
-    // Only advance to CONFIRMED when the ledger confirmation threshold is met.
+    // Determine required confirmation threshold based on global config or donation amount.
+    // For high-value donations (>= MULTISIG_THRESHOLD_XLM), enforce a minimum threshold
+    // to ensure finality before marking as confirmed.
+    let requiredThreshold = CONFIRMATION_THRESHOLD;
+    const multisigConfig = require('../config').donations;
+    if (
+      multisigConfig.multisigThresholdXLM !== null &&
+      parseFloat(amount) >= multisigConfig.multisigThresholdXLM
+    ) {
+      // High-value donation: override to use at least a threshold of 2 if configured threshold is 1
+      requiredThreshold = Math.max(CONFIRMATION_THRESHOLD, 2);
+      log.info('DONATION_SERVICE', 'High-value donation requires increased confirmation threshold', {
+        requestId,
+        amount,
+        multisigThreshold: multisigConfig.multisigThresholdXLM,
+        requiredThreshold,
+      });
+    }
+
+    // Check if the transaction is already confirmed based on current ledger state.
     // stellarResult.ledger is the ledger the tx was included in.
-    // We use it as both transactionLedger and currentLedger here because Stellar
-    // confirms transactions within the same ledger close — the threshold check
-    // ensures at least CONFIRMATION_LEDGER_THRESHOLD subsequent ledgers have closed
-    // before we mark the transaction final.
     const confirmationResult = checkConfirmations(
       stellarResult.ledger,
       stellarResult.currentLedger || stellarResult.ledger,
-      CONFIRMATION_LEDGER_THRESHOLD
+      requiredThreshold
     );
 
-    if (confirmationResult.confirmed) {
+    if (requiredThreshold > 1 && !confirmationResult.confirmed) {
+      // Threshold is > 1 and not yet confirmed: transition to PENDING_CONFIRMATION.
+      // A background worker will poll and advance to CONFIRMED when ready.
+      Transaction.updateStatus(transaction.id, TRANSACTION_STATES.PENDING_CONFIRMATION, {
+        transactionId: stellarResult.transactionId,
+        ledger: stellarResult.ledger,
+        confirmationThreshold: requiredThreshold,
+        confirmations: confirmationResult.confirmations,
+      });
+      log.info('DONATION_SERVICE', 'Transaction awaiting multi-ledger confirmation', {
+        requestId,
+        transactionId: stellarResult.transactionId,
+        confirmations: confirmationResult.confirmations,
+        required: requiredThreshold,
+        status: TRANSACTION_STATES.PENDING_CONFIRMATION,
+      });
+    } else if (confirmationResult.confirmed) {
+      // Threshold met immediately (most common for threshold=1)
       Transaction.updateStatus(transaction.id, TRANSACTION_STATES.CONFIRMED, {
         transactionId: stellarResult.transactionId,
         ledger: stellarResult.ledger,
         confirmedAt: new Date().toISOString(),
         confirmations: confirmationResult.confirmations,
-        confirmationThreshold: confirmationResult.required,
+        confirmationThreshold: requiredThreshold,
       });
       log.info('DONATION_SERVICE', 'Transaction confirmed', {
         requestId,
         transactionId: stellarResult.transactionId,
         confirmations: confirmationResult.confirmations,
-        threshold: confirmationResult.required,
+        threshold: requiredThreshold,
       });
     } else {
+      // Threshold = 1 but not yet confirmed (rare edge case on submission)
       log.info('DONATION_SERVICE', 'Transaction submitted — awaiting confirmation threshold', {
         requestId,
         transactionId: stellarResult.transactionId,
         confirmations: confirmationResult.confirmations,
-        required: confirmationResult.required,
+        required: requiredThreshold,
         status: TRANSACTION_STATES.SUBMITTED,
       });
     }
 
     // Get remaining limits for response headers
     const { dailyRemaining, monthlyRemaining } = await LimitService.getRemainingLimits(senderId);
+
+    // Determine response status based on confirmation result
+    let responseStatus = TRANSACTION_STATES.SUBMITTED;
+    if (confirmationResult.confirmed) {
+      responseStatus = TRANSACTION_STATES.CONFIRMED;
+    } else if (requiredThreshold > 1) {
+      responseStatus = TRANSACTION_STATES.PENDING_CONFIRMATION;
+    }
 
     return {
       id: dbResult.id,
@@ -444,9 +485,9 @@ class DonationService {
       sender: sender.publicKey,
       receiver: receiver.publicKey,
       timestamp: new Date().toISOString(),
-      status: confirmationResult.confirmed ? TRANSACTION_STATES.CONFIRMED : TRANSACTION_STATES.SUBMITTED,
+      status: responseStatus,
       confirmations: confirmationResult.confirmations,
-      confirmationThreshold: confirmationResult.required,
+      confirmationThreshold: requiredThreshold,
       confirmed: confirmationResult.confirmed,
       remainingLimits: { dailyRemaining, monthlyRemaining },
       ...(matchingDonations.length > 0 && { matchingDonations })
@@ -479,7 +520,7 @@ class DonationService {
       return {
         confirmed: true,
         confirmations: transaction.confirmations || 0,
-        required: threshold || CONFIRMATION_LEDGER_THRESHOLD,
+        required: threshold || transaction.confirmationThreshold || CONFIRMATION_THRESHOLD,
         transaction,
       };
     }
@@ -488,7 +529,9 @@ class DonationService {
       throw new ValidationError('Transaction has no ledger information — cannot check confirmations', null, ERROR_CODES.INVALID_REQUEST);
     }
 
-    const result = checkConfirmations(transaction.stellarLedger, currentLedger, threshold);
+    // Use stored threshold from transaction if available, otherwise fall back to configured or provided threshold
+    const effectiveThreshold = threshold || transaction.confirmationThreshold || CONFIRMATION_THRESHOLD;
+    const result = checkConfirmations(transaction.stellarLedger, currentLedger, effectiveThreshold);
 
     if (result.confirmed) {
       Transaction.updateStatus(transactionId, TRANSACTION_STATES.CONFIRMED, {
