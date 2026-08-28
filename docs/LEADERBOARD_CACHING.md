@@ -7,16 +7,18 @@ request. Results are cached in-memory (`src/utils/cache.js`) per
 
 ## Freshness guarantee
 
-- **TTL**: `LEADERBOARD_CACHE_TTL_MS` = 60 000 ms (1 minute). A cached result
-  is served as-is for up to 60s after it was computed.
-- **Event-driven invalidation**: every confirmed donation invalidates *all*
-  leaderboard cache entries (`StatsService.invalidateLeaderboardCache()`,
-  wired up in `src/services/LeaderboardSSE.js` via the `donation.confirmed`
-  event), so in practice data is rarely more than one request-interval stale
-  even within the 60s window.
+- **TTL**: Configurable via `LEADERBOARD_CACHE_TTL_SECONDS` environment variable
+  (default: 60 seconds). A cached result is served as-is for up to the configured
+  TTL after it was computed.
+- **Event-driven invalidation**: every created and confirmed donation invalidates
+  the leaderboard cache entries (`StatsService.invalidateLeaderboardCache()`,
+  wired up in `src/services/LeaderboardSSE.js` via `donation.created` and
+  `donation.confirmed` events), ensuring data reflects real-time donation changes.
+  Full cache invalidation (`StatsService.invalidateFullCache()`) is used for bulk
+  imports and admin corrections.
 - **SSE windows** (`daily`/`weekly`/`all-time`, used by `/leaderboard/stream`
   and `/leaderboard/snapshot`) are recomputed and broadcast immediately on
-  every confirmed donation, independent of the TTL.
+  every donation creation and confirmation, independent of the TTL.
 
 ## Reading freshness from the API
 
