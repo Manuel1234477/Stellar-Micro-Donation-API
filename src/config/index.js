@@ -454,6 +454,7 @@ const buildConfig = (env, isProduction, isTest) => {
       ? process.env.GEO_ALLOWED_IPS.split(',').map(ip => ip.trim()).filter(Boolean)
       : [],
     maxmindDbPath: process.env.MAXMIND_DB_PATH || path.join(__dirname, '../../data/GeoLite2-Country.mmdb'),
+    strictMode: process.env.GEO_STRICT_MODE !== 'false',
   };
 
   // Organization tax configuration for IRS compliance
