@@ -170,12 +170,15 @@ class WebhookService {
     }
 
     // SSRF protection — validate host is not private/loopback/metadata
-    if (parsedUrl.protocol === 'https:') {
-      try {
-        await assertSafeOutboundUrl(url);
-      } catch (ssrfErr) {
-        const e = new Error(ssrfErr.message); e.status = 400; throw e;
-      }
+    try {
+      await assertSafeOutboundUrl(url);
+    } catch (ssrfErr) {
+      const e = new Error(ssrfErr.message);
+      e.status = 400;
+      e.statusCode = 400;
+      e.code = 'SSRF_BLOCKED';
+      e.errorCode = 'SSRF_BLOCKED';
+      throw e;
     }
 
     // Always generate a 32-byte random secret server-side; never accept caller-supplied secrets
@@ -503,6 +506,13 @@ class WebhookService {
       return { delivered: false, error: 'Invalid webhook URL' };
     }
 
+    try {
+      await assertSafeOutboundUrl(webhookUrl);
+    } catch (err) {
+      log.warn('WEBHOOK_SERVICE', 'SSRF blocked for failure notification', { webhookUrl, error: err.message });
+      return { delivered: false, error: err.message };
+    }
+
     const timestamp = new Date().toISOString();
     const body = JSON.stringify({
       event: 'recurring_donation.persistent_failure',
@@ -707,7 +717,12 @@ class WebhookService {
       log.error('WEBHOOK_SERVICE', 'tls_skip_verify flag suppressed in production at delivery time', { webhookId, url });
     }
 
-    return new Promise((resolve, reject) => {
+    return new Promise(async (resolve, reject) => {
+      try {
+        await assertSafeOutboundUrl(url);
+      } catch (err) {
+        return reject(err);
+      }
       const parsed = new URL(url);
       const lib = parsed.protocol === 'https:' ? https : http;
       const options = {
