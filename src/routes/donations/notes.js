@@ -477,8 +477,16 @@ router.post('/:id/tags', requireApiKey, checkPermission(PERMISSIONS.DONATIONS_UP
 
   const transactions = Transaction.loadTransactions();
   const idx = transactions.findIndex(t => t.id === tx.id);
-  transactions[idx].tags = updated;
-  Transaction.saveTransactions(transactions);
+  if (idx !== -1) {
+    transactions[idx].tags = updated;
+    Transaction.saveTransactions(transactions);
+  }
+  tx.tags = updated;
+
+  try {
+    const TagService = require('../../services/TagService');
+    await TagService.associateTags(tx.id, tags);
+  } catch (_) {}
 
   return res.json({ success: true, data: { tags: updated } });
 }));
@@ -498,8 +506,16 @@ router.delete('/:id/tags/:tag', requireApiKey, checkPermission(PERMISSIONS.DONAT
 
   const transactions = Transaction.loadTransactions();
   const idx = transactions.findIndex(t => t.id === tx.id);
-  transactions[idx].tags = updated;
-  Transaction.saveTransactions(transactions);
+  if (idx !== -1) {
+    transactions[idx].tags = updated;
+    Transaction.saveTransactions(transactions);
+  }
+  tx.tags = updated;
+
+  try {
+    const TagService = require('../../services/TagService');
+    await TagService.removeTagFromDonation(tx.id, tag);
+  } catch (_) {}
 
   return res.json({ success: true, data: { tags: updated } });
 }));
