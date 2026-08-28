@@ -3,6 +3,8 @@
  * Produces structured per-field validation errors with masking for sensitive values.
  */
 
+const { getMessage, parseLanguage } = require('./i18n');
+
 /** Fields whose values must always be masked in error output */
 const SENSITIVE_FIELDS = new Set(['secretKey', 'secret', 'password', 'privateKey', 'serviceSecretKey', 'sourceSecret', 'key', 'token', 'apiKey']);
 
@@ -60,18 +62,21 @@ function isSensitive(field) {
  * @param {string} code - Error code from ERROR_REGISTRY
  * @param {*} [receivedValue] - The value that was received (will be masked if sensitive)
  * @param {object} [overrides] - Optional overrides for field / expectedFormat
- * @returns {{ code: string, field: string, receivedValue: *, expectedFormat: string, docLink: string }}
+ * @param {string} [lang='en'] - Locale for the human-readable `message` (falls back to English)
+ * @returns {{ code: string, field: string, message: string, receivedValue: *, expectedFormat: string, docLink: string }}
  */
-function formatError(code, receivedValue, overrides = {}) {
+function formatError(code, receivedValue, overrides = {}, lang = 'en') {
   const entry = ERROR_REGISTRY[code] || { field: 'unknown', expectedFormat: 'See documentation', description: code };
   const field = overrides.field || entry.field;
   const expectedFormat = overrides.expectedFormat || entry.expectedFormat;
+  const message = getMessage(code, lang) || entry.description;
 
   const masked = isSensitive(field) ? maskValue(receivedValue) : receivedValue;
 
   return {
     code,
     field,
+    message,
     receivedValue: masked !== undefined ? masked : null,
     expectedFormat,
     docLink: `${DOCS_BASE}#${code.toLowerCase()}`,
@@ -82,12 +87,20 @@ function formatError(code, receivedValue, overrides = {}) {
  * Build a standard 400 error response body with one or more field errors.
  *
  * @param {Array<{code: string, receivedValue?: *, overrides?: object}>} errors
+ * @param {string|import('express').Request} [langOrReq='en'] - A locale code, or a request
+ *   object to derive one from via its Accept-Language header. Existing callers that omit
+ *   this keep getting English messages, so this is backward compatible.
  * @returns {{ success: false, errors: object[] }}
  */
-function buildErrorResponse(errors) {
+function buildErrorResponse(errors, langOrReq = 'en') {
+  const lang =
+    langOrReq && typeof langOrReq === 'object'
+      ? parseLanguage(langOrReq.headers && langOrReq.headers['accept-language'])
+      : parseLanguage(langOrReq);
+
   return {
     success: false,
-    errors: errors.map(({ code, receivedValue, overrides }) => formatError(code, receivedValue, overrides)),
+    errors: errors.map(({ code, receivedValue, overrides }) => formatError(code, receivedValue, overrides, lang)),
   };
 }
 
