@@ -39,12 +39,12 @@ channelService.initTable().catch((err) =>
 
 /**
  * Open a new payment channel.
- * Body: { senderKey, receiverKey, capacity, fundingTxId?, metadata? }
+ * Body: { senderKey, receiverKey, capacity, sourceSecret?, fundingTxId?, metadata? }
  */
 router.post('/open', requireApiKey, checkPermission(PERMISSIONS.DONATIONS_CREATE), payloadSizeLimiter(ENDPOINT_LIMITS.default), asyncHandler(async (req, res, next) => {
   try {
-    const { senderKey, receiverKey, capacity, fundingTxId, metadata } = req.body;
-    const channel = await channelService.openChannel({ senderKey, receiverKey, capacity: Number(capacity), fundingTxId, metadata });
+    const { senderKey, receiverKey, capacity, sourceSecret, fundingTxId, metadata } = req.body;
+    const channel = await channelService.openChannel({ senderKey, receiverKey, capacity: Number(capacity), sourceSecret, fundingTxId, metadata });
     return res.status(201).json({ success: true, data: channel });
   } catch (err) {
     next(err);
@@ -153,7 +153,7 @@ router.post('/:id/dispute', requireApiKey, checkPermission(PERMISSIONS.DONATIONS
  */
 router.delete('/:id', requireApiKey, checkPermission(PERMISSIONS.DONATIONS_CREATE), asyncHandler(async (req, res, next) => {
   try {
-    const channel = await channelService.closeChannel({
+    const channel = await channelService.forceCloseChannel({
       channelId: req.params.id,
       senderSecret: req.body.senderSecret,
     });
