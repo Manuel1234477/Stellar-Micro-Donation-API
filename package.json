@@ -22,6 +22,7 @@
     "migrate:reencrypt": "node src/scripts/reencrypt-memos.js",
     "migrate:currency": "node src/scripts/migrations/addCurrencyColumns.js",
     "test": "jest",
+    "test:chaos": "jest tests/chaos --runInBand --forceExit",
     "test:e2e": "jest --config jest.config.e2e.js",
     "test:coverage": "jest --coverage",
     "test:coverage:ci": "jest --coverage --ci --maxWorkers=2",

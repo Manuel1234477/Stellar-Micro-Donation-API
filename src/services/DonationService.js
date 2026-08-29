@@ -1846,6 +1846,7 @@ class DonationService {
       startDate, endDate,
       minAmount, maxAmount,
       status, donor, recipient, memo,
+      tags,
       sortBy = 'timestamp', order = 'desc',
     } = filters;
 
@@ -1897,6 +1898,12 @@ class DonationService {
     const recipientLower = recipient ? recipient.toLowerCase() : null;
     const memoLower = memo ? memo.toLowerCase() : null;
 
+    const normalizedFilterTags = tags
+      ? (Array.isArray(tags) ? tags : String(tags).split(','))
+          .map(t => String(t || '').trim().toLowerCase())
+          .filter(Boolean)
+      : null;
+
     let result = transactions.filter(tx => {
       if (start && new Date(tx.timestamp) < start) return false;
       if (end && new Date(tx.timestamp) > end) return false;
@@ -1906,6 +1913,12 @@ class DonationService {
       if (donorLower && !(tx.donor || '').toLowerCase().includes(donorLower)) return false;
       if (recipientLower && !(tx.recipient || '').toLowerCase().includes(recipientLower)) return false;
       if (memoLower && !(tx.memo || '').toLowerCase().includes(memoLower)) return false;
+      if (normalizedFilterTags && normalizedFilterTags.length > 0) {
+        const txTags = (Array.isArray(tx.tags) ? tx.tags : [])
+          .map(t => String(t || '').trim().toLowerCase());
+        const hasAllTags = normalizedFilterTags.every(reqTag => txTags.includes(reqTag));
+        if (!hasAllTags) return false;
+      }
       return true;
     });
 
