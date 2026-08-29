@@ -51,6 +51,7 @@ const V1_ROUTES = [
   ['/auth',                           require('../routes/auth')],
   ['/docs',                           require('../routes/docs')],
   ['/transactions',                   require('../routes/transaction')],
+  ['/contracts',                      require('../routes/contracts')],
   ['/transactions/bump-sequence',     require('../routes/transactions/bump-sequence')],
   ['/claimable-balances',             require('../routes/claimableBalances')],
   ['/liquidity-pools',                require('../routes/liquidity-pools')],
@@ -58,6 +59,7 @@ const V1_ROUTES = [
 
 // ── Admin routes ──────────────────────────────────────────────────────────────
 const ADMIN_ROUTES = [
+  ['/admin/donations',              require('../routes/admin/donations')],
   ['/admin/crowdfunding',             require('../routes/admin/crowdfunding')],
   ['/admin/cors/rules',               require('../routes/admin/corsRules')],
   ['/admin/db',                       require('../routes/admin/db')],

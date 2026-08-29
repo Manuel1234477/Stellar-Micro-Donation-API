@@ -468,15 +468,6 @@ class WalletService {
    * @param {string} key - Data entry key to delete
    * @returns {Promise<Object>} Transaction result with hash and ledger
    */
-  async deleteAccountData(walletId, secretKey, key) {
-    if (!this.stellarService) {
-      throw new ValidationError('Stellar service not available', null, ERROR_CODES.SERVICE_UNAVAILABLE);
-    }
-
-    const wallet = this.getWalletById(walletId);
-    if (!wallet) {
-      throw new NotFoundError('Wallet not found', ERROR_CODES.WALLET_NOT_FOUND);
-    }
   /**
    * Set a data entry on a Stellar account using ManageDataOperation.
    * @param {string|number} walletId - Wallet ID

@@ -35,6 +35,8 @@ class StellarService extends StellarServiceInterface {
     this.serviceSecretKey = config.serviceSecretKey;
     this.environment = config.environment;
     this.correlationId = config.correlationId;
+    this.sorobanRpc = config.sorobanRpc || null;
+    this.sorobanRpcUrl = config.sorobanRpcUrl || process.env.SOROBAN_RPC_URL || null;
 
     // Default to SDK definitions if environment config is missing
     this.baseFee = this.environment?.baseFee || StellarSdk.BASE_FEE;

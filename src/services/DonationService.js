@@ -34,6 +34,7 @@ const log = require('../utils/log');
 const priceOracle = require('./PriceOracleService');
 const { buildOverpaymentRecord } = require('../utils/overpaymentDetector');
 const memoCollisionDetector = require('../utils/memoCollisionDetector');
+const WebhookService = require('./WebhookService');
 const {
   parseAssetInput,
   isSameAsset,
@@ -145,13 +146,21 @@ class DonationService {
         const onChainAmount = parseFloat(onChain.amount);
         const donationAmount = parseFloat(donation.amount);
         if (!isNaN(onChainAmount) && !isNaN(donationAmount)) {
-          const diff = Math.abs(onChainAmount - donationAmount);
-          if (diff > 0.0000001) {
+          const tolerance = Number(process.env.OVERPAYMENT_TOLERANCE_XLM || '0.01');
+          if (onChainAmount < donationAmount - tolerance) {
             throw new ValidationError(
               `Transaction amount mismatch: on-chain ${onChainAmount}, donation record ${donationAmount}`,
               { donationId, onChainAmount, donationAmount },
               'VERIFICATION_FAILED'
             );
+          }
+          if (onChainAmount > donationAmount + tolerance) {
+            const overpayment = buildOverpaymentRecord(onChainAmount, donationAmount, 0);
+            donation.overpaymentFlagged = true;
+            donation.overpaymentDetails = overpayment;
+            donation.overpaymentReturnStatus = donation.overpaymentReturnStatus || 'pending';
+            Transaction.saveTransactions(Transaction.loadTransactions());
+            WebhookService.deliver('donation.overpayment_detected', { donationId, excessAmount: overpayment.excessAmount, receivedAmount: onChainAmount, donationAmount }).catch(() => {});
           }
         }
 
@@ -393,7 +402,10 @@ class DonationService {
       status: TRANSACTION_STATES.PENDING,
       notes: notes || null,
       tags: tags || [],
-      apiKeyId: apiKeyId || null
+      apiKeyId: apiKeyId || null,
+      overpaymentFlagged: Boolean(overpayment),
+      overpaymentDetails: overpayment || null,
+      overpaymentReturnStatus: overpayment ? 'pending' : null
     });
 
     Transaction.updateStatus(transaction.id, TRANSACTION_STATES.SUBMITTED, {
@@ -720,11 +732,20 @@ class DonationService {
     asset,
     validAfter = 0,
     validBefore = 0,
+    validFrom = null,
+    validUntil = null,
     memoEnvelope = null,
     encryptionMetadata = null,
     sdgCategories = [],
     correlationId = null,
+    contractAddress = null,
   }) {
+    if (validFrom) validAfter = Math.floor(new Date(validFrom).getTime() / 1000);
+    if (validUntil) validBefore = Math.floor(new Date(validUntil).getTime() / 1000);
+    if (!Number.isInteger(validAfter) || validAfter < 0) throw new ValidationError('validAfter must be a non-negative Unix timestamp');
+    if (!Number.isInteger(validBefore) || validBefore < 0) throw new ValidationError('validBefore must be a non-negative Unix timestamp');
+    if (validAfter && validBefore && validAfter >= validBefore) throw new ValidationError('validAfter must be strictly less than validBefore');
+    if (validBefore && validBefore <= Math.floor(Date.now() / 1000)) throw new BusinessLogicError('TRANSACTION_EXPIRED', 'validUntil must be in the future');
     // Sanitize identifiers
     const rawDonor = donor ? sanitizeIdentifier(donor) : 'Anonymous';
     const rawRecipient = recipient ? sanitizeIdentifier(recipient) : null;
@@ -808,6 +829,13 @@ class DonationService {
         excessAmount: overpayment.excessAmount,
         overpaymentPercentage: overpayment.overpaymentPercentage,
       });
+      WebhookService.deliver('donation.overpayment_detected', {
+        donationAmount: amount,
+        receivedAmount: overpayment.receivedAmount,
+        excessAmount: overpayment.excessAmount,
+        donor: sanitizedDonor,
+        recipient: sanitizedRecipient,
+      }).catch(() => {});
     }
 
     const sourceAssetProvided = sourceAsset !== undefined && sourceAsset !== null;
@@ -855,6 +883,16 @@ class DonationService {
       const isPathPayment = !customAssetProvided && (sourceAssetProvided || (sendAssetProvided && receiveAssetProvided && !isSameAsset(normalizedSourceAsset, normalizedDestAsset)));
 
       if (!isPathPayment) {
+        // Programmable donations use the Soroban contract instead of a direct payment.
+        if (contractAddress) {
+          stellarResult = await this.stellarService.invokeContract(contractAddress, 'donate', [sanitizedDonor, normalizedSourceAmount.toString()], sourceSecret);
+          if (!stellarResult || stellarResult.status === 'error') {
+            const error = new Error(stellarResult?.returnValue || 'Soroban donation contract invocation failed');
+            error.code = 'SOROBAN_INVOCATION_FAILED';
+            throw error;
+          }
+          paymentMethod = 'soroban';
+        } else {
         // Set correlation ID on StellarService for this request
         if (correlationId) {
           this.stellarService.setCorrelationId(correlationId);
@@ -870,6 +908,7 @@ class DonationService {
           validBefore,
         });
         paymentMethod = 'direct';
+        }
       } else {
         // Set correlation ID on StellarService for this request
         if (correlationId) {
@@ -991,6 +1030,7 @@ class DonationService {
       destinationAsset: serializeAsset(normalizedDestAsset),
       destinationAmount: xlmAmount.toString(),
       paymentMethod,
+      contractAddress: contractAddress || null,
       fallbackUsed,
       path: selectedPath,
       conversionRate,
@@ -2037,6 +2077,22 @@ class DonationService {
    * @throws {ValidationError} If donation is not eligible for refund
    * @throws {BusinessLogicError} If refund fails
    */
+  async approveOverpaymentReturn(donationId, { recipientSecret, requestId } = {}) {
+    const donation = this.getDonationById(donationId);
+    if (!donation.overpaymentFlagged || !donation.overpaymentDetails) throw new ValidationError('Donation has no detected overpayment');
+    if (donation.overpaymentReturnStatus === 'completed') return { alreadyProcessed: true, donationId, amount: donation.overpaymentDetails.excessAmount, status: 'completed', reverseTxId: donation.overpaymentReturnTxId };
+    if (donation.overpaymentReturnStatus === 'rejected') throw new BusinessLogicError(ERROR_CODES.TRANSACTION_FAILED, 'Overpayment return was rejected');
+    if (!recipientSecret) throw new ValidationError('recipientSecret is required to approve an overpayment return');
+    const amount = Number(donation.overpaymentDetails.excessAmount);
+    if (!Number.isFinite(amount) || amount <= 0) throw new ValidationError('Overpayment amount is invalid');
+    const reverseResult = await this.stellarService.sendDonation({ sourceSecret: recipientSecret, destinationPublic: donation.donor, amount, memo: `CHANGE:${donationId}` });
+    donation.overpaymentReturnStatus = 'completed';
+    donation.overpaymentReturnTxId = reverseResult.transactionId;
+    Transaction.saveTransactions(Transaction.loadTransactions());
+    await WebhookService.deliver('donation.overpayment_returned', { donationId, amount, transactionId: reverseResult.transactionId, requestId }).catch(() => {});
+    return { donationId, amount, status: 'completed', reverseTxId: reverseResult.transactionId, ledger: reverseResult.ledger };
+  }
+
   async refundDonation(donationId, { reason, notes, idempotencyKey, recipientSecret, requestId }) {
     const StellarSdk = require('stellar-sdk');
     const { BusinessLogicError, DuplicateError, ValidationError } = require('../utils/errors');
@@ -2165,6 +2221,8 @@ class DonationService {
       ]
     );
 
+    // Keep the issue-defined refund_transactions ledger synchronized when present.
+    await Database.run(`INSERT INTO refund_transactions (original_donation_id, reverse_transaction_id, amount, reason, notes, idempotency_key, status) VALUES (?, ?, ?, ?, ?, ?, 'pending')`, [donationId, `pending_${Date.now()}`, donation.amount, reason || null, notes || null, idempotencyKey || null]).catch(() => {});
     // Update status to processing
     await Database.run(`UPDATE refunds SET status = 'processing' WHERE id = ?`, [pendingRecord.id]);
 
@@ -2178,6 +2236,7 @@ class DonationService {
       });
     } catch (stellarErr) {
       await Database.run(`UPDATE refunds SET status = 'failed' WHERE id = ?`, [pendingRecord.id]);
+      await Database.run(`UPDATE refund_transactions SET status = 'failed', error = ? WHERE original_donation_id = ? AND status = 'pending'`, [stellarErr.message, donationId]).catch(() => {});
       secret = null;
       throw stellarErr;
     }
@@ -2196,6 +2255,7 @@ class DonationService {
       `UPDATE refunds SET reverse_transaction_id = ?, stellar_ledger = ?, status = 'completed' WHERE id = ?`,
       [reverseResult.transactionId, reverseResult.ledger, pendingRecord.id]
     );
+    await Database.run(`UPDATE refund_transactions SET reverse_transaction_id = ?, stellar_ledger = ?, status = 'completed', completed_at = CURRENT_TIMESTAMP WHERE original_donation_id = ? AND status = 'pending'`, [reverseResult.transactionId, reverseResult.ledger, donationId]).catch(() => {});
 
     // Update original donation status to refunded
     Transaction.updateStatus(donationId, 'refunded', {
