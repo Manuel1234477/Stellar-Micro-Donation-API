@@ -39,6 +39,85 @@ jobs:
       - run: npm run openapi:check
       - run: npm run check:no-json-persistence
       - run: npm audit --audit-level=high
+
+      # ── Coverage diff: download base branch artifact (best-effort) ────────
+      - name: Download base branch coverage artifact
+        if: github.event_name == 'pull_request'
+        uses: actions/download-artifact@v4
+        with:
+          name: coverage-base-node-${{ matrix.node-version }}
+          path: coverage/base
+        continue-on-error: true
+
+      # ── Coverage diff: copy base lcov to expected path ─────────────────────
+      - name: Prepare base lcov for diff
+        if: github.event_name == 'pull_request'
+        run: |
+          if [ -f coverage/base/lcov.info ]; then
+            cp coverage/base/lcov.info coverage/base-lcov.info
+            echo "Base lcov found — will compute delta."
+          else
+            echo "No base lcov available — diff will show head-only data."
+            # Create an empty placeholder so the diff script runs without error
+            touch coverage/base-lcov.info
+          fi
+
+      # ── Coverage diff: generate markdown comment ───────────────────────────
+      - name: Generate coverage diff comment
+        if: github.event_name == 'pull_request'
+        run: |
+          node scripts/check-coverage.js \
+            --diff \
+            --base=coverage/base-lcov.info \
+            --head=coverage/lcov.info \
+            --output=coverage/diff-comment.md
+
+      # ── Coverage diff: post or update sticky PR comment ────────────────────
+      - name: Post coverage diff as PR comment
+        if: github.event_name == 'pull_request'
+        uses: actions/github-script@v7
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          script: |
+            const fs = require('fs');
+            const commentPath = 'coverage/diff-comment.md';
+
+            if (!fs.existsSync(commentPath)) {
+              console.log('No diff comment file found — skipping.');
+              return;
+            }
+
+            const body = fs.readFileSync(commentPath, 'utf8');
+            const MARKER = '<!-- coverage-diff-comment -->';
+
+            const { data: comments } = await github.rest.issues.listComments({
+              owner: context.repo.owner,
+              repo:  context.repo.repo,
+              issue_number: context.issue.number,
+              per_page: 100
+            });
+
+            const existing = comments.find(c => c.body && c.body.includes(MARKER));
+
+            if (existing) {
+              await github.rest.issues.updateComment({
+                owner:      context.repo.owner,
+                repo:       context.repo.repo,
+                comment_id: existing.id,
+                body
+              });
+              console.log(`Updated existing coverage comment (id=${existing.id}).`);
+            } else {
+              await github.rest.issues.createComment({
+                owner:        context.repo.owner,
+                repo:         context.repo.repo,
+                issue_number: context.issue.number,
+                body
+              });
+              console.log('Created new coverage comment.');
+            }
+
+      # ── Artifacts ─────────────────────────────────────────────────────────
       - name: Upload coverage reports to artifacts
         if: always()
         uses: actions/upload-artifact@v4
@@ -46,6 +125,17 @@ jobs:
           name: coverage-report-node-${{ matrix.node-version }}
           path: coverage/
           retention-days: 30
+
+      # Save LCOV as a base artifact so future PRs can diff against it.
+      # Only upload on pushes to the default branch (not on PRs), so the
+      # artifact represents the true merged-base coverage.
+      - name: Save coverage as base artifact
+        if: github.event_name == 'push'
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-base-node-${{ matrix.node-version }}
+          path: coverage/lcov.info
+          retention-days: 90
 
   smoke:
     runs-on: ubuntu-latest
