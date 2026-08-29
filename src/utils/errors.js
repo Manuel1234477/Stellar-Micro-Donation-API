@@ -26,6 +26,7 @@ const ERROR_CODES = {
   MISSING_REQUIRED_FIELD:  { code: 'MISSING_REQUIRED_FIELD',  numeric: 1007 },
   IDEMPOTENCY_KEY_REQUIRED:{ code: 'IDEMPOTENCY_KEY_REQUIRED',numeric: 1008 },
   INVALID_SCHEMA_VERSION:  { code: 'INVALID_SCHEMA_VERSION',  numeric: 1009 },
+  SSRF_BLOCKED:            { code: 'SSRF_BLOCKED',            numeric: 1010 },
 
   // Authentication/Authorization errors (2000-2099)
   UNAUTHORIZED:             { code: 'UNAUTHORIZED',             numeric: 2000 },

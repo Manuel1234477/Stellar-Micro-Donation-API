@@ -83,7 +83,15 @@ router.post('/', requireApiKey, payloadSizeLimiter(ENDPOINT_LIMITS.webhook), asy
     });
     res.status(201).json({ success: true, data: webhook });
   } catch (err) {
-    if (err.status === 400) return res.status(400).json({ success: false, error: { message: err.message } });
+    if (err.status === 400 || err.statusCode === 400) {
+      return res.status(400).json({
+        success: false,
+        error: {
+          code: err.code || err.errorCode || 'VALIDATION_ERROR',
+          message: err.message,
+        },
+      });
+    }
     next(err);
   }
 }));

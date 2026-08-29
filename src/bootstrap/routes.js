@@ -84,6 +84,7 @@ const ADMIN_ROUTES = [
   ['/admin/feature-flags',            require('../routes/admin/featureFlags')],
   ['/admin/geo-blocking',             require('../routes/admin/geoBlocking')],
   ['/admin/impact-metrics',           require('../routes/admin/impactMetrics')],
+  ['/admin/sdg-mapping',              require('../routes/admin/impactMetrics')],
   ['/admin/matching-programs',        require('../routes/admin/matchingPrograms')],
   ['/admin/reconciliation',           require('../routes/admin/reconciliation')],
   ['/admin/routing',                  require('../routes/admin/routing')],
@@ -100,6 +101,7 @@ const UNVERSIONED_PATHS = [
   '/webhooks', '/campaigns', '/encryption', '/tiers', '/offers', '/orderbook',
   '/tags', '/leaderboard', '/federation', '/tools', '/auth', '/docs',
   '/transactions', '/claimable-balances', '/liquidity-pools', '/exchange-rates',
+  '/impact',
 ];
 
 /**
@@ -308,9 +310,9 @@ function mountRoutes(app, services = {}) {
   app.get('/api/v1/health', healthCheckRateLimiter, healthHandler);
   app.get('/health', healthCheckRateLimiter, healthHandler);
 
-  app.get('/health/live', (req, res) => res.status(200).json(HealthCheckService.getLiveness()));
+  const liveHandler = (req, res) => res.status(200).json(HealthCheckService.getLiveness());
 
-  app.get('/health/ready', asyncHandler(async (req, res) => {
+  const readyHandler = asyncHandler(async (req, res) => {
     if (state.isShuttingDown) {
       return res.status(503).json({ status: 'not_ready', reason: 'server is shutting down' });
     }
@@ -336,7 +338,13 @@ function mountRoutes(app, services = {}) {
       log.error('HEALTH', 'Readiness check failed', { error: err.message });
       return res.status(503).json({ status: 'not_ready', reason: 'readiness check failed' });
     }
-  }));
+  });
+
+  app.get('/health/live', liveHandler);
+  app.get('/api/v1/health/live', liveHandler);
+
+  app.get('/health/ready', readyHandler);
+  app.get('/api/v1/health/ready', readyHandler);
 
   // ── Observability admin endpoints ─────────────────────────────────────────
   app.get('/abuse-signals', rbac.requireAdmin(), (req, res) => {

@@ -103,10 +103,14 @@ class StellarService extends StellarServiceInterface {
 
   _createHttpClient() {
     const { generateCorrelationHeaders } = require('../utils/correlation');
+    const { assertSafeOutboundUrl } = require('../utils/ssrf');
     const fetch = globalThis.fetch;
     
     return {
       async request(method, url, data, headers = {}) {
+        if (process.env.MOCK_STELLAR !== 'true') {
+          await assertSafeOutboundUrl(url);
+        }
         const correlationHeaders = generateCorrelationHeaders();
         const mergedHeaders = {
           ...headers,
