@@ -836,4 +836,84 @@ router.post(
   })
 );
 
+// ─── Claimable donation helper (used by POST /) ───────────────────────────────
+
+async function processClaimableDonation(req, res, next) {
+  try {
+    const { amount, currency, claimants, expiryTimestamp, memo, memoType, notes, tags, donor, anonymous } = req.body;
+
+    if (!amount || !claimants || !Array.isArray(claimants) || claimants.length === 0) {
+      return res.status(400).json({
+        success: false,
+        error: { code: 'VALIDATION_ERROR', message: 'amount and non-empty claimants array are required' },
+      });
+    }
+
+    const amountValidation = validateXLMAmount(amount);
+    if (!amountValidation.valid) {
+      return res.status(422).json({
+        success: false,
+        error: `Invalid amount: ${amountValidation.error}`,
+      });
+    }
+
+    const result = await donationService.createClaimableDonation({
+      amount: amountValidation.xlm,
+      currency: currency || 'XLM',
+      claimants,
+      expiryTimestamp: expiryTimestamp ? parseInt(expiryTimestamp) : null,
+      memo,
+      memoType: memoType || 'text',
+      notes,
+      tags,
+      donor,
+      anonymous: anonymous === true,
+      idempotencyKey: req.idempotency.key,
+      apiKeyId: req.apiKey ? req.apiKey.id : null,
+      apiKeyRole: req.apiKey ? req.apiKey.role : (req.user?.role || 'user'),
+      correlationId: req.id,
+    });
+
+    if (req.markLifecycleStage) {
+      req.markLifecycleStage(LIFECYCLE_STAGES.PROCESSED);
+    }
+
+    const response = {
+      success: true,
+      data: {
+        verified: true,
+        transactionHash: result.stellarTxId || result.id,
+        claimableBalanceId: result.balanceId,
+        status: 'claimable',
+      },
+    };
+
+    await storeIdempotencyResponse(req, response);
+    res.status(201).json(response);
+  } catch (error) {
+    log.error('DONATION_ROUTE', 'Failed to create claimable donation', {
+      requestId: req.id,
+      error: error.message,
+      stack: error.stack,
+    });
+
+    if (error.name === 'DuplicateError') {
+      return res.status(409).json({
+        success: false,
+        error: { code: error.code, message: error.message },
+      });
+    }
+
+    if (error.statusCode) {
+      return next(error);
+    }
+
+    res.status(500).json({
+      success: false,
+      error: 'Failed to create claimable donation',
+      message: error.message,
+    });
+  }
+}
+
 module.exports = router;

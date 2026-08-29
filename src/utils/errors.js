@@ -32,6 +32,7 @@ const ERROR_CODES = {
   ACCESS_DENIED:            { code: 'ACCESS_DENIED',            numeric: 2001 },
   INSUFFICIENT_PERMISSIONS: { code: 'INSUFFICIENT_PERMISSIONS', numeric: 2002 },
   INVALID_API_KEY:          { code: 'INVALID_API_KEY',          numeric: 2003 },
+  SEP10_REPLAY_DETECTED:    { code: 'SEP10_REPLAY_DETECTED',    numeric: 2004 },
 
   // Not found errors (3000-3099)
   NOT_FOUND:            { code: 'NOT_FOUND',            numeric: 3000 },
