@@ -62,6 +62,7 @@
     "scan:container:json": "bash scripts/scan-container.sh --format json --output trivy-results.json"
   },
   "dependencies": {
+    "@opentelemetry/api": "^1.9.0",
     "ajv": "^8.12.0",
     "csv-parse": "^6.2.1",
     "dotenv": "^17.4.2",
@@ -83,6 +84,13 @@
     "swagger-ui-express": "^5.0.1",
     "uuid": "^11.1.1",
     "ws": "^8.21.0"
+  },
+  "optionalDependencies": {
+    "@opentelemetry/auto-instrumentations-node": "^0.54.0",
+    "@opentelemetry/exporter-trace-otlp-http": "^0.57.0",
+    "@opentelemetry/resources": "^1.30.0",
+    "@opentelemetry/sdk-node": "^0.57.0",
+    "@opentelemetry/semantic-conventions": "^1.28.0"
   },
   "devDependencies": {
     "@babel/preset-env": "^7.29.7",

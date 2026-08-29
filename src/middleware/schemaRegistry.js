@@ -2,6 +2,10 @@
  * Schema Version Registry
  * 
  * RESPONSIBILITY: Store and manage request body schemas, versions, and migration guides.
+ *
+ * Also provides a TRANSFORMATION_TABLE and applyTransformations() so that route
+ * handlers can upgrade a request body from one schema version to another using
+ * the same rules shared across the application.
  */
 
 const schemaRegistry = new Map();
@@ -63,6 +67,107 @@ function getSchema(key, version) {
     migrationGuide: entry.migrationGuides[requestedVersion] || null,
     supportedVersions: entry.allVersions
   };
+}
+
+// ─── Transformation Table ─────────────────────────────────────────────────────
+
+/**
+ * Central transformation table.
+ *
+ * Keys are "fromVersion:toVersion" composite strings.
+ * Values are arrays of transformation rule objects, each with:
+ *
+ *   {
+ *     from:       string           – source version
+ *     to:         string           – target version
+ *     transforms: Array<{
+ *       field:         string      – source field name
+ *       action:        'rename' | 'default' | 'remove'
+ *       newField?:     string      – target field name (used by 'rename')
+ *       defaultValue?: *           – value to inject   (used by 'default')
+ *     }>
+ *   }
+ */
+const TRANSFORMATION_TABLE = {
+  // ── createDonation: v1.0.0 → v2.0.0 ─────────────────────────────────────
+  'createDonation:1.0.0:2.0.0': {
+    from: '1.0.0',
+    to: '2.0.0',
+    transforms: [
+      { field: 'donor_name',        action: 'rename',  newField: 'donorName' },
+      { field: 'recipient_address', action: 'rename',  newField: 'recipient' },
+      { field: 'amount_xlm',        action: 'rename',  newField: 'amount' },
+      { field: 'currency',          action: 'default', defaultValue: 'XLM' }
+    ]
+  },
+
+  // ── createWallet: v1.0.0 → v2.0.0 ───────────────────────────────────────
+  'createWallet:1.0.0:2.0.0': {
+    from: '1.0.0',
+    to: '2.0.0',
+    transforms: [
+      { field: 'public_key', action: 'rename', newField: 'publicKey' }
+    ]
+  }
+};
+
+/**
+ * Apply registered transformations to a body, upgrading it from `fromVersion`
+ * to `toVersion` for the given schema `key`.
+ *
+ * Looks up `key:fromVersion:toVersion` in TRANSFORMATION_TABLE.  When no
+ * entry is found the body is returned unchanged.  When `fromVersion ===
+ * toVersion` the body is also returned unchanged (identity transform).
+ *
+ * The original body is never mutated — a shallow clone is created first.
+ *
+ * @param {Object} body         - Request body to transform.
+ * @param {string} fromVersion  - Schema version of the incoming body.
+ * @param {string} toVersion    - Target schema version.
+ * @param {string} [key='']     - Schema key (e.g. 'createDonation').
+ * @returns {Object} Transformed body (or original when no rules apply).
+ */
+function applyTransformations(body, fromVersion, toVersion, key = '') {
+  if (!body || typeof body !== 'object') return body;
+  if (fromVersion === toVersion) return body;
+
+  const tableKey = key
+    ? `${key}:${fromVersion}:${toVersion}`
+    : `${fromVersion}:${toVersion}`;
+
+  const entry = TRANSFORMATION_TABLE[tableKey];
+  if (!entry || !Array.isArray(entry.transforms) || entry.transforms.length === 0) {
+    return body;
+  }
+
+  const transformed = Object.assign({}, body);
+
+  for (const rule of entry.transforms) {
+    switch (rule.action) {
+      case 'rename':
+        if (Object.prototype.hasOwnProperty.call(transformed, rule.field)) {
+          transformed[rule.newField] = transformed[rule.field];
+          delete transformed[rule.field];
+        }
+        break;
+
+      case 'default':
+        if (!Object.prototype.hasOwnProperty.call(transformed, rule.field)) {
+          transformed[rule.field] = rule.defaultValue;
+        }
+        break;
+
+      case 'remove':
+        delete transformed[rule.field];
+        break;
+
+      default:
+        // Unknown action — skip silently
+        break;
+    }
+  }
+
+  return transformed;
 }
 
 // ─── Built-in Schema Registrations ───────────────────────────────────────────
@@ -162,8 +267,63 @@ registerSchema('createDonation', {
   }
 });
 
+/**
+ * Wallet Creation Schema Versions
+ *
+ * v1.0.0: Original schema using snake_case field names
+ * v2.0.0: Updated schema using camelCase field names with an optional label
+ */
+registerSchema('createWallet', {
+  '1.0.0': {
+    body: {
+      fields: {
+        public_key: {
+          type: 'string',
+          required: true,
+          description: 'Stellar public key (G…)'
+        },
+        memo: {
+          type: 'string',
+          required: false,
+          description: 'Optional memo associated with the wallet'
+        }
+      },
+      allowUnknown: false
+    }
+  },
+  '2.0.0': {
+    body: {
+      fields: {
+        publicKey: {
+          type: 'string',
+          required: true,
+          description: 'Stellar public key (G…)'
+        },
+        memo: {
+          type: 'string',
+          required: false,
+          description: 'Optional memo associated with the wallet'
+        },
+        label: {
+          type: 'string',
+          required: false,
+          description: 'Human-readable label for the wallet'
+        }
+      },
+      allowUnknown: false
+    }
+  }
+}, {
+  deprecated: [],
+  migrationGuides: {
+    '1.0.0': 'Schema v1.0.0 uses snake_case fields. Upgrade to v2.0.0 and rename public_key to publicKey. The new label field is also available in v2.0.0.'
+  }
+});
+
 module.exports = {
   registerSchema,
   getSchema,
-  registry: schemaRegistry
+  registry: schemaRegistry,
+  applyTransformations,
+  TRANSFORMATION_TABLE
 };

@@ -1,0 +1,55 @@
+# .auditignore — npm audit exception list
+# =============================================================================
+#
+# PURPOSE
+# -------
+# This file lists vulnerability IDs that are intentionally accepted and should
+# NOT cause the security-scan CI job to fail.
+#
+# WHEN TO ADD AN ENTRY
+# --------------------
+# Only add an exception when ALL of the following are true:
+#   1. You have reviewed the advisory and confirmed the vulnerability does NOT
+#      affect this project in its current usage context.
+#   2. No patched version of the package is available yet, OR upgrading would
+#      require a disproportionate effort relative to the actual risk.
+#   3. You have documented the rationale and set a realistic expiry date.
+#
+# EVERY EXCEPTION MUST HAVE A RATIONALE. Entries without a reason will be
+# removed during the next security review.
+#
+# FORMAT
+# ------
+# Each active (non-commented) exception occupies a single line:
+#
+#   VULN-ID | package-name | reason | expires: YYYY-MM-DD
+#
+# Fields:
+#   VULN-ID      — The vulnerability identifier (npm advisory source ID,
+#                  GitHub Advisory ID such as GHSA-xxxx-xxxx-xxxx, or CVE).
+#   package-name — The exact npm package name affected.
+#   reason       — A short human-readable justification (no pipes "|" allowed).
+#   expires      — ISO-8601 date after which this exception MUST be re-evaluated.
+#                  The CI job will NOT enforce expiry automatically; the security
+#                  team is responsible for reviewing and removing stale entries.
+#
+# EXAMPLE ENTRIES (all commented out — do not uncomment without review)
+# -----------------------------------------------------------------------
+
+# 1234567 | lodash | Prototype-pollution in _.merge; we only call _.pick on
+#          trusted server-side data. No user input reaches the affected path.
+#          expires: 2026-12-31
+
+# GHSA-abc1-def2-ghi3 | axios | ReDoS in URL parsing; our usage passes only
+#                       hard-coded base URLs — no user-controlled input is
+#                       present in the URL string. Re-evaluate after axios@2.x
+#                       release. expires: 2027-03-31
+
+# CVE-2025-99999 | semver | ReDOS in semver range parsing; only invoked during
+#                  build-time version resolution, never on untrusted input.
+#                  expires: 2026-06-30
+
+# =============================================================================
+# Active exceptions below this line
+# (none at this time — add entries as VULN-ID | package | reason | expires: DATE)
+# =============================================================================

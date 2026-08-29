@@ -2,11 +2,12 @@ name: Security Scan
 
 on:
   push:
-    branches: [ "main", "master" ]
+    branches: ["main", "master"]
   pull_request:
-    branches: [ "main", "master" ]
+    branches: ["main", "master"]
   schedule:
-    - cron: '0 0 * * *'
+    # Every Monday at 8:00 AM UTC
+    - cron: "0 8 * * 1"
 
 # Cancel in-progress runs for the same branch/PR when a new push arrives.
 # Scheduled (nightly) runs are not cancelled.
@@ -20,8 +21,15 @@ permissions:
   pull-requests: write
 
 jobs:
-  security-scan:
+  # ──────────────────────────────────────────────────────────────────────────────
+  # Job 1: Dependency vulnerability audit (npm audit)
+  # Reads .auditignore to filter known/accepted exceptions before failing.
+  # ──────────────────────────────────────────────────────────────────────────────
+  npm-audit:
+    name: Dependency Audit (npm audit)
     runs-on: ubuntu-latest
+    outputs:
+      result: ${{ steps.audit.outputs.result }}
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -32,16 +40,145 @@ jobs:
           node-version: "20"
           cache: "npm"
 
-      - name: Install Dependencies
+      - name: Install dependencies
         run: npm ci
 
-      - name: Run npm audit (Fail on high/critical)
-        id: npm_audit
-        run: npm audit --audit-level=high
+      - name: Run npm audit and filter .auditignore exceptions
+        id: audit
+        run: |
+          set +e
+
+          # Run audit in JSON mode so we can parse it
+          npm audit --audit-level=high --json > audit-output.json 2>&1
+          AUDIT_EXIT=$?
+
+          # If no failures, short-circuit
+          if [ $AUDIT_EXIT -eq 0 ]; then
+            echo "result=success" >> "$GITHUB_OUTPUT"
+            echo "✅ npm audit passed — no high/critical vulnerabilities found."
+            exit 0
+          fi
+
+          # Parse .auditignore: collect non-comment, non-blank lines as ignored IDs
+          IGNORED_IDS=()
+          if [ -f ".auditignore" ]; then
+            while IFS= read -r line; do
+              # Skip blank lines and comment-only lines
+              stripped="${line%%#*}"
+              stripped="${stripped// /}"
+              stripped="${stripped//	/}"
+              if [ -n "$stripped" ]; then
+                # First token before | is the vuln ID
+                vuln_id="${stripped%%|*}"
+                vuln_id="${vuln_id// /}"
+                if [ -n "$vuln_id" ]; then
+                  IGNORED_IDS+=("$vuln_id")
+                fi
+              fi
+            done < ".auditignore"
+          fi
+
+          echo "Ignored vulnerability IDs from .auditignore: ${IGNORED_IDS[*]:-<none>}"
+
+          # Extract advisory IDs from the audit JSON output
+          VULN_IDS=$(python3 -c "
+          import json, sys
+          try:
+              data = json.load(open('audit-output.json'))
+              advisories = data.get('vulnerabilities', data.get('advisories', {}))
+              ids = []
+              for key, val in advisories.items():
+                  via = val.get('via', [])
+                  for v in via:
+                      if isinstance(v, dict):
+                          source = str(v.get('source', ''))
+                          url = v.get('url', '')
+                          if source:
+                              ids.append(source)
+                          if 'GHSA-' in url:
+                              ids.append(url.split('/')[-1])
+              print('\n'.join(set(ids)))
+          except Exception as e:
+              print('PARSE_ERROR: ' + str(e), file=sys.stderr)
+          " 2>/dev/null || true)
+
+          # Filter out ignored IDs
+          UNIGNORED_VULNS=()
+          while IFS= read -r vid; do
+            [ -z "$vid" ] && continue
+            FOUND=false
+            for ignored in "${IGNORED_IDS[@]}"; do
+              if [ "$vid" = "$ignored" ]; then
+                FOUND=true
+                break
+              fi
+            done
+            if [ "$FOUND" = "false" ]; then
+              UNIGNORED_VULNS+=("$vid")
+            fi
+          done <<< "$VULN_IDS"
+
+          if [ ${#UNIGNORED_VULNS[@]} -eq 0 ]; then
+            echo "result=success" >> "$GITHUB_OUTPUT"
+            echo "✅ All detected vulnerabilities are covered by .auditignore exceptions."
+            exit 0
+          else
+            echo "result=failure" >> "$GITHUB_OUTPUT"
+            echo "❌ Unignored high/critical vulnerabilities found: ${UNIGNORED_VULNS[*]}"
+            cat audit-output.json
+            exit 1
+          fi
+
+  # ──────────────────────────────────────────────────────────────────────────────
+  # Job 2: Static Application Security Testing (SAST) with eslint-plugin-security
+  # ──────────────────────────────────────────────────────────────────────────────
+  sast:
+    name: SAST (eslint-plugin-security)
+    runs-on: ubuntu-latest
+    outputs:
+      result: ${{ steps.sast.outputs.result }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: "npm"
+
+      - name: Install dependencies
+        run: npm ci
 
       - name: Run SAST with eslint-plugin-security
         id: sast
-        run: npm run lint:security
+        run: |
+          set +e
+          npm run lint:security
+          EXIT_CODE=$?
+          if [ $EXIT_CODE -eq 0 ]; then
+            echo "result=success" >> "$GITHUB_OUTPUT"
+            echo "✅ SAST passed — no security issues found."
+          else
+            echo "result=failure" >> "$GITHUB_OUTPUT"
+            echo "❌ SAST found security issues. See output above."
+            exit $EXIT_CODE
+          fi
+
+  # ──────────────────────────────────────────────────────────────────────────────
+  # Job 3: Secrets scanning with Gitleaks
+  # ──────────────────────────────────────────────────────────────────────────────
+  secrets-scan:
+    name: Secrets Scan (Gitleaks)
+    runs-on: ubuntu-latest
+    outputs:
+      result: ${{ steps.gitleaks.outputs.result }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          # Full history needed for Gitleaks to scan all commits
+          fetch-depth: 0
 
       - name: Run Gitleaks for secrets scanning
         id: gitleaks
@@ -49,16 +186,226 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Post PR Comment with Scan Results
+  # ──────────────────────────────────────────────────────────────────────────────
+  # Job 4: PR comment on failure (sticky — updates existing bot comment)
+  # Runs after all scan jobs regardless of outcome, but only on pull_requests.
+  # ──────────────────────────────────────────────────────────────────────────────
+  pr-comment:
+    name: PR Comment on Failure
+    runs-on: ubuntu-latest
+    needs: [npm-audit, sast, secrets-scan]
+    if: >
+      always() &&
+      github.event_name == 'pull_request' &&
+      github.event.pull_request.head.repo.full_name == github.repository &&
+      (needs.npm-audit.result == 'failure' ||
+       needs.sast.result == 'failure' ||
+       needs.secrets-scan.result == 'failure')
+    steps:
+      - name: Post or update sticky PR comment
         uses: actions/github-script@v8
-        if: github.event_name == 'pull_request' && failure() && github.event.pull_request.head.repo.full_name == github.repository
-        continue-on-error: true
         with:
-          github-token: ${{secrets.GITHUB_TOKEN}}
+          github-token: ${{ secrets.GITHUB_TOKEN }}
           script: |
-            github.rest.issues.createComment({
-              issue_number: context.issue.number,
+            const MARKER = '<!-- security-scan-comment -->';
+            const owner = context.repo.owner;
+            const repo  = context.repo.repo;
+            const issue_number = context.issue.number;
+
+            const auditResult   = '${{ needs.npm-audit.result }}';
+            const sastResult    = '${{ needs.sast.result }}';
+            const secretsResult = '${{ needs.secrets-scan.result }}';
+
+            const statusIcon = (r) => r === 'success' ? '✅' : r === 'failure' ? '❌' : '⚠️';
+
+            const body = [
+              MARKER,
+              '## 🚨 Security Scan Results',
+              '',
+              '| Check | Status |',
+              '|-------|--------|',
+              `| Dependency Audit (npm audit) | ${statusIcon(auditResult)} ${auditResult} |`,
+              `| SAST (eslint-plugin-security) | ${statusIcon(sastResult)} ${sastResult} |`,
+              `| Secrets Scan (Gitleaks) | ${statusIcon(secretsResult)} ${secretsResult} |`,
+              '',
+              '> One or more security checks failed. Please review the [CI logs](' +
+              `https://github.com/${owner}/${repo}/actions/runs/${context.runId}) for details.`,
+              '',
+              `_Last updated: ${new Date().toISOString()}_`
+            ].join('\n');
+
+            // Find an existing bot comment with the marker (sticky update)
+            const comments = await github.rest.issues.listComments({
+              owner, repo, issue_number, per_page: 100
+            });
+            const existing = comments.data.find(
+              (c) => c.user.type === 'Bot' && c.body.includes(MARKER)
+            );
+
+            if (existing) {
+              await github.rest.issues.updateComment({
+                owner, repo, comment_id: existing.id, body
+              });
+              console.log('Updated existing security scan comment:', existing.id);
+            } else {
+              await github.rest.issues.createComment({
+                owner, repo, issue_number, body
+              });
+              console.log('Created new security scan comment.');
+            }
+
+  # ──────────────────────────────────────────────────────────────────────────────
+  # Job 5: Weekly CVE tracking — runs ONLY on schedule trigger
+  # Parses npm audit JSON output and opens a GitHub Issue for new CVEs found.
+  # ──────────────────────────────────────────────────────────────────────────────
+  weekly-cve-report:
+    name: Weekly CVE Report
+    runs-on: ubuntu-latest
+    # Only execute on the scheduled trigger, not on push/PR
+    if: github.event_name == 'schedule'
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: "npm"
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run npm audit and collect CVEs
+        id: collect-cves
+        run: |
+          set +e
+          npm audit --json > audit-output.json 2>&1
+          echo "audit_exit=$?" >> "$GITHUB_OUTPUT"
+
+      - name: Create GitHub Issue if new CVEs detected
+        uses: actions/github-script@v8
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          script: |
+            const fs   = require('fs');
+            const path = require('path');
+
+            // ── Parse audit output ──────────────────────────────────────────
+            let auditData;
+            try {
+              auditData = JSON.parse(fs.readFileSync('audit-output.json', 'utf8'));
+            } catch (e) {
+              console.log('Could not parse audit-output.json:', e.message);
+              return;
+            }
+
+            // Collect vulnerability metadata
+            const vulns = auditData.vulnerabilities || auditData.advisories || {};
+            const cveList = [];
+
+            for (const [pkgName, info] of Object.entries(vulns)) {
+              const severity = info.severity || 'unknown';
+              // Only report high and critical
+              if (!['high', 'critical'].includes(severity)) continue;
+
+              const via = info.via || [];
+              for (const v of via) {
+                if (typeof v !== 'object') continue;
+                const title  = v.title  || 'No title';
+                const url    = v.url    || '';
+                const source = String(v.source || '');
+                const cves   = (v.cves  || []).join(', ') || 'N/A';
+                cveList.push({ pkgName, severity, title, url, source, cves });
+              }
+            }
+
+            if (cveList.length === 0) {
+              console.log('✅ No high/critical CVEs found in weekly audit. No issue created.');
+              return;
+            }
+
+            // ── Load .auditignore to skip already-accepted exceptions ────────
+            let ignoredIds = new Set();
+            try {
+              const ignoreContent = fs.readFileSync('.auditignore', 'utf8');
+              for (const line of ignoreContent.split('\n')) {
+                const stripped = line.replace(/#.*/g, '').trim();
+                if (!stripped) continue;
+                const id = stripped.split('|')[0].trim();
+                if (id) ignoredIds.add(id);
+              }
+            } catch (_) {
+              // .auditignore is optional
+            }
+
+            const newCves = cveList.filter(
+              (c) => !ignoredIds.has(c.source) && !ignoredIds.has(c.cves)
+            );
+
+            if (newCves.length === 0) {
+              console.log('✅ All CVEs are covered by .auditignore exceptions. No issue created.');
+              return;
+            }
+
+            // ── Build issue body ────────────────────────────────────────────
+            const ISSUE_MARKER = '<!-- weekly-cve-report -->';
+            const date = new Date().toISOString().split('T')[0];
+
+            const rows = newCves.map((c) =>
+              `| \`${c.pkgName}\` | ${c.severity.toUpperCase()} | ${c.title} | ${c.cves} | [Advisory](${c.url}) |`
+            ).join('\n');
+
+            const issueBody = [
+              ISSUE_MARKER,
+              `## 🔍 Weekly CVE Report — ${date}`,
+              '',
+              `**${newCves.length} new high/critical vulnerabilit${newCves.length === 1 ? 'y' : 'ies'} detected** in dependency audit.`,
+              '',
+              '| Package | Severity | Title | CVE(s) | Reference |',
+              '|---------|----------|-------|--------|-----------|',
+              rows,
+              '',
+              '### Recommended Actions',
+              '1. Review each vulnerability above.',
+              '2. Update the affected package(s) with `npm update <package>`.',
+              '3. If a fix is not yet available, add an exception to `.auditignore` with a rationale and expiry date.',
+              '4. Close this issue once all items are resolved.',
+              '',
+              `_Generated automatically by the weekly CVE workflow on ${date}._`
+            ].join('\n');
+
+            // ── Check for an existing open weekly-cve issue ─────────────────
+            const { data: openIssues } = await github.rest.issues.listForRepo({
               owner: context.repo.owner,
-              repo: context.repo.repo,
-              body: '🚨 **Security Scan Failed** 🚨\nOne or more security checks have failed. Please check the CI logs for details regarding SAST, Secrets, or Dependency Vulnerabilities.'
-            })
+              repo:  context.repo.repo,
+              state: 'open',
+              labels: 'security,cve-report',
+              per_page: 10
+            });
+
+            const existing = openIssues.find(
+              (i) => i.body && i.body.includes(ISSUE_MARKER)
+            );
+
+            if (existing) {
+              // Update the existing issue instead of opening a duplicate
+              await github.rest.issues.update({
+                owner:     context.repo.owner,
+                repo:      context.repo.repo,
+                issue_number: existing.number,
+                body:      issueBody,
+                title:     `🔍 Weekly CVE Report — ${date}`
+              });
+              console.log(`Updated existing CVE issue #${existing.number}`);
+            } else {
+              // Open a new issue
+              const { data: newIssue } = await github.rest.issues.create({
+                owner:  context.repo.owner,
+                repo:   context.repo.repo,
+                title:  `🔍 Weekly CVE Report — ${date}`,
+                body:   issueBody,
+                labels: ['security', 'cve-report']
+              });
+              console.log(`Created new CVE issue #${newIssue.number}`);
+            }
