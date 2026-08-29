@@ -293,6 +293,12 @@ class StellarService extends StellarServiceInterface {
   async getInflationDestination(publicKey) { 
     return this.accounts.getInflationDestination(publicKey); 
   }
+  async setHomeDomain(sourceSecret, homeDomain) {
+    return this.accounts.setHomeDomain(sourceSecret, homeDomain);
+  }
+  async getHomeDomain(publicKey) {
+    return this.accounts.getHomeDomain(publicKey);
+  }
   isValidAddress(address) { return this.accounts.isValidAddress(address); }
 
   // Payments module methods
