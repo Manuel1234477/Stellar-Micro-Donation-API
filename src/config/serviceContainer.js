@@ -26,6 +26,7 @@ const DonationTotalsRepository = require('../services/DonationTotalsRepository')
 const DonationRouter = require('../services/DonationRouter');
 const RoutingConfigRepository = require('../services/RoutingConfigRepository');
 const { PaymentChannelService } = require('../services/PaymentChannelService');
+const ServiceAccountBalanceMonitor = require('../services/ServiceAccountBalanceMonitor');
 
 class ServiceContainer {
   constructor(config = {}) {
@@ -85,6 +86,12 @@ class ServiceContainer {
 
     // Initialize Payment Channel Service
     this.paymentChannelService = new PaymentChannelService(this.stellarService);
+
+    // Initialize Service Account Balance Monitor (fee-bump / scheduler funding safety net)
+    this.serviceAccountBalanceMonitor = new ServiceAccountBalanceMonitor(
+      this.stellarService,
+      this.recurringDonationScheduler
+    );
   }
 
   getStellarService() {
@@ -117,6 +124,10 @@ class ServiceContainer {
 
   getFeeBumpService() {
     return this.feeBumpService;
+  }
+
+  getServiceAccountBalanceMonitor() {
+    return this.serviceAccountBalanceMonitor;
   }
 
   getRecipientPoolRepo() {
