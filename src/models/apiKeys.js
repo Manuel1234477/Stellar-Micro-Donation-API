@@ -301,6 +301,34 @@ async function listApiKeys(filters = {}) {
 }
 
 /**
+ * Fetch a single API key by its DB id (issue #1547 — audit log export
+ * needs to validate the target key exists before generating an export).
+ * @param {string|number} id - API key DB id
+ * @returns {Promise<Object|null>} The key record (same shape as listApiKeys entries), or null
+ */
+async function getApiKeyById(id) {
+  await initializeApiKeysTable();
+  const row = await db.get('SELECT * FROM api_keys WHERE id = ?', [id]);
+  if (!row) return null;
+
+  return {
+    id: row.id,
+    keyPrefix: row.key_prefix,
+    name: row.name,
+    role: row.role,
+    scopes: row.scopes ? JSON.parse(row.scopes) : [],
+    status: row.status,
+    isDeprecated: row.status === API_KEY_STATUS.DEPRECATED,
+    last_used_at: row.last_used_at,
+    created_at: row.created_at,
+    expires_at: row.expires_at,
+    deprecated_at: row.deprecated_at,
+    revoked_at: row.revoked_at,
+    notification_email: row.notification_email || null,
+  };
+}
+
+/**
  * Deprecate an active API key (marks it for rotation grace period).
  * Invalidates the cache entry to ensure deprecation headers are sent on next request.
  *
@@ -696,6 +724,7 @@ module.exports = {
   validateKey,
   updateApiKey,
   listApiKeys,
+  getApiKeyById,
   deprecateApiKey,
   revokeApiKey,
   extendApiKey,

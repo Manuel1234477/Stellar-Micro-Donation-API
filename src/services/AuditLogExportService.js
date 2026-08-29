@@ -43,6 +43,29 @@ const EXPORT_FORMAT = {
 const ASYNC_EXPORT_THRESHOLD = 1000;
 
 /**
+ * Redactable export fields (Issue #1547) and the row property each maps to.
+ * `apiKeyFragment` is a derived field (see computeApiKeyFragment) — it is not
+ * a raw database column, but is added to every exported row so it can be
+ * redacted like any other sensitive field.
+ * @type {Object.<string, string>}
+ */
+const REDACTABLE_FIELD_MAP = {
+  ip: 'ipAddress',
+  apiKeyFragment: 'apiKeyFragment',
+  userId: 'userId',
+};
+
+/** @type {string[]} */
+const REDACTABLE_FIELDS = Object.keys(REDACTABLE_FIELD_MAP);
+
+/**
+ * Fields redacted by default for non-admin API keys (Issue #1547 RBAC rule).
+ * Non-admins may request additional redaction but can never opt out of these.
+ * @type {string[]}
+ */
+const DEFAULT_NON_ADMIN_REDACTED_FIELDS = [...REDACTABLE_FIELDS];
+
+/**
  * Audit log export service class
  */
 class AuditLogExportService {
@@ -146,10 +169,114 @@ class AuditLogExportService {
 
     const rows = await Database.query(query, params);
 
-    return rows.map(row => ({
-      ...row,
-      details: JSON.parse(row.details || '{}')
-    }));
+    return rows.map(row => {
+      const mapped = { ...row, details: JSON.parse(row.details || '{}') };
+      // Derived field for redaction (Issue #1547) — a truncated, non-reversible
+      // fragment identifying the API key without exposing the full key/id.
+      mapped.apiKeyFragment = this.computeApiKeyFragment(mapped);
+      return mapped;
+    });
+  }
+
+  /**
+   * Derive a short, non-sensitive fragment identifying the API key that
+   * produced an audit log entry, for display/redaction purposes only.
+   * @param {Object} row - A row with parsed `details` and `userId`
+   * @returns {string|null}
+   */
+  static computeApiKeyFragment(row) {
+    const apiKeyId = row.details && row.details.apiKeyId;
+    if (apiKeyId) {
+      return `...${String(apiKeyId).slice(-8)}`;
+    }
+    if (row.userId && String(row.userId).startsWith('apikey-')) {
+      return `...${String(row.userId).slice(-8)}`;
+    }
+    return null;
+  }
+
+  /**
+   * Parse and validate a comma-separated `redact` query parameter.
+   * @param {string|undefined|null} raw - Raw query value, e.g. "ip,userId"
+   * @returns {string[]} Deduplicated, validated field names
+   * @throws {ValidationError} If any field name is not redactable
+   */
+  static parseRedactFields(raw) {
+    if (raw === undefined || raw === null || raw === '') {
+      return [];
+    }
+    const fields = String(raw).split(',').map(f => f.trim()).filter(Boolean);
+    const invalid = fields.filter(f => !REDACTABLE_FIELDS.includes(f));
+    if (invalid.length > 0) {
+      throw new ValidationError(
+        `Invalid redact field(s): ${invalid.join(', ')}. Allowed: ${REDACTABLE_FIELDS.join(', ')}`,
+        null,
+        ERROR_CODES.INVALID_REQUEST
+      );
+    }
+    return Array.from(new Set(fields));
+  }
+
+  /**
+   * Compute the effective set of fields to redact for an export request,
+   * enforcing the RBAC default (Issue #1547): non-admin API keys always get
+   * the default PII fields redacted, regardless of what they request. Admins
+   * fully control redaction — by default (no `redact` param) their exports
+   * are unredacted.
+   * @param {Object} params
+   * @param {boolean} params.isAdmin
+   * @param {string|undefined|null} params.requestedRaw - Raw `redact` query value
+   * @returns {string[]} Effective fields to redact
+   */
+  static computeRedactFields({ isAdmin, requestedRaw }) {
+    const requested = this.parseRedactFields(requestedRaw);
+    if (isAdmin) {
+      return requested;
+    }
+    return Array.from(new Set([...DEFAULT_NON_ADMIN_REDACTED_FIELDS, ...requested]));
+  }
+
+  /**
+   * Replace redacted field values with '[REDACTED]' across a set of log entries.
+   * Non-mutating — returns a new array (logs themselves are shallow-cloned).
+   * @param {Array} logs
+   * @param {string[]} redactFields
+   * @returns {Array}
+   */
+  static applyRedaction(logs, redactFields = []) {
+    if (!redactFields || redactFields.length === 0) {
+      return logs;
+    }
+    return logs.map(entry => {
+      const clone = { ...entry };
+      for (const field of redactFields) {
+        const prop = REDACTABLE_FIELD_MAP[field];
+        if (prop && clone[prop] !== undefined && clone[prop] !== null) {
+          clone[prop] = '[REDACTED]';
+        }
+      }
+      return clone;
+    });
+  }
+
+  /**
+   * Build an export manifest describing what was redacted, when the export
+   * ran, and its redaction status (Issue #1547). Sent to clients via the
+   * X-Export-* response headers on the export routes.
+   * @param {Object} params
+   * @param {string[]} [params.redactedFields]
+   * @param {number} [params.recordCount]
+   * @param {string} [params.format]
+   * @returns {{exportedAt: string, redactedFields: string[], redactionStatus: string, recordCount: number, format: string}}
+   */
+  static buildManifest({ redactedFields = [], recordCount = 0, format = EXPORT_FORMAT.JSON } = {}) {
+    return {
+      exportedAt: new Date().toISOString(),
+      redactedFields: [...redactedFields],
+      redactionStatus: redactedFields.length > 0 ? 'REDACTED' : 'UNREDACTED',
+      recordCount,
+      format,
+    };
   }
 
   /**
@@ -181,6 +308,7 @@ class AuditLogExportService {
       'userId',
       'requestId',
       'ipAddress',
+      'apiKeyFragment',
       'resource',
       'reason',
       'details',
@@ -297,15 +425,18 @@ class AuditLogExportService {
    * @param {string} format - Export format
    * @returns {Promise<string>} Export content
    */
-  static async processExportSync(exportId, apiKeyId, filters, format) {
+  static async processExportSync(exportId, apiKeyId, filters, format, redactFields = []) {
     try {
       await this.updateExportStatus(exportId, EXPORT_STATUS.PROCESSING);
 
       // Query audit logs
-      const logs = await this.queryAuditLogs(apiKeyId, {
+      let logs = await this.queryAuditLogs(apiKeyId, {
         ...filters,
         limit: filters.limit || 10000
       });
+
+      // Apply field redaction (Issue #1547) before serializing
+      logs = this.applyRedaction(logs, redactFields);
 
       // Convert to requested format
       let content;
@@ -393,7 +524,7 @@ class AuditLogExportService {
    * @returns {Promise<Object>} Export initiation result
    */
   static async initiateExport(apiKeyId, options = {}) {
-    const { startDate, endDate, action, format = EXPORT_FORMAT.JSON } = options;
+    const { startDate, endDate, action, format = EXPORT_FORMAT.JSON, redactFields = [] } = options;
 
     // Validate format
     if (!Object.values(EXPORT_FORMAT).includes(format)) {
@@ -453,7 +584,7 @@ class AuditLogExportService {
       };
     } else {
       // Process synchronously
-      const content = await this.processExportSync(exportId, apiKeyId, { startDate, endDate, action }, format);
+      const content = await this.processExportSync(exportId, apiKeyId, { startDate, endDate, action }, format, redactFields);
 
       return {
         exportId,
@@ -462,6 +593,7 @@ class AuditLogExportService {
         format,
         async: false,
         content,
+        manifest: this.buildManifest({ redactedFields: redactFields, recordCount, format }),
         message: `Export completed. ${recordCount} records exported.`
       };
     }
@@ -718,3 +850,5 @@ module.exports = AuditLogExportService;
 module.exports.EXPORT_STATUS = EXPORT_STATUS;
 module.exports.EXPORT_FORMAT = EXPORT_FORMAT;
 module.exports.ASYNC_EXPORT_THRESHOLD = ASYNC_EXPORT_THRESHOLD;
+module.exports.REDACTABLE_FIELDS = REDACTABLE_FIELDS;
+module.exports.DEFAULT_NON_ADMIN_REDACTED_FIELDS = DEFAULT_NON_ADMIN_REDACTED_FIELDS;
