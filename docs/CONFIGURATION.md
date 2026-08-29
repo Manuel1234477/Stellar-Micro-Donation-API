@@ -123,7 +123,8 @@ application. Variables are grouped by concern. For each variable the table shows
 | `STELLAR_BASE_RESERVE` | number | `0.5` | no | Minimum XLM base reserve per account entry (in XLM). Mirrors Stellar protocol value |
 | `STELLAR_FEE_MULTIPLIER` | number | `1` | no | Multiplier applied to the network base fee when constructing transactions |
 | `STELLAR_EXPLORER_URL` | string | — | no | Base URL of the Stellar block explorer used to build transaction links |
-| `CONFIRMATION_LEDGER_THRESHOLD` | number | `3` | no | Number of ledger closings required before a transaction is considered confirmed |
+| `CONFIRMATION_THRESHOLD` | number | `1` | no | Number of ledger closings required before a transaction is considered confirmed (min: 1, max: 10). Backwards compatible with `CONFIRMATION_LEDGER_THRESHOLD`. |
+| `CONFIRMATION_CHECK_INTERVAL_MS` | number | `5000` | no | Interval (ms) between background confirmation threshold checks for pending transactions (#1606) |
 | `MIN_RESERVE_XLM` | number | `1` | no | Minimum XLM balance (in XLM) required in a wallet for operations |
 | `SYNC_MAX_PAGES` | number | `10` | no | Maximum number of Horizon history pages fetched during a transaction sync pass |
 | `TX_SYNC_INTERVAL_MS` | number | `30000` | no | Interval (ms) between automatic transaction reconciliation runs |
