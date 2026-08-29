@@ -4,6 +4,7 @@ const fs = require('fs/promises');
 const db = require('../utils/database');
 const log = require('../utils/log');
 const { ValidationError, NotFoundError, ERROR_CODES } = require('../utils/errors');
+const { escapeField: csvEscape } = require('../utils/csvSerializer');
 
 const EXPORT_TYPES = ['donations', 'wallets', 'audit_logs'];
 const EXPORT_FORMATS = ['csv', 'json'];
@@ -11,24 +12,6 @@ const EXPORT_RETENTION_MS = 24 * 60 * 60 * 1000;
 const SIGNED_URL_TTL_MS = 60 * 60 * 1000;
 const EXPORT_DIR = path.join(__dirname, '../../data/exports');
 const SIGNING_SECRET = process.env.EXPORT_SIGNING_SECRET || process.env.ENCRYPTION_SECRET || 'export-signing-secret';
-
-/**
- * Escape and serialize a value for safe CSV output.
- * @param {*} value - Value to serialize.
- * @returns {string} CSV-safe cell string.
- */
-function csvEscape(value) {
-  if (value === null || value === undefined) return '';
-  let normalized = value;
-  if (typeof normalized === 'object') {
-    normalized = JSON.stringify(normalized);
-  }
-  const text = String(normalized);
-  if (text.includes('"') || text.includes(',') || text.includes('\n') || text.includes('\r')) {
-    return `"${text.replace(/"/g, '""')}"`;
-  }
-  return text;
-}
 
 /**
  * Convert records to CSV with a header row.

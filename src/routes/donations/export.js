@@ -17,6 +17,7 @@ const requireApiKey = require('../../middleware/apiKey');
 const { checkPermission } = require('../../middleware/rbac');
 const { PERMISSIONS } = require('../../utils/permissions');
 const asyncHandler = require('../../utils/asyncHandler');
+const { escapeField: csvEscape } = require('../../utils/csvSerializer');
 
 // ─── POST /donations/export ───────────────────────────────────────────────────
 
@@ -146,12 +147,6 @@ router.get('/export', requireApiKey, checkPermission(PERMISSIONS.ADMIN_ALL), asy
   if (senderPublicKey)    { query += ' AND sender.publicKey = ?'; params.push(senderPublicKey); }
   if (recipientPublicKey) { query += ' AND receiver.publicKey = ?'; params.push(recipientPublicKey); }
   query += ' ORDER BY t.timestamp DESC';
-
-  function csvEscape(v) {
-    if (v === null || v === undefined) return '';
-    const s = String(v);
-    return (s.includes('"') || s.includes(',') || s.includes('\n')) ? `"${s.replace(/"/g, '""')}"` : s;
-  }
 
   const ts = new Date().toISOString().replace(/[:.]/g, '-');
 
