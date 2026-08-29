@@ -153,6 +153,7 @@ function mountRoutes(app, services = {}) {
     recurringDonationScheduler,
     transactionSyncScheduler,
     feeBumpService,
+    serviceAccountBalanceMonitor,
   } = services;
 
   // Network route needs a service reference injected at mount time
@@ -295,6 +296,9 @@ function mountRoutes(app, services = {}) {
       health.requestId = req.id;
       if (transactionSyncScheduler) {
         health.transactionSync = transactionSyncScheduler.getSyncStatus();
+      }
+      if (serviceAccountBalanceMonitor) {
+        health.serviceAccountBalance = serviceAccountBalanceMonitor.getStatus();
       }
       return res.status(health.status === 'healthy' ? 200 : 503).json(health);
     } catch (err) {

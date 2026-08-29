@@ -68,6 +68,7 @@ async function startServer(app, overrideServices = {}) {
     const recurringDonationScheduler = overrideServices.recurringDonationScheduler || serviceContainer.getRecurringDonationScheduler();
     const networkStatusService = overrideServices.networkStatusService || serviceContainer.getNetworkStatusService();
     const transactionSyncScheduler = overrideServices.transactionSyncScheduler || serviceContainer.getTransactionSyncScheduler();
+    const serviceAccountBalanceMonitor = overrideServices.serviceAccountBalanceMonitor || serviceContainer.getServiceAccountBalanceMonitor();
 
     // Wire network status service into the network route (must happen before requests)
     const { setService: setNetworkService } = require('../routes/network');
@@ -196,6 +197,7 @@ async function startServer(app, overrideServices = {}) {
           auditLogRetentionService.start();
           retentionService.start();
           transactionSyncScheduler.start();
+          serviceAccountBalanceMonitor.start();
           sseManager.start();
 
           runCleanup();

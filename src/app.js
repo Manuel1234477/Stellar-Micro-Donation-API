@@ -35,6 +35,7 @@ function createApp() {
   const networkStatusService = serviceContainer.getNetworkStatusService();
   const transactionSyncScheduler = serviceContainer.getTransactionSyncScheduler();
   const feeBumpService = serviceContainer.getFeeBumpService();
+  const serviceAccountBalanceMonitor = serviceContainer.getServiceAccountBalanceMonitor();
 
   const { setService: setNetworkService } = require('./routes/network');
   setNetworkService(networkStatusService);
@@ -48,6 +49,7 @@ function createApp() {
     networkStatusService,
     transactionSyncScheduler,
     feeBumpService,
+    serviceAccountBalanceMonitor,
   });
 
   return app;
