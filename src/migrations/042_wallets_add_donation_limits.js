@@ -10,7 +10,7 @@
  * When NULL, system defaults to global environment variables.
  */
 
-exports.name = '040_wallets_add_donation_limits';
+exports.name = '042_wallets_add_donation_limits';
 
 exports.up = async (db) => {
   await db.run(`

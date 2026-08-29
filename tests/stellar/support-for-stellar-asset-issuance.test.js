@@ -39,6 +39,13 @@ async function makeIssuancePair(stellar) {
   const recipient = await stellar.createWallet();
   stellar.wallets.get(issuer.publicKey).balance = '1000.0000000';
   stellar.wallets.get(recipient.publicKey).balance = '10.0000000';
+  await stellar.addTrustline(recipient.secretKey, 'DONATE', issuer.publicKey);
+  await stellar.addTrustline(recipient.secretKey, 'CERT', issuer.publicKey);
+  await stellar.addTrustline(recipient.secretKey, 'IMPACT', issuer.publicKey);
+  await stellar.addTrustline(recipient.secretKey, 'TOKEN', issuer.publicKey);
+  await stellar.addTrustline(recipient.secretKey, 'AAA', issuer.publicKey);
+  await stellar.addTrustline(recipient.secretKey, 'BBB', issuer.publicKey);
+  await stellar.addTrustline(recipient.secretKey, 'BURN', issuer.publicKey);
   return { issuer, recipient };
 }
 

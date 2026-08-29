@@ -225,4 +225,73 @@ router.get('/dashboard', requireApiKey, requireAdmin(), asyncHandler(async (req,
   }
 }));
 
+/**
+ * GET /admin/impact-metrics/sdg-mapping
+ * List all SDG mappings.
+ */
+router.get('/sdg-mapping', requireApiKey, requireAdmin(), asyncHandler(async (req, res, next) => {
+  try {
+    const mappings = await ImpactMetricService.getAllSdgMappings();
+    res.json(mappings);
+  } catch (error) {
+    next(error);
+  }
+}));
+
+/**
+ * POST /admin/impact-metrics/sdg-mapping
+ * Create or update an SDG mapping.
+ */
+router.post('/sdg-mapping', requireApiKey, requireAdmin(), asyncHandler(async (req, res, next) => {
+  try {
+    const { tag, sdgId } = req.body || {};
+    if (!tag || typeof tag !== 'string' || tag.trim().length === 0) {
+      return res.status(400).json({
+        success: false,
+        error: { message: 'tag is required and must be a non-empty string' },
+      });
+    }
+    if (sdgId === undefined || sdgId === null || typeof sdgId !== 'number') {
+      return res.status(400).json({
+        success: false,
+        error: { message: 'sdgId must be a numeric integer' },
+      });
+    }
+    if (sdgId < 1 || sdgId > 17 || !Number.isInteger(sdgId)) {
+      return res.status(400).json({
+        success: false,
+        error: { message: 'sdgId must be between 1 and 17' },
+      });
+    }
+
+    const { created, mapping } = await ImpactMetricService.setSdgMapping(tag, sdgId);
+    res.status(created ? 201 : 200).json(mapping);
+  } catch (error) {
+    next(error);
+  }
+}));
+
+/**
+ * DELETE /admin/impact-metrics/sdg-mapping/:tag
+ * Delete an SDG mapping by tag.
+ */
+router.delete('/sdg-mapping/:tag', requireApiKey, requireAdmin(), asyncHandler(async (req, res, next) => {
+  try {
+    const { tag } = req.params;
+    const deleted = await ImpactMetricService.deleteSdgMapping(tag);
+    if (!deleted) {
+      return res.status(404).json({
+        success: false,
+        error: { message: `SDG mapping for tag "${tag}" not found` },
+      });
+    }
+    res.status(200).json({
+      success: true,
+      message: `SDG mapping for tag "${tag}" deleted successfully`,
+    });
+  } catch (error) {
+    next(error);
+  }
+}));
+
 module.exports = router;

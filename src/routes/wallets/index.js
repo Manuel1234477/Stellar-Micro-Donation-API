@@ -28,7 +28,7 @@ const requireApiKey = require('../../middleware/apiKey');
 const { getStellarService } = require('../../config/stellar');
 const { walletCreateSchema, walletIdSchema } = require('./helpers');
 
-const walletService = new WalletService();
+const walletService = new WalletService(getStellarService());
 
 // ─── Helper Functions ────────────────────────────────────────────────────
 

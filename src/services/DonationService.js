@@ -24,7 +24,7 @@ const { ValidationError, NotFoundError, BusinessLogicError, ERROR_CODES } = requ
 const { PREDEFINED_TAGS } = require('../constants/tags');
 const { paginateCollection } = require('../utils/pagination');
 const { checkConfirmations } = require('../utils/confirmationChecker');
-const { CONFIRMATION_LEDGER_THRESHOLD } = require('../config/confirmationThreshold');
+const { CONFIRMATION_THRESHOLD } = require('../config/confirmationThreshold');
 
 const LimitService = require('./LimitService');
 const DonationVelocityService = require('./DonationVelocityService');
@@ -34,6 +34,7 @@ const log = require('../utils/log');
 const priceOracle = require('./PriceOracleService');
 const { buildOverpaymentRecord } = require('../utils/overpaymentDetector');
 const memoCollisionDetector = require('../utils/memoCollisionDetector');
+const WebhookService = require('./WebhookService');
 const {
   parseAssetInput,
   isSameAsset,
@@ -145,13 +146,21 @@ class DonationService {
         const onChainAmount = parseFloat(onChain.amount);
         const donationAmount = parseFloat(donation.amount);
         if (!isNaN(onChainAmount) && !isNaN(donationAmount)) {
-          const diff = Math.abs(onChainAmount - donationAmount);
-          if (diff > 0.0000001) {
+          const tolerance = Number(process.env.OVERPAYMENT_TOLERANCE_XLM || '0.01');
+          if (onChainAmount < donationAmount - tolerance) {
             throw new ValidationError(
               `Transaction amount mismatch: on-chain ${onChainAmount}, donation record ${donationAmount}`,
               { donationId, onChainAmount, donationAmount },
               'VERIFICATION_FAILED'
             );
+          }
+          if (onChainAmount > donationAmount + tolerance) {
+            const overpayment = buildOverpaymentRecord(onChainAmount, donationAmount, 0);
+            donation.overpaymentFlagged = true;
+            donation.overpaymentDetails = overpayment;
+            donation.overpaymentReturnStatus = donation.overpaymentReturnStatus || 'pending';
+            Transaction.saveTransactions(Transaction.loadTransactions());
+            WebhookService.deliver('donation.overpayment_detected', { donationId, excessAmount: overpayment.excessAmount, receivedAmount: onChainAmount, donationAmount }).catch(() => {});
           }
         }
 
@@ -223,7 +232,7 @@ class DonationService {
    * @param {string} params.requestId - Request ID for logging
    * @returns {Promise<Object>} Donation result with transaction details
    */
-  async sendCustodialDonation({ senderId, receiverId, amount, memo, notes, tags, apiKeyId, campaign_id, idempotencyKey, requestId }) {
+  async sendCustodialDonation({ senderId, receiverId, amount, memo, notes, tags, apiKeyId, campaign_id, idempotencyKey, requestId, asset = null }) {
     log.debug('DONATION_SERVICE', 'Processing custodial donation', {
       requestId,
       senderId,
@@ -293,6 +302,8 @@ class DonationService {
     const secret = encryption.decrypt(sender.encryptedSecret);
 
     // Check sender balance and minimum reserve before submitting (max 2s to avoid slowing donation flow)
+    // Custom tokens do not spend the native reserve; skip the XLM reserve check for those payments.
+    if (!asset || asset.type === 'native') {
     try {
       const reserveCheck = await withTimeout(
         this.stellarService.accounts.checkDonationReserve(sender.publicKey, parseFloat(amount)),
@@ -311,6 +322,7 @@ class DonationService {
       // Reserve check timed out or failed — log and proceed optimistically
       log.warn('DONATION_SERVICE', 'Reserve check skipped', { requestId, error: err.message });
     }
+    }
 
     log.debug('DONATION_SERVICE', 'Initiating Stellar transaction', {
       requestId
@@ -321,7 +333,8 @@ class DonationService {
       sourceSecret: secret,
       destinationPublic: receiver.publicKey,
       amount: amount,
-      memo: sanitizedMemo
+      memo: sanitizedMemo,
+      ...(asset ? { asset } : {}),
     });
 
     log.debug('DONATION_SERVICE', 'Stellar transaction successful', {
@@ -389,7 +402,10 @@ class DonationService {
       status: TRANSACTION_STATES.PENDING,
       notes: notes || null,
       tags: tags || [],
-      apiKeyId: apiKeyId || null
+      apiKeyId: apiKeyId || null,
+      overpaymentFlagged: Boolean(overpayment),
+      overpaymentDetails: overpayment || null,
+      overpaymentReturnStatus: overpayment ? 'pending' : null
     });
 
     Transaction.updateStatus(transaction.id, TRANSACTION_STATES.SUBMITTED, {
@@ -397,44 +413,85 @@ class DonationService {
       ledger: stellarResult.ledger,
     });
 
-    // Only advance to CONFIRMED when the ledger confirmation threshold is met.
+    // Determine required confirmation threshold based on global config or donation amount.
+    // For high-value donations (>= MULTISIG_THRESHOLD_XLM), enforce a minimum threshold
+    // to ensure finality before marking as confirmed.
+    let requiredThreshold = CONFIRMATION_THRESHOLD;
+    const multisigConfig = require('../config').donations;
+    if (
+      multisigConfig.multisigThresholdXLM !== null &&
+      parseFloat(amount) >= multisigConfig.multisigThresholdXLM
+    ) {
+      // High-value donation: override to use at least a threshold of 2 if configured threshold is 1
+      requiredThreshold = Math.max(CONFIRMATION_THRESHOLD, 2);
+      log.info('DONATION_SERVICE', 'High-value donation requires increased confirmation threshold', {
+        requestId,
+        amount,
+        multisigThreshold: multisigConfig.multisigThresholdXLM,
+        requiredThreshold,
+      });
+    }
+
+    // Check if the transaction is already confirmed based on current ledger state.
     // stellarResult.ledger is the ledger the tx was included in.
-    // We use it as both transactionLedger and currentLedger here because Stellar
-    // confirms transactions within the same ledger close — the threshold check
-    // ensures at least CONFIRMATION_LEDGER_THRESHOLD subsequent ledgers have closed
-    // before we mark the transaction final.
     const confirmationResult = checkConfirmations(
       stellarResult.ledger,
       stellarResult.currentLedger || stellarResult.ledger,
-      CONFIRMATION_LEDGER_THRESHOLD
+      requiredThreshold
     );
 
-    if (confirmationResult.confirmed) {
+    if (requiredThreshold > 1 && !confirmationResult.confirmed) {
+      // Threshold is > 1 and not yet confirmed: transition to PENDING_CONFIRMATION.
+      // A background worker will poll and advance to CONFIRMED when ready.
+      Transaction.updateStatus(transaction.id, TRANSACTION_STATES.PENDING_CONFIRMATION, {
+        transactionId: stellarResult.transactionId,
+        ledger: stellarResult.ledger,
+        confirmationThreshold: requiredThreshold,
+        confirmations: confirmationResult.confirmations,
+      });
+      log.info('DONATION_SERVICE', 'Transaction awaiting multi-ledger confirmation', {
+        requestId,
+        transactionId: stellarResult.transactionId,
+        confirmations: confirmationResult.confirmations,
+        required: requiredThreshold,
+        status: TRANSACTION_STATES.PENDING_CONFIRMATION,
+      });
+    } else if (confirmationResult.confirmed) {
+      // Threshold met immediately (most common for threshold=1)
       Transaction.updateStatus(transaction.id, TRANSACTION_STATES.CONFIRMED, {
         transactionId: stellarResult.transactionId,
         ledger: stellarResult.ledger,
         confirmedAt: new Date().toISOString(),
         confirmations: confirmationResult.confirmations,
-        confirmationThreshold: confirmationResult.required,
+        confirmationThreshold: requiredThreshold,
       });
       log.info('DONATION_SERVICE', 'Transaction confirmed', {
         requestId,
         transactionId: stellarResult.transactionId,
         confirmations: confirmationResult.confirmations,
-        threshold: confirmationResult.required,
+        threshold: requiredThreshold,
       });
     } else {
+      // Threshold = 1 but not yet confirmed (rare edge case on submission)
       log.info('DONATION_SERVICE', 'Transaction submitted — awaiting confirmation threshold', {
         requestId,
         transactionId: stellarResult.transactionId,
         confirmations: confirmationResult.confirmations,
-        required: confirmationResult.required,
+        required: requiredThreshold,
         status: TRANSACTION_STATES.SUBMITTED,
       });
     }
 
     // Get remaining limits for response headers
     const { dailyRemaining, monthlyRemaining } = await LimitService.getRemainingLimits(senderId);
+
+    // Determine response status based on confirmation result
+    let responseStatus = TRANSACTION_STATES.SUBMITTED;
+    if (confirmationResult.confirmed) {
+      responseStatus = TRANSACTION_STATES.CONFIRMED;
+    } else if (requiredThreshold > 1) {
+      responseStatus = TRANSACTION_STATES.PENDING_CONFIRMATION;
+    }
 
     return {
       id: dbResult.id,
@@ -444,9 +501,9 @@ class DonationService {
       sender: sender.publicKey,
       receiver: receiver.publicKey,
       timestamp: new Date().toISOString(),
-      status: confirmationResult.confirmed ? TRANSACTION_STATES.CONFIRMED : TRANSACTION_STATES.SUBMITTED,
+      status: responseStatus,
       confirmations: confirmationResult.confirmations,
-      confirmationThreshold: confirmationResult.required,
+      confirmationThreshold: requiredThreshold,
       confirmed: confirmationResult.confirmed,
       remainingLimits: { dailyRemaining, monthlyRemaining },
       ...(matchingDonations.length > 0 && { matchingDonations })
@@ -479,7 +536,7 @@ class DonationService {
       return {
         confirmed: true,
         confirmations: transaction.confirmations || 0,
-        required: threshold || CONFIRMATION_LEDGER_THRESHOLD,
+        required: threshold || transaction.confirmationThreshold || CONFIRMATION_THRESHOLD,
         transaction,
       };
     }
@@ -488,7 +545,9 @@ class DonationService {
       throw new ValidationError('Transaction has no ledger information — cannot check confirmations', null, ERROR_CODES.INVALID_REQUEST);
     }
 
-    const result = checkConfirmations(transaction.stellarLedger, currentLedger, threshold);
+    // Use stored threshold from transaction if available, otherwise fall back to configured or provided threshold
+    const effectiveThreshold = threshold || transaction.confirmationThreshold || CONFIRMATION_THRESHOLD;
+    const result = checkConfirmations(transaction.stellarLedger, currentLedger, effectiveThreshold);
 
     if (result.confirmed) {
       Transaction.updateStatus(transactionId, TRANSACTION_STATES.CONFIRMED, {
@@ -713,13 +772,23 @@ class DonationService {
     sendAsset,
     receiveAsset,
     slippageTolerance,
+    asset,
     validAfter = 0,
     validBefore = 0,
+    validFrom = null,
+    validUntil = null,
     memoEnvelope = null,
     encryptionMetadata = null,
     sdgCategories = [],
     correlationId = null,
+    contractAddress = null,
   }) {
+    if (validFrom) validAfter = Math.floor(new Date(validFrom).getTime() / 1000);
+    if (validUntil) validBefore = Math.floor(new Date(validUntil).getTime() / 1000);
+    if (!Number.isInteger(validAfter) || validAfter < 0) throw new ValidationError('validAfter must be a non-negative Unix timestamp');
+    if (!Number.isInteger(validBefore) || validBefore < 0) throw new ValidationError('validBefore must be a non-negative Unix timestamp');
+    if (validAfter && validBefore && validAfter >= validBefore) throw new ValidationError('validAfter must be strictly less than validBefore');
+    if (validBefore && validBefore <= Math.floor(Date.now() / 1000)) throw new BusinessLogicError('TRANSACTION_EXPIRED', 'validUntil must be in the future');
     // Sanitize identifiers
     const rawDonor = donor ? sanitizeIdentifier(donor) : 'Anonymous';
     const rawRecipient = recipient ? sanitizeIdentifier(recipient) : null;
@@ -803,16 +872,32 @@ class DonationService {
         excessAmount: overpayment.excessAmount,
         overpaymentPercentage: overpayment.overpaymentPercentage,
       });
+      WebhookService.deliver('donation.overpayment_detected', {
+        donationAmount: amount,
+        receivedAmount: overpayment.receivedAmount,
+        excessAmount: overpayment.excessAmount,
+        donor: sanitizedDonor,
+        recipient: sanitizedRecipient,
+      }).catch(() => {});
     }
 
     const sourceAssetProvided = sourceAsset !== undefined && sourceAsset !== null;
     const sendAssetProvided = sendAsset !== undefined && sendAsset !== null;
     const receiveAssetProvided = receiveAsset !== undefined && receiveAsset !== null;
+    const customAssetProvided = asset !== undefined && asset !== null;
 
     let normalizedDestAsset = DEFAULT_DESTINATION_ASSET;
     let normalizedSourceAsset = sourceAssetProvided
       ? parseAssetInput(sourceAsset, 'sourceAsset')
       : normalizedDestAsset;
+
+    // Direct custom-token payment: same asset on both sides (not a DEX path payment)
+    if (customAssetProvided) {
+      normalizedSourceAsset = (asset.type && asset.code)
+        ? asset
+        : parseAssetInput(asset, 'asset');
+      normalizedDestAsset = normalizedSourceAsset;
+    }
 
     // Handle sendAsset/receiveAsset for path payment donations
     if (sendAssetProvided && receiveAssetProvided) {
@@ -838,9 +923,19 @@ class DonationService {
     if (sourceSecret && sanitizedRecipient && !requiresApproval) {
       await this.checkRecipientAccountExists(sanitizedRecipient);
 
-      const isPathPayment = sourceAssetProvided || (sendAssetProvided && receiveAssetProvided && !isSameAsset(normalizedSourceAsset, normalizedDestAsset));
+      const isPathPayment = !customAssetProvided && (sourceAssetProvided || (sendAssetProvided && receiveAssetProvided && !isSameAsset(normalizedSourceAsset, normalizedDestAsset)));
 
       if (!isPathPayment) {
+        // Programmable donations use the Soroban contract instead of a direct payment.
+        if (contractAddress) {
+          stellarResult = await this.stellarService.invokeContract(contractAddress, 'donate', [sanitizedDonor, normalizedSourceAmount.toString()], sourceSecret);
+          if (!stellarResult || stellarResult.status === 'error') {
+            const error = new Error(stellarResult?.returnValue || 'Soroban donation contract invocation failed');
+            error.code = 'SOROBAN_INVOCATION_FAILED';
+            throw error;
+          }
+          paymentMethod = 'soroban';
+        } else {
         // Set correlation ID on StellarService for this request
         if (correlationId) {
           this.stellarService.setCorrelationId(correlationId);
@@ -856,6 +951,7 @@ class DonationService {
           validBefore,
         });
         paymentMethod = 'direct';
+        }
       } else {
         // Set correlation ID on StellarService for this request
         if (correlationId) {
@@ -977,6 +1073,7 @@ class DonationService {
       destinationAsset: serializeAsset(normalizedDestAsset),
       destinationAmount: xlmAmount.toString(),
       paymentMethod,
+      contractAddress: contractAddress || null,
       fallbackUsed,
       path: selectedPath,
       conversionRate,
@@ -1083,6 +1180,118 @@ class DonationService {
     }
 
     return transaction;
+  }
+
+  /**
+   * Create a claimable balance donation
+   * Stores donation as a claimable balance that can be claimed by eligible accounts
+   * @param {Object} params
+   * @returns {Promise<Object>} Transaction record with claimable balance details
+   */
+  async createClaimableDonation({
+    amount,
+    currency = 'XLM',
+    claimants,
+    expiryTimestamp = null,
+    memo = null,
+    memoType = 'text',
+    notes = null,
+    tags = [],
+    donor = null,
+    anonymous = false,
+    idempotencyKey = null,
+    apiKeyId = null,
+    apiKeyRole = 'user',
+    correlationId = null,
+  }) {
+    if (!amount || !claimants || !Array.isArray(claimants) || claimants.length === 0) {
+      throw new ValidationError('amount and non-empty claimants array are required');
+    }
+
+    const normalizedCurrency = currency.toUpperCase();
+    let xlmAmount = amount;
+    if (normalizedCurrency !== 'XLM') {
+      try {
+        xlmAmount = await priceOracle.convertToXLM(amount, normalizedCurrency);
+      } catch (err) {
+        throw new ValidationError(`Currency conversion failed: ${err.message}`);
+      }
+    }
+
+    this.validateDonationAmount(xlmAmount, donor);
+
+    const memoResult = this.validateAndSanitizeMemo(memo);
+    if (!memoResult.valid) {
+      throw new ValidationError(memoResult.error);
+    }
+
+    this._validateTags(tags, apiKeyRole);
+
+    if (idempotencyKey) {
+      const existing = await Database.get(
+        'SELECT data FROM donations_store WHERE idempotency_key = ?',
+        [idempotencyKey]
+      );
+      if (existing) {
+        try {
+          return JSON.parse(existing.data);
+        } catch (_) { /* fall through */ }
+      }
+    }
+
+    const sanitizedDonor = donor ? sanitizeIdentifier(donor) : 'Anonymous';
+    const claimantDestinations = claimants.map(c => c.destination);
+    const predicate = claimants.length > 0 && claimants[0].predicate ? claimants[0].predicate : null;
+
+    try {
+      const stellarResult = await this.stellarService.createClaimableBalance({
+        sourceSecret: this.resolvePaymentSourceSecret(sanitizedDonor),
+        amount: xlmAmount.toString(),
+        claimants,
+        predicate,
+      });
+
+      const transaction = Transaction.create({
+        amount: xlmAmount,
+        originalAmount: normalizedCurrency !== 'XLM' ? amount : undefined,
+        originalCurrency: normalizedCurrency !== 'XLM' ? normalizedCurrency : undefined,
+        donor: sanitizedDonor,
+        recipient: claimantDestinations.join(','),
+        memo: memoResult.sanitized,
+        memoType: memoType || 'text',
+        notes: notes || null,
+        tags: tags || [],
+        apiKeyId: apiKeyId || null,
+        idempotencyKey: idempotencyKey,
+        status: 'claimable',
+        type: 'claimable',
+        stellarTxId: stellarResult.transactionId,
+        stellarLedger: stellarResult.ledger,
+        confirmedAt: new Date().toISOString(),
+        balanceId: stellarResult.balanceId,
+        expiryTimestamp: expiryTimestamp || null,
+        anonymous: anonymous === true,
+      });
+
+      const pubsub = require('../graphql/pubsub');
+      pubsub.publish(pubsub.TOPICS.DONATION_CREATED, {
+        id: transaction.id,
+        donor: transaction.donor,
+        recipient: transaction.recipient,
+        amount: transaction.amount,
+        status: transaction.status,
+        stellarTxId: transaction.stellarTxId,
+        timestamp: transaction.timestamp,
+      });
+
+      return transaction;
+    } catch (error) {
+      log.error('DONATION_SERVICE', 'Failed to create claimable balance', {
+        error: error.message,
+        claimants,
+      });
+      throw error;
+    }
   }
 
   /**
@@ -1680,6 +1889,7 @@ class DonationService {
       startDate, endDate,
       minAmount, maxAmount,
       status, donor, recipient, memo,
+      tags,
       sortBy = 'timestamp', order = 'desc',
     } = filters;
 
@@ -1731,6 +1941,12 @@ class DonationService {
     const recipientLower = recipient ? recipient.toLowerCase() : null;
     const memoLower = memo ? memo.toLowerCase() : null;
 
+    const normalizedFilterTags = tags
+      ? (Array.isArray(tags) ? tags : String(tags).split(','))
+          .map(t => String(t || '').trim().toLowerCase())
+          .filter(Boolean)
+      : null;
+
     let result = transactions.filter(tx => {
       if (start && new Date(tx.timestamp) < start) return false;
       if (end && new Date(tx.timestamp) > end) return false;
@@ -1740,6 +1956,12 @@ class DonationService {
       if (donorLower && !(tx.donor || '').toLowerCase().includes(donorLower)) return false;
       if (recipientLower && !(tx.recipient || '').toLowerCase().includes(recipientLower)) return false;
       if (memoLower && !(tx.memo || '').toLowerCase().includes(memoLower)) return false;
+      if (normalizedFilterTags && normalizedFilterTags.length > 0) {
+        const txTags = (Array.isArray(tx.tags) ? tx.tags : [])
+          .map(t => String(t || '').trim().toLowerCase());
+        const hasAllTags = normalizedFilterTags.every(reqTag => txTags.includes(reqTag));
+        if (!hasAllTags) return false;
+      }
       return true;
     });
 
@@ -2023,6 +2245,22 @@ class DonationService {
    * @throws {ValidationError} If donation is not eligible for refund
    * @throws {BusinessLogicError} If refund fails
    */
+  async approveOverpaymentReturn(donationId, { recipientSecret, requestId } = {}) {
+    const donation = this.getDonationById(donationId);
+    if (!donation.overpaymentFlagged || !donation.overpaymentDetails) throw new ValidationError('Donation has no detected overpayment');
+    if (donation.overpaymentReturnStatus === 'completed') return { alreadyProcessed: true, donationId, amount: donation.overpaymentDetails.excessAmount, status: 'completed', reverseTxId: donation.overpaymentReturnTxId };
+    if (donation.overpaymentReturnStatus === 'rejected') throw new BusinessLogicError(ERROR_CODES.TRANSACTION_FAILED, 'Overpayment return was rejected');
+    if (!recipientSecret) throw new ValidationError('recipientSecret is required to approve an overpayment return');
+    const amount = Number(donation.overpaymentDetails.excessAmount);
+    if (!Number.isFinite(amount) || amount <= 0) throw new ValidationError('Overpayment amount is invalid');
+    const reverseResult = await this.stellarService.sendDonation({ sourceSecret: recipientSecret, destinationPublic: donation.donor, amount, memo: `CHANGE:${donationId}` });
+    donation.overpaymentReturnStatus = 'completed';
+    donation.overpaymentReturnTxId = reverseResult.transactionId;
+    Transaction.saveTransactions(Transaction.loadTransactions());
+    await WebhookService.deliver('donation.overpayment_returned', { donationId, amount, transactionId: reverseResult.transactionId, requestId }).catch(() => {});
+    return { donationId, amount, status: 'completed', reverseTxId: reverseResult.transactionId, ledger: reverseResult.ledger };
+  }
+
   async refundDonation(donationId, { reason, notes, idempotencyKey, recipientSecret, requestId }) {
     const StellarSdk = require('stellar-sdk');
     const { BusinessLogicError, DuplicateError, ValidationError } = require('../utils/errors');
@@ -2151,6 +2389,8 @@ class DonationService {
       ]
     );
 
+    // Keep the issue-defined refund_transactions ledger synchronized when present.
+    await Database.run(`INSERT INTO refund_transactions (original_donation_id, reverse_transaction_id, amount, reason, notes, idempotency_key, status) VALUES (?, ?, ?, ?, ?, ?, 'pending')`, [donationId, `pending_${Date.now()}`, donation.amount, reason || null, notes || null, idempotencyKey || null]).catch(() => {});
     // Update status to processing
     await Database.run(`UPDATE refunds SET status = 'processing' WHERE id = ?`, [pendingRecord.id]);
 
@@ -2164,6 +2404,7 @@ class DonationService {
       });
     } catch (stellarErr) {
       await Database.run(`UPDATE refunds SET status = 'failed' WHERE id = ?`, [pendingRecord.id]);
+      await Database.run(`UPDATE refund_transactions SET status = 'failed', error = ? WHERE original_donation_id = ? AND status = 'pending'`, [stellarErr.message, donationId]).catch(() => {});
       secret = null;
       throw stellarErr;
     }
@@ -2182,6 +2423,7 @@ class DonationService {
       `UPDATE refunds SET reverse_transaction_id = ?, stellar_ledger = ?, status = 'completed' WHERE id = ?`,
       [reverseResult.transactionId, reverseResult.ledger, pendingRecord.id]
     );
+    await Database.run(`UPDATE refund_transactions SET reverse_transaction_id = ?, stellar_ledger = ?, status = 'completed', completed_at = CURRENT_TIMESTAMP WHERE original_donation_id = ? AND status = 'pending'`, [reverseResult.transactionId, reverseResult.ledger, donationId]).catch(() => {});
 
     // Update original donation status to refunded
     Transaction.updateStatus(donationId, 'refunded', {

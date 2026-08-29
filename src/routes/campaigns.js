@@ -49,7 +49,7 @@ const updateCampaignSchema = validateSchema({
  */
 router.post('/', requireApiKey, checkPermission(PERMISSIONS.ADMIN), createCampaignSchema, payloadSizeLimiter(ENDPOINT_LIMITS.campaign), asyncHandler(async (req, res, next) => {
   try {
-    const { name, description, goal_amount, start_date, end_date, funding_model } = req.body;
+    const { name, description, goal_amount, start_date, end_date, funding_model, sdg_tags, sdgTags } = req.body;
     
     // Explicit numeric validation bridging
     const goalValidation = validateFloat(goal_amount);
@@ -57,11 +57,14 @@ router.post('/', requireApiKey, checkPermission(PERMISSIONS.ADMIN), createCampai
       return res.status(400).json({ success: false, error: 'Goal Amount must be a valid number' });
     }
 
+    const tags = sdgTags || sdg_tags || [];
+    const tagsStr = Array.isArray(tags) ? JSON.stringify(tags) : (typeof tags === 'string' ? tags : '[]');
+
     const model = funding_model || 'keep-what-you-raise';
 
     const dbResult = await Database.run(
-      `INSERT INTO campaigns (name, description, goal_amount, current_amount, start_date, end_date, created_by, status, funding_model)
-       VALUES (?, ?, ?, 0, ?, ?, ?, 'active', ?)`,
+      `INSERT INTO campaigns (name, description, goal_amount, current_amount, start_date, end_date, created_by, status, funding_model, sdg_tags)
+       VALUES (?, ?, ?, 0, ?, ?, ?, 'active', ?, ?)`,
       [
         name,
         description || null,
@@ -69,7 +72,8 @@ router.post('/', requireApiKey, checkPermission(PERMISSIONS.ADMIN), createCampai
         start_date || new Date().toISOString(),
         end_date || null,
         req.user ? req.user.id : null,
-        model
+        model,
+        tagsStr,
       ]
     );
 

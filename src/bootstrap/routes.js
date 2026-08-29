@@ -51,13 +51,16 @@ const V1_ROUTES = [
   ['/auth',                           require('../routes/auth')],
   ['/docs',                           require('../routes/docs')],
   ['/transactions',                   require('../routes/transaction')],
+  ['/contracts',                      require('../routes/contracts')],
   ['/transactions/bump-sequence',     require('../routes/transactions/bump-sequence')],
   ['/claimable-balances',             require('../routes/claimableBalances')],
   ['/liquidity-pools',                require('../routes/liquidity-pools')],
+  ['/channels',                       require('../routes/channels')],
 ];
 
 // ── Admin routes ──────────────────────────────────────────────────────────────
 const ADMIN_ROUTES = [
+  ['/admin/donations',              require('../routes/admin/donations')],
   ['/admin/crowdfunding',             require('../routes/admin/crowdfunding')],
   ['/admin/cors/rules',               require('../routes/admin/corsRules')],
   ['/admin/db',                       require('../routes/admin/db')],
@@ -81,12 +84,14 @@ const ADMIN_ROUTES = [
   ['/admin/feature-flags',            require('../routes/admin/featureFlags')],
   ['/admin/geo-blocking',             require('../routes/admin/geoBlocking')],
   ['/admin/impact-metrics',           require('../routes/admin/impactMetrics')],
+  ['/admin/sdg-mapping',              require('../routes/admin/impactMetrics')],
   ['/admin/matching-programs',        require('../routes/admin/matchingPrograms')],
   ['/admin/reconciliation',           require('../routes/admin/reconciliation')],
   ['/admin/routing',                  require('../routes/admin/routing')],
   ['/admin/traces',                   require('../routes/admin/traces')],
   ['/admin/wallets',                  require('../routes/admin/walletLimits')],
   ['/admin/wallets',                  require('../routes/admin/walletDonationLimits')],
+  ['/admin/wallets/bulk-import',        require('../routes/admin/bulkWalletImport')],
   ['/admin/webhooks',                 require('../routes/admin/webhooks')],
 ];
 
@@ -96,6 +101,7 @@ const UNVERSIONED_PATHS = [
   '/webhooks', '/campaigns', '/encryption', '/tiers', '/offers', '/orderbook',
   '/tags', '/leaderboard', '/federation', '/tools', '/auth', '/docs',
   '/transactions', '/claimable-balances', '/liquidity-pools', '/exchange-rates',
+  '/impact',
 ];
 
 /**
@@ -147,6 +153,7 @@ function mountRoutes(app, services = {}) {
     recurringDonationScheduler,
     transactionSyncScheduler,
     feeBumpService,
+    serviceAccountBalanceMonitor,
   } = services;
 
   // Network route needs a service reference injected at mount time
@@ -181,11 +188,15 @@ function mountRoutes(app, services = {}) {
     try {
       const priceOracle = require('../services/PriceOracleService');
       const rates = await priceOracle.getRates();
+      const priceSource = typeof priceOracle.getPriceSourceStatus === 'function'
+        ? priceOracle.getPriceSourceStatus().source
+        : undefined;
       res.json({
         success: true,
         data: {
           base: 'XLM',
           rates,
+          source: priceSource,
           supportedCurrencies: ['XLM', ...priceOracle.SUPPORTED_CURRENCIES.map(c => c.toUpperCase())],
           cachedAt: new Date().toISOString(),
         },
@@ -200,6 +211,16 @@ function mountRoutes(app, services = {}) {
   }));
 
   app.use('/api/v1', apiV1);
+
+  // Payment channels were introduced as an unversioned API; keep that path
+  // available for existing clients while also exposing the versioned route.
+  app.use('/channels', require('../routes/channels'));
+
+  // Stellar federation protocol server (SEP-0002).
+  // The versioned lookup router above is for consumers; this router serves
+  // this application's own /.well-known and /federation protocol endpoints.
+  const { router: federationProtocolRoutes } = require('../routes/federation');
+  app.use('/', federationProtocolRoutes);
 
   // ── GraphQL endpoint (Issue #1366) ────────────────────────────────────────
   // createGraphQLRouter() was defined and exported in src/graphql/index.js but
@@ -276,6 +297,9 @@ function mountRoutes(app, services = {}) {
       if (transactionSyncScheduler) {
         health.transactionSync = transactionSyncScheduler.getSyncStatus();
       }
+      if (serviceAccountBalanceMonitor) {
+        health.serviceAccountBalance = serviceAccountBalanceMonitor.getStatus();
+      }
       return res.status(health.status === 'healthy' ? 200 : 503).json(health);
     } catch (err) {
       log.error('HEALTH', 'Health check failed', { error: err.message });
@@ -290,9 +314,9 @@ function mountRoutes(app, services = {}) {
   app.get('/api/v1/health', healthCheckRateLimiter, healthHandler);
   app.get('/health', healthCheckRateLimiter, healthHandler);
 
-  app.get('/health/live', (req, res) => res.status(200).json(HealthCheckService.getLiveness()));
+  const liveHandler = (req, res) => res.status(200).json(HealthCheckService.getLiveness());
 
-  app.get('/health/ready', asyncHandler(async (req, res) => {
+  const readyHandler = asyncHandler(async (req, res) => {
     if (state.isShuttingDown) {
       return res.status(503).json({ status: 'not_ready', reason: 'server is shutting down' });
     }
@@ -318,7 +342,13 @@ function mountRoutes(app, services = {}) {
       log.error('HEALTH', 'Readiness check failed', { error: err.message });
       return res.status(503).json({ status: 'not_ready', reason: 'readiness check failed' });
     }
-  }));
+  });
+
+  app.get('/health/live', liveHandler);
+  app.get('/api/v1/health/live', liveHandler);
+
+  app.get('/health/ready', readyHandler);
+  app.get('/api/v1/health/ready', readyHandler);
 
   // ── Observability admin endpoints ─────────────────────────────────────────
   app.get('/abuse-signals', rbac.requireAdmin(), (req, res) => {
@@ -370,10 +400,6 @@ function mountRoutes(app, services = {}) {
   app.use('/admin/totp', requireApiKey, require('../routes/admin/totp'));
   app.use('/admin/inspect/xdr', rbac.requireAdmin(), require('../routes/admin/inspect'));
   
-  const serviceContainer = require('../config/serviceContainer');
-  const createFeeBumpRouter = require('../routes/admin/feeBump');
-  app.use('/admin/transactions', createFeeBumpRouter(serviceContainer.getFeeBumpService()));
-
   // Audit logs — #796: mandatory pagination, default 50, max 500
   const AUDIT_LOG_DEFAULT_LIMIT = 50;
   const AUDIT_LOG_MAX_LIMIT = 500;

@@ -291,3 +291,101 @@ describe('POST /wallets/bulk-import', () => {
     expect([401, 403, 500]).toContain(res.status);
   });
 });
+
+// ─── Integration: Async Admin Bulk Import & Progress Polling ─────────────────
+
+describe('Async Admin Bulk Import & Progress Polling (Issue #1538)', () => {
+  let adminApp;
+  let snapshot;
+  const adminRouter = require('../../src/routes/admin/bulkWalletImport');
+
+  beforeAll(() => {
+    adminApp = express();
+    adminApp.use(express.json());
+    adminApp.use((req, res, next) => {
+      req.user = { id: 'admin-1', role: 'admin' };
+      req.apiKey = { id: 'admin-key-1', role: 'admin' };
+      next();
+    });
+    adminApp.use('/admin/wallets/bulk-import', adminRouter);
+    adminApp.use((err, req, res, next) => {
+      void next;
+      res.status(err.status || 500).json({
+        success: false,
+        error: { code: err.code || 'INTERNAL_ERROR', message: err.message },
+      });
+    });
+  });
+
+  beforeEach(() => {
+    snapshot = Wallet.loadWallets();
+  });
+
+  afterEach(() => {
+    Wallet.saveWallets(snapshot);
+  });
+
+  test('POST /admin/wallets/bulk-import returns 202 and jobId for valid CSV', async () => {
+    const rows = make10Rows();
+    const res = await request(adminApp)
+      .post('/admin/wallets/bulk-import')
+      .attach('file', toCSV(rows), { filename: 'wallets.csv', contentType: 'text/csv' });
+
+    expect(res.status).toBe(202);
+    expect(res.body.success).toBe(true);
+    expect(res.body.data.jobId).toBeDefined();
+    expect(res.body.data.total).toBe(10);
+
+    const jobId = res.body.data.jobId;
+
+    // Allow background job ticks
+    await new Promise(r => setTimeout(r, 50));
+
+    const pollRes = await request(adminApp).get(`/admin/wallets/bulk-import/${jobId}`);
+    expect(pollRes.status).toBe(200);
+    expect(pollRes.body.success).toBe(true);
+    expect(pollRes.body.data.status).toBe('completed');
+    expect(pollRes.body.data.succeeded).toBe(10);
+    expect(pollRes.body.data.failed).toBe(0);
+  });
+
+  test('flags duplicates and invalid rows with detailed per-row error tracking', async () => {
+    const key1 = makeKey();
+    const key2 = makeKey();
+
+    // Pre-insert key1 into DB to test DB duplicate detection
+    Wallet.create({ address: key1, label: 'already-in-db' });
+
+    const rows = [
+      { public_key: key1, label: 'db-dup' }, // duplicate in DB
+      { public_key: key2, label: 'valid-row' }, // valid
+      { public_key: key2, label: 'file-dup' }, // duplicate in file
+      { public_key: 'INVALID_STELLAR_KEY', label: 'invalid' }, // invalid format
+    ];
+
+    const service = new BulkWalletImportService();
+    const jobInfo = service.createJob({ rows, batchSize: 2 });
+    expect(jobInfo.jobId).toBeDefined();
+    expect(jobInfo.total).toBe(4);
+
+    // Allow job to complete
+    await new Promise(r => setTimeout(r, 60));
+
+    const job = service.getJob(jobInfo.jobId);
+    expect(job.status).toBe('completed');
+    expect(job.succeeded).toBe(1);
+    expect(job.failed).toBe(3);
+    expect(job.errors).toHaveLength(3);
+    expect(job.errors.some(e => e.reason === 'duplicate_in_db')).toBe(true);
+    expect(job.errors.some(e => e.reason === 'duplicate_in_file')).toBe(true);
+    expect(job.errors.some(e => e.reason === 'invalid_address')).toBe(true);
+  });
+
+  test('GET /admin/wallets/bulk-import/:jobId returns 404 for unknown job ID', async () => {
+    const res = await request(adminApp).get('/admin/wallets/bulk-import/non_existent_job_12345');
+    expect(res.status).toBe(404);
+    expect(res.body.success).toBe(false);
+    expect(res.body.error.code).toBe('JOB_NOT_FOUND');
+  });
+});
+

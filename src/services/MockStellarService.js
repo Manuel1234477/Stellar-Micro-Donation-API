@@ -512,6 +512,11 @@ class MockStellarService extends StellarServiceInterface {
   async getBalance(publicKey) { return this.accounts.getBalance(publicKey); }
   async fundTestnetWallet(publicKey) { return this.accounts.fundTestnetWallet(publicKey); }
   async fundWithFriendbot(publicKey) { return this.accounts.fundWithFriendbot(publicKey); }
+  async createSponsoredAccount(sponsorSecret, publicKey) { return this.accounts.createSponsoredAccount(sponsorSecret, publicKey); }
+  async sponsorAccount(sponsorSecret, publicKey) { return this.accounts.sponsorAccount(sponsorSecret, publicKey); }
+  async revokeSponsoredAccount(sponsorSecret, publicKey) { return this.accounts.revokeSponsoredAccount(sponsorSecret, publicKey); }
+  async revokeSponsorship(sponsorSecret, publicKey, entryType) { return this.accounts.revokeSponsorship(sponsorSecret, publicKey, entryType); }
+  async getSponsorshipStatus(publicKey) { return this.accounts.getSponsorshipStatus(publicKey); }
   async isAccountFunded(publicKey) { return this.accounts.isAccountFunded(publicKey); }
   async loadAccount(address) { return this.accounts.loadAccount(address); }
   async getAccountSequence(address) { return this.accounts.getAccountSequence(address); }
@@ -562,6 +567,9 @@ class MockStellarService extends StellarServiceInterface {
   async sendPayment(sourcePublicKey, destinationPublic, amount, memo = '') { 
     return this.payments.sendPayment(sourcePublicKey, destinationPublic, amount, memo); 
   }
+  async openChannel(sourceSecret, recipientPublicKey, depositAmount) { return this.channels.openChannel(sourceSecret, recipientPublicKey, depositAmount); }
+  async updateChannel(channelId, newAmount) { return this.channels.updateChannel(channelId, newAmount); }
+  async closeChannel(channelId, escrowSecret, recipientPublicKey, amount) { return this.channels.closeChannel(channelId, escrowSecret, recipientPublicKey, amount); }
   async pathPaymentStrictSend(sourceSecret, sendAsset, sendAmount, destPublicKey, destAsset, minDestAmount, options = {}) { 
     return this.payments.pathPaymentStrictSend(sourceSecret, sendAsset, sendAmount, destPublicKey, destAsset, minDestAmount, options); 
   }
@@ -589,6 +597,33 @@ class MockStellarService extends StellarServiceInterface {
   }
   async validateMergeEligibility(publicKey) { 
     return this.accounts.validateMergeEligibility(publicKey); 
+  }
+
+  // Assets / trustlines
+  async addTrustline(accountSecretOrPublicKey, assetCodeOrAsset, issuerPublic, limit = null) {
+    return this.assets.addTrustline(accountSecretOrPublicKey, assetCodeOrAsset, issuerPublic, limit);
+  }
+  async removeTrustline(accountSecretOrPublicKey, assetCodeOrAsset, issuerPublic) {
+    return this.assets.removeTrustline(accountSecretOrPublicKey, assetCodeOrAsset, issuerPublic);
+  }
+  async getTrustlines(publicKey) { return this.assets.getTrustlines(publicKey); }
+  getTrustline(accountPublic, assetCode, issuerPublic) {
+    return this.assets.getTrustline(accountPublic, assetCode, issuerPublic);
+  }
+  async issueAsset(issuerSecret, assetCode, amount, recipientPublic) {
+    return this.assets.issueAsset(issuerSecret, assetCode, amount, recipientPublic);
+  }
+  async burnAsset(holderSecret, assetCode, issuerPublic, amount) {
+    return this.assets.burnAsset(holderSecret, assetCode, issuerPublic, amount);
+  }
+  async clawback(issuerSecret, from, assetCode, amount) {
+    return this.assets.clawback(issuerSecret, from, assetCode, amount);
+  }
+  async distributeAsset(distributorSecret, assetCode, issuerPublicKey, recipientPublicKey, amount) {
+    return this.assets.distributeAsset(distributorSecret, assetCode, issuerPublicKey, recipientPublicKey, amount);
+  }
+  getAssetHolders(assetCode, issuerPublic) {
+    return this.assets.getAssetHolders(assetCode, issuerPublic);
   }
 }
 

@@ -41,13 +41,26 @@ class GeoBlockMiddleware {
   async initialize(forceReload = false) {
     try {
       const dbPath = config.geoBlocking.maxmindDbPath;
+      const strictMode = config.geoBlocking.strictMode !== false;
+      const hasConfiguredRules = (config.geoBlocking.blockedCountries && config.geoBlocking.blockedCountries.length > 0) ||
+                                (config.geoBlocking.allowedCountries && config.geoBlocking.allowedCountries.length > 0);
 
       // Check if database file exists
       if (!fs.existsSync(dbPath)) {
-        log.warn('GEO_BLOCK', `MaxMind database not found at ${dbPath}. Geo-blocking will be disabled.`);
+        const errorMsg = `MaxMind database not found at ${dbPath}.`;
         this.lookup = null;
         this.initialized = false;
-        this.initializationError = new Error('MaxMind database not found');
+        this.initializationError = new Error(errorMsg);
+
+        if (strictMode && hasConfiguredRules) {
+          log.error('GEO_BLOCK', `FATAL: ${errorMsg} Server startup aborted because GEO_STRICT_MODE=true.`);
+          if (process.env.NODE_ENV !== 'test') {
+            throw new Error(`Geo-blocking startup failure: ${errorMsg}`);
+          }
+          return;
+        }
+
+        log.warn('GEO_BLOCK', `${errorMsg} Geo-blocking will be disabled.`);
         return;
       }
 
@@ -61,10 +74,19 @@ class GeoBlockMiddleware {
       this.initializationError = null;
       log.info('GEO_BLOCK', `MaxMind GeoIP database loaded from ${dbPath}`);
     } catch (error) {
-      log.error('GEO_BLOCK', 'Failed to initialize MaxMind database', { error: error.message });
       this.lookup = null;
       this.initialized = false;
       this.initializationError = error;
+      const strictMode = config.geoBlocking.strictMode !== false;
+      const hasConfiguredRules = (config.geoBlocking.blockedCountries && config.geoBlocking.blockedCountries.length > 0);
+      if (strictMode && hasConfiguredRules) {
+        log.error('GEO_BLOCK', 'Failed to initialize MaxMind database', { error: error.message });
+        if (process.env.NODE_ENV !== 'test') {
+          throw error;
+        }
+      } else {
+        log.error('GEO_BLOCK', 'Failed to initialize MaxMind database', { error: error.message });
+      }
     }
   }
 
@@ -225,9 +247,15 @@ class GeoBlockMiddleware {
     const countryCode = this.getCountryCode(normalizedIp);
 
     // If no country found and no blocking configured, allow.
-    // If the GeoIP database is unavailable while geo rules are active, fail closed.
+    // If the GeoIP database is unavailable while geo rules are active:
+    // - In strict mode (default): fail closed (block: true).
+    // - In soft mode (GEO_STRICT_MODE=false): fail open (block: false).
     if (!countryCode) {
       if (!this.initialized && this.hasActiveRules(ruleState)) {
+        const strictMode = config.geoBlocking.strictMode !== false;
+        if (!strictMode) {
+          return { block: false, reason: null };
+        }
         return {
           block: true,
           reason: 'geo',
@@ -290,6 +318,18 @@ class GeoBlockMiddleware {
                      (req.socket && req.socket.remoteAddress) ||
                      (req.connection.socket && req.connection.socket.remoteAddress) ||
                      '127.0.0.1');
+
+    // If uninitialized in soft mode, log warning on each request that geo-blocking is inactive
+    if (!this.initialized) {
+      const strictMode = config.geoBlocking.strictMode !== false;
+      if (!strictMode) {
+        log.warn('GEO_BLOCK', 'Geo-blocking is inactive: MaxMind database is uninitialized or missing', {
+          ip: clientIP,
+          path: req.path,
+          method: req.method,
+        });
+      }
+    }
 
     const decision = this.shouldBlock(clientIP, ruleState);
 

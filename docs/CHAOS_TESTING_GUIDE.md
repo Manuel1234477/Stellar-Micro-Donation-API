@@ -233,28 +233,15 @@ module.exports = {
 };
 ```
 
-### GitHub Actions
-```yaml
-name: Chaos Testing
-on:
-  schedule:
-    - cron: '0 2 * * *'  # Nightly at 2 AM
+### GitHub Actions (Nightly Workflow)
 
-jobs:
-  chaos:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v2
-      - run: npm install
-      - run: npm test -- chaos-testing.test.js
-      - name: Check Results
-        run: |
-          if grep -q "Crashes: 0" test-results.txt; then
-            echo "✅ Chaos tests passed"
-          else
-            echo "❌ Chaos tests failed"
-            exit 1
-          fi
+The automated nightly chaos workflow is configured in `.github/workflows/chaos-nightly.yml`:
+- **Trigger**: Runs nightly at 3 AM UTC (`cron: '0 3 * * *'`) and via `workflow_dispatch`.
+- **Failure Notification**: On test failure, an annotated GitHub issue is automatically created (or updated) with the commit SHA and direct links to the failing run logs.
+
+```bash
+# Run chaos suite manually
+npm run test:chaos
 ```
 
 ### Pre-commit Hook
