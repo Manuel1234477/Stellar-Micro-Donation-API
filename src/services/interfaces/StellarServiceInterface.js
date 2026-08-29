@@ -127,6 +127,17 @@ class StellarServiceInterface {
     throw new Error('getInflationDestination() must be implemented');
   }
 
+  async setHomeDomain(_sourceSecret, _homeDomain) {
+    void _sourceSecret;
+    void _homeDomain;
+    throw new Error('setHomeDomain() must be implemented');
+  }
+
+  async getHomeDomain(_publicKey) {
+    void _publicKey;
+    throw new Error('getHomeDomain() must be implemented');
+  }
+
   async setAccountData(_secret, _key, _value) {
     void _secret;
     void _key;

@@ -123,6 +123,29 @@ class StellarAccounts {
     return account.inflation_destination || null;
   }
 
+  async setHomeDomain(sourceSecret, homeDomain) {
+    validateHomeDomain(homeDomain, { allowEmpty: true });
+
+    const sourceKeypair = StellarSdk.Keypair.fromSecret(sourceSecret);
+    const account = await this.loadAccount(sourceKeypair.publicKey());
+    const transaction = new StellarSdk.TransactionBuilder(account, {
+      fee: this.stellarService.baseFee,
+      networkPassphrase: this.stellarService.networkPassphrase,
+    })
+      .addOperation(StellarSdk.Operation.setOptions({ homeDomain }))
+      .setTimeout(30)
+      .build();
+
+    transaction.sign(sourceKeypair);
+    const result = await this.stellarService._submitTransactionWithNetworkSafety(transaction);
+    return { hash: result.hash, ledger: result.ledger };
+  }
+
+  async getHomeDomain(publicKey) {
+    const account = await this.loadAccount(publicKey);
+    return account.home_domain || null;
+  }
+
   isValidAddress(address) {
     try {
       StellarSdk.StrKey.decodeEd25519PublicKey(address);

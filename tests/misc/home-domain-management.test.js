@@ -3,7 +3,8 @@
  *
  * Covers:
  * - MockStellarService.setHomeDomain / getHomeDomain
- * - PUT  /wallets/:id/home-domain  (set)
+ * - PATCH /wallets/:id/home-domain  (set)
+ * - DELETE /wallets/:id/home-domain (clear)
  * - GET  /wallets/:id/home-domain  (get)
  * - POST /wallets/:id/home-domain/verify (verify stellar.toml)
  */
@@ -40,6 +41,22 @@ function createApp() {
   return app;
 }
 
+function mockTomlSuccess() {
+  https.get.mockImplementation((_url, _opts, cb) => {
+    const mockRes = {
+      statusCode: 200,
+      on: (event, handler) => {
+        if (event === 'data') handler('NETWORK_PASSPHRASE="Test SDF Network ; September 2015"');
+        if (event === 'end') handler();
+        return mockRes;
+      },
+      resume: jest.fn(),
+    };
+    cb(mockRes);
+    return { on: jest.fn(), destroy: jest.fn() };
+  });
+}
+
 // ── MockStellarService unit tests ─────────────────────────────────────────────
 
 describe('MockStellarService – home domain state', () => {
@@ -65,9 +82,9 @@ describe('MockStellarService – home domain state', () => {
     expect(domain).toBe('example.com');
   });
 
-  test('setHomeDomain rejects domain longer than 32 chars', async () => {
+  test('setHomeDomain rejects a domain longer than 32 bytes', async () => {
     const { secretKey } = await svc.createWallet();
-    await expect(svc.setHomeDomain(secretKey, 'a'.repeat(33))).rejects.toThrow('32 characters');
+    await expect(svc.setHomeDomain(secretKey, 'a'.repeat(33))).rejects.toThrow('32 bytes');
   });
 
   test('setHomeDomain rejects domain with protocol prefix', async () => {
@@ -89,7 +106,7 @@ describe('MockStellarService – home domain state', () => {
 
 // ── HTTP endpoint tests ───────────────────────────────────────────────────────
 
-describe('PUT /wallets/:id/home-domain', () => {
+describe('PATCH /wallets/:id/home-domain', () => {
   let app, svc, wallet, dbWallet;
 
   beforeAll(async () => {
@@ -99,11 +116,16 @@ describe('PUT /wallets/:id/home-domain', () => {
     dbWallet = Wallet.create({ address: wallet.publicKey, label: 'hd-test' });
   });
 
+  beforeEach(() => {
+    jest.clearAllMocks();
+  });
+
   test('sets home domain and returns hash + ledger', async () => {
+    mockTomlSuccess();
     const res = await request(app)
-      .put(`/wallets/${dbWallet.id}/home-domain`)
+      .patch(`/wallets/${dbWallet.id}/home-domain`)
       .set('x-api-key', 'test-key')
-      .send({ domain: 'stellar.org', sourceSecret: wallet.secretKey });
+      .send({ homeDomain: 'stellar.org', sourceSecret: wallet.secretKey });
 
     expect(res.status).toBe(200);
     expect(res.body.success).toBe(true);
@@ -114,7 +136,7 @@ describe('PUT /wallets/:id/home-domain', () => {
 
   test('returns 400 when domain is missing', async () => {
     const res = await request(app)
-      .put(`/wallets/${dbWallet.id}/home-domain`)
+      .patch(`/wallets/${dbWallet.id}/home-domain`)
       .set('x-api-key', 'test-key')
       .send({ sourceSecret: wallet.secretKey });
 
@@ -123,29 +145,85 @@ describe('PUT /wallets/:id/home-domain', () => {
 
   test('returns 400 when sourceSecret is missing', async () => {
     const res = await request(app)
-      .put(`/wallets/${dbWallet.id}/home-domain`)
+      .patch(`/wallets/${dbWallet.id}/home-domain`)
       .set('x-api-key', 'test-key')
-      .send({ domain: 'example.com' });
+      .send({ homeDomain: 'example.com' });
 
     expect(res.status).toBe(400);
   });
 
   test('returns 400 for invalid domain format', async () => {
     const res = await request(app)
-      .put(`/wallets/${dbWallet.id}/home-domain`)
+      .patch(`/wallets/${dbWallet.id}/home-domain`)
       .set('x-api-key', 'test-key')
-      .send({ domain: 'https://bad-domain.com', sourceSecret: wallet.secretKey });
+      .send({ homeDomain: 'https://bad-domain.com', sourceSecret: wallet.secretKey });
 
     expect(res.status).toBe(400);
   });
 
+  test('returns 400 when domain exceeds 32 bytes', async () => {
+    const res = await request(app)
+      .patch(`/wallets/${dbWallet.id}/home-domain`)
+      .set('x-api-key', 'test-key')
+      .send({ homeDomain: 'é'.repeat(17), sourceSecret: wallet.secretKey });
+
+    expect(res.status).toBe(400);
+  });
+
+  test('returns 502 when stellar.toml is unavailable', async () => {
+    https.get.mockImplementation((_url, _opts, _cb) => {
+      const emitter = { on: jest.fn() };
+      emitter.on.mockImplementation((event, handler) => {
+        if (event === 'error') handler(new Error('ECONNREFUSED'));
+        return emitter;
+      });
+      return emitter;
+    });
+
+    const res = await request(app)
+      .patch(`/wallets/${dbWallet.id}/home-domain`)
+      .set('x-api-key', 'test-key')
+      .send({ homeDomain: 'unreachable.example', sourceSecret: wallet.secretKey });
+
+    expect(res.status).toBe(502);
+  });
+
   test('returns 404 for non-existent wallet', async () => {
     const res = await request(app)
-      .put('/wallets/999999/home-domain')
+      .patch('/wallets/999999/home-domain')
       .set('x-api-key', 'test-key')
-      .send({ domain: 'example.com', sourceSecret: wallet.secretKey });
+      .send({ homeDomain: 'example.com', sourceSecret: wallet.secretKey });
 
     expect(res.status).toBe(404);
+  });
+});
+
+describe('DELETE /wallets/:id/home-domain', () => {
+  let app, svc, wallet, dbWallet;
+
+  beforeAll(async () => {
+    app = createApp();
+    svc = getStellarService();
+    wallet = await svc.createWallet();
+    dbWallet = Wallet.create({ address: wallet.publicKey, label: 'hd-delete-test' });
+  });
+
+  beforeEach(() => {
+    jest.clearAllMocks();
+  });
+
+  test('clears a home domain without fetching stellar.toml', async () => {
+    await svc.setHomeDomain(wallet.secretKey, 'example.com');
+
+    const res = await request(app)
+      .delete(`/wallets/${dbWallet.id}/home-domain`)
+      .set('x-api-key', 'test-key')
+      .send({ sourceSecret: wallet.secretKey });
+
+    expect(res.status).toBe(200);
+    expect(res.body.data.homeDomain).toBeNull();
+    expect(await svc.getHomeDomain(wallet.publicKey)).toBeNull();
+    expect(https.get).not.toHaveBeenCalled();
   });
 });
 
