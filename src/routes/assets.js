@@ -99,10 +99,11 @@ async function upsertHolding(assetCode, issuerPublic, holderPublic, delta) {
  */
 router.post('/issue', requireAdmin(), payloadSizeLimiter(ENDPOINT_LIMITS.asset), asyncHandler(async (req, res, next) => {
   try {
-    const { issuerSecret, assetCode, distributorPublicKey, amount } = req.body;
+    const { issuerSecret, assetCode, distributorPublicKey, recipientPublic, amount } = req.body;
+    const distributor = distributorPublicKey || recipientPublic;
 
     const required = validateRequiredFields(
-      { issuerSecret, assetCode, amount, distributorPublicKey },
+      { issuerSecret, assetCode, amount, distributorPublicKey: distributor },
       ['issuerSecret', 'assetCode', 'amount', 'distributorPublicKey']
     );
     if (!required.valid) {
@@ -125,10 +126,10 @@ router.post('/issue', requireAdmin(), payloadSizeLimiter(ENDPOINT_LIMITS.asset),
     }
 
     const stellar = getStellarService();
-    const result = await stellar.issueAsset(issuerSecret, assetCode, amount, distributorPublicKey);
+    const result = await stellar.issueAsset(issuerSecret, assetCode, amount, distributor);
 
     await upsertAssetRecord(assetCode, result.issuerPublic, amountResult.value, 0);
-    await upsertHolding(assetCode, result.issuerPublic, distributorPublicKey, amountResult.value);
+    await upsertHolding(assetCode, result.issuerPublic, distributor, amountResult.value);
 
     await AuditLogService.log({
       category: AuditLogService.CATEGORY.FINANCIAL_OPERATION,
@@ -139,7 +140,7 @@ router.post('/issue', requireAdmin(), payloadSizeLimiter(ENDPOINT_LIMITS.asset),
       requestId: req.id,
       ipAddress: req.ip,
       resource: `/assets/issue`,
-      details: { assetCode, issuerPublic: result.issuerPublic, distributorPublicKey, amount: result.amount, hash: result.hash },
+      details: { assetCode, issuerPublic: result.issuerPublic, distributorPublicKey: distributor, amount: result.amount, hash: result.hash },
     }).catch(() => {});
 
     return res.status(201).json({
@@ -148,7 +149,7 @@ router.post('/issue', requireAdmin(), payloadSizeLimiter(ENDPOINT_LIMITS.asset),
       data: {
         assetCode: result.assetCode,
         issuerPublic: result.issuerPublic,
-        distributorPublicKey,
+        distributorPublicKey: distributor,
         amount: result.amount,
         transactionHash: result.hash,
         ledger: result.ledger,

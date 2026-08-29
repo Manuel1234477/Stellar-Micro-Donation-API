@@ -183,6 +183,13 @@ class Transaction {
     }
     _persist(newTransaction);
 
+    if (Array.isArray(newTransaction.tags) && newTransaction.tags.length > 0) {
+      try {
+        const TagService = require('../services/TagService');
+        TagService.associateTags(newTransaction.id, newTransaction.tags).catch(() => {});
+      } catch (_) {}
+    }
+
     const emitter = this.eventEmitter;
     if (emitter) {
       const eventName = emitter.constructor?.EVENTS?.CREATED || 'donation.created';

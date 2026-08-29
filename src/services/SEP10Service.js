@@ -76,6 +76,7 @@ class SEP10Service {
       transaction.sign(serverKeypair);
 
       await this._registerChallenge(challengeId, clientAccount, expiresAtMs);
+      await this._storeNonce(challengeId, expiresAtMs);
 
       log.info('SEP10', 'Challenge transaction generated', {
         clientAccount: this._maskPublicKey(clientAccount),
@@ -114,11 +115,13 @@ class SEP10Service {
         );
       }
 
+      await this._checkNonceReplay(memoPayload.challengeId);
       this._verifyServerSignature(transaction);
       this._verifyTransactionSignatures(transaction, clientAccount);
 
       await this._getChallengeEntry(memoPayload.challengeId, clientAccount);
       await this._markChallengeUsed(memoPayload.challengeId);
+      await this._consumeNonce(memoPayload.challengeId);
 
       log.info('SEP10', 'Challenge verification successful', {
         account: this._maskPublicKey(clientAccount)
@@ -407,6 +410,70 @@ class SEP10Service {
   _maskPublicKey(publicKey) {
     if (publicKey.length < 8) return publicKey;
     return `${publicKey.slice(0, 4)}...${publicKey.slice(-4)}`;
+  }
+
+  /**
+   * Store nonce in nonce_store table for replay detection
+   * @private
+   * @param {string} nonce - The challenge nonce to store
+   * @param {number} expiresAtMs - Expiry timestamp in milliseconds
+   */
+  async _storeNonce(nonce, expiresAtMs) {
+    const expiresAtSec = Math.floor(expiresAtMs / 1000);
+    try {
+      await db.run(
+        `INSERT OR IGNORE INTO nonce_store (nonce, expiresAt)
+         VALUES (?, datetime(?, 'unixepoch'))`,
+        [nonce, expiresAtSec]
+      );
+    } catch (error) {
+      log.warn('SEP10', 'Failed to store nonce for replay detection', { error: error.message });
+    }
+  }
+
+  /**
+   * Check if a nonce has already been used (replay detection)
+   * @private
+   * @param {string} nonce - The challenge nonce to check
+   */
+  async _checkNonceReplay(nonce) {
+    try {
+      const entry = await db.get(
+        `SELECT nonce, usedAt FROM nonce_store WHERE nonce = ?`,
+        [nonce]
+      );
+
+      if (!entry) {
+        return;
+      }
+
+      if (entry.usedAt) {
+        throw new ValidationError(
+          'Challenge nonce has already been consumed',
+          null,
+          ERROR_CODES.SEP10_REPLAY_DETECTED
+        );
+      }
+    } catch (error) {
+      if (error instanceof ValidationError) throw error;
+      log.warn('SEP10', 'Failed to check nonce replay', { error: error.message });
+    }
+  }
+
+  /**
+   * Mark a nonce as consumed to prevent replay
+   * @private
+   * @param {string} nonce - The challenge nonce to mark as consumed
+   */
+  async _consumeNonce(nonce) {
+    try {
+      await db.run(
+        `UPDATE nonce_store SET usedAt = CURRENT_TIMESTAMP WHERE nonce = ?`,
+        [nonce]
+      );
+    } catch (error) {
+      log.warn('SEP10', 'Failed to mark nonce as consumed', { error: error.message });
+    }
   }
 }
 

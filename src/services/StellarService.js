@@ -35,6 +35,8 @@ class StellarService extends StellarServiceInterface {
     this.serviceSecretKey = config.serviceSecretKey;
     this.environment = config.environment;
     this.correlationId = config.correlationId;
+    this.sorobanRpc = config.sorobanRpc || null;
+    this.sorobanRpcUrl = config.sorobanRpcUrl || process.env.SOROBAN_RPC_URL || null;
 
     // Default to SDK definitions if environment config is missing
     this.baseFee = this.environment?.baseFee || StellarSdk.BASE_FEE;
@@ -287,6 +289,11 @@ class StellarService extends StellarServiceInterface {
   async getBalance(publicKey) { return this.accounts.getBalance(publicKey); }
   async fundTestnetWallet(publicKey) { return this.accounts.fundTestnetWallet(publicKey); }
   async fundWithFriendbot(publicKey) { return this.accounts.fundWithFriendbot(publicKey); }
+  async createSponsoredAccount(sponsorSecret, publicKey) { return this.accounts.createSponsoredAccount(sponsorSecret, publicKey); }
+  async sponsorAccount(sponsorSecret, publicKey) { return this.accounts.sponsorAccount(sponsorSecret, publicKey); }
+  async revokeSponsoredAccount(sponsorSecret, publicKey) { return this.accounts.revokeSponsoredAccount(sponsorSecret, publicKey); }
+  async revokeSponsorship(sponsorSecret, publicKey, entryType) { return this.accounts.revokeSponsorship(sponsorSecret, publicKey, entryType); }
+  async getSponsorshipStatus(publicKey) { return this.accounts.getSponsorshipStatus(publicKey); }
   async isAccountFunded(publicKey) { return this.accounts.isAccountFunded(publicKey); }
   async loadAccount(publicKey) { return this.accounts.loadAccount(publicKey); }
   async getAccountSequence(publicKey) { return this.accounts.getAccountSequence(publicKey); }
@@ -309,6 +316,9 @@ class StellarService extends StellarServiceInterface {
   async sendBatchDonations(sourceSecret, payments) { 
     return this.payments.sendBatchDonations(sourceSecret, payments); 
   }
+  async openChannel(sourceSecret, recipientPublicKey, depositAmount) { return this.channels.openChannel(sourceSecret, recipientPublicKey, depositAmount); }
+  async updateChannel(channelId, newAmount) { return this.channels.updateChannel(channelId, newAmount); }
+  async closeChannel(channelId, escrowSecret, recipientPublicKey, amount) { return this.channels.closeChannel(channelId, escrowSecret, recipientPublicKey, amount); }
   async getTransactionHistory(publicKey, limit = 10) { 
     return this.payments.getTransactionHistory(publicKey, limit); 
   }
@@ -365,6 +375,27 @@ class StellarService extends StellarServiceInterface {
   }
   async claimBalance(claimantSecret, balanceId) { 
     return this.claimableBalances.claimBalance(claimantSecret, balanceId); 
+  }
+
+  // Assets / trustlines
+  async addTrustline(accountSecret, assetCode, issuerPublic, limit = null) {
+    return this.assets.addTrustline(accountSecret, assetCode, issuerPublic, limit);
+  }
+  async removeTrustline(accountSecret, assetCode, issuerPublic) {
+    return this.assets.removeTrustline(accountSecret, assetCode, issuerPublic);
+  }
+  async getTrustlines(publicKey) { return this.assets.getTrustlines(publicKey); }
+  async issueAsset(issuerSecret, assetCode, amount, recipientPublic) {
+    return this.assets.issueAsset(issuerSecret, assetCode, amount, recipientPublic);
+  }
+  async burnAsset(holderSecret, assetCode, issuerPublic, amount) {
+    return this.assets.burnAsset(holderSecret, assetCode, issuerPublic, amount);
+  }
+  async clawback(issuerSecret, from, assetCode, amount) {
+    return this.assets.clawback(issuerSecret, from, assetCode, amount);
+  }
+  async distributeAsset(distributorSecret, assetCode, issuerPublicKey, recipientPublicKey, amount) {
+    return this.assets.distributeAsset(distributorSecret, assetCode, issuerPublicKey, recipientPublicKey, amount);
   }
 }
 

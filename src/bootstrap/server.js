@@ -78,6 +78,16 @@ async function startServer(app, overrideServices = {}) {
 
     await logStartupDiagnostics();
 
+    // ── #1533: Refuse startup if GEO_BLOCKED_COUNTRIES configured but MaxMind DB is missing in strict mode
+    if (config.geoBlocking.strictMode !== false && config.geoBlocking.blockedCountries.length > 0) {
+      const fs = require('fs');
+      if (!fs.existsSync(config.geoBlocking.maxmindDbPath)) {
+        const errorMsg = `MaxMind GeoIP database not found at ${config.geoBlocking.maxmindDbPath} with GEO_BLOCKED_COUNTRIES configured and GEO_STRICT_MODE=true. Refusing to start.`;
+        log.error('GEO_BLOCK', errorMsg);
+        throw new Error(errorMsg);
+      }
+    }
+
     // ── #714: Bind port immediately so /health/live responds right away ───────
     const server = app.listen(PORT);
 

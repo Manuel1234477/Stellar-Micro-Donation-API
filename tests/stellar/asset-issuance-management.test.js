@@ -9,6 +9,15 @@
 
 const MockStellarService = require('../../src/services/MockStellarService');
 
+async function fundedPair(service, assetCode = 'TOKEN') {
+  const issuer = await service.createWallet();
+  const recipient = await service.createWallet();
+  await service.fundTestnetWallet(issuer.publicKey);
+  await service.fundTestnetWallet(recipient.publicKey);
+  await service.addTrustline(recipient.secretKey, assetCode, issuer.publicKey);
+  return { issuer, recipient };
+}
+
 // ─── MockStellarService.issueAsset ───────────────────────────────────────────
 
 describe('MockStellarService.issueAsset', () => {
@@ -19,10 +28,7 @@ describe('MockStellarService.issueAsset', () => {
   });
 
   it('issues an asset and returns hash, ledger, assetCode, amount', async () => {
-    const issuer = await service.createWallet();
-    const recipient = await service.createWallet();
-    await service.fundTestnetWallet(issuer.publicKey);
-    await service.fundTestnetWallet(recipient.publicKey);
+    const { issuer, recipient } = await fundedPair(service, 'DONATE');
 
     const result = await service.issueAsset(issuer.secretKey, 'DONATE', '100', recipient.publicKey);
     expect(result).toHaveProperty('hash');
@@ -33,10 +39,7 @@ describe('MockStellarService.issueAsset', () => {
   });
 
   it('credits recipient balance in assetBalances map', async () => {
-    const issuer = await service.createWallet();
-    const recipient = await service.createWallet();
-    await service.fundTestnetWallet(issuer.publicKey);
-    await service.fundTestnetWallet(recipient.publicKey);
+    const { issuer, recipient } = await fundedPair(service, 'TOKEN');
 
     await service.issueAsset(issuer.secretKey, 'TOKEN', '500', recipient.publicKey);
 
@@ -75,10 +78,7 @@ describe('MockStellarService.issueAsset', () => {
   });
 
   it('accumulates balance on multiple issuances', async () => {
-    const issuer = await service.createWallet();
-    const recipient = await service.createWallet();
-    await service.fundTestnetWallet(issuer.publicKey);
-    await service.fundTestnetWallet(recipient.publicKey);
+    const { issuer, recipient } = await fundedPair(service, 'TOKEN');
 
     await service.issueAsset(issuer.secretKey, 'TOKEN', '100', recipient.publicKey);
     await service.issueAsset(issuer.secretKey, 'TOKEN', '200', recipient.publicKey);
@@ -105,6 +105,8 @@ describe('MockStellarService.distributeAsset', () => {
     await service.fundTestnetWallet(issuer.publicKey);
     await service.fundTestnetWallet(distributor.publicKey);
     await service.fundTestnetWallet(recipient.publicKey);
+    await service.addTrustline(distributor.secretKey, 'TOKEN', issuer.publicKey);
+    await service.addTrustline(recipient.secretKey, 'TOKEN', issuer.publicKey);
 
     await service.issueAsset(issuer.secretKey, 'TOKEN', '1000', distributor.publicKey);
 
@@ -126,6 +128,8 @@ describe('MockStellarService.distributeAsset', () => {
     await service.fundTestnetWallet(issuer.publicKey);
     await service.fundTestnetWallet(distributor.publicKey);
     await service.fundTestnetWallet(recipient.publicKey);
+    await service.addTrustline(distributor.secretKey, 'TOKEN', issuer.publicKey);
+    await service.addTrustline(recipient.secretKey, 'TOKEN', issuer.publicKey);
 
     await service.issueAsset(issuer.secretKey, 'TOKEN', '1000', distributor.publicKey);
     await service.distributeAsset(distributor.secretKey, 'TOKEN', issuer.publicKey, recipient.publicKey, '300');
@@ -143,6 +147,7 @@ describe('MockStellarService.distributeAsset', () => {
     await service.fundTestnetWallet(issuer.publicKey);
     await service.fundTestnetWallet(distributor.publicKey);
     await service.fundTestnetWallet(recipient.publicKey);
+    await service.addTrustline(distributor.secretKey, 'TOKEN', issuer.publicKey);
 
     await service.issueAsset(issuer.secretKey, 'TOKEN', '10', distributor.publicKey);
 
@@ -177,6 +182,8 @@ describe('MockStellarService.distributeAsset', () => {
     await service.fundTestnetWallet(issuer.publicKey);
     await service.fundTestnetWallet(distributor.publicKey);
     await service.fundTestnetWallet(recipient.publicKey);
+    await service.addTrustline(distributor.secretKey, 'TOKEN', issuer.publicKey);
+
     await service.issueAsset(issuer.secretKey, 'TOKEN', '100', distributor.publicKey);
 
     await expect(
@@ -186,6 +193,17 @@ describe('MockStellarService.distributeAsset', () => {
 });
 
 // ─── StellarService.distributeAsset method exists ────────────────────────────
+
+describe('StellarService.issueAsset', () => {
+  it('is defined as a method on StellarService', () => {
+    const StellarService = require('../../src/services/StellarService');
+    expect(typeof StellarService.prototype.issueAsset).toBe('function');
+  });
+
+  it('is defined as a method on MockStellarService', () => {
+    expect(typeof MockStellarService.prototype.issueAsset).toBe('function');
+  });
+});
 
 describe('StellarService.distributeAsset', () => {
   it('is defined as a method on StellarService', () => {

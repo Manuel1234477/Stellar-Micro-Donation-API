@@ -528,7 +528,7 @@ The following integrations are **completely optional**. If their env vars are ab
 
 | Integration | Required vars | Fallback behaviour |
 |-------------|---------------|--------------------|
-| CoinGecko price oracle | `COINGECKO_API_KEY` | Public rate-limited endpoint is used |
+| CoinGecko price oracle | `COINGECKO_API_KEY` | Public rate-limited endpoint is used; if CoinGecko is unreachable, XLM/USD comes from the Stellar DEX orderbook |
 | IPFS certificate pinning | `PINATA_API_KEY`, `PINATA_SECRET_KEY` | Certificates stored in local memory only |
 | Email receipts (SMTP) | `SMTP_HOST`, `SMTP_USER`, `SMTP_PASS`, `SMTP_FROM` | Email delivery skipped/graceful failure |
 | Geographic IP blocking | `GEO_BLOCKED_COUNTRIES`, `MAXMIND_DB_PATH` | All IPs allowed; no geo rules applied |
@@ -646,6 +646,7 @@ All variables in this section are **optional**. Omitting them disables the integ
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `COINGECKO_API_KEY` | — | API key for XLM/fiat rates. Without it the public (rate-limited) endpoint is used. |
+| `XLM_USDC_ASSET` | Circle USDC for the active network | `CODE:ISSUER` used for the Stellar DEX price fallback (XLM/USDC mid-market price). |
 
 #### IPFS Certificate Pinning (Pinata)
 

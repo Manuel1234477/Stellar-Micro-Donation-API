@@ -649,6 +649,29 @@ function checkCoRequiredFlags() {
   return allOk;
 }
 
+/** Check — Geo-blocking database presence when strict mode is active (#1533) */
+function checkGeoBlocking() {
+  const strictMode = process.env.GEO_STRICT_MODE !== 'false';
+  const rawBlocked = process.env.GEO_BLOCKED_COUNTRIES;
+  const blockedCountries = rawBlocked ? rawBlocked.split(',').map(s => s.trim()).filter(Boolean) : [];
+  const dbPath = process.env.MAXMIND_DB_PATH || path.join(__dirname, '../../data/GeoLite2-Country.mmdb');
+
+  if (blockedCountries.length > 0) {
+    if (!fs.existsSync(dbPath)) {
+      if (strictMode) {
+        fail('Geo-blocking', `GEO_BLOCKED_COUNTRIES is configured but MaxMind database not found at "${dbPath}" with GEO_STRICT_MODE=true`);
+        return false;
+      }
+      warn('Geo-blocking', `GEO_BLOCKED_COUNTRIES is configured but MaxMind database not found at "${dbPath}" (GEO_STRICT_MODE=false; geo-blocking inactive)`);
+    } else {
+      pass('Geo-blocking', `MaxMind database found, blocking ${blockedCountries.length} country/countries`);
+    }
+  } else {
+    pass('Geo-blocking', 'no country restrictions configured');
+  }
+  return true;
+}
+
 /**
  * Non-blocking DB integrity check run at startup.
  * Logs result at INFO level, or ERROR if corruption is detected.
@@ -710,6 +733,7 @@ async function run({ exitOnFailure = false } = {}) {
     checkStellarSigningKeys(),  // #1234
     checkNumericRanges(),       // #1234
     checkCoRequiredFlags(),     // #1234
+    checkGeoBlocking(),         // #1533
     await checkDatabase(),
     await checkDatabaseDiagnostics(), // #1483
     await checkStellarNetwork(),

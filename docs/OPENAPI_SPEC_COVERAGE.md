@@ -73,9 +73,16 @@ Common response envelopes, pagination, and error structures are defined once and
 }
 ```
 
-### 5. CI Enforcement
+### 5. Automated Runtime Response Schema Validation
 
-The CI pipeline runs `npm run openapi:check` on every PR, which executes:
+Automated test suite `tests/misc/openapi-response-schema-validation.test.js` starts the Express app and validates actual HTTP responses against OpenAPI 3.1 response schemas using **AJV** (issue #1539):
+- Validates 2xx success response bodies against documented schemas
+- Validates common error responses (400, 401, 403, 404) against standard Error/ValidationError/UnauthorizedError/NotFoundError schemas
+- Emits clear error messages with exact field paths and schema rules upon drift
+
+### 6. CI Enforcement
+
+The CI pipeline runs `npm run openapi:check` and the test suite on every PR, which executes:
 
 1. **check-openapi-sync.js** - Verifies:
    - Spec is byte-stable (committed == generated)
@@ -87,6 +94,9 @@ The CI pipeline runs `npm run openapi:check` on every PR, which executes:
    - All required main endpoints are documented
    - All shared schemas are defined
    - All auth schemes are properly configured
+
+3. **Jest Test Suite** - Executes:
+   - `tests/misc/openapi-response-schema-validation.test.js` validating live response payloads against the specification.
 
 **CI Configuration** (`.github/workflows/ci.yml`):
 ```yaml

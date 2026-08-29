@@ -284,5 +284,24 @@ describe('Support for Donation Notes and Tags', () => {
       expect(response.status).toBe(200);
       expect(response.body.data.customAllowed).toBe(true);
     });
+
+    test('GET /tags returns known tags with donation counts', async () => {
+      const response = await request(app)
+        .get('/tags')
+        .set('X-API-Key', 'test-key-1');
+
+      expect(response.status).toBe(200);
+      expect(Array.isArray(response.body.data.tags)).toBe(true);
+    });
+
+    test('GET /donations?tags=education,custom1 filters donations having all specified tags', async () => {
+      const response = await request(app)
+        .get('/donations?tags=education,custom1')
+        .set('X-API-Key', 'test-key-1');
+
+      expect(response.status).toBe(200);
+      expect(response.body.count).toBe(1);
+      expect(response.body.data[0].amount === '100' || response.body.data[0].amount === 100).toBe(true);
+    });
   });
 });
