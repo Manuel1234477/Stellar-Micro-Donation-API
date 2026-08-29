@@ -248,6 +248,20 @@ function recordDonation(status) {
   stellarDonationsTotal.inc({ status });
 }
 
+// ─── Memo Collision Metrics (#1592) ──────────────────────────────────────────
+
+/**
+ * Counter: total memo collision events detected during donation creation.
+ * Labels: attempt (1|2|3), outcome (retry|failed|resolved)
+ * @type {client.Counter}
+ */
+const memoCollisionsTotal = new client.Counter({
+  name: 'stellar_memo_collisions_total',
+  help: 'Total number of encrypted memo collision events detected during donation creation',
+  labelNames: ['attempt', 'outcome'],
+  registers: [registry],
+});
+
 module.exports = {
   registry,
   httpRequestDuration,
@@ -255,6 +269,8 @@ module.exports = {
   metricsMiddleware,
   normaliseRoute,
   recordDonation,
+  // Memo collision metrics
+  memoCollisionsTotal,
   // Recurring scheduler metrics
   recurringDonationsDueTotal,
   recurringDonationsExecutedTotal,
