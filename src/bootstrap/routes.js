@@ -51,13 +51,16 @@ const V1_ROUTES = [
   ['/auth',                           require('../routes/auth')],
   ['/docs',                           require('../routes/docs')],
   ['/transactions',                   require('../routes/transaction')],
+  ['/contracts',                      require('../routes/contracts')],
   ['/transactions/bump-sequence',     require('../routes/transactions/bump-sequence')],
   ['/claimable-balances',             require('../routes/claimableBalances')],
   ['/liquidity-pools',                require('../routes/liquidity-pools')],
+  ['/channels',                       require('../routes/channels')],
 ];
 
 // ── Admin routes ──────────────────────────────────────────────────────────────
 const ADMIN_ROUTES = [
+  ['/admin/donations',              require('../routes/admin/donations')],
   ['/admin/crowdfunding',             require('../routes/admin/crowdfunding')],
   ['/admin/cors/rules',               require('../routes/admin/corsRules')],
   ['/admin/db',                       require('../routes/admin/db')],
@@ -181,11 +184,15 @@ function mountRoutes(app, services = {}) {
     try {
       const priceOracle = require('../services/PriceOracleService');
       const rates = await priceOracle.getRates();
+      const priceSource = typeof priceOracle.getPriceSourceStatus === 'function'
+        ? priceOracle.getPriceSourceStatus().source
+        : undefined;
       res.json({
         success: true,
         data: {
           base: 'XLM',
           rates,
+          source: priceSource,
           supportedCurrencies: ['XLM', ...priceOracle.SUPPORTED_CURRENCIES.map(c => c.toUpperCase())],
           cachedAt: new Date().toISOString(),
         },
@@ -200,6 +207,16 @@ function mountRoutes(app, services = {}) {
   }));
 
   app.use('/api/v1', apiV1);
+
+  // Payment channels were introduced as an unversioned API; keep that path
+  // available for existing clients while also exposing the versioned route.
+  app.use('/channels', require('../routes/channels'));
+
+  // Stellar federation protocol server (SEP-0002).
+  // The versioned lookup router above is for consumers; this router serves
+  // this application's own /.well-known and /federation protocol endpoints.
+  const { router: federationProtocolRoutes } = require('../routes/federation');
+  app.use('/', federationProtocolRoutes);
 
   // ── GraphQL endpoint (Issue #1366) ────────────────────────────────────────
   // createGraphQLRouter() was defined and exported in src/graphql/index.js but
@@ -370,10 +387,6 @@ function mountRoutes(app, services = {}) {
   app.use('/admin/totp', requireApiKey, require('../routes/admin/totp'));
   app.use('/admin/inspect/xdr', rbac.requireAdmin(), require('../routes/admin/inspect'));
   
-  const serviceContainer = require('../config/serviceContainer');
-  const createFeeBumpRouter = require('../routes/admin/feeBump');
-  app.use('/admin/transactions', createFeeBumpRouter(serviceContainer.getFeeBumpService()));
-
   // Audit logs — #796: mandatory pagination, default 50, max 500
   const AUDIT_LOG_DEFAULT_LIMIT = 50;
   const AUDIT_LOG_MAX_LIMIT = 500;

@@ -397,6 +397,7 @@ See [ADR-003](./adr/003-signing-provider-strategy.md) for the rationale behind t
 |---|---|---|---|---|
 | `FEATURE_FLAGS` | string | — | no | JSON object of feature-flag overrides, e.g. `{"newDonationFlow":true}`. See [docs/FEATURE_FLAGS_RUNTIME.md](./FEATURE_FLAGS_RUNTIME.md) |
 | `COINGECKO_API_KEY` | string | — | no | CoinGecko API key (`CG-…` format) for XLM/fiat exchange rate lookups. Without this, the unauthenticated endpoint is used (stricter rate limits) |
+| `XLM_USDC_ASSET` | string | Circle USDC for the active network | no | `CODE:ISSUER` of the stablecoin used for the Stellar DEX price fallback. The XLM/USD rate is the mid-market price of this orderbook when CoinGecko is unavailable |
 | `FEDERATION_RECORDS` | string | — | no | JSON-encoded static federation records for local development, bypassing live federation lookups |
 | `FEDERATION_DOMAIN` | string | — | no | Domain used for Stellar federation lookups |
 | `API_BASE_URL` | string | — | no | Publicly accessible base URL of this API, used in generated links (e.g. in receipts, webhooks) |

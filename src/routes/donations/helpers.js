@@ -42,7 +42,8 @@ const sendDonationSchema = validateSchema({
       receiverId: { type: 'string', required: true, trim: true, minLength: 1 },
       amount: { type: 'number', required: true },
       memo: { type: 'string', required: false, maxLength: 28, nullable: true },
-      campaign_id: { type: 'string', required: false, nullable: true }
+      campaign_id: { type: 'string', required: false, nullable: true },
+      asset: { types: ['string', 'object'], required: false, nullable: true }
     }
   }
 });
@@ -76,9 +77,8 @@ const createDonationSchema = validateSchema({
       sourceAmount: { types: ['number', 'numberString'], required: false, nullable: true },
       sendAsset: { types: ['string', 'object'], required: false, nullable: true },
       receiveAsset: { types: ['string', 'object'], required: false, nullable: true },
-      slippageTolerance: { type: 'number', required: false, nullable: true },
-      claimants: { type: 'array', required: false, nullable: true },
-      expiryTimestamp: { types: ['number', 'numberString'], required: false, nullable: true }
+      asset: { types: ['string', 'object'], required: false, nullable: true },
+      slippageTolerance: { type: 'number', required: false, nullable: true }
     }
   }
 });

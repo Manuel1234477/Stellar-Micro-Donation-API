@@ -9,51 +9,97 @@ class MockAssets {
     this.service = service;
   }
 
-  async addTrustline(accountSecret, assetCode, issuerPublic, limit = null) {
+  /**
+   * Establish a ChangeTrust-equivalent trustline.
+   *
+   * Call styles:
+   *   addTrustline(secret, assetCode, issuerPublic, limit?)
+   *   addTrustline(publicKey, { code, issuer, limit? })
+   */
+  async addTrustline(accountSecretOrPublicKey, assetCodeOrAsset, issuerPublic, limit = null) {
     await this.service._simulateNetworkDelay();
     this.service._checkRateLimit();
-    this.service._validateSecretKey(accountSecret);
-    this.service._validatePublicKey(issuerPublic);
     this.service._simulateFailure();
+
+    const objectForm = assetCodeOrAsset && typeof assetCodeOrAsset === 'object' && !Array.isArray(assetCodeOrAsset);
+    let wallet;
+    let assetCode;
+    let issuer;
+    let trustLimit = limit;
+    let rejectIfExists = false;
+    let hashPrefix = 'mock_trustline_';
+
+    if (objectForm) {
+      if (!accountSecretOrPublicKey || typeof accountSecretOrPublicKey !== 'string' || !accountSecretOrPublicKey.startsWith('G')) {
+        throw new ValidationError('Invalid Stellar public key format. Must start with G and be 56 characters long.');
+      }
+      wallet = this.service.wallets.get(accountSecretOrPublicKey);
+      if (!wallet) {
+        throw new NotFoundError('Account not found', ERROR_CODES.WALLET_NOT_FOUND);
+      }
+      assetCode = assetCodeOrAsset.code;
+      issuer = assetCodeOrAsset.issuer;
+      if (assetCodeOrAsset.limit !== undefined && assetCodeOrAsset.limit !== null) {
+        trustLimit = assetCodeOrAsset.limit;
+      }
+      rejectIfExists = true;
+      hashPrefix = 'mock_';
+    } else {
+      this.service._validateSecretKey(accountSecretOrPublicKey);
+      if (issuerPublic) this.service._validatePublicKey(issuerPublic);
+      assetCode = assetCodeOrAsset;
+      issuer = issuerPublic;
+      wallet = this.service._findWalletBySecret(accountSecretOrPublicKey);
+      if (!wallet) {
+        throw new ValidationError('Invalid account secret key. No matching account found.');
+      }
+    }
 
     if (!assetCode || !/^[A-Za-z0-9]{1,12}$/.test(assetCode)) {
       throw new ValidationError('Asset code must be 1-12 alphanumeric characters');
     }
+    if (!issuer || typeof issuer !== 'string' || !issuer.startsWith('G')) {
+      throw new ValidationError('issuerPublic is required');
+    }
 
     const STELLAR_MAX_LIMIT = '922337203685.4775807';
 
-    if (limit !== null && limit !== undefined) {
-      const limitNum = parseFloat(limit);
+    if (trustLimit !== null && trustLimit !== undefined) {
+      const limitNum = parseFloat(trustLimit);
       if (isNaN(limitNum) || limitNum <= 0) {
         throw new ValidationError('Trust limit must be a positive numeric string');
       }
-      if (parseFloat(limit) > parseFloat(STELLAR_MAX_LIMIT)) {
+      if (parseFloat(trustLimit) > parseFloat(STELLAR_MAX_LIMIT)) {
         throw new ValidationError(`Trust limit cannot exceed Stellar maximum of ${STELLAR_MAX_LIMIT}`);
       }
     }
 
-    let accountPublic = null;
-    for (const w of this.service.wallets.values()) {
-      if (w.secretKey === accountSecret) { accountPublic = w.publicKey; break; }
-    }
-    if (!accountPublic) {
-      throw new ValidationError('Invalid account secret key. No matching account found.');
-    }
+    const accountPublic = wallet.publicKey;
+    const resolvedLimit = trustLimit !== null && trustLimit !== undefined ? String(trustLimit) : STELLAR_MAX_LIMIT;
+    const assetKey = `${assetCode}:${issuer}`;
 
-    const resolvedLimit = limit !== null && limit !== undefined ? String(limit) : STELLAR_MAX_LIMIT;
+    if (!wallet.trustlines) wallet.trustlines = new Map();
+    if (rejectIfExists && wallet.trustlines.has(assetKey)) {
+      throw new BusinessLogicError(ERROR_CODES.TRANSACTION_FAILED, 'Trustline already exists for this asset');
+    }
 
     if (!this.service.trustlines) this.service.trustlines = new Map();
-    const key = `${accountPublic}:${assetCode}:${issuerPublic}`;
-    this.service.trustlines.set(key, { assetCode, issuerPublic, limit: resolvedLimit, accountPublic });
+    const key = `${accountPublic}:${assetCode}:${issuer}`;
+    this.service.trustlines.set(key, { assetCode, issuerPublic: issuer, limit: resolvedLimit, accountPublic });
+    wallet.trustlines.set(assetKey, {
+      asset: { code: assetCode, issuer },
+      balance: wallet.trustlines.get(assetKey)?.balance || '0.0000000',
+      limit: resolvedLimit,
+    });
 
-    const hash = 'mock_trustline_' + crypto.randomBytes(16).toString('hex');
+    const hash = hashPrefix + crypto.randomBytes(16).toString('hex');
     const ledger = Math.floor(Math.random() * 1000000) + 1000000;
 
     log.info('MOCK_STELLAR_SERVICE', 'Trustline established', {
-      assetCode, issuerPublic, limit: resolvedLimit, hash,
+      assetCode, issuerPublic: issuer, limit: resolvedLimit, hash,
     });
 
-    return { hash, ledger, assetCode, issuerPublic, limit: resolvedLimit };
+    return { hash, ledger, assetCode, issuerPublic: issuer, limit: resolvedLimit };
   }
 
   getTrustline(accountPublic, assetCode, issuerPublic) {
@@ -61,14 +107,28 @@ class MockAssets {
     return this.service.trustlines.get(`${accountPublic}:${assetCode}:${issuerPublic}`);
   }
 
-  async removeTrustline(publicKey, asset) {
+  async removeTrustline(accountSecretOrPublicKey, assetCodeOrAsset, issuerPublic) {
     return this.service._executeWithRetry(async () => {
       await this.service._simulateNetworkDelay();
       this.service._checkRateLimit();
-      this.service._validatePublicKey(publicKey);
       this.service._simulateFailure();
 
-      const wallet = this.service.wallets.get(publicKey);
+      const objectForm = assetCodeOrAsset && typeof assetCodeOrAsset === 'object' && !Array.isArray(assetCodeOrAsset);
+      let wallet;
+      let assetCode;
+      let issuer;
+
+      if (objectForm) {
+        wallet = this.service.wallets.get(accountSecretOrPublicKey);
+        assetCode = assetCodeOrAsset.code;
+        issuer = assetCodeOrAsset.issuer;
+      } else {
+        this.service._validateSecretKey(accountSecretOrPublicKey);
+        wallet = this.service._findWalletBySecret(accountSecretOrPublicKey);
+        assetCode = assetCodeOrAsset;
+        issuer = issuerPublic;
+      }
+
       if (!wallet) {
         throw new NotFoundError('Account not found', ERROR_CODES.WALLET_NOT_FOUND);
       }
@@ -80,6 +140,7 @@ class MockAssets {
         );
       }
 
+      const asset = { type: 'credit_alphanum', code: assetCode, issuer };
       const assetKey = getAssetKey(asset);
       const trustline = wallet.trustlines.get(assetKey);
 
@@ -91,22 +152,25 @@ class MockAssets {
       }
 
       if (parseFloat(trustline.balance) > 0) {
-        throw new ValidationError('Cannot remove trustline with non-zero balance');
+        throw new ValidationError('Cannot remove a trustline with a non-zero balance');
       }
 
       wallet.trustlines.delete(assetKey);
+      if (this.service.trustlines) {
+        this.service.trustlines.delete(`${wallet.publicKey}:${assetCode}:${issuer}`);
+      }
 
       const hash = `mock_${crypto.randomBytes(16).toString('hex')}`;
       const ledger = Math.floor(Math.random() * 1000000) + 1;
 
       log.info('MOCK_STELLAR_SERVICE', 'Trustline removed', {
-        publicKey,
-        assetCode: asset.code,
-        issuer: asset.issuer,
+        publicKey: wallet.publicKey,
+        assetCode,
+        issuer,
         hash
       });
 
-      return { hash, ledger };
+      return { hash, ledger, assetCode, issuerPublic: issuer };
     });
   }
 
@@ -114,7 +178,6 @@ class MockAssets {
     return this.service._executeWithRetry(async () => {
       await this.service._simulateNetworkDelay();
       this.service._checkRateLimit();
-      this.service._validatePublicKey(publicKey);
 
       const wallet = this.service.wallets.get(publicKey);
       if (!wallet) {
@@ -164,20 +227,49 @@ class MockAssets {
         throw new ValidationError('Issuer and recipient cannot be the same account');
       }
 
-      if (!this.service.wallets.has(recipientPublic)) {
+      const recipientWallet = this.service.wallets.get(recipientPublic);
+      if (!recipientWallet) {
         throw new NotFoundError(
           `Recipient account not found: ${recipientPublic}`,
           ERROR_CODES.WALLET_NOT_FOUND
         );
       }
 
-      if (!this.service.assetBalances) this.service.assetBalances = new Map();
+      const minBalance = parseFloat(this.service.config.minAccountBalance);
+      const issuerXlm = parseFloat(issuerWallet.balance || '0');
+      if (issuerXlm < minBalance) {
+        throw new BusinessLogicError(
+          ERROR_CODES.INSUFFICIENT_BALANCE,
+          `Issuer account must maintain a minimum balance of ${this.service.config.minAccountBalance} XLM`
+        );
+      }
+
       const assetKey = `${assetCode}:${issuerWallet.publicKey}`;
+      const hasTrustline = Boolean(
+        (recipientWallet.trustlines && recipientWallet.trustlines.has(assetKey)) ||
+        (this.service.trustlines && this.service.trustlines.get(`${recipientPublic}:${assetCode}:${issuerWallet.publicKey}`))
+      );
+      if (!hasTrustline) {
+        throw new ValidationError(
+          'Recipient has no trustline for this asset. Create one via POST /wallets/:id/trustlines first.'
+        );
+      }
+
+      if (!this.service.assetBalances) this.service.assetBalances = new Map();
       if (!this.service.assetBalances.has(assetKey)) this.service.assetBalances.set(assetKey, new Map());
 
       const holders = this.service.assetBalances.get(assetKey);
       const current = parseFloat(holders.get(recipientPublic) || '0');
       holders.set(recipientPublic, (current + amountNum).toFixed(7));
+      const creditAsset = { type: 'credit_alphanum', code: assetCode, issuer: issuerWallet.publicKey };
+      this.service._setWalletAssetBalance(
+        recipientWallet,
+        creditAsset,
+        this.service._getWalletAssetBalance(recipientWallet, creditAsset) + amountNum
+      );
+      if (recipientWallet.trustlines && recipientWallet.trustlines.has(assetKey)) {
+        recipientWallet.trustlines.get(assetKey).balance = holders.get(recipientPublic);
+      }
 
       const hash = 'mock_issue_' + crypto.randomBytes(16).toString('hex');
       const ledger = Math.floor(Math.random() * 1000000) + 1000000;

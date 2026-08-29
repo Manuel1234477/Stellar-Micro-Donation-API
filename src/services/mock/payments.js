@@ -166,10 +166,20 @@ class MockPayments {
 
       this.service._ensureDestinationFunded(destWallet);
 
+      const paymentAsset = asset && asset.type === 'native' ? asset : (asset || NATIVE_ASSET);
+      if (paymentAsset.type !== 'native') {
+        const destTrust = destWallet.trustlines && destWallet.trustlines.get(`${paymentAsset.code}:${paymentAsset.issuer}`);
+        if (!destTrust) {
+          throw new ValidationError(
+            'Recipient has no trustline for this asset. Create one via POST /wallets/:id/trustlines first.'
+          );
+        }
+      }
+
       this.service._applyAssetTransfer({
         sourceWallet,
         destWallet,
-        asset,
+        asset: paymentAsset,
         amountNum: parseFloat(amount),
       });
 
@@ -180,7 +190,7 @@ class MockPayments {
         source: sourceWallet.publicKey,
         destination: destinationPublic,
         amount: Number(amount).toFixed(7),
-        asset: serializeAsset(asset),
+        asset: serializeAsset(paymentAsset),
         memo: memo || '',
         memoType,
         validAfter: validAfter || 0,

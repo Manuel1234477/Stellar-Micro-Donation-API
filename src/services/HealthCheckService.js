@@ -3,13 +3,14 @@
  *
  * RESPONSIBILITY: Checks the health of all critical dependencies
  * OWNER: Backend Team
- * DEPENDENCIES: Database, StellarService, IdempotencyService
+ * DEPENDENCIES: Database, StellarService, IdempotencyService, PriceOracleService
  *
  * Performs bounded-time checks against each dependency and aggregates
  * results into a structured health report used by the health endpoints.
  */
 
 const Database = require('../utils/database');
+const priceOracle = require('./PriceOracleService');
 
 /** Maximum time (ms) allowed for any single dependency check */
 const DEPENDENCY_TIMEOUT_MS = 500;
@@ -166,6 +167,14 @@ async function getFullHealth(stellarService, networkStatusService, scheduler, ve
   }
 
   const response = { status, timestamp: new Date().toISOString() };
+
+  // Which source (CoinGecko or the Stellar DEX orderbook) is backing the
+  // currently cached XLM rates. Reads cached state only — no network call.
+  try {
+    response.priceOracle = priceOracle.getPriceSourceStatus();
+  } catch (err) {
+    response.priceOracle = { source: 'unknown', error: err.message };
+  }
 
   // Only include detailed dependencies if verbose mode is enabled
   if (verbose) {
