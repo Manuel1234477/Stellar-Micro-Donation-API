@@ -11,6 +11,7 @@
   "scripts": {
     "start": "npm run validate-env && node src/app.js",
     "validate-env": "node src/utils/startupChecks.js",
+    "predeploy:check": "node src/utils/startupChecks.js && node scripts/validate-env.js",
     "check": "node src/utils/startupChecks.js",
     "init-db": "node src/scripts/initDB.js",
     "migrate": "node src/scripts/migrate.js",

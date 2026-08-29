@@ -51,8 +51,23 @@ const PLACEHOLDER_KEY_PATTERNS = [
 
 /** Check 1 — ENCRYPTION_KEY is set, non-placeholder, and has sufficient length */
 function checkEncryptionKey() {
+  const kmsConfigured = !!(process.env.KMS_KEY_ID || process.env.KMS_PROVIDER);
   const key = process.env.ENCRYPTION_KEY;
+  const wrappedKey = process.env.ENCRYPTED_ENCRYPTION_KEY;
   const isProduction = (process.env.NODE_ENV || '').toLowerCase() === 'production';
+
+  if (kmsConfigured) {
+    if (!process.env.KMS_KEY_ID || !process.env.KMS_KEY_ID.trim()) {
+      fail('KMS_KEY_ID', 'required when KMS encryption is enabled');
+      return false;
+    }
+    if (!wrappedKey || !wrappedKey.trim()) {
+      fail('ENCRYPTED_ENCRYPTION_KEY', 'required when KMS_KEY_ID is configured. Generate a wrapped key using the KMS provisioning script.');
+      return false;
+    }
+    pass('KMS_KEY_ID', 'configured for envelope encryption');
+    return true;
+  }
 
   if (!key || !key.trim()) {
     fail('ENCRYPTION_KEY', 'required but not set — run `npm run generate-key`');

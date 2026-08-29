@@ -75,12 +75,27 @@ function checkOptional(name, validator, hint) {
 
 console.log('\nValidating environment variables…\n');
 
+const kmsConfigured = !!(process.env.KMS_KEY_ID || process.env.KMS_PROVIDER);
+
 // REQUIRED
-checkRequired(
-  'ENCRYPTION_KEY',
-  v => /^[0-9a-fA-F]{64}$/.test(v),
-  'must be exactly 64 hex characters — run `npm run generate-key`'
-);
+if (kmsConfigured) {
+  checkRequired(
+    'KMS_KEY_ID',
+    v => v.trim().length > 0,
+    'must be set when KMS is enabled'
+  );
+  checkRequired(
+    'ENCRYPTED_ENCRYPTION_KEY',
+    v => v.trim().length > 0,
+    'must be provided when KMS_KEY_ID is configured'
+  );
+} else {
+  checkRequired(
+    'ENCRYPTION_KEY',
+    v => /^[0-9a-fA-F]{64}$/.test(v),
+    'must be exactly 64 hex characters — run `npm run generate-key`'
+  );
+}
 
 checkRequired('API_KEYS', v => v.split(',').map(k => k.trim()).filter(Boolean).length > 0,
   'must contain at least one API key (comma-separated)');

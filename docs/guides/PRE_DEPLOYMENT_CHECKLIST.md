@@ -6,7 +6,8 @@ This checklist ensures the Stellar Micro-Donation API is production-ready before
 
 ### Required Environment Variables
 - [ ] `API_KEYS` - Set with strong, randomly generated keys (use `openssl rand -hex 32`)
-- [ ] `ENCRYPTION_KEY` - Required in all environments (32+ character random string — run `npm run generate-key`)
+- [ ] `ENCRYPTION_KEY` OR `ENCRYPTED_ENCRYPTION_KEY` + `KMS_KEY_ID` - Required in all environments (plain key: 64 hex chars from `npm run generate-key`; KMS mode: `npm run generate-key -- --kms`)
+- [ ] `KMS_KEY_ID` - Set when using AWS KMS envelope encryption
 - [ ] `NODE_ENV` - Set to `production`
 - [ ] `STELLAR_NETWORK` - Set to `mainnet` for production (or `testnet` for staging)
 - [ ] `PORT` - Configured (default: 3000, must be 1-65535)
@@ -239,6 +240,9 @@ This checklist ensures the Stellar Micro-Donation API is production-ready before
 Run these commands to verify key aspects before deployment:
 
 ```bash
+# Production deployment gate
+npm run predeploy:check
+
 # Install dependencies
 npm install
 
