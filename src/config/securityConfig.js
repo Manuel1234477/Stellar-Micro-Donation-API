@@ -10,6 +10,7 @@
  */
 
 const log = require('../utils/log');
+const { unwrapEncryptionKey } = require('../utils/kms');
 
 /**
  * Security-sensitive environment variables and their safe defaults
@@ -151,6 +152,18 @@ function loadSecurityConfig() {
   log.info('SECURITY_CONFIG', 'Loading security configuration', { 
     environment: process.env.NODE_ENV || 'development' 
   });
+
+  if (process.env.KMS_KEY_ID && !process.env.ENCRYPTED_ENCRYPTION_KEY && !process.env.ENCRYPTION_KEY) {
+    throw new Error('KMS_KEY_ID is set, but ENCRYPTED_ENCRYPTION_KEY is missing. Use the KMS wrapping script before startup.');
+  }
+
+  if (process.env.KMS_KEY_ID && process.env.ENCRYPTED_ENCRYPTION_KEY && !process.env.ENCRYPTION_KEY) {
+    try {
+      process.env.ENCRYPTION_KEY = unwrapEncryptionKey();
+    } catch (error) {
+      throw new Error(`KMS key unwrapping failed at startup: ${error.message}`);
+    }
+  }
 
   Object.entries(SECURITY_CONFIGS).forEach(([key, configDef]) => {
     const envValue = process.env[key];

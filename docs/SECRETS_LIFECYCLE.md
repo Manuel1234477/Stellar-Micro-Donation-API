@@ -17,6 +17,10 @@ This is the envelope-encryption model implemented in `src/utils/kms.js`.
 # Generate a cryptographically random 64-hex-char (32-byte) key
 npm run generate-key
 # Output: a hex string. Paste it as ENCRYPTION_KEY in your secrets manager.
+
+# Or, if using AWS KMS envelope encryption, wrap a fresh data key and store the ciphertext only.
+KMS_KEY_ID=arn:aws:kms:us-east-1:123456789012:key/your-key AWS_REGION=us-east-1 npm run generate-key -- --kms
+# Output: a base64 KMS ciphertext value, stored as ENCRYPTED_ENCRYPTION_KEY.
 ```
 
 **Never store the key in:**
@@ -26,7 +30,7 @@ npm run generate-key
 - Database backups (BackupService strips it, but verify your backup pipeline)
 
 **Recommended source:** AWS Secrets Manager / HashiCorp Vault. Set `KMS_PROVIDER=aws` and
-`KMS_KEY_ID=<your-kms-key-arn>` to use AWS KMS directly for DEK encryption (see `src/utils/kms.js`).
+`KMS_KEY_ID=<your-kms-key-arn>` to use AWS KMS directly for DEK encryption (see `src/utils/kms.js`). When KMS mode is enabled, the plaintext `ENCRYPTION_KEY` is not kept in the runtime environment; only `ENCRYPTED_ENCRYPTION_KEY` is loaded and unwrapped at startup.
 
 ### Scheduled Rotation
 
