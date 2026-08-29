@@ -66,21 +66,21 @@ class WalletService {
     if (this.stellarService) {
       if (sponsored && process.env.SPONSOR_SECRET) {
         try {
-          await this.stellarService.createSponsoredAccount(process.env.SPONSOR_SECRET, address);
+          await this.stellarService.createSponsoredAccount(process.env.SPONSOR_SECRET, sanitizedAddress);
           isSponsored = true;
           funded = true;
         } catch (err) {
           log.warn('WALLET_SERVICE', 'Sponsored account creation failed, falling back to Friendbot', {
-            address, error: err.message
+            address: sanitizedAddress, error: err.message
           });
         }
       }
       if (!isSponsored) {
-        const fundResult = await this.stellarService.fundWithFriendbot(address);
+        const fundResult = await this.stellarService.fundWithFriendbot(sanitizedAddress);
         funded = fundResult.funded;
         if (!funded) {
           log.warn('WALLET_SERVICE', 'Friendbot funding skipped or failed', {
-            address,
+            address: sanitizedAddress,
             reason: fundResult.error || 'non-testnet network'
           });
         }
