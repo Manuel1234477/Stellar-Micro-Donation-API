@@ -115,7 +115,7 @@ class StellarService extends StellarServiceInterface {
         const mergedHeaders = {
           ...headers,
           ...correlationHeaders,
-          'X-Request-ID': this.correlationId || correlationHeaders['X-Correlation-ID'],
+          'X-Request-ID': correlationHeaders['X-Request-ID'] || this.correlationId,
         };
         
         const signal = getCurrentAbortSignal();
