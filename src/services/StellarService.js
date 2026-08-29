@@ -104,12 +104,12 @@ class StellarService extends StellarServiceInterface {
     const fetch = globalThis.fetch;
     
     return {
-      async request(method, url, data, headers = {}) {
+      request: async (method, url, data, headers = {}) => {
         const correlationHeaders = generateCorrelationHeaders();
         const mergedHeaders = {
           ...headers,
           ...correlationHeaders,
-          'X-Request-ID': this.correlationId || correlationHeaders['X-Correlation-ID'],
+          'X-Request-ID': correlationHeaders['X-Request-ID'] || this.correlationId,
         };
         
         const signal = getCurrentAbortSignal();
