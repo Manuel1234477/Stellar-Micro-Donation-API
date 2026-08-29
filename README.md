@@ -438,6 +438,22 @@ For detailed information, see [Donation Routes Integration Tests](DONATION_ROUTE
 node test-recurring-donations.js
 ```
 
+### Load Testing & Performance Baselines
+
+The load test suite drives the app with concurrent virtual users and gates CI
+on defined performance baselines (p50/p95/p99 latency, throughput, error rate)
+for `POST /donations`, `GET /donations`, and `GET /stats/summary`:
+
+```bash
+npm run test:load
+```
+
+Runs nightly via `.github/workflows/nightly-load-test.yml`, which compares
+results against production SLA targets and automatically files a GitHub
+issue if latency regresses by more than 20%. See
+[docs/LOAD_TESTING.md](docs/LOAD_TESTING.md) for thresholds, local flags, and
+how to interpret a regression.
+
 ### Test Failure Scenarios
 
 The project includes comprehensive failure simulation for testing network errors and retry logic:

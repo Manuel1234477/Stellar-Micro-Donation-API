@@ -297,33 +297,115 @@ class WalletService {
     };
   }
   /**
-   * Get wallet balance with caching support
+   * Resolve the configured wallet balance cache TTL (Issue #1545).
+   * @returns {number} TTL in milliseconds (default 30s)
+   */
+  static getBalanceCacheTtlMs() {
+    const ttlSeconds = parseInt(process.env.WALLET_BALANCE_CACHE_TTL_SECONDS, 10);
+    return (Number.isFinite(ttlSeconds) && ttlSeconds > 0 ? ttlSeconds : 30) * 1000;
+  }
+
+  /**
+   * Get wallet balance with stale-while-revalidate (SWR) caching (Issue #1545).
+   *
+   * Freshness buckets, based on the cached entry's age relative to the
+   * configured TTL:
+   *   - Fresh (age ≤ TTL): return the cached balance immediately (HIT).
+   *   - Stale (TTL < age ≤ 2×TTL): return the stale cached balance
+   *     immediately (HIT-STALE) and kick off an async Horizon revalidation
+   *     in the background to refresh the cache for subsequent requests.
+   *   - Expired (age > 2×TTL, or no cache entry): fetch fresh synchronously
+   *     from Horizon before responding (MISS).
+   *
    * @param {string} id - Wallet ID
-   * @param {boolean} forceRefresh - Bypass cache request
-   * @returns {Promise<Object>} Balance data with cache meta
+   * @param {boolean} [forceRefresh=false] - Bypass the cache and fetch synchronously (MISS)
+   * @returns {Promise<Object>} Balance data with `cached` (boolean, back-compat)
+   *   and `cacheStatus` ('HIT' | 'HIT-STALE' | 'MISS')
    */
   async getBalance(id, forceRefresh = false) {
     const wallet = this.getWalletById(id);
     const cacheKey = `wallet_balance_${wallet.address}`;
-    const ttlSeconds = parseInt(process.env.WALLET_BALANCE_CACHE_TTL_SECONDS, 10);
-    const cacheTtl = (Number.isFinite(ttlSeconds) && ttlSeconds > 0 ? ttlSeconds : 30) * 1000;
+    const ttlMs = WalletService.getBalanceCacheTtlMs();
+    const staleMs = ttlMs * 2;
 
     const Cache = require('../utils/cache');
     const serviceContainer = require('../config/serviceContainer');
     const stellarService = serviceContainer.getStellarService();
 
-    if (!forceRefresh) {
-      const cached = Cache.get(cacheKey);
-      if (cached !== null) {
-        return { ...cached, cached: true };
-      }
+    const fetchFresh = async () => {
+      const liveBalance = await stellarService.getBalance(wallet.address);
+      const result = { ...liveBalance, lastUpdated: new Date().toISOString(), cachedAt: Date.now() };
+      // Store for the full stale window (2×TTL) — getBalance() decides the
+      // HIT/HIT-STALE/MISS bucket itself from the entry's own cachedAt.
+      Cache.set(cacheKey, result, staleMs);
+      return result;
+    };
+
+    if (forceRefresh) {
+      const fresh = await fetchFresh();
+      return { ...fresh, cached: false, cacheStatus: 'MISS' };
     }
 
-    const liveBalance = await stellarService.getBalance(wallet.address);
-    const result = { ...liveBalance, lastUpdated: new Date().toISOString() };
-    Cache.set(cacheKey, result, cacheTtl);
+    const cached = Cache.get(cacheKey);
+    if (cached) {
+      const age = Date.now() - (cached.cachedAt || 0);
+      if (age <= ttlMs) {
+        return { ...cached, cached: true, cacheStatus: 'HIT' };
+      }
+      if (age <= staleMs) {
+        this._revalidateBalanceInBackground(cacheKey, wallet.address, stellarService, ttlMs);
+        return { ...cached, cached: true, cacheStatus: 'HIT-STALE' };
+      }
+      // Older than the stale window — Cache.set stores entries for exactly
+      // staleMs, so this branch is defensive (clock skew, manual TTL
+      // shrink between requests, etc.) rather than a normally-reachable path.
+    }
 
-    return { ...result, cached: false };
+    const fresh = await fetchFresh();
+    return { ...fresh, cached: false, cacheStatus: 'MISS' };
+  }
+
+  /**
+   * Fire-and-forget Horizon balance revalidation for the stale-while-revalidate
+   * path. Deduplicates concurrent revalidations for the same cache key so a
+   * burst of stale reads doesn't trigger a burst of Horizon calls.
+   * @param {string} cacheKey
+   * @param {string} address
+   * @param {Object} stellarService
+   * @param {number} ttlMs
+   */
+  _revalidateBalanceInBackground(cacheKey, address, stellarService, ttlMs) {
+    if (!this._revalidatingKeys) this._revalidatingKeys = new Set();
+    if (this._revalidatingKeys.has(cacheKey)) return;
+    this._revalidatingKeys.add(cacheKey);
+
+    const Cache = require('../utils/cache');
+    stellarService.getBalance(address)
+      .then((liveBalance) => {
+        const result = { ...liveBalance, lastUpdated: new Date().toISOString(), cachedAt: Date.now() };
+        Cache.set(cacheKey, result, ttlMs * 2);
+      })
+      .catch((err) => {
+        log.warn('WALLET_SERVICE', 'Background balance revalidation failed', {
+          cacheKey, error: err.message
+        });
+      })
+      .finally(() => {
+        this._revalidatingKeys.delete(cacheKey);
+      });
+  }
+
+  /**
+   * Manually purge and refresh the cached balance for a wallet (Issue #1545).
+   * Used by the admin-only POST /wallets/:id/refresh-balance endpoint.
+   * @param {string} id - Wallet ID
+   * @returns {Promise<Object>} Fresh balance data (cacheStatus: 'MISS')
+   */
+  async refreshBalance(id) {
+    const wallet = this.getWalletById(id);
+    const Cache = require('../utils/cache');
+    Cache.delete(`wallet_balance_${wallet.address}`);
+    return this.getBalance(id, true);
   }
   /**
    * Revoke platform sponsorship for a wallet.

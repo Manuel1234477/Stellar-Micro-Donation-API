@@ -10,7 +10,7 @@
 
 const express = require('express');
 const router = express.Router();
-const { checkPermission } = require('../../middleware/rbac');
+const { checkPermission, requireAdmin } = require('../../middleware/rbac');
 const { PERMISSIONS } = require('../../utils/permissions');
 const { validateSchema } = require('../../middleware/schemaValidation');
 const Database = require('../../utils/database');
@@ -78,13 +78,66 @@ router.get('/:id/balance', requestTimeout(TIMEOUTS.balance), checkPermission(PER
       throw err;
     }
 
-    res.setHeader('X-Cache', result.cached ? 'HIT' : 'MISS');
+    res.setHeader('X-Cache', result.cacheStatus || (result.cached ? 'HIT' : 'MISS'));
 
     return res.json({
       balance: result.balance,
       asset: result.asset || 'XLM',
       lastUpdated: result.lastUpdated || new Date().toISOString(),
       cached: result.cached,
+      cacheStatus: result.cacheStatus,
+    });
+  } catch (error) {
+    next(error);
+  }
+}));
+
+/**
+ * POST /wallets/:id/refresh-balance
+ * Manually purge and refresh the cached balance for a wallet (Issue #1545).
+ * Admin only — bypasses the stale-while-revalidate cache entirely and
+ * performs a synchronous Horizon fetch, then repopulates the cache.
+ *
+ * Explicit 10s timeout (TIMEOUTS.balance) — bounds the Horizon lookup.
+ */
+router.post('/:id/refresh-balance', requestTimeout(TIMEOUTS.balance), requireAdmin(), walletIdSchema, asyncHandler(async (req, res, next) => {
+  try {
+    let result;
+    try {
+      result = await walletService.refreshBalance(req.params.id);
+    } catch (err) {
+      if (err && (err.status === 404 || err.response?.status === 404)) {
+        return res.status(422).json({
+          success: false,
+          error: {
+            code: 'STELLAR_ACCOUNT_NOT_FOUND',
+            message: 'Stellar account not found. The account exists in the local database but has not been funded on the Stellar network.',
+          },
+        });
+      }
+      throw err;
+    }
+
+    await AuditLogService.log({
+      category: AuditLogService.CATEGORY.WALLET_OPERATION,
+      action: 'WALLET_BALANCE_CACHE_REFRESHED',
+      severity: AuditLogService.SEVERITY.LOW,
+      result: 'SUCCESS',
+      userId: req.user && req.user.id,
+      requestId: req.id,
+      ipAddress: req.ip,
+      resource: `/wallets/${req.params.id}/refresh-balance`,
+      details: { walletId: req.params.id },
+    });
+
+    res.setHeader('X-Cache', result.cacheStatus);
+
+    return res.json({
+      balance: result.balance,
+      asset: result.asset || 'XLM',
+      lastUpdated: result.lastUpdated,
+      cached: result.cached,
+      cacheStatus: result.cacheStatus,
     });
   } catch (error) {
     next(error);

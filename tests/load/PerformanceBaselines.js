@@ -53,6 +53,57 @@ const BASELINES = {
     minThroughputRps: 20,
     maxErrorRate: 0.01,
   },
+  // Read path: auth + permission check + cached aggregation (issue #1546).
+  'stats-summary': {
+    p50LatencyMs: 100,
+    p95LatencyMs: 250,
+    p99LatencyMs: 500,
+    minThroughputRps: 20,
+    maxErrorRate: 0.02,
+  },
+};
+
+/**
+ * Issue #1546 target SLA baselines — the exact performance targets named in
+ * the issue for the three primary endpoints. These are intentionally
+ * SEPARATE from BASELINES above:
+ *
+ *   - BASELINES drives the push/PR merge gate (.github/workflows/load-tests.yml),
+ *     tuned to be achievable on noisy, shared CI runners without being flaky.
+ *   - NIGHTLY_TARGET_BASELINES drives the nightly regression check
+ *     (.github/workflows/nightly-load-test.yml), which files a GitHub issue
+ *     rather than blocking a merge — so it can safely enforce the stricter
+ *     production SLA targets without risking a false-positive-blocked PR.
+ *
+ * Scenario keys intentionally match the BASELINES/run-load-tests.js scenario
+ * names so the same LoadTestReport can be validated against either set.
+ * @type {Object.<string, ScenarioBaseline>}
+ */
+const NIGHTLY_TARGET_BASELINES = {
+  // POST /donations: 200 req/s, p95 < 150ms
+  'donation-creation': {
+    p50LatencyMs: 50,
+    p95LatencyMs: 150,
+    p99LatencyMs: 300,
+    minThroughputRps: 200,
+    maxErrorRate: 0.05,
+  },
+  // GET /donations: 500 req/s, p95 < 50ms
+  'list-donations': {
+    p50LatencyMs: 15,
+    p95LatencyMs: 50,
+    p99LatencyMs: 100,
+    minThroughputRps: 500,
+    maxErrorRate: 0.02,
+  },
+  // GET /stats/summary: 100 req/s, p95 < 200ms
+  'stats-summary': {
+    p50LatencyMs: 65,
+    p95LatencyMs: 200,
+    p99LatencyMs: 400,
+    minThroughputRps: 100,
+    maxErrorRate: 0.02,
+  },
 };
 
 /**
@@ -148,6 +199,7 @@ function validateReport(report) {
 
 module.exports = {
   BASELINES,
+  NIGHTLY_TARGET_BASELINES,
   getMargins,
   resolveBaselines,
   validateAgainstBaseline,

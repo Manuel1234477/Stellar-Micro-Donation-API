@@ -36,6 +36,9 @@ const PERMISSIONS = {
   TRANSACTIONS_SYNC: 'transactions:sync',
   TRANSACTIONS_SIMULATE: 'transactions:simulate',
 
+  // Audit log permissions
+  AUDIT_LOG_EXPORT: 'audit:export',
+
   // Admin permissions
   ADMIN_ALL: '*'
 };

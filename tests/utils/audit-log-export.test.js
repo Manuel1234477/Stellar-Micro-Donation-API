@@ -499,6 +499,227 @@ describe('API Key Audit Log Export', () => {
     });
   });
 
+  describe('computeApiKeyFragment', () => {
+    test('derives fragment from details.apiKeyId when present', () => {
+      const fragment = AuditLogExportService.computeApiKeyFragment({
+        userId: 'apikey-abcdef01',
+        details: { apiKeyId: 'key-1234567890abcdef' }
+      });
+      expect(fragment).toBe('...90abcdef');
+    });
+
+    test('falls back to userId when it looks like an api key identity', () => {
+      const fragment = AuditLogExportService.computeApiKeyFragment({
+        userId: 'apikey-1234567890abcdef',
+        details: {}
+      });
+      expect(fragment).toBe('...90abcdef');
+    });
+
+    test('returns null when no api key identity is available', () => {
+      const fragment = AuditLogExportService.computeApiKeyFragment({
+        userId: 'guest',
+        details: {}
+      });
+      expect(fragment).toBeNull();
+    });
+  });
+
+  describe('queryAuditLogs — apiKeyFragment', () => {
+    test('adds a computed apiKeyFragment field to every row', async () => {
+      Database.query.mockResolvedValue([
+        {
+          id: 1,
+          timestamp: '2024-01-15T10:30:00.000Z',
+          userId: 'apikey-123',
+          ipAddress: '127.0.0.1',
+          details: JSON.stringify({ apiKeyId: 'abcdefgh12345678' })
+        }
+      ]);
+
+      const logs = await AuditLogExportService.queryAuditLogs('api-key-123');
+      expect(logs[0].apiKeyFragment).toBe('...12345678');
+    });
+  });
+
+  describe('parseRedactFields (Issue #1547 — query parameter parsing)', () => {
+    test('returns an empty array for undefined/null/empty input', () => {
+      expect(AuditLogExportService.parseRedactFields(undefined)).toEqual([]);
+      expect(AuditLogExportService.parseRedactFields(null)).toEqual([]);
+      expect(AuditLogExportService.parseRedactFields('')).toEqual([]);
+    });
+
+    test('parses a comma-separated list of valid fields', () => {
+      expect(AuditLogExportService.parseRedactFields('ip,userId')).toEqual(['ip', 'userId']);
+    });
+
+    test('trims whitespace and dedupes', () => {
+      expect(AuditLogExportService.parseRedactFields(' ip , ip, userId ')).toEqual(['ip', 'userId']);
+    });
+
+    test('accepts all three redactable fields', () => {
+      expect(AuditLogExportService.parseRedactFields('ip,apiKeyFragment,userId'))
+        .toEqual(expect.arrayContaining(['ip', 'apiKeyFragment', 'userId']));
+    });
+
+    test('throws ValidationError for an unknown field name', () => {
+      expect(() => AuditLogExportService.parseRedactFields('ip,ssn'))
+        .toThrow('Invalid redact field(s): ssn');
+    });
+  });
+
+  describe('computeRedactFields (Issue #1547 — RBAC redaction defaults)', () => {
+    test('admin with no redact param gets an unredacted export by default', () => {
+      const fields = AuditLogExportService.computeRedactFields({ isAdmin: true, requestedRaw: undefined });
+      expect(fields).toEqual([]);
+    });
+
+    test('admin can request specific fields to redact', () => {
+      const fields = AuditLogExportService.computeRedactFields({ isAdmin: true, requestedRaw: 'ip' });
+      expect(fields).toEqual(['ip']);
+    });
+
+    test('non-admin with no redact param gets the default PII fields redacted', () => {
+      const fields = AuditLogExportService.computeRedactFields({ isAdmin: false, requestedRaw: undefined });
+      expect(fields.sort()).toEqual(['apiKeyFragment', 'ip', 'userId']);
+    });
+
+    test('non-admin cannot reduce redaction below the mandatory default', () => {
+      const fields = AuditLogExportService.computeRedactFields({ isAdmin: false, requestedRaw: '' });
+      expect(fields.sort()).toEqual(['apiKeyFragment', 'ip', 'userId']);
+    });
+
+    test('non-admin requesting additional fields still gets the mandatory defaults', () => {
+      const fields = AuditLogExportService.computeRedactFields({ isAdmin: false, requestedRaw: 'ip' });
+      expect(fields.sort()).toEqual(['apiKeyFragment', 'ip', 'userId']);
+    });
+  });
+
+  describe('applyRedaction (Issue #1547 — CSV/JSON export redaction)', () => {
+    const sampleLogs = [
+      { id: 1, userId: 'apikey-123', ipAddress: '10.0.0.1', apiKeyFragment: '...abcd1234', action: 'DONATION_CREATED' }
+    ];
+
+    test('returns logs unchanged when no fields are redacted', () => {
+      expect(AuditLogExportService.applyRedaction(sampleLogs, [])).toBe(sampleLogs);
+    });
+
+    test('replaces the mapped property with [REDACTED] for each requested field', () => {
+      const redacted = AuditLogExportService.applyRedaction(sampleLogs, ['ip', 'userId']);
+      expect(redacted[0].ipAddress).toBe('[REDACTED]');
+      expect(redacted[0].userId).toBe('[REDACTED]');
+      expect(redacted[0].apiKeyFragment).toBe('...abcd1234'); // not requested
+      expect(redacted[0].action).toBe('DONATION_CREATED'); // untouched
+    });
+
+    test('redacts apiKeyFragment when requested', () => {
+      const redacted = AuditLogExportService.applyRedaction(sampleLogs, ['apiKeyFragment']);
+      expect(redacted[0].apiKeyFragment).toBe('[REDACTED]');
+    });
+
+    test('does not mutate the original logs array', () => {
+      const redacted = AuditLogExportService.applyRedaction(sampleLogs, ['ip']);
+      expect(sampleLogs[0].ipAddress).toBe('10.0.0.1');
+      expect(redacted).not.toBe(sampleLogs);
+    });
+
+    test('produces valid redacted CSV output', () => {
+      const redacted = AuditLogExportService.applyRedaction(sampleLogs, ['ip', 'userId']);
+      const csv = AuditLogExportService.convertToCSV(redacted);
+      expect(csv).toContain('[REDACTED]');
+      expect(csv).not.toContain('10.0.0.1');
+    });
+
+    test('produces valid redacted JSON output', () => {
+      const redacted = AuditLogExportService.applyRedaction(sampleLogs, ['ip', 'userId']);
+      const json = AuditLogExportService.convertToJSON(redacted);
+      const parsed = JSON.parse(json);
+      expect(parsed[0].ipAddress).toBe('[REDACTED]');
+      expect(parsed[0].userId).toBe('[REDACTED]');
+    });
+  });
+
+  describe('buildManifest (Issue #1547 — export manifest metadata)', () => {
+    test('reports UNREDACTED status and empty field list when nothing is redacted', () => {
+      const manifest = AuditLogExportService.buildManifest({ redactedFields: [], recordCount: 5, format: 'json' });
+      expect(manifest.redactionStatus).toBe('UNREDACTED');
+      expect(manifest.redactedFields).toEqual([]);
+      expect(manifest.recordCount).toBe(5);
+      expect(manifest.format).toBe('json');
+      expect(manifest.exportedAt).toBeDefined();
+      expect(new Date(manifest.exportedAt).toString()).not.toBe('Invalid Date');
+    });
+
+    test('reports REDACTED status and the redacted field list', () => {
+      const manifest = AuditLogExportService.buildManifest({ redactedFields: ['ip', 'userId'], recordCount: 3 });
+      expect(manifest.redactionStatus).toBe('REDACTED');
+      expect(manifest.redactedFields).toEqual(['ip', 'userId']);
+    });
+  });
+
+  describe('initiateExport — redaction integration', () => {
+    test('sync export applies redaction and includes a manifest', async () => {
+      Database.get.mockResolvedValue({ count: 1 });
+      Database.query.mockResolvedValue([
+        {
+          id: 1,
+          timestamp: '2024-01-15T10:30:00.000Z',
+          category: 'AUTHENTICATION',
+          action: 'API_KEY_VALIDATED',
+          severity: 'LOW',
+          result: 'SUCCESS',
+          userId: 'apikey-123',
+          requestId: 'req-1',
+          ipAddress: '10.0.0.1',
+          resource: '/api/test',
+          reason: null,
+          details: '{}'
+        }
+      ]);
+      Database.run.mockResolvedValue({});
+
+      const result = await AuditLogExportService.initiateExport('api-key-123', {
+        format: 'json',
+        redactFields: ['ip', 'userId']
+      });
+
+      expect(result.async).toBe(false);
+      expect(result.manifest.redactionStatus).toBe('REDACTED');
+      expect(result.manifest.redactedFields).toEqual(['ip', 'userId']);
+
+      const parsed = JSON.parse(result.content);
+      expect(parsed[0].ipAddress).toBe('[REDACTED]');
+      expect(parsed[0].userId).toBe('[REDACTED]');
+    });
+
+    test('sync export with no redactFields returns an unredacted manifest', async () => {
+      Database.get.mockResolvedValue({ count: 1 });
+      Database.query.mockResolvedValue([
+        {
+          id: 1,
+          timestamp: '2024-01-15T10:30:00.000Z',
+          category: 'AUTHENTICATION',
+          action: 'API_KEY_VALIDATED',
+          severity: 'LOW',
+          result: 'SUCCESS',
+          userId: 'apikey-123',
+          requestId: 'req-1',
+          ipAddress: '10.0.0.1',
+          resource: '/api/test',
+          reason: null,
+          details: '{}'
+        }
+      ]);
+      Database.run.mockResolvedValue({});
+
+      const result = await AuditLogExportService.initiateExport('api-key-123', { format: 'json' });
+
+      expect(result.manifest.redactionStatus).toBe('UNREDACTED');
+      const parsed = JSON.parse(result.content);
+      expect(parsed[0].ipAddress).toBe('10.0.0.1');
+    });
+  });
+
   describe('initializeTables', () => {
     test('should create export tables', async () => {
       Database.run.mockResolvedValue({});

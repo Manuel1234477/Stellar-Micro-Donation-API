@@ -130,6 +130,11 @@ async function main() {
       requestFn: (req) => req.get('/api/v1/donations').set('X-API-Key', 'test-load-key'),
     },
     {
+      // GET /stats/summary baseline (issue #1546): 100 req/s, p95 < 200ms
+      name: 'stats-summary',
+      requestFn: (req) => req.get('/api/v1/stats/summary').set('X-API-Key', 'test-load-key'),
+    },
+    {
       name: 'donation-creation',
       requestFn: (req) => req.post('/api/v1/donations')
         .set('X-API-Key', 'test-load-key')

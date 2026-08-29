@@ -182,6 +182,10 @@ function mountRoutes(app, services = {}) {
   const { requireAdminTOTP } = require('../middleware/adminTOTP');
   apiV1.use('/api-keys', requireAdminTOTP(), require('../routes/apiKeys'));
   apiV1.use('/api-keys', require('../routes/apiKeyUsage'));
+  // Audit log export (issue #1547) — route-level RBAC (see auditExportAccess()
+  // in routes/auditLogExport.js) gates admin vs. self-service non-admin access,
+  // so this is intentionally NOT behind requireAdminTOTP() at the mount point.
+  apiV1.use('/api-keys', require('../routes/auditLogExport'));
 
   // Exchange rates
   apiV1.get('/exchange-rates', asyncHandler(async (req, res) => {
