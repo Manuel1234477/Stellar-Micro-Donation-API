@@ -63,7 +63,7 @@ const stellarService = getStellarService();
  */
 router.post('/send', rotationLockMiddleware(), payloadSizeLimiter(ENDPOINT_LIMITS.singleDonation), donationRateLimiter, requireIdempotency, sendDonationSchema, async (req, res, next) => {
   try {
-    const { senderId, receiverId, amount, memo, campaign_id } = req.body;
+    const { senderId, receiverId, amount, memo, campaign_id, asset } = req.body;
 
     log.debug('DONATION_ROUTE', 'Processing donation request', {
       requestId: req.id,
@@ -129,6 +129,7 @@ router.post('/send', rotationLockMiddleware(), payloadSizeLimiter(ENDPOINT_LIMIT
       amount: amountValidation.xlm,
       memo,
       campaign_id,
+      asset: asset ? parseAssetInput(asset, 'asset') : null,
       idempotencyKey: req.idempotency.key,
       requestId: req.id,
       apiKeyId: req.apiKey ? req.apiKey.id : null,
@@ -185,7 +186,7 @@ router.post('/send', rotationLockMiddleware(), payloadSizeLimiter(ENDPOINT_LIMIT
 
 async function processCustodialDonation(req, res, next) {
   try {
-    const { senderId, receiverId, amount, memo } = req.body;
+    const { senderId, receiverId, amount, memo, asset } = req.body;
 
     if (!senderId || !receiverId || !amount) {
       return res.status(400).json({
@@ -250,6 +251,7 @@ async function processCustodialDonation(req, res, next) {
       receiverId,
       amount: amountValidation.xlm,
       memo: memo || null,
+      asset: asset ? parseAssetInput(asset, 'asset') : null,
       idempotencyKey: req.idempotency && req.idempotency.key,
       requestId: req.id,
     });
@@ -283,7 +285,7 @@ router.post('/', rotationLockMiddleware(), payloadSizeLimiter(ENDPOINT_LIMITS.si
       return await processCustodialDonation(req, res, next);
     }
 
-    const { amount, currency, donor, recipient, memo, memoType, notes, tags, encryptMemo, anonymous, sourceAsset, sourceAmount, sendAsset, receiveAsset, slippageTolerance } = req.body;
+    const { amount, currency, donor, recipient, memo, memoType, notes, tags, encryptMemo, anonymous, sourceAsset, sourceAmount, sendAsset, receiveAsset, slippageTolerance, validAfter, validBefore, validFrom, validUntil, contractAddress } = req.body;
 
     if (!amount || !recipient) {
       throw new ValidationError('Missing required fields: amount, recipient', null, ERROR_CODES.MISSING_REQUIRED_FIELD);
@@ -302,6 +304,22 @@ router.post('/', rotationLockMiddleware(), payloadSizeLimiter(ENDPOINT_LIMITS.si
       });
     }
 
+    const parsedValidAfter = validFrom ? Math.floor(new Date(validFrom).getTime() / 1000) : (validAfter === undefined || validAfter === null ? 0 : Number(validAfter));
+    const parsedValidBefore = validUntil ? Math.floor(new Date(validUntil).getTime() / 1000) : (validBefore === undefined || validBefore === null ? 0 : Number(validBefore));
+    const nowSeconds = Math.floor(Date.now() / 1000);
+    if (!Number.isInteger(parsedValidAfter) || parsedValidAfter < 0) {
+      return res.status(400).json({ success: false, error: { code: 'VALIDATION_ERROR', message: 'validAfter must be a non-negative Unix timestamp in seconds' } });
+    }
+    if (!Number.isInteger(parsedValidBefore) || parsedValidBefore < 0) {
+      return res.status(400).json({ success: false, error: { code: 'VALIDATION_ERROR', message: 'validBefore must be a non-negative Unix timestamp in seconds' } });
+    }
+    if (parsedValidAfter && parsedValidBefore && parsedValidAfter >= parsedValidBefore) {
+      return res.status(400).json({ success: false, error: { code: 'VALIDATION_ERROR', message: 'validAfter must be strictly less than validBefore' } });
+    }
+    if (parsedValidBefore && parsedValidBefore <= nowSeconds) {
+      return res.status(400).json({ success: false, error: { code: 'VALIDATION_ERROR', message: 'validBefore must be in the future' } });
+    }
+
     let sourceAmountValidation = null;
     let normalizedSourceAsset = null;
     if (sourceAsset || sourceAmount) {
@@ -317,6 +335,10 @@ router.post('/', rotationLockMiddleware(), payloadSizeLimiter(ENDPOINT_LIMITS.si
     let normalizedSendAsset = null;
     let normalizedReceiveAsset = null;
     let normalizedSlippageTolerance = null;
+    let customAsset = null;
+    if (asset) {
+      customAsset = parseAssetInput(asset, 'asset');
+    }
     if (sendAsset || receiveAsset) {
       if (!sendAsset || !receiveAsset) {
         return res.status(400).json({
@@ -385,6 +407,7 @@ router.post('/', rotationLockMiddleware(), payloadSizeLimiter(ENDPOINT_LIMITS.si
       sourceAmount: sourceAmountValidation ? sourceAmountValidation.value : undefined,
       sendAsset: normalizedSendAsset,
       receiveAsset: normalizedReceiveAsset,
+      asset: customAsset,
       slippageTolerance: normalizedSlippageTolerance,
       memoType: memoType || 'text',
       notes,
@@ -395,6 +418,9 @@ router.post('/', rotationLockMiddleware(), payloadSizeLimiter(ENDPOINT_LIMITS.si
       apiKeyId: req.apiKey ? req.apiKey.id : null,
       apiKeyRole: req.apiKey ? req.apiKey.role : (req.user?.role || 'user'),
       anonymous: anonymous === true,
+      validAfter: parsedValidAfter,
+      validBefore: parsedValidBefore,
+      contractAddress: contractAddress || null,
       correlationId: req.id,
     });
 
@@ -809,5 +835,85 @@ router.post(
     }
   })
 );
+
+// ─── Claimable donation helper (used by POST /) ───────────────────────────────
+
+async function processClaimableDonation(req, res, next) {
+  try {
+    const { amount, currency, claimants, expiryTimestamp, memo, memoType, notes, tags, donor, anonymous } = req.body;
+
+    if (!amount || !claimants || !Array.isArray(claimants) || claimants.length === 0) {
+      return res.status(400).json({
+        success: false,
+        error: { code: 'VALIDATION_ERROR', message: 'amount and non-empty claimants array are required' },
+      });
+    }
+
+    const amountValidation = validateXLMAmount(amount);
+    if (!amountValidation.valid) {
+      return res.status(422).json({
+        success: false,
+        error: `Invalid amount: ${amountValidation.error}`,
+      });
+    }
+
+    const result = await donationService.createClaimableDonation({
+      amount: amountValidation.xlm,
+      currency: currency || 'XLM',
+      claimants,
+      expiryTimestamp: expiryTimestamp ? parseInt(expiryTimestamp) : null,
+      memo,
+      memoType: memoType || 'text',
+      notes,
+      tags,
+      donor,
+      anonymous: anonymous === true,
+      idempotencyKey: req.idempotency.key,
+      apiKeyId: req.apiKey ? req.apiKey.id : null,
+      apiKeyRole: req.apiKey ? req.apiKey.role : (req.user?.role || 'user'),
+      correlationId: req.id,
+    });
+
+    if (req.markLifecycleStage) {
+      req.markLifecycleStage(LIFECYCLE_STAGES.PROCESSED);
+    }
+
+    const response = {
+      success: true,
+      data: {
+        verified: true,
+        transactionHash: result.stellarTxId || result.id,
+        claimableBalanceId: result.balanceId,
+        status: 'claimable',
+      },
+    };
+
+    await storeIdempotencyResponse(req, response);
+    res.status(201).json(response);
+  } catch (error) {
+    log.error('DONATION_ROUTE', 'Failed to create claimable donation', {
+      requestId: req.id,
+      error: error.message,
+      stack: error.stack,
+    });
+
+    if (error.name === 'DuplicateError') {
+      return res.status(409).json({
+        success: false,
+        error: { code: error.code, message: error.message },
+      });
+    }
+
+    if (error.statusCode) {
+      return next(error);
+    }
+
+    res.status(500).json({
+      success: false,
+      error: 'Failed to create claimable donation',
+      message: error.message,
+    });
+  }
+}
 
 module.exports = router;

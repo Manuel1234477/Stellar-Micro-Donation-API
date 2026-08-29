@@ -514,3 +514,76 @@ describe('Constants', () => {
   test('TOTP_DIGITS is 6', () => { expect(TOTP_DIGITS).toBe(6); });
   test('TOTP_STEP is 30', () => { expect(TOTP_STEP).toBe(30); });
 });
+
+// ─── 11. requireAdminTOTP & Replay Protection (Issue #1536) ───────────────────
+describe('requireAdminTOTP middleware & Replay Protection', () => {
+  const { requireAdminTOTP } = require('../../src/middleware/adminTOTP');
+
+  function makeReq(overrides = {}) {
+    return {
+      apiKey: { id: 1, isLegacy: false },
+      body: {},
+      get: jest.fn((h) => (overrides.headers || {})[h] || undefined),
+      ...overrides,
+    };
+  }
+
+  function makeRes() {
+    return {
+      _status: null, _body: null, headers: {},
+      setHeader: jest.fn(function(k, v) { this.headers[k] = v; }),
+      status: jest.fn(function(s) { this._status = s; return this; }),
+      json: jest.fn(function(b) { this._body = b; return this; }),
+    };
+  }
+
+  beforeEach(() => {
+    process.env.REQUIRE_ADMIN_2FA = 'true';
+  });
+
+  afterEach(() => {
+    delete process.env.REQUIRE_ADMIN_2FA;
+  });
+
+  test('blocks replayed TOTP code within same time window', async () => {
+    const id = _insertRow();
+    const { secret } = await generateSecret(id, 'admin-key');
+    await enable(id, generateCode(secret));
+    const code = generateCode(secret);
+
+    const mw = requireAdminTOTP();
+
+    // First use: success
+    const req1 = makeReq({ apiKey: { id }, headers: { 'X-TOTP-Code': code } });
+    const res1 = makeRes();
+    const next1 = jest.fn();
+    await mw(req1, res1, next1);
+    expect(next1).toHaveBeenCalled();
+
+    // Second use with same code in same window: replay detected
+    const req2 = makeReq({ apiKey: { id }, headers: { 'X-TOTP-Code': code } });
+    const res2 = makeRes();
+    const next2 = jest.fn();
+    await mw(req2, res2, next2);
+    expect(res2._status).toBe(401);
+    expect(res2._body.error.code).toBe('REPLAY_DETECTED');
+    expect(next2).not.toHaveBeenCalled();
+  });
+
+  test('rejects expired code from >1 window ago', async () => {
+    const id = _insertRow();
+    const { secret } = await generateSecret(id, 'admin-key');
+    await enable(id, generateCode(secret));
+    const expiredCode = generateCode(secret, Date.now() - TOTP_STEP * 1000 * 5);
+
+    const mw = requireAdminTOTP();
+    const req = makeReq({ apiKey: { id }, headers: { 'X-TOTP-Code': expiredCode } });
+    const res = makeRes();
+    const next = jest.fn();
+
+    await mw(req, res, next);
+    expect(res._status).toBe(401);
+    expect(res._body.error.code).toBe('INVALID_TOTP');
+    expect(next).not.toHaveBeenCalled();
+  });
+});

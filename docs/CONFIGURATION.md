@@ -123,7 +123,8 @@ application. Variables are grouped by concern. For each variable the table shows
 | `STELLAR_BASE_RESERVE` | number | `0.5` | no | Minimum XLM base reserve per account entry (in XLM). Mirrors Stellar protocol value |
 | `STELLAR_FEE_MULTIPLIER` | number | `1` | no | Multiplier applied to the network base fee when constructing transactions |
 | `STELLAR_EXPLORER_URL` | string | — | no | Base URL of the Stellar block explorer used to build transaction links |
-| `CONFIRMATION_LEDGER_THRESHOLD` | number | `3` | no | Number of ledger closings required before a transaction is considered confirmed |
+| `CONFIRMATION_THRESHOLD` | number | `1` | no | Number of ledger closings required before a transaction is considered confirmed (min: 1, max: 10). Backwards compatible with `CONFIRMATION_LEDGER_THRESHOLD`. |
+| `CONFIRMATION_CHECK_INTERVAL_MS` | number | `5000` | no | Interval (ms) between background confirmation threshold checks for pending transactions (#1606) |
 | `MIN_RESERVE_XLM` | number | `1` | no | Minimum XLM balance (in XLM) required in a wallet for operations |
 | `SYNC_MAX_PAGES` | number | `10` | no | Maximum number of Horizon history pages fetched during a transaction sync pass |
 | `TX_SYNC_INTERVAL_MS` | number | `30000` | no | Interval (ms) between automatic transaction reconciliation runs |
@@ -397,6 +398,7 @@ See [ADR-003](./adr/003-signing-provider-strategy.md) for the rationale behind t
 |---|---|---|---|---|
 | `FEATURE_FLAGS` | string | — | no | JSON object of feature-flag overrides, e.g. `{"newDonationFlow":true}`. See [docs/FEATURE_FLAGS_RUNTIME.md](./FEATURE_FLAGS_RUNTIME.md) |
 | `COINGECKO_API_KEY` | string | — | no | CoinGecko API key (`CG-…` format) for XLM/fiat exchange rate lookups. Without this, the unauthenticated endpoint is used (stricter rate limits) |
+| `XLM_USDC_ASSET` | string | Circle USDC for the active network | no | `CODE:ISSUER` of the stablecoin used for the Stellar DEX price fallback. The XLM/USD rate is the mid-market price of this orderbook when CoinGecko is unavailable |
 | `FEDERATION_RECORDS` | string | — | no | JSON-encoded static federation records for local development, bypassing live federation lookups |
 | `FEDERATION_DOMAIN` | string | — | no | Domain used for Stellar federation lookups |
 | `API_BASE_URL` | string | — | no | Publicly accessible base URL of this API, used in generated links (e.g. in receipts, webhooks) |

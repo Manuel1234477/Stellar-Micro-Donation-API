@@ -26,12 +26,14 @@ const ERROR_CODES = {
   MISSING_REQUIRED_FIELD:  { code: 'MISSING_REQUIRED_FIELD',  numeric: 1007 },
   IDEMPOTENCY_KEY_REQUIRED:{ code: 'IDEMPOTENCY_KEY_REQUIRED',numeric: 1008 },
   INVALID_SCHEMA_VERSION:  { code: 'INVALID_SCHEMA_VERSION',  numeric: 1009 },
+  SSRF_BLOCKED:            { code: 'SSRF_BLOCKED',            numeric: 1010 },
 
   // Authentication/Authorization errors (2000-2099)
   UNAUTHORIZED:             { code: 'UNAUTHORIZED',             numeric: 2000 },
   ACCESS_DENIED:            { code: 'ACCESS_DENIED',            numeric: 2001 },
   INSUFFICIENT_PERMISSIONS: { code: 'INSUFFICIENT_PERMISSIONS', numeric: 2002 },
   INVALID_API_KEY:          { code: 'INVALID_API_KEY',          numeric: 2003 },
+  SEP10_REPLAY_DETECTED:    { code: 'SEP10_REPLAY_DETECTED',    numeric: 2004 },
 
   // Not found errors (3000-3099)
   NOT_FOUND:            { code: 'NOT_FOUND',            numeric: 3000 },

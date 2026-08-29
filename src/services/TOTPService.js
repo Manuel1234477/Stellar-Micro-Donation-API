@@ -33,6 +33,28 @@ const BACKUP_CODE_BYTES = 5;   // 10 hex chars per code
 const ISSUER = process.env.TOTP_ISSUER || 'StellarDonationAPI';
 const DEFAULT_WINDOW = 1;      // ±1 window tolerance
 
+// ─── Encryption helper for secret at rest ─────────────────────────────────────
+
+function encryptSecret(secret) {
+  if (!secret) return secret;
+  try {
+    const EncryptionService = require('./EncryptionService');
+    return EncryptionService.encryptField ? EncryptionService.encryptField(secret) : secret;
+  } catch (_) {
+    return secret;
+  }
+}
+
+function decryptSecret(secret) {
+  if (!secret) return secret;
+  try {
+    const EncryptionService = require('./EncryptionService');
+    return EncryptionService.decryptField ? EncryptionService.decryptField(secret) : secret;
+  } catch (_) {
+    return secret;
+  }
+}
+
 // ─── Base32 helpers ───────────────────────────────────────────────────────────
 
 const BASE32_ALPHABET = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ234567';
@@ -97,7 +119,6 @@ function base32Decode(str) {
 function hotp(keyBuf, counter) {
   // Encode counter as big-endian 8-byte buffer
   const counterBuf = Buffer.alloc(8);
-  // JavaScript numbers are safe up to 2^53; split into two 32-bit halves
   const hi = Math.floor(counter / 0x100000000);
   const lo = counter >>> 0;
   counterBuf.writeUInt32BE(hi, 0);
@@ -124,7 +145,8 @@ function hotp(keyBuf, counter) {
  * @returns {string} 6-digit TOTP code
  */
 function generateCode(secret, timestampMs = Date.now()) {
-  const keyBuf = base32Decode(secret);
+  const rawSecret = decryptSecret(secret);
+  const keyBuf = base32Decode(rawSecret);
   const counter = Math.floor(timestampMs / 1000 / TOTP_STEP);
   return hotp(keyBuf, counter);
 }
@@ -164,7 +186,7 @@ async function ensureTotpColumns() {
  * @param {string} keyName - Human-readable label shown in the authenticator app
  * @returns {Promise<{secret: string, qrCodeDataUrl: string, backupCodes: string[], otpauthUrl: string}>}
  */
-async function generateSecret(keyId, keyName) {
+async function generateSecret(keyId, keyName = 'AdminKey') {
   await ensureTotpColumns();
 
   // 20 bytes → 160-bit secret (recommended by RFC 4226)
@@ -175,14 +197,16 @@ async function generateSecret(keyId, keyName) {
     crypto.randomBytes(BACKUP_CODE_BYTES).toString('hex')
   );
 
-  // Store secret and hashed backup codes; totp_enabled stays 0 until verify
+  // Store encrypted secret and hashed backup codes; totp_enabled stays 0 until verify
   const hashedCodes = backupCodes.map(c =>
     crypto.createHash('sha256').update(c).digest('hex')
   );
 
+  const storedSecret = encryptSecret(secret);
+
   await db.run(
     `UPDATE api_keys SET totp_secret = ?, totp_backup_codes = ?, totp_enabled = 0 WHERE id = ?`,
-    [secret, JSON.stringify(hashedCodes), keyId]
+    [storedSecret, JSON.stringify(hashedCodes), keyId]
   );
 
   const label = encodeURIComponent(`${ISSUER}:${keyName}`);
@@ -218,7 +242,8 @@ async function verify(keyId, code, timestampMs = Date.now()) {
 
   const window = parseInt(process.env.TOTP_WINDOW || String(DEFAULT_WINDOW), 10);
   const counter = Math.floor(timestampMs / 1000 / TOTP_STEP);
-  const keyBuf = base32Decode(row.totp_secret);
+  const rawSecret = decryptSecret(row.totp_secret);
+  const keyBuf = base32Decode(rawSecret);
 
   for (let delta = -window; delta <= window; delta++) {
     const expected = hotp(keyBuf, counter + delta);
@@ -377,6 +402,8 @@ module.exports = {
   base32Encode,
   base32Decode,
   ensureTotpColumns,
+  encryptSecret,
+  decryptSecret,
   TOTP_STEP,
   TOTP_DIGITS,
   BACKUP_CODE_COUNT,

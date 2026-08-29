@@ -33,6 +33,18 @@ function mockHttpsGetError(errorMessage) {
   });
 }
 
+/**
+ * Load a fresh oracle instance whose DEX fallback talks to a stubbed
+ * StellarService, so no Horizon call is ever made.
+ */
+function loadOracleWithDex(getOrderBook) {
+  jest.resetModules();
+  jest.doMock('../../src/config/stellar', () => ({
+    getStellarService: () => ({ getOrderBook }),
+  }));
+  return require('../../src/services/PriceOracleService');
+}
+
 describe('PriceOracleService', () => {
   let oracle;
 
@@ -73,9 +85,137 @@ describe('PriceOracleService', () => {
       expect(rates.usd).toBe(0.13);
     });
 
-    it('throws when network fails and no cache exists', async () => {
+    it('reports CoinGecko as the active source after a successful fetch', async () => {
+      mockHttpsGet({ stellar: { usd: 0.12, eur: 0.11, gbp: 0.09 } });
+      await oracle.getRates();
+      expect(oracle.getPriceSourceStatus().source).toBe(oracle.PRICE_SOURCES.COINGECKO);
+    });
+
+    it('throws when both sources fail and no cache exists', async () => {
+      const dexOracle = loadOracleWithDex(jest.fn().mockRejectedValue(new Error('Horizon down')));
       mockHttpsGetError('Connection refused');
-      await expect(oracle.getRates()).rejects.toThrow();
+      await expect(dexOracle.getRates()).rejects.toThrow();
+    });
+  });
+
+  // ── Stellar DEX fallback (Issue #1567) ─────────────────────────────────────
+
+  describe('Stellar DEX orderbook fallback', () => {
+    const book = { bids: [{ price: '0.1000000' }], asks: [{ price: '0.1200000' }] };
+
+    it('falls back to the DEX mid-market price when CoinGecko fails', async () => {
+      const getOrderBook = jest.fn().mockResolvedValue(book);
+      const dexOracle = loadOracleWithDex(getOrderBook);
+      mockHttpsGetError('CoinGecko rate limited');
+
+      const rates = await dexOracle.getRates();
+
+      expect(rates.usd).toBeCloseTo(0.11, 7);
+      expect(dexOracle.getPriceSourceStatus().source).toBe(dexOracle.PRICE_SOURCES.STELLAR_DEX);
+    });
+
+    it('queries the XLM/USDC orderbook', async () => {
+      const getOrderBook = jest.fn().mockResolvedValue(book);
+      const dexOracle = loadOracleWithDex(getOrderBook);
+      mockHttpsGetError('CoinGecko rate limited');
+
+      await dexOracle.getRates();
+
+      expect(getOrderBook).toHaveBeenCalledWith('XLM', expect.stringMatching(/^USDC:G/), 1);
+    });
+
+    it('does not query the DEX while CoinGecko succeeds', async () => {
+      const getOrderBook = jest.fn().mockResolvedValue(book);
+      const dexOracle = loadOracleWithDex(getOrderBook);
+      mockHttpsGet({ stellar: { usd: 0.12, eur: 0.11, gbp: 0.09 } });
+
+      await dexOracle.getRates();
+
+      expect(getOrderBook).not.toHaveBeenCalled();
+    });
+
+    it('caches the DEX price for the same TTL as CoinGecko', async () => {
+      const getOrderBook = jest.fn().mockResolvedValue(book);
+      const dexOracle = loadOracleWithDex(getOrderBook);
+      mockHttpsGetError('CoinGecko rate limited');
+
+      await dexOracle.getRates();
+      await dexOracle.getRates();
+
+      expect(getOrderBook).toHaveBeenCalledTimes(1);
+      expect(dexOracle.getPriceSourceStatus().ttlMs).toBe(5 * 60 * 1000);
+    });
+
+    it('converts USD to XLM using the DEX price', async () => {
+      const dexOracle = loadOracleWithDex(jest.fn().mockResolvedValue(book));
+      mockHttpsGetError('CoinGecko rate limited');
+
+      const xlm = await dexOracle.convertToXLM(1.1, 'USD');
+
+      expect(xlm).toBeCloseTo(10, 5);
+    });
+
+    it('reports "none" as the source before any successful fetch', () => {
+      const dexOracle = loadOracleWithDex(jest.fn());
+      expect(dexOracle.getPriceSourceStatus()).toMatchObject({
+        source: dexOracle.PRICE_SOURCES.NONE,
+        cached: false,
+        stale: false,
+      });
+    });
+
+    it('names both failed sources when the DEX also fails', async () => {
+      const dexOracle = loadOracleWithDex(jest.fn().mockRejectedValue(new Error('Horizon 503')));
+      mockHttpsGetError('CoinGecko rate limited');
+
+      await expect(dexOracle.getRates()).rejects.toThrow(/CoinGecko.*Stellar DEX/);
+    });
+
+    it('serves the stale cache when both sources fail after a successful fetch', async () => {
+      const dexOracle = loadOracleWithDex(jest.fn().mockRejectedValue(new Error('Horizon 503')));
+
+      const nowSpy = jest.spyOn(Date, 'now').mockReturnValue(1_000_000);
+      mockHttpsGet({ stellar: { usd: 0.12, eur: 0.11, gbp: 0.09 } });
+      await dexOracle.getRates();
+
+      nowSpy.mockReturnValue(1_000_000 + 6 * 60 * 1000);
+      https.get.mockRestore();
+      mockHttpsGetError('CoinGecko rate limited');
+
+      const rates = await dexOracle.getRates();
+
+      expect(rates.usd).toBe(0.12);
+      expect(dexOracle.getPriceSourceStatus()).toMatchObject({
+        source: dexOracle.PRICE_SOURCES.COINGECKO,
+        stale: true,
+      });
+    });
+  });
+
+  // ── mid-market price derivation ────────────────────────────────────────────
+
+  describe('midMarketPrice()', () => {
+    it('averages the best bid and the best ask', () => {
+      expect(oracle.midMarketPrice({
+        bids: [{ price: '0.1000000' }, { price: '0.0900000' }],
+        asks: [{ price: '0.1200000' }, { price: '0.1300000' }],
+      })).toBeCloseTo(0.11, 7);
+    });
+
+    it('throws when the bid side is empty', () => {
+      expect(() => oracle.midMarketPrice({ bids: [], asks: [{ price: '0.12' }] })).toThrow(/bid/);
+    });
+
+    it('throws when the ask side is empty', () => {
+      expect(() => oracle.midMarketPrice({ bids: [{ price: '0.10' }], asks: [] })).toThrow(/ask/);
+    });
+
+    it('throws on a non-numeric price', () => {
+      expect(() => oracle.midMarketPrice({ bids: [{ price: 'abc' }], asks: [{ price: '0.12' }] })).toThrow();
+    });
+
+    it('throws on a zero price', () => {
+      expect(() => oracle.midMarketPrice({ bids: [{ price: '0' }], asks: [{ price: '0.12' }] })).toThrow();
     });
   });
 

@@ -78,6 +78,16 @@ async function startServer(app, overrideServices = {}) {
 
     await logStartupDiagnostics();
 
+    // ── #1533: Refuse startup if GEO_BLOCKED_COUNTRIES configured but MaxMind DB is missing in strict mode
+    if (config.geoBlocking.strictMode !== false && config.geoBlocking.blockedCountries.length > 0) {
+      const fs = require('fs');
+      if (!fs.existsSync(config.geoBlocking.maxmindDbPath)) {
+        const errorMsg = `MaxMind GeoIP database not found at ${config.geoBlocking.maxmindDbPath} with GEO_BLOCKED_COUNTRIES configured and GEO_STRICT_MODE=true. Refusing to start.`;
+        log.error('GEO_BLOCK', errorMsg);
+        throw new Error(errorMsg);
+      }
+    }
+
     // ── #714: Bind port immediately so /health/live responds right away ───────
     const server = app.listen(PORT);
 
@@ -180,6 +190,7 @@ async function startServer(app, overrideServices = {}) {
 
           require('../workers/expiryWorker').start();
           require('../workers/donationApprovalExpiryWorker').start();
+          require('../workers/confirmationThresholdWorker').start();
           recurringDonationScheduler.start();
           reconciliationService.start();
           auditLogRetentionService.start();
@@ -341,6 +352,7 @@ async function startServer(app, overrideServices = {}) {
         transactionSyncScheduler.stop();
         require('../workers/expiryWorker').stop();
         require('../workers/donationApprovalExpiryWorker').stop();
+        require('../workers/confirmationThresholdWorker').stop();
 
         if (server.stopQuotaResetJob) {
           server.stopQuotaResetJob();

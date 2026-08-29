@@ -90,6 +90,23 @@ const MESSAGES = {
   IDEMPOTENCY_KEY_REQUIRED:{ en: 'Idempotency key is required',           es: 'Se requiere clave de idempotencia',      fr: 'Clé d\'idempotence requise',                       pt: 'Chave de idempotência obrigatória' },
   INVALID_SCHEMA_VERSION: { en: 'Invalid schema version',                 es: 'Versión de esquema inválida',            fr: 'Version de schéma invalide',                       pt: 'Versão de esquema inválida' },
 
+  // ── Field-level validation errors (src/utils/validationErrorFormatter.js) ──
+  MISSING_AMOUNT:          { en: 'amount is required',                    es: 'el monto es obligatorio',                fr: 'le montant est requis',                            pt: 'o valor é obrigatório' },
+  INVALID_AMOUNT_TYPE:     { en: 'amount must be a valid number',         es: 'el monto debe ser un número válido',     fr: 'le montant doit être un nombre valide',            pt: 'o valor deve ser um número válido' },
+  AMOUNT_TOO_LOW:          { en: 'amount must be greater than zero',      es: 'el monto debe ser mayor que cero',       fr: 'le montant doit être supérieur à zéro',            pt: 'o valor deve ser maior que zero' },
+  AMOUNT_BELOW_MINIMUM:    { en: 'amount is below the minimum allowed',   es: 'el monto está por debajo del mínimo permitido', fr: 'le montant est inférieur au minimum autorisé', pt: 'o valor está abaixo do mínimo permitido' },
+  AMOUNT_EXCEEDS_MAXIMUM:  { en: 'amount exceeds the maximum allowed',    es: 'el monto supera el máximo permitido',    fr: 'le montant dépasse le maximum autorisé',           pt: 'o valor excede o máximo permitido' },
+  DAILY_LIMIT_EXCEEDED:    { en: 'daily donation limit would be exceeded', es: 'se superaría el límite diario de donación', fr: 'la limite quotidienne de don serait dépassée', pt: 'o limite diário de doação seria excedido' },
+  MISSING_RECIPIENT:       { en: 'recipient is required',                 es: 'el destinatario es obligatorio',         fr: 'le destinataire est requis',                       pt: 'o destinatário é obrigatório' },
+  SAME_SENDER_RECIPIENT:   { en: 'sender and recipient must be different', es: 'el remitente y el destinatario deben ser diferentes', fr: 'l\'expéditeur et le destinataire doivent être différents', pt: 'remetente e destinatário devem ser diferentes' },
+  MISSING_IDEMPOTENCY_KEY: { en: 'Idempotency-Key header is required',    es: 'el encabezado Idempotency-Key es obligatorio', fr: 'l\'en-tête Idempotency-Key est requis',       pt: 'o cabeçalho Idempotency-Key é obrigatório' },
+  MISSING_ADDRESS:         { en: 'address is required',                   es: 'la dirección es obligatoria',             fr: 'l\'adresse est requise',                           pt: 'o endereço é obrigatório' },
+  MISSING_STATUS:          { en: 'status is required',                    es: 'el estado es obligatorio',                fr: 'le statut est requis',                             pt: 'o status é obrigatório' },
+  INVALID_STATUS:          { en: 'status value is not recognised',        es: 'el valor de estado no es válido',         fr: 'la valeur du statut n\'est pas reconnue',          pt: 'o valor de status não é reconhecido' },
+  MISSING_PUBLIC_KEY:      { en: 'publicKey is required',                 es: 'publicKey es obligatorio',                fr: 'publicKey est requis',                             pt: 'publicKey é obrigatório' },
+  MISSING_TRANSACTION_HASH:{ en: 'transactionHash is required',           es: 'transactionHash es obligatorio',          fr: 'transactionHash est requis',                       pt: 'transactionHash é obrigatório' },
+  MISSING_WALLET_FIELD:    { en: 'at least one of label or ownerName is required', es: 'se requiere al menos uno entre label u ownerName', fr: 'au moins l\'un de label ou ownerName est requis', pt: 'é necessário pelo menos um entre label ou ownerName' },
+
   // ── Authentication / Authorisation errors ────────────────────────────────
   UNAUTHORIZED:             { en: 'Unauthorized',                         es: 'No autorizado',                          fr: 'Non autorisé',                                     pt: 'Não autorizado' },
   ACCESS_DENIED:            { en: 'Access denied',                        es: 'Acceso denegado',                        fr: 'Accès refusé',                                     pt: 'Acesso negado' },

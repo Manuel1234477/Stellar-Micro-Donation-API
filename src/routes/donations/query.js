@@ -86,7 +86,7 @@ router.get('/', checkPermission(PERMISSIONS.DONATIONS_READ), asyncHandler(async 
 
     const pagination = parseCursorPaginationQuery(req.query);
     const [sortBy, order] = sort ? sort.split(':') : ['timestamp', 'desc'];
-    const { status, from, to, minAmount, maxAmount } = req.query;
+    const { status, from, to, minAmount, maxAmount, tag, tags } = req.query;
 
     let statusFilter;
     if (status) {
@@ -94,10 +94,18 @@ router.get('/', checkPermission(PERMISSIONS.DONATIONS_READ), asyncHandler(async 
       statusFilter = statuses.length === 1 ? statuses[0] : statuses;
     }
 
+    let tagsFilter;
+    if (tags) {
+      tagsFilter = tags.split(',').map(s => s.trim().toLowerCase()).filter(Boolean);
+    } else if (tag) {
+      tagsFilter = [tag.trim().toLowerCase()];
+    }
+
     const filters = {
       sortBy,
       order,
       ...(statusFilter !== undefined && { status: statusFilter }),
+      ...(tagsFilter !== undefined && { tags: tagsFilter }),
       ...(from && { startDate: from }),
       ...(to && { endDate: to }),
       ...(minAmount !== undefined && { minAmount }),

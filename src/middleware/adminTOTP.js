@@ -1,12 +1,13 @@
 'use strict';
 /**
- * Admin 2FA Middleware — Issue #918
+ * Admin 2FA Middleware — Issue #918 / Issue #1536
  *
- * When REQUIRE_ADMIN_2FA=true, enforces TOTP verification on all admin
- * API key management operations via the X-TOTP-Code header.
+ * Enforces TOTP verification on admin API key operations via the X-TOTP-Code header
+ * (or request body field `totpCode`) when TOTP is enabled on the key or when
+ * REQUIRE_ADMIN_2FA=true.
  *
  * Replay protection: each code is single-use within its 30-second window.
- * Used codes are persisted to SQLite (issue #1118) so they survive restarts
+ * Used codes are persisted to SQLite so they survive restarts
  * and are shared across horizontally-scaled instances.
  * Entries expire after REPLAY_TTL_MS (90 s = 3 TOTP windows).
  */
@@ -47,23 +48,39 @@ function purgeExpired(db) {
 }
 
 /**
- * Returns Express middleware that enforces TOTP when REQUIRE_ADMIN_2FA=true.
+ * Returns Express middleware that enforces TOTP for admin operations.
  */
 function requireAdminTOTP() {
   return async function adminTotpMiddleware(req, res, next) {
-    if (process.env.REQUIRE_ADMIN_2FA !== 'true') return next();
+    const keyId = req.apiKey && !req.apiKey.isLegacy ? req.apiKey.id : null;
+    const require2FA = process.env.REQUIRE_ADMIN_2FA === 'true';
 
-    const keyId = req.apiKey && req.apiKey.id;
-    if (!keyId) {
-      return res.status(403).json({
+    // If key has TOTP enabled or global 2FA is required
+    let isEnrolled = false;
+    if (keyId) {
+      try {
+        isEnrolled = await TOTPService.isTotpEnabled(keyId);
+      } catch (_) {
+        isEnrolled = false;
+      }
+    }
+
+    if (!require2FA && !isEnrolled) {
+      return next();
+    }
+
+    if (!keyId && require2FA) {
+      res.setHeader('X-TOTP-Required', 'true');
+      return res.status(401).json({
         success: false,
         error: { code: 'TOTP_REQUIRED', message: 'Admin operations require a valid TOTP code' },
       });
     }
 
-    const code = req.get('X-TOTP-Code');
+    const code = req.get('X-TOTP-Code') || (req.body && req.body.totpCode);
     if (!code) {
-      return res.status(403).json({
+      res.setHeader('X-TOTP-Required', 'true');
+      return res.status(401).json({
         success: false,
         error: { code: 'TOTP_REQUIRED', message: 'Admin operations require a valid TOTP code' },
       });
@@ -88,25 +105,31 @@ function requireAdminTOTP() {
     // Replay check — row present means code was already used
     const existing = await db.get('SELECT 1 FROM totp_used_codes WHERE replay_key = ?', [replayKey]);
     if (existing) {
-      return res.status(403).json({
+      res.setHeader('X-TOTP-Required', 'true');
+      return res.status(401).json({
         success: false,
-        error: { code: 'TOTP_REQUIRED', message: 'Admin operations require a valid TOTP code' },
+        error: { code: 'REPLAY_DETECTED', message: 'TOTP code has already been used in the current window' },
       });
     }
 
-    const valid = await TOTPService.verify(keyId, code);
-    if (!valid) {
-      return res.status(403).json({
+    const validTotp = await TOTPService.verify(keyId, String(code));
+    const validBackup = !validTotp && await TOTPService.verifyBackupCode(keyId, String(code));
+
+    if (!validTotp && !validBackup) {
+      res.setHeader('X-TOTP-Required', 'true');
+      return res.status(401).json({
         success: false,
-        error: { code: 'TOTP_REQUIRED', message: 'Admin operations require a valid TOTP code' },
+        error: { code: 'INVALID_TOTP', message: 'Invalid or expired TOTP code' },
       });
     }
 
-    // Persist used code so it cannot be replayed across restarts / instances
-    await db.run(
-      'INSERT OR IGNORE INTO totp_used_codes (replay_key, expires_at) VALUES (?, ?)',
-      [replayKey, Date.now() + REPLAY_TTL_MS]
-    );
+    // Persist used code so it cannot be replayed across restarts / instances (for time-based TOTP codes)
+    if (validTotp) {
+      await db.run(
+        'INSERT OR IGNORE INTO totp_used_codes (replay_key, expires_at) VALUES (?, ?)',
+        [replayKey, Date.now() + REPLAY_TTL_MS]
+      );
+    }
 
     next();
   };

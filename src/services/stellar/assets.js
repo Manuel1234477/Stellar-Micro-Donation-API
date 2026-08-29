@@ -1,7 +1,7 @@
 const StellarSdk = require('stellar-sdk');
 const StellarErrorHandler = require('../../utils/stellarErrorHandler');
 const log = require('../../utils/log');
-const { ValidationError } = require('../../utils/errors');
+const { ValidationError, BusinessLogicError, ERROR_CODES } = require('../../utils/errors');
 
 class StellarAssets {
   constructor(service) {
@@ -135,6 +135,12 @@ class StellarAssets {
         throw new ValidationError('Asset code must be 1-12 alphanumeric characters');
       }
 
+      const amountNum = parseFloat(amount);
+      if (isNaN(amountNum) || amountNum <= 0) {
+        throw new ValidationError('Amount must be a positive number');
+      }
+      const issuedAmount = amountNum.toFixed(7);
+
       const issuerKeypair = StellarSdk.Keypair.fromSecret(issuerSecret);
       const issuerPublic = issuerKeypair.publicKey();
 
@@ -148,17 +154,43 @@ class StellarAssets {
         this.service.server.loadAccount(issuerPublic)
       );
 
+      const recipientAccount = await this.service._executeWithRetry(() =>
+        this.service.server.loadAccount(recipientPublic)
+      );
+
+      const hasTrustline = (recipientAccount.balances || []).some((b) =>
+        b.asset_type !== 'native' &&
+        b.asset_code === assetCode &&
+        b.asset_issuer === issuerPublic
+      );
+      if (!hasTrustline) {
+        throw new ValidationError(
+          'Recipient has no trustline for this asset. Create one via POST /wallets/:id/trustlines first.'
+        );
+      }
+
+      const nativeBalance = (issuerAccount.balances || []).find((b) => b.asset_type === 'native');
+      const currentXlm = nativeBalance ? parseFloat(nativeBalance.balance) : 0;
+      const subentryCount = issuerAccount.subentry_count || 0;
+      const minimumReserve = this.service.accounts.calculateMinimumReserve
+        ? this.service.accounts.calculateMinimumReserve(subentryCount)
+        : 1 + (subentryCount * 0.5);
+      const feeXlm = parseInt(this.service.baseFee || StellarSdk.BASE_FEE, 10) / 10000000;
+      if (currentXlm - feeXlm < minimumReserve) {
+        throw new BusinessLogicError(
+          ERROR_CODES.INSUFFICIENT_BALANCE,
+          `Issuer account must maintain a minimum reserve of ${minimumReserve} XLM`
+        );
+      }
+
       const transaction = new StellarSdk.TransactionBuilder(issuerAccount, {
-        fee: StellarSdk.BASE_FEE,
-        networkPassphrase:
-          this.service.network === 'public'
-            ? StellarSdk.Networks.PUBLIC
-            : StellarSdk.Networks.TESTNET,
+        fee: this.service.baseFee || StellarSdk.BASE_FEE,
+        networkPassphrase: this.service.networkPassphrase || this.service._getNetworkPassphrase(),
       })
         .addOperation(StellarSdk.Operation.payment({
           destination: recipientPublic,
           asset,
-          amount: amount.toString(),
+          amount: issuedAmount,
         }))
         .setTimeout(30)
         .build();
@@ -167,10 +199,10 @@ class StellarAssets {
       const result = await this.service._submitTransactionWithNetworkSafety(transaction);
 
       log.info('STELLAR_SERVICE', 'Asset issued', {
-        assetCode, issuerPublic, recipientPublic, amount, hash: result.hash,
+        assetCode, issuerPublic, recipientPublic, amount: issuedAmount, hash: result.hash,
       });
 
-      return { hash: result.hash, ledger: result.ledger, assetCode, issuerPublic, amount };
+      return { hash: result.hash, ledger: result.ledger, assetCode, issuerPublic, amount: issuedAmount };
     }, 'issueAsset');
   }
 

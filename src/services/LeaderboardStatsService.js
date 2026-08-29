@@ -14,9 +14,16 @@ function toStroops(xlmAmount) {
 }
 
 /**
- * Leaderboard cache TTL in milliseconds (1 minute)
+ * Get configured leaderboard cache TTL in milliseconds (default: 60 seconds)
+ * Configurable via LEADERBOARD_CACHE_TTL_SECONDS environment variable.
  */
-const LEADERBOARD_CACHE_TTL_MS = 60_000;
+function getLeaderboardCacheTtlMs() {
+  const seconds = parseInt(process.env.LEADERBOARD_CACHE_TTL_SECONDS, 10);
+  if (Number.isFinite(seconds) && seconds > 0) {
+    return seconds * 1000;
+  }
+  return 60_000;
+}
 
 /**
  * Default number of top entries to return
@@ -499,7 +506,7 @@ class StatsService {
     withCacheMeta(leaderboard, new Date().toISOString());
 
     // Cache the result
-    Cache.set(cacheKey, leaderboard, LEADERBOARD_CACHE_TTL_MS);
+    Cache.set(cacheKey, leaderboard, getLeaderboardCacheTtlMs());
 
     return leaderboard;
   }
@@ -579,19 +586,32 @@ class StatsService {
     withCacheMeta(leaderboard, new Date().toISOString());
 
     // Cache the result
-    Cache.set(cacheKey, leaderboard, LEADERBOARD_CACHE_TTL_MS);
+    Cache.set(cacheKey, leaderboard, getLeaderboardCacheTtlMs());
 
     return leaderboard;
   }
 
   /**
-   * Invalidate all leaderboard caches (called when new confirmed donation arrives)
+   * Invalidate leaderboard cache (called when new donation is created/confirmed or for a donor's position)
+   * @param {string} [donor] - Optional donor identifier
    */
-  static invalidateLeaderboardCache() {
+  static invalidateLeaderboardCache(donor = null) {
+    Cache.clearPrefix('leaderboard:');
+  }
+
+  /**
+   * Full cache invalidation (used for bulk imports or admin corrections)
+   */
+  static invalidateFullCache() {
     Cache.clearPrefix('leaderboard:');
   }
 }
 
-StatsService.LEADERBOARD_CACHE_TTL_MS = LEADERBOARD_CACHE_TTL_MS;
+Object.defineProperty(StatsService, 'LEADERBOARD_CACHE_TTL_MS', {
+  get() {
+    return getLeaderboardCacheTtlMs();
+  },
+  configurable: true,
+});
 
 module.exports = StatsService;

@@ -18,6 +18,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Local scanning scripts for developers (`npm run scan:container`)
 
 ### Added
+- Stellar DEX orderbook fallback for XLM price discovery when CoinGecko is unavailable or rate-limited (#1567):
+  - XLM/USD is derived from the mid-market price of the best bid and ask on the XLM/USDC orderbook
+  - Both sources share the existing 5-minute rate cache; a fresh DEX price is preferred over a stale cached one
+  - `GET /health` and `GET /api/v1/exchange-rates` report the active price source
+  - Quote asset is configurable via `XLM_USDC_ASSET` (defaults to the Circle USDC issuer for the active network)
 - `MockStellarServiceStub`: thin (<200 line) configurable stub implementing `StellarServiceInterface` for unit tests (#756)
 - `npm run changelog` script to generate changelog entries from conventional commits (#761)
 - Container security documentation in `docs/CONTAINER_SECURITY.md` (#1233)

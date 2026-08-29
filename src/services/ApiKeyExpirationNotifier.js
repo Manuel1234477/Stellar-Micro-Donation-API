@@ -203,6 +203,14 @@ class ApiKeyExpirationNotifier {
       return { delivered: false, error: 'Invalid webhook URL' };
     }
 
+    try {
+      const { assertSafeOutboundUrl } = require('../utils/ssrf');
+      await assertSafeOutboundUrl(webhookUrl);
+    } catch (ssrfErr) {
+      log.warn('API_KEY_EXPIRY_NOTIFIER', 'SSRF blocked webhook URL', { webhookUrl, keyId: key.id, error: ssrfErr.message });
+      return { delivered: false, error: ssrfErr.message };
+    }
+
     const event = thresholdDays === 0
       ? 'api_key.expired'
       : 'api_key.expiring';
