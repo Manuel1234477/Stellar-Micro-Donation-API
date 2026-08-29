@@ -24,6 +24,7 @@ const { createRequestSigningMiddleware } = require('../middleware/requestSigning
 const trackQuotaUsage = require('../middleware/quotaTracker');
 const { metricsMiddleware, registry } = require('../utils/metrics');
 const { createDeduplicationMiddleware } = require('../middleware/deduplication');
+const { createCompressionMiddleware } = require('../middleware/compression');
 const { fieldFilterMiddleware } = require('../middleware/fieldFilter');
 const { requestTimeout, TIMEOUTS } = require('../middleware/requestTimeout');
 const schemaVersionMiddleware = require('../middleware/schemaVersion');
@@ -134,6 +135,13 @@ function applyMiddleware(app) {
       });
     }
   }));
+
+  // ─── Response compression ────────────────────────────────────────────────────
+  // Mounted BEFORE deduplication and field filtering on purpose. Each of these
+  // wraps res.json, and the wrapper installed last runs first — so compression
+  // has to be installed first to run last and see the final, filtered body
+  // rather than compressing something a later middleware still rewrites.
+  app.use(createCompressionMiddleware());
 
   // ─── Deduplication & field filtering ─────────────────────────────────────────
   app.use(createDeduplicationMiddleware());
