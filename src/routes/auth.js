@@ -48,7 +48,9 @@ router.post('/token/apikey', bruteForce.middleware(), requireApiKey, payloadSize
   try {
     const apiKeyId = req.apiKey.id || 0;
     const claims = { role: req.apiKey.role || 'user' };
-    const { accessToken, refreshToken, familyId } = await issueTokenPair(apiKeyId, claims);
+    // Optional: lets the owner tell their sessions apart when reviewing them.
+    const deviceId = req.get('X-Device-ID');
+    const { accessToken, refreshToken, familyId } = await issueTokenPair(apiKeyId, claims, { deviceId });
 
     bruteForce.recordSuccess(req.ip || 'unknown');
     log.info('AUTH', 'Token pair issued', { apiKeyId, familyId });
@@ -85,7 +87,7 @@ router.post('/refresh', bruteForce.middleware(), authRefreshRateLimiter, payload
   }
 
   try {
-    const result = await rotateRefreshToken(refreshToken);
+    const result = await rotateRefreshToken(refreshToken, { deviceId: req.get('X-Device-ID') });
 
     if (!result) {
       bruteForce.recordFailure(req.ip || 'unknown');

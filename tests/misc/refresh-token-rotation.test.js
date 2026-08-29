@@ -7,6 +7,8 @@
  * - Refresh token rotation (old invalidated, new issued)
  * - Token family revocation on refresh token reuse (theft detection)
  * - All tokens revoked on API key rotation
+ * - Absolute family expiry (rotation cannot extend a session forever)
+ * - Device association and per-device session revocation
  * - Edge cases: missing token, malformed token, expired token
  *
  * No live Stellar network required.
@@ -24,9 +26,24 @@ const {
   rotateRefreshToken,
   revokeTokenFamily,
   revokeAllForApiKey,
+  listSessionsForApiKey,
+  revokeDeviceSessions,
+  normalizeDeviceId,
   ACCESS_TOKEN_TTL_MS,
   REFRESH_TOKEN_TTL_MS,
+  REFRESH_TOKEN_ABSOLUTE_TTL_MS,
 } = JwtService;
+
+/**
+ * Backdates a token family's start so the absolute deadline has already passed.
+ * Faster and more deterministic than advancing timers across an async DB path.
+ */
+async function backdateFamily(familyId, msAgo) {
+  await db.run(
+    `UPDATE refresh_tokens SET family_started_at = ? WHERE family_id = ?`,
+    [Date.now() - msAgo, familyId]
+  );
+}
 
 // ─── helpers ────────────────────────────────────────────────────────────────
 
@@ -179,9 +196,9 @@ describe('rotateRefreshToken', () => {
   it('old refresh token cannot be used again (marked used)', async () => {
     const { refreshToken } = await issueTokenPair(TEST_API_KEY_ID);
     await rotateRefreshToken(refreshToken);
-    // Second use should throw TOKEN_FAMILY_REVOKED
+    // Second use should throw TOKEN_REUSE_DETECTED
     await expect(rotateRefreshToken(refreshToken)).rejects.toMatchObject({
-      code: 'TOKEN_FAMILY_REVOKED',
+      code: 'TOKEN_REUSE_DETECTED',
     });
   });
 
@@ -213,11 +230,11 @@ describe('rotateRefreshToken', () => {
 // ─── Token family revocation (theft detection) ───────────────────────────────
 
 describe('Token family revocation on reuse', () => {
-  it('throws TOKEN_FAMILY_REVOKED when a used token is replayed', async () => {
+  it('throws TOKEN_REUSE_DETECTED when a used token is replayed', async () => {
     const { refreshToken } = await issueTokenPair(TEST_API_KEY_ID);
     await rotateRefreshToken(refreshToken); // legitimate use
     await expect(rotateRefreshToken(refreshToken)).rejects.toMatchObject({
-      code: 'TOKEN_FAMILY_REVOKED',
+      code: 'TOKEN_REUSE_DETECTED',
     });
   });
 
@@ -225,10 +242,10 @@ describe('Token family revocation on reuse', () => {
     const { refreshToken: r1, familyId } = await issueTokenPair(TEST_API_KEY_ID);
     const { refreshToken: r2 } = await rotateRefreshToken(r1);
     // Replay r1 → revokes family
-    await expect(rotateRefreshToken(r1)).rejects.toMatchObject({ code: 'TOKEN_FAMILY_REVOKED' });
-    // r2 (same family) should now be revoked too
-    const result = await rotateRefreshToken(r2);
-    expect(result).toBeNull();
+    await expect(rotateRefreshToken(r1)).rejects.toMatchObject({ code: 'TOKEN_REUSE_DETECTED' });
+    // r2 (same family) is revoked too, and a revoked token is rejected with
+    // TOKEN_REVOKED (the code POST /auth/refresh maps to 401).
+    await expect(rotateRefreshToken(r2)).rejects.toMatchObject({ code: 'TOKEN_REVOKED' });
     // Verify DB state
     const rows = await db.all(`SELECT revoked FROM refresh_tokens WHERE family_id = ?`, [familyId]);
     expect(rows.every(r => r.revoked === 1)).toBe(true);
@@ -237,8 +254,7 @@ describe('Token family revocation on reuse', () => {
   it('revokeTokenFamily marks all family tokens as revoked', async () => {
     const { familyId, refreshToken } = await issueTokenPair(TEST_API_KEY_ID);
     await revokeTokenFamily(familyId);
-    const result = await rotateRefreshToken(refreshToken);
-    expect(result).toBeNull();
+    await expect(rotateRefreshToken(refreshToken)).rejects.toMatchObject({ code: 'TOKEN_REVOKED' });
   });
 
   it('revoking one family does not affect another family', async () => {
@@ -258,8 +274,8 @@ describe('revokeAllForApiKey', () => {
     const { refreshToken: r1 } = await issueTokenPair(TEST_API_KEY_ID);
     const { refreshToken: r2 } = await issueTokenPair(TEST_API_KEY_ID);
     await revokeAllForApiKey(TEST_API_KEY_ID);
-    expect(await rotateRefreshToken(r1)).toBeNull();
-    expect(await rotateRefreshToken(r2)).toBeNull();
+    await expect(rotateRefreshToken(r1)).rejects.toMatchObject({ code: 'TOKEN_REVOKED' });
+    await expect(rotateRefreshToken(r2)).rejects.toMatchObject({ code: 'TOKEN_REVOKED' });
   });
 
   it('does not revoke tokens for a different API key', async () => {
@@ -342,7 +358,7 @@ describe('POST /auth/token and POST /auth/refresh (HTTP)', () => {
     expect(res.body.error.code).toBe('INVALID_REFRESH_TOKEN');
   });
 
-  it('POST /auth/refresh with reused token returns 401 TOKEN_FAMILY_REVOKED', async () => {
+  it('POST /auth/refresh with reused token returns 401 TOKEN_REUSE_DETECTED', async () => {
     const request = require('supertest');
     const app = buildTestApp();
     const issueRes = await request(app).post('/auth/token/apikey').send();
@@ -352,6 +368,147 @@ describe('POST /auth/token and POST /auth/refresh (HTTP)', () => {
     // Second use — theft detection
     const res = await request(app).post('/auth/refresh').send({ refreshToken });
     expect(res.status).toBe(401);
-    expect(res.body.error.code).toBe('TOKEN_FAMILY_REVOKED');
+    expect(res.body.error.code).toBe('TOKEN_REUSE_DETECTED');
+  });
+});
+
+
+// ─── Absolute expiry ─────────────────────────────────────────────────────────
+
+describe('Absolute family expiry', () => {
+  it('defaults to 30 days', () => {
+    expect(REFRESH_TOKEN_ABSOLUTE_TTL_MS).toBe(30 * 24 * 60 * 60 * 1000);
+  });
+
+  it('rotation succeeds while the family is inside its absolute window', async () => {
+    const { refreshToken, familyId } = await issueTokenPair(TEST_API_KEY_ID);
+    await backdateFamily(familyId, REFRESH_TOKEN_ABSOLUTE_TTL_MS - 60 * 60 * 1000);
+    const result = await rotateRefreshToken(refreshToken);
+    expect(result).not.toBeNull();
+    expect(result.familyId).toBe(familyId);
+  });
+
+  it('rotation is rejected once the absolute deadline has passed', async () => {
+    const { refreshToken, familyId } = await issueTokenPair(TEST_API_KEY_ID);
+    await backdateFamily(familyId, REFRESH_TOKEN_ABSOLUTE_TTL_MS + 1000);
+    await expect(rotateRefreshToken(refreshToken)).rejects.toMatchObject({
+      code: 'TOKEN_ABSOLUTE_EXPIRY',
+    });
+  });
+
+  it('reaching the absolute deadline revokes the whole family', async () => {
+    const { refreshToken, familyId } = await issueTokenPair(TEST_API_KEY_ID);
+    await backdateFamily(familyId, REFRESH_TOKEN_ABSOLUTE_TTL_MS + 1000);
+    await expect(rotateRefreshToken(refreshToken)).rejects.toMatchObject({
+      code: 'TOKEN_ABSOLUTE_EXPIRY',
+    });
+    const rows = await db.all(
+      `SELECT revoked FROM refresh_tokens WHERE family_id = ?`,
+      [familyId]
+    );
+    expect(rows.length).toBeGreaterThan(0);
+    expect(rows.every((r) => r.revoked === 1)).toBe(true);
+  });
+
+  it('rotation does not push the deadline back — it stays anchored on family start', async () => {
+    const { refreshToken, familyId } = await issueTokenPair(TEST_API_KEY_ID);
+    const before = await db.get(
+      `SELECT family_started_at FROM refresh_tokens WHERE family_id = ?`,
+      [familyId]
+    );
+    const { refreshToken: rotated } = await rotateRefreshToken(refreshToken);
+    const after = await db.get(
+      `SELECT family_started_at FROM refresh_tokens WHERE family_id = ? ORDER BY id DESC`,
+      [familyId]
+    );
+    expect(after.family_started_at).toBe(before.family_started_at);
+    expect(rotated).not.toBe(refreshToken);
+  });
+
+  it('a refresh token never outlives the absolute deadline', async () => {
+    const { familyId } = await issueTokenPair(TEST_API_KEY_ID);
+    const row = await db.get(
+      `SELECT expires_at, family_started_at FROM refresh_tokens WHERE family_id = ?`,
+      [familyId]
+    );
+    expect(row.expires_at).toBeLessThanOrEqual(
+      row.family_started_at + REFRESH_TOKEN_ABSOLUTE_TTL_MS
+    );
+  });
+});
+
+// ─── Device tracking ─────────────────────────────────────────────────────────
+
+describe('Device association', () => {
+  it('normalizes a device identifier', () => {
+    expect(normalizeDeviceId('  pixel-8  ')).toBe('pixel-8');
+    expect(normalizeDeviceId('')).toBeNull();
+    expect(normalizeDeviceId('   ')).toBeNull();
+    expect(normalizeDeviceId(undefined)).toBeNull();
+    expect(normalizeDeviceId(42)).toBeNull();
+    expect(normalizeDeviceId('d'.repeat(500))).toHaveLength(128);
+  });
+
+  it('stores the device against the token family', async () => {
+    const { familyId, deviceId } = await issueTokenPair(
+      TEST_API_KEY_ID,
+      {},
+      { deviceId: 'laptop-1' }
+    );
+    expect(deviceId).toBe('laptop-1');
+    const row = await db.get(
+      `SELECT device_id FROM refresh_tokens WHERE family_id = ?`,
+      [familyId]
+    );
+    expect(row.device_id).toBe('laptop-1');
+  });
+
+  it('carries the device across a rotation', async () => {
+    const { refreshToken } = await issueTokenPair(
+      TEST_API_KEY_ID,
+      {},
+      { deviceId: 'laptop-1' }
+    );
+    const result = await rotateRefreshToken(refreshToken);
+    expect(result.deviceId).toBe('laptop-1');
+  });
+
+  it('a rotation cannot re-point an already-labelled family to another device', async () => {
+    const { refreshToken } = await issueTokenPair(
+      TEST_API_KEY_ID,
+      {},
+      { deviceId: 'laptop-1' }
+    );
+    const result = await rotateRefreshToken(refreshToken, { deviceId: 'attacker-device' });
+    expect(result.deviceId).toBe('laptop-1');
+  });
+
+  it('lists one session per family with its device', async () => {
+    await issueTokenPair(TEST_API_KEY_ID, {}, { deviceId: 'laptop-1' });
+    await issueTokenPair(TEST_API_KEY_ID, {}, { deviceId: 'phone-1' });
+    const sessions = await listSessionsForApiKey(TEST_API_KEY_ID);
+    expect(sessions).toHaveLength(2);
+    expect(sessions.map((s) => s.deviceId).sort()).toEqual(['laptop-1', 'phone-1']);
+  });
+
+  it('revokes only the named device, leaving other sessions usable', async () => {
+    await issueTokenPair(TEST_API_KEY_ID, {}, { deviceId: 'laptop-1' });
+    const { refreshToken: phoneToken } = await issueTokenPair(
+      TEST_API_KEY_ID,
+      {},
+      { deviceId: 'phone-1' }
+    );
+    const revoked = await revokeDeviceSessions(TEST_API_KEY_ID, 'laptop-1');
+    expect(revoked).toBe(1);
+    const result = await rotateRefreshToken(phoneToken);
+    expect(result).not.toBeNull();
+    const sessions = await listSessionsForApiKey(TEST_API_KEY_ID);
+    expect(sessions.map((s) => s.deviceId)).toEqual(['phone-1']);
+  });
+
+  it('revoking an unknown device revokes nothing', async () => {
+    await issueTokenPair(TEST_API_KEY_ID, {}, { deviceId: 'laptop-1' });
+    expect(await revokeDeviceSessions(TEST_API_KEY_ID, 'nope')).toBe(0);
+    expect(await revokeDeviceSessions(TEST_API_KEY_ID, '')).toBe(0);
   });
 });

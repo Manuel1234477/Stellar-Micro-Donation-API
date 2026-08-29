@@ -20,6 +20,20 @@ const log = require('../utils/log');
 const ACCESS_TOKEN_TTL_MS = 15 * 60 * 1000;       // 15 minutes
 const REFRESH_TOKEN_TTL_MS = 7 * 24 * 60 * 60 * 1000; // 7 days
 
+// Absolute lifetime of a token family. Rotation issues a fresh refresh token
+// each time, so without this bound an active session could be extended forever.
+// Anchored on family creation, never on the latest rotation.
+const REFRESH_TOKEN_ABSOLUTE_TTL_DAYS =
+  Number(process.env.REFRESH_TOKEN_ABSOLUTE_TTL_DAYS) > 0
+    ? Number(process.env.REFRESH_TOKEN_ABSOLUTE_TTL_DAYS)
+    : 30;
+const REFRESH_TOKEN_ABSOLUTE_TTL_MS =
+  REFRESH_TOKEN_ABSOLUTE_TTL_DAYS * 24 * 60 * 60 * 1000;
+
+// Device identifiers are client-supplied and only ever displayed back to the
+// owner, so they are length-capped rather than validated against a format.
+const MAX_DEVICE_ID_LENGTH = 128;
+
 const CREATE_TABLE_SQL = `
   CREATE TABLE IF NOT EXISTS refresh_tokens (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -27,6 +41,8 @@ const CREATE_TABLE_SQL = `
     token_hash TEXT NOT NULL UNIQUE,
     api_key_id INTEGER NOT NULL,
     family_id TEXT NOT NULL,
+    device_id TEXT,
+    family_started_at INTEGER,
     expires_at INTEGER NOT NULL,
     used_at INTEGER,
     revoked INTEGER NOT NULL DEFAULT 0,
@@ -55,6 +71,9 @@ async function initializeRefreshTokensTable() {
   await db.run(CREATE_TABLE_SQL);
   // Add jti column to existing tables that predate this change
   try { await db.run(`ALTER TABLE refresh_tokens ADD COLUMN jti TEXT`); } catch (_) { /* best-effort */ }
+  try { await db.run(`ALTER TABLE refresh_tokens ADD COLUMN device_id TEXT`); } catch (_) { /* best-effort */ }
+  try { await db.run(`ALTER TABLE refresh_tokens ADD COLUMN family_started_at INTEGER`); } catch (_) { /* best-effort */ }
+  await db.run(`CREATE INDEX IF NOT EXISTS idx_refresh_tokens_device ON refresh_tokens(api_key_id, device_id)`);
   await db.run(CREATE_REVOCATIONS_TABLE_SQL);
   await db.run(`CREATE INDEX IF NOT EXISTS idx_revocations_jti ON refresh_token_revocations(jti)`);
   await db.run(`CREATE INDEX IF NOT EXISTS idx_revocations_expires ON refresh_token_revocations(expires_at)`);
@@ -131,18 +150,61 @@ function verifyAccessToken(token) {
  * @param {string} familyId - Token family identifier (UUID)
  * @returns {Promise<string>} Raw refresh token (shown once)
  */
-async function issueRefreshToken(apiKeyId, familyId) {
+async function issueRefreshToken(apiKeyId, familyId, options = {}) {
   await initializeRefreshTokensTable();
   const raw = crypto.randomBytes(32).toString('hex');
   const hash = crypto.createHash('sha256').update(raw).digest('hex');
   const jti = crypto.randomUUID();
   const now = Date.now();
+  const deviceId = normalizeDeviceId(options.deviceId);
+  // A rotated token inherits the family's original start so the absolute
+  // deadline stays fixed; a brand-new family starts now.
+  const familyStartedAt = options.familyStartedAt || now;
+  // The sliding window never outlives the absolute deadline.
+  const expiresAt = Math.min(
+    now + REFRESH_TOKEN_TTL_MS,
+    familyStartedAt + REFRESH_TOKEN_ABSOLUTE_TTL_MS
+  );
   await db.run(
-    `INSERT INTO refresh_tokens (jti, token_hash, api_key_id, family_id, expires_at, created_at)
-     VALUES (?, ?, ?, ?, ?, ?)`,
-    [jti, hash, apiKeyId, familyId, now + REFRESH_TOKEN_TTL_MS, now]
+    `INSERT INTO refresh_tokens
+       (jti, token_hash, api_key_id, family_id, device_id, family_started_at, expires_at, created_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+    [jti, hash, apiKeyId, familyId, deviceId, familyStartedAt, expiresAt, now]
   );
   return raw;
+}
+
+/**
+ * Normalizes a client-supplied device identifier.
+ * Rejects absent, non-string, or over-long values rather than storing them.
+ * @param {unknown} deviceId
+ * @returns {string|null}
+ */
+function normalizeDeviceId(deviceId) {
+  if (typeof deviceId !== 'string') return null;
+  const trimmed = deviceId.trim();
+  if (!trimmed) return null;
+  return trimmed.slice(0, MAX_DEVICE_ID_LENGTH);
+}
+
+/**
+ * The instant a token family began, tolerating rows written before the
+ * family_started_at column existed.
+ * @param {object} row - A refresh_tokens row
+ * @returns {number} Epoch milliseconds
+ */
+function familyStartOf(row) {
+  return row.family_started_at || row.created_at;
+}
+
+/**
+ * Whether a token family has passed its absolute deadline.
+ * @param {object} row - A refresh_tokens row
+ * @param {number} now - Epoch milliseconds
+ * @returns {boolean}
+ */
+function isAbsolutelyExpired(row, now) {
+  return now >= familyStartOf(row) + REFRESH_TOKEN_ABSOLUTE_TTL_MS;
 }
 
 /**
@@ -155,7 +217,7 @@ async function issueRefreshToken(apiKeyId, familyId) {
  *   Returns null if the token is invalid or expired.
  * @throws {Error} With code 'TOKEN_REUSE_DETECTED' if token reuse is detected
  */
-async function rotateRefreshToken(rawRefreshToken) {
+async function rotateRefreshToken(rawRefreshToken, options = {}) {
   await initializeRefreshTokensTable();
   const hash = crypto.createHash('sha256').update(rawRefreshToken).digest('hex');
   const row = await db.get(
@@ -212,6 +274,20 @@ async function rotateRefreshToken(rawRefreshToken) {
     }
   }
 
+  // Absolute deadline: a family may not be rotated past it, however recently
+  // its newest token was issued. Revoke the family so the stale credential
+  // cannot be presented again.
+  if (isAbsolutelyExpired(row, Date.now())) {
+    log.warn('JWT_SERVICE', 'Refresh token family passed its absolute expiry', {
+      familyId: row.family_id,
+      apiKeyId: row.api_key_id,
+    });
+    await revokeTokenFamily(row.family_id, 'ABSOLUTE_EXPIRY_REACHED');
+    const err = new Error('Refresh token family has reached its absolute expiry');
+    err.code = 'TOKEN_ABSOLUTE_EXPIRY';
+    throw err;
+  }
+
   if (row.expires_at < Date.now()) return null;
 
   // Insert consumed token's jti into revocations table
@@ -232,9 +308,21 @@ async function rotateRefreshToken(rawRefreshToken) {
 
   // Issue new token pair in the same family
   const accessToken = issueAccessToken({ sub: row.api_key_id, role: 'user' });
-  const newRefreshToken = await issueRefreshToken(row.api_key_id, row.family_id);
+  // The device stays bound to the family. A caller may supply one only to label
+  // a family that has none yet; it can never re-point an already-labelled family.
+  const deviceId = row.device_id || normalizeDeviceId(options.deviceId);
+  const newRefreshToken = await issueRefreshToken(row.api_key_id, row.family_id, {
+    deviceId,
+    familyStartedAt: familyStartOf(row),
+  });
 
-  return { accessToken, refreshToken: newRefreshToken, apiKeyId: row.api_key_id };
+  return {
+    accessToken,
+    refreshToken: newRefreshToken,
+    apiKeyId: row.api_key_id,
+    deviceId,
+    familyId: row.family_id,
+  };
 }
 
 /**
@@ -327,15 +415,74 @@ async function revokeAllForApiKey(apiKeyId) {
  * @param {object} [claims={}] - Extra claims for the access token
  * @returns {Promise<{ accessToken: string, refreshToken: string, familyId: string }>}
  */
-async function issueTokenPair(apiKeyId, claims = {}) {
+async function issueTokenPair(apiKeyId, claims = {}, options = {}) {
   const familyId = crypto.randomUUID();
+  const deviceId = normalizeDeviceId(options.deviceId);
   const accessToken = issueAccessToken({ sub: apiKeyId, ...claims });
-  const refreshToken = await issueRefreshToken(apiKeyId, familyId);
-  return { accessToken, refreshToken, familyId };
+  const refreshToken = await issueRefreshToken(apiKeyId, familyId, { deviceId });
+  return { accessToken, refreshToken, familyId, deviceId };
+}
+
+/**
+ * Lists the active token families for an API key, one row per session, so a
+ * user can recognise their devices and revoke a specific one.
+ * @param {number} apiKeyId
+ * @returns {Promise<Array<{familyId: string, deviceId: string|null, startedAt: number, absoluteExpiresAt: number, lastIssuedAt: number}>>}
+ */
+async function listSessionsForApiKey(apiKeyId) {
+  await initializeRefreshTokensTable();
+  const rows = await db.query(
+    `SELECT family_id,
+            MAX(device_id)         AS device_id,
+            MIN(created_at)        AS started_at,
+            MAX(created_at)        AS last_issued_at,
+            MIN(family_started_at) AS family_started_at
+       FROM refresh_tokens
+      WHERE api_key_id = ? AND revoked = 0
+      GROUP BY family_id`,
+    [apiKeyId]
+  );
+  const now = Date.now();
+  return rows
+    .map((r) => {
+      const startedAt = r.family_started_at || r.started_at;
+      return {
+        familyId: r.family_id,
+        deviceId: r.device_id || null,
+        startedAt,
+        lastIssuedAt: r.last_issued_at,
+        absoluteExpiresAt: startedAt + REFRESH_TOKEN_ABSOLUTE_TTL_MS,
+      };
+    })
+    .filter((session) => session.absoluteExpiresAt > now);
+}
+
+/**
+ * Revokes every token family an API key holds on one device.
+ * @param {number} apiKeyId
+ * @param {string} deviceId
+ * @returns {Promise<number>} Number of families revoked
+ */
+async function revokeDeviceSessions(apiKeyId, deviceId) {
+  await initializeRefreshTokensTable();
+  const normalized = normalizeDeviceId(deviceId);
+  if (!normalized) return 0;
+  const rows = await db.query(
+    `SELECT DISTINCT family_id FROM refresh_tokens
+      WHERE api_key_id = ? AND device_id = ? AND revoked = 0`,
+    [apiKeyId, normalized]
+  );
+  for (const row of rows) {
+    await revokeTokenFamily(row.family_id, 'DEVICE_SESSION_REVOKED');
+  }
+  return rows.length;
 }
 
 module.exports = {
   initializeRefreshTokensTable,
+  listSessionsForApiKey,
+  revokeDeviceSessions,
+  normalizeDeviceId,
   issueAccessToken,
   verifyAccessToken,
   verifyRefreshToken,
@@ -347,4 +494,5 @@ module.exports = {
   cleanupExpiredRevocations,
   ACCESS_TOKEN_TTL_MS,
   REFRESH_TOKEN_TTL_MS,
+  REFRESH_TOKEN_ABSOLUTE_TTL_MS,
 };
