@@ -251,9 +251,29 @@ function validateSegment(data, segmentSchema, segmentName) {
       continue;
     }
 
-    const fieldError = validateField(value, rules, `${segmentName}.${fieldName}`);
-    if (fieldError) {
-      errors.push(fieldError);
+    // Handle array validation with index tracking
+    if (Array.isArray(value) && rules.items) {
+      for (let i = 0; i < value.length; i++) {
+        const item = value[i];
+        const itemPath = `${segmentName}.${fieldName}[${i}]`;
+        
+        if (isPlainObject(item) && rules.items.fields) {
+          // Validate nested object within array
+          const nestedErrors = validateNestedObject(item, rules.items, itemPath);
+          errors.push(...nestedErrors);
+        } else {
+          // Validate scalar array item
+          const itemError = validateField(item, rules.items, itemPath);
+          if (itemError) {
+            errors.push(itemError);
+          }
+        }
+      }
+    } else {
+      const fieldError = validateField(value, rules, `${segmentName}.${fieldName}`);
+      if (fieldError) {
+        errors.push(fieldError);
+      }
     }
   }
 
@@ -266,6 +286,48 @@ function validateSegment(data, segmentSchema, segmentName) {
           typeof segmentError === 'string' ? segmentError : 'Invalid input'
         )
       );
+    }
+  }
+
+  return errors;
+}
+
+/**
+ * Validate a nested object (e.g., within an array).
+ * @param {Object} data - Object to validate
+ * @param {Object} schema - Schema with fields definition
+ * @param {string} path - Dot-notation path prefix
+ * @returns {Array} Array of validation errors
+ */
+function validateNestedObject(data, schema, path) {
+  const errors = [];
+  const fields = schema.fields || {};
+
+  if (!isPlainObject(data)) {
+    errors.push(formatSegmentError(path, `Expected an object, received ${getValueType(data)}.`));
+    return errors;
+  }
+
+  for (const [fieldName, rules] of Object.entries(fields)) {
+    const value = data[fieldName];
+    const isMissing = value === undefined;
+    const fieldPath = `${path}.${fieldName}`;
+
+    if (isMissing) {
+      if (rules.required) {
+        errors.push(formatRequiredError(fieldPath, rules));
+      }
+      continue;
+    }
+
+    if (value === null && rules.nullable !== true) {
+      errors.push(formatNullError(fieldPath, rules));
+      continue;
+    }
+
+    const fieldError = validateField(value, rules, fieldPath);
+    if (fieldError) {
+      errors.push(fieldError);
     }
   }
 
