@@ -58,6 +58,9 @@ class StellarService extends StellarServiceInterface {
       size: poolSize,
       cooldownMs: poolCooldownMs,
       createHttpClient: () => this._createHttpClient(),
+      fallbackUrls: config.horizonFallbackUrls || [],
+      failoverThreshold: config.failoverThreshold || 3,
+      recoveryCooldownMs: config.recoveryCooldownMs || 60000,
     });
 
     // Timeout configuration (overridable via env vars or constructor config)

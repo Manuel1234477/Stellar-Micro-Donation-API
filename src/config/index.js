@@ -284,10 +284,18 @@ const buildConfig = (env, isProduction, isTest) => {
   
   const environmentConfig = getActiveEnvironment();
   
+  // Parse fallback Horizon URLs from comma-separated list
+  const fallbackUrls = process.env.HORIZON_FALLBACK_URLS
+    ? process.env.HORIZON_FALLBACK_URLS.split(',').map(url => url.trim()).filter(Boolean)
+    : [];
+  
   const stellar = {
     network: environmentConfig.environment,
     environment: environmentConfig,
     horizonUrl: environmentConfig.horizonUrl,
+    horizonFallbackUrls: fallbackUrls,
+    failoverThreshold: parseInteger(process.env.HORIZON_FAILOVER_THRESHOLD, 3, 1, 10, 'HORIZON_FAILOVER_THRESHOLD'),
+    recoveryCooldownMs: parseInteger(process.env.HORIZON_RECOVERY_COOLDOWN_MS, 60000, 10000, 600000, 'HORIZON_RECOVERY_COOLDOWN_MS'),
     mockEnabled: parseBoolean(process.env.MOCK_STELLAR, false),
     serviceSecretKey: process.env.STELLAR_SECRET || process.env.SERVICE_SECRET_KEY || null,
   };
