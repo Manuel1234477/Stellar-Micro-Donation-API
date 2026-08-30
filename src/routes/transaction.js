@@ -148,6 +148,26 @@ const { validateDateRange } = require('../middleware/validation');
 
 const multiSigService = new MultiSigService(serviceContainer.getStellarService());
 
+/**
+ * Build a compact object of only the active (non-empty) filter values.
+ * Included in the pagination response so clients know what was applied.
+ */
+function buildActiveFilters(params) {
+  const active = {};
+  const keys = [
+    'fromAddress', 'toAddress', 'amountMin', 'amountMax',
+    'dateFrom', 'dateTo', 'startDate', 'endDate',
+    'status', 'memoContains', 'sort', 'filterMode',
+    'senderPublicKey', 'recipientPublicKey',
+  ];
+  for (const key of keys) {
+    if (params[key] != null && params[key] !== '' && params[key] !== 'all') {
+      active[key] = params[key];
+    }
+  }
+  return Object.keys(active).length ? active : undefined;
+}
+
 const transactionListQuerySchema = validateSchema({
   query: {
     fields: {
@@ -172,12 +192,9 @@ const transactionListQuerySchema = validateSchema({
       cursor: {
         type: 'string',
         required: false,
-        // Accept both legacy "timestamp_id" and new base64-JSON cursors (contain "=", "+", "/")
         validate: (value) => {
-          // Base64-JSON cursors are produced when date filters are active
           const isBase64 = /^[A-Za-z0-9+/]+=*$/.test(value);
           if (isBase64) return true;
-          // Legacy format: timestamp_id
           if (!value.includes('_')) {
             return 'cursor must be in format: timestamp_id';
           }
@@ -186,28 +203,65 @@ const transactionListQuerySchema = validateSchema({
           return !isNaN(parsed) ? true : 'cursor timestamp must be a valid integer';
         },
       },
-      startDate: {
+      // Legacy aliases (kept for backward compat)
+      startDate: { type: 'string', required: false },
+      endDate:   { type: 'string', required: false },
+      senderPublicKey:    { type: 'string', required: false, trim: true, maxLength: 56 },
+      recipientPublicKey: { type: 'string', required: false, trim: true, maxLength: 56 },
+      // New compound-filter params (#1578)
+      fromAddress:   { type: 'string', required: false, trim: true, maxLength: 56 },
+      toAddress:     { type: 'string', required: false, trim: true, maxLength: 56 },
+      dateFrom:      { type: 'string', required: false },
+      dateTo:        { type: 'string', required: false },
+      amountMin: {
         type: 'string',
         required: false,
-        // Date format/range validation is handled by validateDateRange middleware
-        // which returns INVALID_DATE_FORMAT (1004) and INVALID_DATE_RANGE codes
+        validate: (value) => {
+          const n = parseFloat(value);
+          return !isNaN(n) && n >= 0 ? true : 'amountMin must be a non-negative number';
+        },
       },
-      endDate: {
+      amountMax: {
         type: 'string',
         required: false,
-        // Date format/range validation is handled by validateDateRange middleware
+        validate: (value) => {
+          const n = parseFloat(value);
+          return !isNaN(n) && n >= 0 ? true : 'amountMax must be a non-negative number';
+        },
       },
-      senderPublicKey: {
+      status: {
         type: 'string',
         required: false,
-        trim: true,
-        maxLength: 56,
+        validate: (value) => {
+          const allowed = ['pending', 'submitted', 'confirmed', 'failed', 'cancelled', 'refunded'];
+          return allowed.includes(value.toLowerCase()) ? true :
+            `status must be one of: ${allowed.join(', ')}`;
+        },
       },
-      recipientPublicKey: {
+      memoContains: { type: 'string', required: false, trim: true, maxLength: 128 },
+      sort: {
         type: 'string',
         required: false,
-        trim: true,
-        maxLength: 56,
+        validate: (value) => {
+          const [field, dir] = value.split(':');
+          const allowedFields = ['amount', 'timestamp', 'status'];
+          const allowedDirs = ['asc', 'desc'];
+          if (!allowedFields.includes((field || '').toLowerCase())) {
+            return `sort field must be one of: ${allowedFields.join(', ')}`;
+          }
+          if (dir && !allowedDirs.includes(dir.toLowerCase())) {
+            return 'sort direction must be "asc" or "desc"';
+          }
+          return true;
+        },
+      },
+      filterMode: {
+        type: 'string',
+        required: false,
+        validate: (value) => {
+          return ['all', 'any'].includes(value.toLowerCase()) ? true :
+            'filterMode must be "all" or "any"';
+        },
       },
     },
   },
@@ -253,17 +307,45 @@ function withStellarTxHash(tx) {
 
 router.get('/', checkPermission(PERMISSIONS.TRANSACTIONS_READ), transactionListQuerySchema, validateDateRange, asyncHandler(async (req, res, next) => {
   try {
-    const { limit = 20, offset, cursor, startDate, endDate, senderPublicKey, recipientPublicKey } = req.query;
+    const {
+      limit = 20, offset, cursor,
+      // legacy
+      startDate, endDate, senderPublicKey, recipientPublicKey,
+      // new compound filters
+      fromAddress, toAddress, amountMin, amountMax,
+      dateFrom, dateTo, status, memoContains, sort, filterMode,
+    } = req.query;
+
+    // Validate amountMin <= amountMax when both provided
+    if (amountMin != null && amountMax != null && parseFloat(amountMin) > parseFloat(amountMax)) {
+      return res.status(400).json(
+        buildErrorResponse([{ code: 'INVALID_AMOUNT_RANGE', message: 'amountMin must not exceed amountMax' }])
+      );
+    }
+
+    const filterParams = {
+      fromAddress: fromAddress || undefined,
+      toAddress: toAddress || undefined,
+      senderPublicKey: senderPublicKey || undefined,
+      recipientPublicKey: recipientPublicKey || undefined,
+      amountMin: amountMin != null ? amountMin : undefined,
+      amountMax: amountMax != null ? amountMax : undefined,
+      startDate: startDate || undefined,
+      endDate: endDate || undefined,
+      dateFrom: dateFrom || undefined,
+      dateTo: dateTo || undefined,
+      status: status || undefined,
+      memoContains: memoContains || undefined,
+      sort: sort || undefined,
+      filterMode: filterMode || 'all',
+    };
 
     // Cursor-based pagination (preferred)
     if (cursor !== undefined) {
       const result = Transaction.getCursorPaginated({
         limit: parseInt(limit),
         cursor: cursor || null,
-        startDate: startDate || undefined,
-        endDate: endDate || undefined,
-        senderPublicKey: senderPublicKey || undefined,
-        recipientPublicKey: recipientPublicKey || undefined,
+        ...filterParams,
       });
 
       return res.status(200).json({
@@ -273,10 +355,7 @@ router.get('/', checkPermission(PERMISSIONS.TRANSACTIONS_READ), transactionListQ
           limit: parseInt(limit),
           nextCursor: result.nextCursor,
           hasMore: result.hasMore,
-          ...(startDate && { startDate }),
-          ...(endDate && { endDate }),
-          ...(senderPublicKey && { senderPublicKey }),
-          ...(recipientPublicKey && { recipientPublicKey }),
+          filters: buildActiveFilters(filterParams),
         },
       });
     }
@@ -303,7 +382,6 @@ router.get('/', checkPermission(PERMISSIONS.TRANSACTIONS_READ), transactionListQ
         offset: offsetNum,
       });
 
-      // Add deprecation warning header
       res.setHeader('X-Pagination-Deprecated', 'Offset-based pagination is deprecated. Use cursor-based pagination with ?cursor= parameter.');
 
       return res.status(200).json({
@@ -313,13 +391,10 @@ router.get('/', checkPermission(PERMISSIONS.TRANSACTIONS_READ), transactionListQ
       });
     }
 
-    // Default: cursor-based pagination (no cursor supplied, optional date filters)
+    // Default: cursor-based pagination with compound filters
     const result = Transaction.getCursorPaginated({
       limit: parseInt(limit),
-      startDate: startDate || undefined,
-      endDate: endDate || undefined,
-      senderPublicKey: senderPublicKey || undefined,
-      recipientPublicKey: recipientPublicKey || undefined,
+      ...filterParams,
     });
 
     return res.status(200).json({
@@ -329,10 +404,7 @@ router.get('/', checkPermission(PERMISSIONS.TRANSACTIONS_READ), transactionListQ
         limit: parseInt(limit),
         nextCursor: result.nextCursor,
         hasMore: result.hasMore,
-        ...(startDate && { startDate }),
-        ...(endDate && { endDate }),
-        ...(senderPublicKey && { senderPublicKey }),
-        ...(recipientPublicKey && { recipientPublicKey }),
+        filters: buildActiveFilters(filterParams),
       },
     });
 
