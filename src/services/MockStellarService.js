@@ -40,6 +40,9 @@ class MockStellarService extends StellarServiceInterface {
     // Mock system time for testing time-bound transactions
     // Can be overridden via setMockSystemTime() for testing clock-based failures
     this.mockSystemTime = null;
+
+    // Controls the outcome of simulateTransaction() — see setSimulationOutcome()
+    this.simulationOutcome = 'success';
     
     this.failureSimulation = {
       enabled: false,
@@ -77,6 +80,15 @@ class MockStellarService extends StellarServiceInterface {
 
   setMaxConsecutiveFailures(max) {
     this.failureSimulation.maxConsecutiveFailures = max;
+  }
+
+  /**
+   * Controls the outcome returned by simulateTransaction() for test/demo purposes.
+   * One of: 'success' (default), 'insufficient_balance', 'bad_sequence', 'error'.
+   */
+  setSimulationOutcome(outcome) {
+    this.simulationOutcome = outcome;
+    log.info('MOCK_STELLAR_SERVICE', 'Simulation outcome set', { outcome });
   }
 
   setMockSystemTime(unixTimestamp) {

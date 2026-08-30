@@ -238,22 +238,17 @@ class AnomalyDetectionService {
   // ─── Query ─────────────────────────────────────────────────────────────────
 
   /**
-   * Get anomaly history for a key from durable storage.
+   * Get anomaly history for a key from the in-memory store (rehydrated from
+   * anomaly_records on startup — see _loadPersistedState — and kept current
+   * by record()). Synchronous so callers get an immediate, consistent read
+   * right after record() flags something, without waiting on a DB round trip.
    *
    * @param {string} keyId
-   * @returns {Promise<Array<{type: string, detail: string, timestamp: number}>>}
+   * @returns {Array<{type: string, detail: string, timestamp: number}>}
    */
-  async getAnomalies(keyId) {
-    try {
-      const rows = await Database.query(
-        'SELECT type, detail, timestamp FROM anomaly_records WHERE key_id = ? ORDER BY timestamp DESC',
-        [keyId]
-      );
-      return rows;
-    } catch (err) {
-      log.warn('ANOMALY_DETECTION', 'DB query failed, falling back to memory', { keyId, error: err.message });
-      return this._anomalies.get(keyId) || [];
-    }
+  getAnomalies(keyId) {
+    const anomalies = this._anomalies.get(keyId) || [];
+    return [...anomalies].sort((a, b) => b.timestamp - a.timestamp);
   }
 
   /**

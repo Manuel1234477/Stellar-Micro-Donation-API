@@ -638,43 +638,45 @@ class MockPayments {
     return Math.round(numberValue * 1e7);
   }
 
+  /**
+   * Dry-run simulate a transaction envelope: never touches submitTransaction,
+   * never mutates ledger state. Outcome is controlled via
+   * MockStellarService#setSimulationOutcome() for deterministic testing.
+   */
   async simulateTransaction(xdr) {
-    const simulatedAt = new Date().toISOString();
-
     if (!xdr || typeof xdr !== 'string' || xdr.trim() === '') {
-      return {
-        success: false,
-        errors: ['xdr is required and must be a non-empty string'],
-        simulatedAt,
-      };
+      throw Object.assign(
+        new Error('tx_envelope (Base64 XDR) is required and must be a non-empty string'),
+        { code: 'INVALID_XDR' }
+      );
     }
 
-    if (this.service.failureSimulation.enabled) {
-      const failureType = this.service.failureSimulation.type || 'unknown';
-      return {
-        success: false,
-        errors: [`Simulation failed: ${failureType}`],
-        simulatedAt,
-      };
+    if (process.env.SIMULATION_ENABLED === 'false') {
+      throw Object.assign(
+        new Error('Transaction simulation is currently disabled'),
+        { code: 'SIMULATION_DISABLED' }
+      );
+    }
+
+    const outcome = this.service.simulationOutcome || 'success';
+
+    if (outcome === 'error') {
+      throw Object.assign(
+        new Error('Simulation failed due to an unexpected error'),
+        { code: 'SIMULATION_ERROR' }
+      );
     }
 
     const BASE_FEE_STROOPS = 100;
     const multiplier = this.service.config.feeMultiplier !== undefined ? this.service.config.feeMultiplier : 1;
-    const feePerOp = Math.round(BASE_FEE_STROOPS * multiplier);
-    const estimatedFeeStroops = feePerOp;
+    const estimatedFeeStroops = Math.round(BASE_FEE_STROOPS * multiplier);
 
     return {
-      success: true,
-      estimatedFee: {
-        stroops: estimatedFeeStroops,
-        xlm: (estimatedFeeStroops / 1e7).toFixed(7),
-      },
-      estimatedResult: {
-        operationType: 'payment',
-        sourceAccount: null,
-        destinationAccount: null,
-      },
-      simulatedAt,
+      estimated_fee: this.stroopsToXlm(estimatedFeeStroops),
+      sequence_validity: outcome !== 'bad_sequence',
+      source_account_balance_status: outcome === 'insufficient_balance' ? 'insufficient' : 'sufficient',
+      operation_validity: true,
+      simulation_note: 'Dry-run simulation only — no transaction was submitted to the network.',
     };
   }
 }

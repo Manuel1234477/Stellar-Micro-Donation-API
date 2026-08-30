@@ -102,6 +102,13 @@ function globalStatsCache(req, res, next) {
     return next();
   }
 
+  // /dashboard manages its own caching (StatsService.getDashboardData) with a
+  // `cached` flag callers rely on and event-driven invalidation. Wrapping it
+  // in this generic response cache would mask that flag behind a stale body.
+  if (req.path === '/dashboard') {
+    return next();
+  }
+
   try {
     const apiKeyId = (req.apiKey && req.apiKey.id) ? req.apiKey.id : req.ip;
     const endpoint = req.path;
