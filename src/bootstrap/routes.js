@@ -40,6 +40,7 @@ const V1_ROUTES = [
   ['/stats',                          require('../routes/stats')],
   ['/stream',                         require('../routes/stream')],
   ['/webhooks',                       require('../routes/webhooks')],
+  ['/pledges',                        require('../routes/pledges')],
   ['/campaigns',                      require('../routes/campaigns')],
   ['/encryption',                     require('../routes/encryption')],
   ['/tiers',                          require('../routes/tiers')],
@@ -98,7 +99,7 @@ const ADMIN_ROUTES = [
 // Unversioned paths that redirect to /api/v1 (Issue #738)
 const UNVERSIONED_PATHS = [
   '/wallets', '/donations', '/assets', '/stats', '/stream', '/network',
-  '/webhooks', '/campaigns', '/encryption', '/tiers', '/offers', '/orderbook',
+  '/webhooks', '/campaigns', '/pledges', '/encryption', '/tiers', '/offers', '/orderbook',
   '/tags', '/leaderboard', '/federation', '/tools', '/auth', '/docs',
   '/transactions', '/claimable-balances', '/liquidity-pools', '/exchange-rates',
   '/impact',
