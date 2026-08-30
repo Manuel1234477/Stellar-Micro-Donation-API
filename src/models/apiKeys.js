@@ -325,6 +325,7 @@ async function getApiKeyById(id) {
     deprecated_at: row.deprecated_at,
     revoked_at: row.revoked_at,
     notification_email: row.notification_email || null,
+    rateLimitPerMinute: row.rate_limit_per_minute ?? null,
   };
 }
 

@@ -1,99 +1,78 @@
 /**
- * Corporate Matching Routes
- * Endpoints for employer allowlist management and the match claim workflow.
+ * Corporate Matching Routes - Donor/Employee-Facing Endpoints (#1550)
+ *
+ * RESPONSIBILITY: Discovery of active corporate matching programs, employee
+ *   self-enrollment, and lookup of an employee's own matched donations.
+ *   Admin CRUD for programs (create/list/update-status/enrolled-employees)
+ *   and the admin activity/export endpoints live in routes/admin/corporateMatching.js,
+ *   which is auto-guarded by requireApiKey + requireAdmin() at the /admin mount point.
  */
 
 const express = require('express');
 const router = express.Router();
 const CorporateMatchingService = require('../services/CorporateMatchingService');
-const MockStellarService = require('../services/MockStellarService');
+const requireApiKey = require('../middleware/apiKey');
 const asyncHandler = require('../utils/asyncHandler');
 const { payloadSizeLimiter, ENDPOINT_LIMITS } = require('../middleware/payloadSizeLimiter');
 
-// Shared service instance (can be replaced in tests)
-const stellarService = new MockStellarService();
-const matchingService = new CorporateMatchingService(stellarService);
-
-// ─── Admin: Employer Allowlist ────────────────────────────────────────────────
-
 /**
- * POST /admin/corporate-matching/employers
- * Add an employer to the allowlist with match ratio and annual cap.
+ * GET /corporate-matching/programs
+ * List active corporate matching programs available for enrollment.
  */
-router.post('/admin/corporate-matching/employers', (req, res) => {
-  try {
-    const { employerId, name, matchRatio, annualCap } = req.body;
-    const employer = matchingService.addEmployer(employerId, name, Number(matchRatio), Number(annualCap));
-    res.status(201).json({ success: true, data: employer });
-  } catch (err) {
-    res.status(400).json({ success: false, error: err.message });
-  }
-});
-
-/**
- * GET /admin/corporate-matching/employers
- * List all employers in the allowlist.
- */
-router.get('/admin/corporate-matching/employers', (req, res) => {
-  res.json({ success: true, data: matchingService.listEmployers() });
-});
-
-// ─── Donor: Submit Claim ──────────────────────────────────────────────────────
-
-/**
- * POST /corporate-matching/claim
- * Donor submits a match request referencing their employer.
- */
-router.post('/corporate-matching/claim', (req, res) => {
-  try {
-    const { donorId, employerId, donationAmount } = req.body;
-    const claim = matchingService.submitClaim(donorId, employerId, Number(donationAmount));
-    res.status(201).json({ success: true, data: claim });
-  } catch (err) {
-    res.status(400).json({ success: false, error: err.message });
-  }
-});
-
-// ─── Admin: Claims Management ─────────────────────────────────────────────────
-
-/**
- * GET /admin/corporate-matching/claims
- * List pending (or all) claims.
- */
-router.get('/admin/corporate-matching/claims', (req, res) => {
-  const { status } = req.query;
-  res.json({ success: true, data: matchingService.listClaims(status) });
-});
-
-/**
- * POST /admin/corporate-matching/claims/:id/approve
- * Approve a claim and trigger the on-chain matching donation.
- * Body: { sourcePublicKey, donorPublicKey }
- */
-router.post('/admin/corporate-matching/claims/:id/approve', payloadSizeLimiter(ENDPOINT_LIMITS.admin), asyncHandler(async (req, res) => {
-  try {
-    const { sourcePublicKey, donorPublicKey } = req.body;
-    const claim = await matchingService.approveClaim(req.params.id, sourcePublicKey, donorPublicKey);
-    res.json({ success: true, data: claim });
-  } catch (err) {
-    const status = err.message.includes('not found') ? 404 : 400;
-    res.status(status).json({ success: false, error: err.message });
-  }
+router.get('/corporate-matching/programs', requireApiKey, asyncHandler(async (req, res) => {
+  const programs = await CorporateMatchingService.getAll({ status: 'active' });
+  res.json({ success: true, data: programs });
 }));
 
 /**
- * POST /admin/corporate-matching/claims/:id/reject
- * Reject a claim.
- * Body: { reason? }
+ * POST /corporate-matching/:id/enroll
+ * Enroll an employee in a corporate matching program.
+ * Body: { employeeWalletId }
  */
-router.post('/admin/corporate-matching/claims/:id/reject', (req, res) => {
-  try {
-    const claim = matchingService.rejectClaim(req.params.id, req.body.reason);
-    res.json({ success: true, data: claim });
-  } catch (err) {
-    const status = err.message.includes('not found') ? 404 : 400;
-    res.status(status).json({ success: false, error: err.message });
-  }
-});
+router.post('/corporate-matching/:id/enroll', requireApiKey, payloadSizeLimiter(ENDPOINT_LIMITS.default), asyncHandler(async (req, res) => {
+  const programId = parseInt(req.params.id, 10);
+  const employeeWalletId = parseInt(req.body.employeeWalletId, 10);
 
-module.exports = { router, matchingService };
+  if (isNaN(programId) || isNaN(employeeWalletId)) {
+    return res.status(400).json({ success: false, error: 'programId and employeeWalletId must be integers' });
+  }
+
+  const enrollment = await CorporateMatchingService.enrollEmployee(programId, employeeWalletId);
+  res.status(201).json({ success: true, data: enrollment });
+}));
+
+/**
+ * DELETE /corporate-matching/:id/enroll/:employeeWalletId
+ * Remove an employee's enrollment from a program.
+ */
+router.delete('/corporate-matching/:id/enroll/:employeeWalletId', requireApiKey, asyncHandler(async (req, res) => {
+  const programId = parseInt(req.params.id, 10);
+  const employeeWalletId = parseInt(req.params.employeeWalletId, 10);
+
+  if (isNaN(programId) || isNaN(employeeWalletId)) {
+    return res.status(400).json({ success: false, error: 'programId and employeeWalletId must be integers' });
+  }
+
+  await CorporateMatchingService.unenrollEmployee(programId, employeeWalletId);
+  res.json({ success: true, data: { programId, employeeWalletId, unenrolled: true } });
+}));
+
+/**
+ * GET /corporate-matching/:id/my-matches
+ * An employee's own matched donations for a given program.
+ * Query: employeeWalletId (required — the caller's users.id)
+ */
+router.get('/corporate-matching/:id/my-matches', requireApiKey, asyncHandler(async (req, res) => {
+  const programId = parseInt(req.params.id, 10);
+  const employeeWalletId = parseInt(req.query.employeeWalletId, 10);
+
+  if (isNaN(programId) || isNaN(employeeWalletId)) {
+    return res.status(400).json({ success: false, error: 'programId (param) and employeeWalletId (query) must be integers' });
+  }
+
+  const activity = await CorporateMatchingService.getMatchingActivity({ programId });
+  const mine = activity.filter((row) => row.employee_wallet_id === employeeWalletId);
+  res.json({ success: true, data: mine });
+}));
+
+module.exports = router;

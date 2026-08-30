@@ -142,4 +142,91 @@ router.get('/:id/employees', requireApiKey, requireAdmin(), asyncHandler(async (
   }
 }));
 
+const enrollEmployeeSchema = validateSchema({
+  body: {
+    fields: {
+      employeeWalletId: { type: 'integer', required: true, min: 1 }
+    }
+  }
+});
+
+/**
+ * POST /admin/corporate-matching/:id/employees
+ * Enroll an employee in a corporate matching program.
+ */
+router.post('/:id/employees', requireApiKey, requireAdmin(), enrollEmployeeSchema, payloadSizeLimiter(ENDPOINT_LIMITS.admin), asyncHandler(async (req, res, next) => {
+  try {
+    const { id } = req.params;
+    const { employeeWalletId } = req.body;
+
+    const enrollment = await CorporateMatchingService.enrollEmployee(parseInt(id), employeeWalletId);
+
+    res.status(201).json({
+      success: true,
+      data: enrollment
+    });
+  } catch (error) {
+    log.error('CORPORATE_MATCHING_ADMIN', 'Failed to enroll employee', { error: error.message });
+    next(error);
+  }
+}));
+
+/**
+ * GET /admin/corporate-matching/:id/activity
+ * View matching activity (created matches) for a program, for program administrators.
+ * Query params: from, to (ISO date strings)
+ */
+router.get('/:id/activity', requireApiKey, requireAdmin(), asyncHandler(async (req, res, next) => {
+  try {
+    const { id } = req.params;
+    const { from, to } = req.query;
+
+    await CorporateMatchingService.getById(parseInt(id)); // 404 if program doesn't exist
+    const activity = await CorporateMatchingService.getMatchingActivity({ programId: parseInt(id), from, to });
+    const utilization = await CorporateMatchingService.getUtilization(parseInt(id));
+
+    res.json({
+      success: true,
+      data: { program: utilization, activity }
+    });
+  } catch (error) {
+    log.error('CORPORATE_MATCHING_ADMIN', 'Failed to get matching activity', { error: error.message });
+    next(error);
+  }
+}));
+
+/**
+ * GET /admin/corporate-matching/:id/activity/export
+ * Export matching activity for a program as CSV.
+ * Query params: from, to (ISO date strings)
+ */
+router.get('/:id/activity/export', requireApiKey, requireAdmin(), asyncHandler(async (req, res, next) => {
+  try {
+    const { id } = req.params;
+    const { from, to } = req.query;
+
+    await CorporateMatchingService.getById(parseInt(id)); // 404 if program doesn't exist
+    const activity = await CorporateMatchingService.getMatchingActivity({ programId: parseInt(id), from, to });
+
+    const header = 'id,corporate_matching_id,original_donation_id,matched_donation_id,employee_wallet_id,matched_amount,year,status,stellar_tx_hash,created_at';
+    const escape = (v) => {
+      if (v === null || v === undefined) return '';
+      const s = String(v);
+      return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
+    };
+    const rows = activity.map((row) => [
+      row.id, row.corporate_matching_id, row.original_donation_id, row.matched_donation_id,
+      row.employee_wallet_id, row.matched_amount, row.year, row.status, row.stellar_tx_hash, row.created_at
+    ].map(escape).join(','));
+    const csv = [header, ...rows].join('\n');
+
+    res.setHeader('Content-Type', 'text/csv');
+    res.setHeader('Content-Disposition', `attachment; filename="corporate-matching-${id}-activity.csv"`);
+    res.status(200).send(csv);
+  } catch (error) {
+    log.error('CORPORATE_MATCHING_ADMIN', 'Failed to export matching activity', { error: error.message });
+    next(error);
+  }
+}));
+
 module.exports = router;

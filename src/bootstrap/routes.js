@@ -78,6 +78,7 @@ const ADMIN_ROUTES = [
   ['/admin/security/scan',            require('../routes/admin/securityScan')],
   ['/admin/analytics',                require('../routes/admin/analytics')],
   ['/admin/api-keys/usage',           require('../routes/admin/apiKeyUsage')],
+  ['/admin/api-keys',                 require('../routes/admin/apiKeyAnalytics')],
   ['/admin/circuit-breaker',          require('../routes/admin/circuitBreaker')],
   ['/admin/corporate-matching',       require('../routes/admin/corporateMatching')],
   ['/admin/encryption',               require('../routes/admin/encryption')],
@@ -170,9 +171,8 @@ function mountRoutes(app, services = {}) {
   // Network routes require separate injection
   apiV1.use('/network', networkRoutes);
 
-  // Corporate matching router (has named export)
-  const { router: corporateMatchingRoutes } = require('../routes/corporateMatching');
-  apiV1.use('/', corporateMatchingRoutes);
+  // Corporate matching router
+  apiV1.use('/', require('../routes/corporateMatching'));
 
   // Federation lookup (has named export)
   const { router: federationLookupRoutes } = require('../routes/federationLookup');
@@ -215,6 +215,10 @@ function mountRoutes(app, services = {}) {
   }));
 
   app.use('/api/v1', apiV1);
+
+  // ── /api/v2 standardized response envelope (Issue #1553) ─────────────────
+  // Additive: /api/v1 above is untouched for backward compatibility.
+  app.use('/api/v2', require('../routes/v2'));
 
   // Payment channels were introduced as an unversioned API; keep that path
   // available for existing clients while also exposing the versioned route.
