@@ -147,6 +147,23 @@ async function pledge(campaignId, donorId, amount, options = {}) {
     [amount, campaignId]
   );
 
+  // Check for milestone achievements
+  try {
+    const CampaignMilestoneService = require('./CampaignMilestoneService');
+    const milestones = await CampaignMilestoneService.checkMilestones(campaignId);
+    
+    // Send email notifications for reached milestones
+    for (const milestone of milestones) {
+      await CampaignMilestoneService.sendMilestoneEmail(milestone);
+    }
+  } catch (error) {
+    log.error('CrowdfundingService', 'Failed to check campaign milestones', {
+      campaignId,
+      error: error.message,
+    });
+    // Don't fail the donation if milestone checking fails
+  }
+
   log.info('CrowdfundingService', 'Escrow pledge created', {
     pledgeId: result.id,
     campaignId,
