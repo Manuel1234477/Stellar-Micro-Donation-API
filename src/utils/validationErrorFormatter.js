@@ -105,20 +105,32 @@ function buildErrorResponse(errors, langOrReq = 'en') {
 }
 
 function formatRequiredError(fieldPath, rules) {
-  return { field: fieldPath, message: `${fieldPath} is required`, code: 'REQUIRED' };
+  return { field: fieldPath, message: `${fieldPath} is required`, code: 'REQUIRED', constraint: 'required', value: null };
 }
 
 function formatNullError(fieldPath, rules) {
-  return { field: fieldPath, message: `${fieldPath} cannot be null`, code: 'NULL_NOT_ALLOWED' };
+  return { field: fieldPath, message: `${fieldPath} cannot be null`, code: 'NULL_NOT_ALLOWED', constraint: 'notNull', value: null };
 }
 
 function formatTypeError(fieldPath, value, expectedTypes, rules) {
   const types = Array.isArray(expectedTypes) ? expectedTypes.join(', ') : expectedTypes;
-  return { field: fieldPath, message: `${fieldPath} must be of type ${types}`, code: 'INVALID_TYPE', receivedValue: isSensitive(fieldPath) ? maskValue(value) : value };
+  return { 
+    field: fieldPath, 
+    message: `${fieldPath} must be of type ${types}`, 
+    code: 'INVALID_TYPE', 
+    constraint: 'type',
+    value: isSensitive(fieldPath) ? maskValue(value) : value 
+  };
 }
 
 function formatEnumError(fieldPath, value, enumValues) {
-  return { field: fieldPath, message: `${fieldPath} must be one of: ${enumValues.join(', ')}`, code: 'INVALID_ENUM', receivedValue: isSensitive(fieldPath) ? maskValue(value) : value };
+  return { 
+    field: fieldPath, 
+    message: `${fieldPath} must be one of: ${enumValues.join(', ')}`, 
+    code: 'INVALID_ENUM', 
+    constraint: 'enum',
+    value: isSensitive(fieldPath) ? maskValue(value) : value 
+  };
 }
 
 function formatLengthError(fieldPath, value, minLength, maxLength) {
@@ -126,7 +138,10 @@ function formatLengthError(fieldPath, value, minLength, maxLength) {
     ? `${fieldPath} length must be between ${minLength} and ${maxLength}`
     : minLength !== undefined ? `${fieldPath} must be at least ${minLength} characters`
     : `${fieldPath} must not exceed ${maxLength} characters`;
-  return { field: fieldPath, message: msg, code: 'INVALID_LENGTH' };
+  const constraint = minLength !== undefined && maxLength !== undefined
+    ? 'length'
+    : minLength !== undefined ? 'minLength' : 'maxLength';
+  return { field: fieldPath, message: msg, code: 'INVALID_LENGTH', constraint, value: isSensitive(fieldPath) ? maskValue(value) : value };
 }
 
 function formatRangeError(fieldPath, value, min, max) {
@@ -134,15 +149,18 @@ function formatRangeError(fieldPath, value, min, max) {
     ? `${fieldPath} must be between ${min} and ${max}`
     : min !== undefined ? `${fieldPath} must be at least ${min}`
     : `${fieldPath} must not exceed ${max}`;
-  return { field: fieldPath, message: msg, code: 'OUT_OF_RANGE' };
+  const constraint = min !== undefined && max !== undefined
+    ? 'range'
+    : min !== undefined ? 'minimum' : 'maximum';
+  return { field: fieldPath, message: msg, code: 'OUT_OF_RANGE', constraint, value };
 }
 
 function formatPatternError(fieldPath, value, pattern, rules) {
-  return { field: fieldPath, message: `${fieldPath} does not match required pattern`, code: 'INVALID_PATTERN' };
+  return { field: fieldPath, message: `${fieldPath} does not match required pattern`, code: 'INVALID_PATTERN', constraint: 'pattern', value: isSensitive(fieldPath) ? maskValue(value) : value };
 }
 
 function formatCustomError(fieldPath, value, message) {
-  return { field: fieldPath, message: typeof message === 'string' ? message : `${fieldPath} is invalid`, code: 'VALIDATION_FAILED' };
+  return { field: fieldPath, message: typeof message === 'string' ? message : `${fieldPath} is invalid`, code: 'VALIDATION_FAILED', constraint: 'custom', value: isSensitive(fieldPath) ? maskValue(value) : value };
 }
 
 function formatSegmentError(segmentName, message) {
