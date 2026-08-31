@@ -86,11 +86,12 @@ router.post('/', requireApiKey, checkPermission(PERMISSIONS.ADMIN), createCampai
 
 /**
  * GET /campaigns
- * Retrieves campaigns with optional ?status= filter.
+ * Retrieves campaigns with optional ?status= filter and FTS5 ?q= keyword search.
  *
  * ?status=active (default) — non-expired campaigns only
  * ?status=expired           — campaigns past their end_date
  * ?status=all               — all campaigns regardless of end_date
+ * ?q=keyword                — full-text search across name and description (FTS5, BM25 ranked)
  */
 router.get('/', cacheMiddleware('campaign', 'public'), asyncHandler(async (req, res, next) => {
   try {
@@ -100,6 +101,38 @@ router.get('/', cacheMiddleware('campaign', 'public'), asyncHandler(async (req, 
 
     const pagination = parseCursorPaginationQuery(req.query);
     const status = req.query.status || 'active';
+    const q = req.query.q;
+
+    // If FTS5 keyword search requested, use campaigns_fts virtual table
+    if (q) {
+      const ftsQuery = q.replace(/['"*()]/g, ' ').trim();
+      if (!ftsQuery) {
+        return res.status(400).json({ success: false, error: { code: 'INVALID_QUERY', message: 'q must contain searchable text' } });
+      }
+
+      let statusCondition = '';
+      const extraParams = [ftsQuery];
+      if (status === 'active') {
+        statusCondition = `AND c.status != 'expired' AND (c.end_date IS NULL OR c.end_date > datetime('now'))`;
+      } else if (status === 'expired') {
+        statusCondition = `AND (c.status = 'expired' OR (c.end_date IS NOT NULL AND c.end_date < datetime('now')))`;
+      }
+
+      const rows = await Database.query(
+        `SELECT c.*, bm25(campaigns_fts) AS relevance_score
+         FROM campaigns_fts
+         JOIN campaigns c ON c.id = campaigns_fts.campaign_id
+         WHERE campaigns_fts MATCH ? AND c.deleted_at IS NULL ${statusCondition}
+         ORDER BY bm25(campaigns_fts)
+         LIMIT ?`,
+        [...extraParams, pagination.limit + 1]
+      );
+
+      const hasMore = rows.length > pagination.limit;
+      const data = hasMore ? rows.slice(0, pagination.limit) : rows;
+
+      return res.status(200).json({ success: true, count: data.length, data, pagination: { hasMore, total: data.length } });
+    }
 
     let baseWhere = 'deleted_at IS NULL';
     if (status === 'active') {

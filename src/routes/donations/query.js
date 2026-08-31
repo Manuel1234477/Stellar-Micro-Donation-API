@@ -334,7 +334,23 @@ router.get('/by-campaign/:campaignId', checkPermission(PERMISSIONS.DONATIONS_REA
 
 /**
  * GET /donations/search
- * Full-text memo search + field filtering with cursor pagination.
+ * Full-text memo/notes/tags search (FTS5 with BM25 ranking) + field filtering.
+ *
+ * When ?q= is provided, uses the donations_fts virtual table for ranked
+ * full-text search across memo, notes, and tags fields.
+ * Without ?q= falls back to efficient field-only filtering on donations_store.
+ *
+ * Query params:
+ *   q              - full-text search query (FTS5 match expression)
+ *   minAmount      - minimum amount filter
+ *   maxAmount      - maximum amount filter
+ *   startDate      - ISO date lower bound on timestamp
+ *   endDate        - ISO date upper bound on timestamp
+ *   status         - exact status filter
+ *   senderPublicKey    - filter by donor address
+ *   recipientPublicKey - filter by recipient address
+ *   limit          - page size (default 50, max 100)
+ *   cursor         - opaque offset cursor for pagination
  */
 router.get('/search', checkPermission(PERMISSIONS.DONATIONS_READ), asyncHandler(async (req, res, next) => {
   try {
@@ -359,40 +375,124 @@ router.get('/search', checkPermission(PERMISSIONS.DONATIONS_READ), asyncHandler(
       return res.status(400).json({ success: false, error: { code: 'INVALID_MAX_AMOUNT', message: 'maxAmount must be a valid number' } });
     }
 
-    const conditions = [];
-    const params = [];
-
-    if (q) { conditions.push('memo LIKE ?'); params.push(`%${q}%`); }
-    if (parsedMinAmount !== undefined) { conditions.push('amount >= ?'); params.push(parsedMinAmount); }
-    if (parsedMaxAmount !== undefined) { conditions.push('amount <= ?'); params.push(parsedMaxAmount); }
-    if (startDate) { conditions.push('timestamp >= ?'); params.push(startDate); }
-    if (endDate) { conditions.push('timestamp <= ?'); params.push(endDate); }
-    if (status) { conditions.push('status = ?'); params.push(status); }
-    if (senderPublicKey) { conditions.push('sender_public_key = ?'); params.push(senderPublicKey); }
-    if (recipientPublicKey) { conditions.push('recipient_public_key = ?'); params.push(recipientPublicKey); }
-
-    const whereClause = conditions.length > 0 ? 'WHERE ' + conditions.join(' AND ') : '';
-
-    const countResult = await Database.get(
-      `SELECT COUNT(*) as total FROM transactions ${whereClause}`,
-      params
-    );
-    const totalCount = countResult?.total || 0;
-
     const offset = cursor ? parseInt(cursor, 10) : 0;
-    const rows = await Database.query(
-      `SELECT * FROM transactions ${whereClause} ORDER BY timestamp DESC LIMIT ? OFFSET ?`,
-      [...params, parsedLimit + 1, offset]
-    );
 
-    const hasMore = rows.length > parsedLimit;
-    const data = rows.slice(0, parsedLimit);
+    let rows;
+    let totalCount = 0;
+
+    if (q) {
+      // ── FTS5 path: rank by BM25 relevance ──────────────────────────────────
+      // Sanitize the query to prevent FTS5 syntax errors from raw user input
+      const ftsQuery = q.replace(/['"*()]/g, ' ').trim();
+      if (!ftsQuery) {
+        return res.status(400).json({ success: false, error: { code: 'INVALID_QUERY', message: 'q must contain searchable text' } });
+      }
+
+      const storeConditions = [];
+      const storeParams = [ftsQuery];
+
+      if (parsedMinAmount !== undefined) { storeConditions.push('ds.amount_stroops >= ?'); storeParams.push(Math.round(parsedMinAmount * 1e7)); }
+      if (parsedMaxAmount !== undefined) { storeConditions.push('ds.amount_stroops <= ?'); storeParams.push(Math.round(parsedMaxAmount * 1e7)); }
+      if (startDate) { storeConditions.push('ds.timestamp >= ?'); storeParams.push(startDate); }
+      if (endDate) { storeConditions.push('ds.timestamp <= ?'); storeParams.push(endDate); }
+      if (status) { storeConditions.push('ds.status = ?'); storeParams.push(status); }
+      if (senderPublicKey) { storeConditions.push('ds.donor = ?'); storeParams.push(senderPublicKey); }
+      if (recipientPublicKey) { storeConditions.push('ds.recipient = ?'); storeParams.push(recipientPublicKey); }
+
+      const storeWhere = storeConditions.length > 0 ? 'AND ' + storeConditions.join(' AND ') : '';
+
+      // Count total FTS matches (without offset)
+      const countResult = await Database.get(
+        `SELECT COUNT(*) as total
+         FROM donations_fts
+         JOIN donations_store ds ON ds.id = donations_fts.donation_id
+         WHERE donations_fts MATCH ? AND ds.deleted_at IS NULL ${storeWhere}`,
+        storeParams
+      );
+      totalCount = countResult?.total || 0;
+
+      // Fetch ranked results using bm25() for relevance ordering
+      rows = await Database.query(
+        `SELECT ds.id, ds.donor, ds.recipient, ds.amount_text, ds.status, ds.timestamp, ds.data,
+                bm25(donations_fts) AS relevance_score
+         FROM donations_fts
+         JOIN donations_store ds ON ds.id = donations_fts.donation_id
+         WHERE donations_fts MATCH ? AND ds.deleted_at IS NULL ${storeWhere}
+         ORDER BY bm25(donations_fts)
+         LIMIT ? OFFSET ?`,
+        [...storeParams, parsedLimit, offset]
+      );
+
+      // Parse JSON data blob for each row
+      rows = rows.map(r => {
+        let parsed = {};
+        try { parsed = JSON.parse(r.data || '{}'); } catch { /* ignore */ }
+        return {
+          id: r.id,
+          donor: r.donor,
+          recipient: r.recipient,
+          amount: r.amount_text,
+          status: r.status,
+          timestamp: r.timestamp,
+          relevanceScore: r.relevance_score,
+          memo: parsed.memo || null,
+          notes: parsed.notes || null,
+          tags: parsed.tags || null,
+        };
+      });
+    } else {
+      // ── Non-FTS path: field filtering on donations_store ──────────────────
+      const conditions = [];
+      const params = [];
+
+      if (parsedMinAmount !== undefined) { conditions.push('amount_stroops >= ?'); params.push(Math.round(parsedMinAmount * 1e7)); }
+      if (parsedMaxAmount !== undefined) { conditions.push('amount_stroops <= ?'); params.push(Math.round(parsedMaxAmount * 1e7)); }
+      if (startDate) { conditions.push('timestamp >= ?'); params.push(startDate); }
+      if (endDate) { conditions.push('timestamp <= ?'); params.push(endDate); }
+      if (status) { conditions.push('status = ?'); params.push(status); }
+      if (senderPublicKey) { conditions.push('donor = ?'); params.push(senderPublicKey); }
+      if (recipientPublicKey) { conditions.push('recipient = ?'); params.push(recipientPublicKey); }
+      conditions.push('deleted_at IS NULL');
+
+      const whereClause = 'WHERE ' + conditions.join(' AND ');
+
+      const countResult = await Database.get(
+        `SELECT COUNT(*) as total FROM donations_store ${whereClause}`,
+        params
+      );
+      totalCount = countResult?.total || 0;
+
+      const rawRows = await Database.query(
+        `SELECT id, donor, recipient, amount_text, status, timestamp, data
+         FROM donations_store ${whereClause}
+         ORDER BY timestamp DESC LIMIT ? OFFSET ?`,
+        [...params, parsedLimit, offset]
+      );
+
+      rows = rawRows.map(r => {
+        let parsed = {};
+        try { parsed = JSON.parse(r.data || '{}'); } catch { /* ignore */ }
+        return {
+          id: r.id,
+          donor: r.donor,
+          recipient: r.recipient,
+          amount: r.amount_text,
+          status: r.status,
+          timestamp: r.timestamp,
+          memo: parsed.memo || null,
+          notes: parsed.notes || null,
+          tags: parsed.tags || null,
+        };
+      });
+    }
+
+    const hasMore = rows.length === parsedLimit && (offset + parsedLimit) < totalCount;
     const nextCursor = hasMore ? offset + parsedLimit : null;
 
     res.setHeader('X-Total-Count', String(totalCount));
     res.json({
       success: true,
-      data,
+      data: rows,
       pagination: { cursor: offset, nextCursor, hasMore, limit: parsedLimit, total: totalCount }
     });
   } catch (error) {
