@@ -1,6 +1,7 @@
 /**
  * Donation Receipt Routes
  *
+ * GET  /donations/annual-summary             - Generate annual summary PDF for a donor wallet
  * GET  /donations/:id/receipt        - Download a PDF receipt (or JSON with ?format=json)
  * POST /donations/:id/receipt        - Generate and return a PDF receipt (optionally email it)
  * GET  /donations/:id/receipt/status - Check if a receipt has been generated
@@ -15,9 +16,27 @@ const { ValidationError, NotFoundError, ERROR_CODES } = require('../utils/errors
 const { TRANSACTION_STATES } = require('../utils/transactionStateMachine');
 const AuditLogService = require('../services/AuditLogService');
 const ReceiptService = require('../services/ReceiptService');
+const TaxReceiptService = require('../services/TaxReceiptService');
 const Transaction = require('../models/transaction');
 const asyncHandler = require('../utils/asyncHandler');
 const { payloadSizeLimiter, ENDPOINT_LIMITS } = require('../middleware/payloadSizeLimiter');
+const rateLimit = require('express-rate-limit');
+
+// ── Annual summary rate limiter ───────────────────────────────────────────────
+// PDF generation is CPU-intensive; restrict to 10 requests per 15 minutes per IP
+const annualSummaryRateLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 10,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: {
+    success: false,
+    error: {
+      code: 'RATE_LIMIT_EXCEEDED',
+      message: 'Too many annual summary requests. Please wait 15 minutes before trying again.',
+    },
+  },
+});
 
 // ── Sequential receipt counter ────────────────────────────────────────────────
 let _receiptSequence = 0;
@@ -51,6 +70,79 @@ async function _getUsdRate() {
 // In-memory receipt generation log (keyed by donation ID)
 // Stores { generatedAt: ISO string, emailedTo: string|null }
 const receiptLog = new Map();
+
+/**
+ * GET /donations/annual-summary
+ * Generate and download an annual tax receipt summary PDF for a donor wallet.
+ *
+ * Query parameters:
+ *   walletAddress - Donor's Stellar public key (required)
+ *   year          - Calendar year (required, e.g. 2026)
+ *   format        - "json" returns JSON data instead of PDF
+ *
+ * Rate-limited to 10 requests per 15 minutes to prevent expensive PDF abuse.
+ * Requires: donations:read permission.
+ */
+router.get('/annual-summary',
+  requireApiKey,
+  checkPermission(PERMISSIONS.DONATIONS_READ),
+  annualSummaryRateLimiter,
+  asyncHandler(async (req, res) => {
+    const { walletAddress, format } = req.query;
+    const yearRaw = req.query.year;
+
+    if (!walletAddress) {
+      throw new ValidationError(
+        'walletAddress query parameter is required',
+        null,
+        ERROR_CODES.VALIDATION_ERROR
+      );
+    }
+
+    if (!yearRaw) {
+      throw new ValidationError(
+        'year query parameter is required',
+        null,
+        ERROR_CODES.VALIDATION_ERROR
+      );
+    }
+
+    const year = parseInt(yearRaw, 10);
+    if (isNaN(year) || year < 2000 || year > 2100) {
+      throw new ValidationError(
+        'year must be a valid calendar year (2000–2100)',
+        null,
+        ERROR_CODES.VALIDATION_ERROR
+      );
+    }
+
+    // JSON format — return structured summary data
+    if ((format || '').toLowerCase() === 'json') {
+      const summary = await TaxReceiptService.getAnnualSummaryData({ walletAddress, year });
+      return res.json({ success: true, data: summary });
+    }
+
+    // PDF format
+    const pdfBuffer = await TaxReceiptService.generateAnnualSummaryPDF({ walletAddress, year });
+
+    log.info('RECEIPT_ROUTE', 'Annual summary PDF generated', {
+      walletAddress: walletAddress.slice(0, 8) + '...',
+      year,
+      size: pdfBuffer.length,
+    });
+
+    res.set({
+      'Content-Type': 'application/pdf',
+      'Content-Disposition': `attachment; filename="annual-summary-${year}-${walletAddress.slice(0, 8)}.pdf"`,
+      'Content-Length': pdfBuffer.length,
+    });
+
+    return res.send(pdfBuffer);
+  })
+);
+
+// Add log import used in the route above
+const log = require('../utils/log');
 
 /**
  * GET /donations/:id/receipt

@@ -1039,6 +1039,58 @@ class DonationService {
       }
     }
 
+    // ── #1592: DB-based encrypted memo uniqueness check ──────────────────────
+    // Before persisting the donation, verify that no transaction with the same
+    // memo value already exists in the last 30 days.  On collision, append a
+    // random nonce suffix to produce a different memo and retry, up to 3 total
+    // attempts.  If all attempts collide, abort with MEMO_COLLISION.
+    const { memoCollisionsTotal } = require('../utils/metrics');
+    const MEMO_COLLISION_WINDOW_DAYS = 30;
+    const MAX_MEMO_ATTEMPTS = 3;
+
+    let finalMemo = memoResult.sanitized;
+    if (finalMemo) {
+      for (let attempt = 1; attempt <= MAX_MEMO_ATTEMPTS; attempt++) {
+        // Check DB for existing memo within the last 30 days
+        const cutoff = new Date(Date.now() - MEMO_COLLISION_WINDOW_DAYS * 24 * 60 * 60 * 1000).toISOString();
+        const existing = await Database.get(
+          `SELECT id FROM transactions WHERE memo = ? AND timestamp >= ? LIMIT 1`,
+          [finalMemo, cutoff]
+        ).catch(() => null);
+
+        if (!existing) {
+          break; // Memo is unique — proceed
+        }
+
+        if (attempt < MAX_MEMO_ATTEMPTS) {
+          // Collision — generate a new nonce-diversified memo and retry
+          memoCollisionsTotal.inc({ attempt: String(attempt), outcome: 'retry' });
+          log.warn('DONATION_SERVICE', 'Encrypted memo collision detected, retrying', {
+            attempt,
+            donor: sanitizedDonor ? sanitizedDonor.slice(0, 8) + '...' : 'anon',
+          });
+          // Append a small random hex suffix to make the memo unique
+          const { randomBytes } = require('crypto');
+          const nonce = randomBytes(4).toString('hex');
+          finalMemo = `${memoResult.sanitized}-${nonce}`;
+        } else {
+          // All 3 attempts collided
+          memoCollisionsTotal.inc({ attempt: String(attempt), outcome: 'failed' });
+          log.error('DONATION_SERVICE', 'Memo collision: all retry attempts exhausted', {
+            donor: sanitizedDonor ? sanitizedDonor.slice(0, 8) + '...' : 'anon',
+          });
+          throw new BusinessLogicError(
+            'MEMO_COLLISION',
+            'Unable to generate a unique transaction memo after 3 attempts. Please retry the donation.'
+          );
+        }
+      }
+      if (finalMemo !== memoResult.sanitized) {
+        memoCollisionsTotal.inc({ attempt: '0', outcome: 'resolved' });
+      }
+    }
+    // ─────────────────────────────────────────────────────────────────────────
+
     // Create transaction record
     const transaction = Transaction.create({
       amount: xlmAmount,
@@ -1046,7 +1098,7 @@ class DonationService {
       originalCurrency: normalizedCurrency !== 'XLM' ? normalizedCurrency : undefined,
       donor: sanitizedDonor,
       recipient: sanitizedRecipient,
-      memo: memoResult.sanitized,
+      memo: finalMemo,
       memoType: memoType || 'text',
       notes: notes || null,
       tags: tags || [],
@@ -1136,7 +1188,7 @@ class DonationService {
 
     // Detect memo collision after the record is created so we have a transactionId
     const collisionResult = memoCollisionDetector.check({
-      memo: memoResult.sanitized,
+      memo: finalMemo,
       donor: sanitizedDonor,
       recipient: sanitizedRecipient,
       amount,

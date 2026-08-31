@@ -10,8 +10,10 @@
  * - Donation date and fair market value in USD
  * - Statement that no goods or services were provided in exchange
  * - Exchange rate snapshot at time of donation
+ * - Annual summary PDFs for year-end tax filing (#1595)
  */
 
+const PDFDocument = require('pdfkit');
 const Database = require('../utils/database');
 const config = require('../config');
 const log = require('../utils/log');
@@ -311,6 +313,214 @@ class TaxReceiptService {
     );
 
     return donation && donation.tax_receipt_generated === 1;
+  }
+
+  /**
+   * Get all donations for a specific wallet/donor within a calendar year,
+   * grouped by recipient, for the annual summary.
+   *
+   * @param {Object} params
+   * @param {string} params.walletAddress - Donor wallet public key
+   * @param {number} params.year - Calendar year (e.g. 2026)
+   * @returns {Promise<{ donations: Array, recipientTotals: Object, grandTotal: number, donationCount: number }>}
+   */
+  static async getAnnualSummaryData({ walletAddress, year }) {
+    if (!walletAddress || typeof walletAddress !== 'string') {
+      throw new ValidationError('walletAddress is required', null, ERROR_CODES.VALIDATION_ERROR);
+    }
+    if (!year || typeof year !== 'number' || year < 2000 || year > 2100) {
+      throw new ValidationError('year must be a valid calendar year', null, ERROR_CODES.VALIDATION_ERROR);
+    }
+
+    const startDate = `${year}-01-01T00:00:00.000Z`;
+    const endDate   = `${year}-12-31T23:59:59.999Z`;
+
+    const donations = await Database.query(
+      `SELECT
+         t.id,
+         t.amount,
+         t.timestamp,
+         t.xlm_usd_rate,
+         t.fair_market_value_usd,
+         t.stellar_tx_id,
+         t.status,
+         sender.publicKey   AS donorPublicKey,
+         receiver.publicKey AS recipientPublicKey
+       FROM transactions t
+       LEFT JOIN users sender   ON t.senderId   = sender.id
+       LEFT JOIN users receiver ON t.receiverId = receiver.id
+       WHERE sender.publicKey = ?
+         AND t.timestamp >= ?
+         AND t.timestamp <= ?
+         AND (t.status IS NULL OR t.status NOT IN ('refunded','failed','cancelled'))
+       ORDER BY t.timestamp ASC`,
+      [walletAddress, startDate, endDate]
+    );
+
+    // Aggregate per recipient
+    const recipientTotals = {};
+    let grandTotalXlm = 0;
+
+    for (const d of donations) {
+      const rk = d.recipientPublicKey || 'unknown';
+      if (!recipientTotals[rk]) {
+        recipientTotals[rk] = { xlmTotal: 0, usdTotal: 0, count: 0 };
+      }
+      const xlm = Number(d.amount) || 0;
+      recipientTotals[rk].xlmTotal += xlm;
+      recipientTotals[rk].usdTotal += Number(d.fair_market_value_usd) || 0;
+      recipientTotals[rk].count += 1;
+      grandTotalXlm += xlm;
+    }
+
+    return {
+      donations,
+      recipientTotals,
+      grandTotalXlm: parseFloat(grandTotalXlm.toFixed(7)),
+      donationCount: donations.length,
+      year,
+      walletAddress,
+    };
+  }
+
+  /**
+   * Generate an annual summary PDF buffer for a donor.
+   *
+   * @param {Object} params
+   * @param {string} params.walletAddress - Donor wallet public key
+   * @param {number} params.year          - Calendar year
+   * @returns {Promise<Buffer>} PDF buffer
+   */
+  static async generateAnnualSummaryPDF({ walletAddress, year }) {
+    const summary = await this.getAnnualSummaryData({ walletAddress, year });
+    const orgConfig = this.isConfigured() ? this.getOrganizationConfig() : null;
+
+    return new Promise((resolve, reject) => {
+      try {
+        const doc = new PDFDocument({ margin: 50, compress: true });
+        const chunks = [];
+        doc.on('data', (chunk) => chunks.push(chunk));
+        doc.on('end', () => resolve(Buffer.concat(chunks)));
+        doc.on('error', reject);
+
+        const PRIMARY   = '#1a3c5e';
+        const SECONDARY = '#4a90d9';
+        const LIGHT_GRAY = '#f5f7fa';
+
+        // ── Header ──────────────────────────────────────────────────────────
+        doc.rect(0, 0, doc.page.width, 80).fill(PRIMARY);
+        doc.fillColor('white').fontSize(22).font('Helvetica-Bold')
+           .text('ANNUAL TAX RECEIPT SUMMARY', 50, 25, { align: 'center' });
+        doc.fontSize(11).font('Helvetica')
+           .text(`Tax Year ${year}`, 50, 52, { align: 'center' });
+
+        // ── Organization block ───────────────────────────────────────────────
+        let y = 100;
+        if (orgConfig) {
+          doc.fillColor(PRIMARY).fontSize(12).font('Helvetica-Bold')
+             .text('ISSUING ORGANIZATION', 50, y);
+          y += 18;
+          doc.fillColor('#333').fontSize(10).font('Helvetica')
+             .text(orgConfig.legalName, 50, y)
+             .text(`EIN: ${orgConfig.ein}`, 50, y + 14);
+          if (orgConfig.address) {
+            const addrParts = [orgConfig.address, orgConfig.city, orgConfig.state, orgConfig.zipCode].filter(Boolean).join(', ');
+            doc.text(addrParts, 50, y + 28);
+            y += 44;
+          } else {
+            y += 30;
+          }
+        }
+
+        // ── Summary box ──────────────────────────────────────────────────────
+        y += 8;
+        doc.rect(50, y, doc.page.width - 100, 72).fill(LIGHT_GRAY).stroke('#dde3ed');
+        doc.fillColor(PRIMARY).fontSize(11).font('Helvetica-Bold')
+           .text('SUMMARY', 66, y + 10);
+        doc.fillColor('#333').fontSize(10).font('Helvetica');
+        doc.text(`Donor Wallet: ${walletAddress}`, 66, y + 26);
+        doc.text(`Period: January 1, ${year} – December 31, ${year}`, 66, y + 40);
+        doc.text(`Total Donations: ${summary.donationCount}`, 66, y + 54);
+        doc.text(`Grand Total (XLM): ${summary.grandTotalXlm.toFixed(7)}`, 310, y + 26);
+        y += 84;
+
+        // ── Per-recipient table ───────────────────────────────────────────────
+        y += 10;
+        doc.fillColor(PRIMARY).fontSize(11).font('Helvetica-Bold')
+           .text('DONATIONS BY RECIPIENT', 50, y);
+        y += 16;
+
+        // Table header
+        const colX = [50, 310, 410, 480];
+        doc.rect(50, y, doc.page.width - 100, 18).fill(SECONDARY);
+        doc.fillColor('white').fontSize(9).font('Helvetica-Bold');
+        doc.text('Recipient Wallet', colX[0] + 4, y + 4, { width: 255 });
+        doc.text('Count', colX[1] + 4, y + 4, { width: 90 });
+        doc.text('XLM Total', colX[2] + 4, y + 4, { width: 65 });
+        y += 18;
+
+        let rowAlt = false;
+        for (const [recipient, totals] of Object.entries(summary.recipientTotals)) {
+          if (y > doc.page.height - 100) {
+            doc.addPage();
+            y = 50;
+          }
+          if (rowAlt) doc.rect(50, y, doc.page.width - 100, 16).fill('#eef1f6');
+          rowAlt = !rowAlt;
+
+          const masked = recipient.length > 16
+            ? `${recipient.slice(0, 8)}...${recipient.slice(-6)}`
+            : recipient;
+
+          doc.fillColor('#333').fontSize(9).font('Helvetica');
+          doc.text(masked, colX[0] + 4, y + 3, { width: 255 });
+          doc.text(String(totals.count), colX[1] + 4, y + 3, { width: 90 });
+          doc.text(totals.xlmTotal.toFixed(7), colX[2] + 4, y + 3, { width: 90 });
+          y += 16;
+        }
+
+        // Grand total row
+        doc.rect(50, y, doc.page.width - 100, 18).fill(PRIMARY);
+        doc.fillColor('white').fontSize(9).font('Helvetica-Bold');
+        doc.text('GRAND TOTAL', colX[0] + 4, y + 4, { width: 255 });
+        doc.text(String(summary.donationCount), colX[1] + 4, y + 4, { width: 90 });
+        doc.text(summary.grandTotalXlm.toFixed(7), colX[2] + 4, y + 4, { width: 90 });
+        y += 28;
+
+        // ── IRS Statement ────────────────────────────────────────────────────
+        if (y > doc.page.height - 140) { doc.addPage(); y = 50; }
+        y += 10;
+        doc.rect(50, y, doc.page.width - 100, 56).stroke('#c0ccd8');
+        doc.fillColor('#555').fontSize(9).font('Helvetica-Oblique')
+           .text(IRS_STATEMENT, 58, y + 8, { width: doc.page.width - 118, align: 'justify' });
+        y += 64;
+
+        // ── Digital signature block ──────────────────────────────────────────
+        if (y > doc.page.height - 100) { doc.addPage(); y = 50; }
+        y += 8;
+        doc.fillColor(PRIMARY).fontSize(10).font('Helvetica-Bold').text('AUTHORIZED SIGNATURE', 50, y);
+        y += 18;
+        doc.fillColor('#333').fontSize(9).font('Helvetica');
+        doc.moveTo(50, y + 20).lineTo(250, y + 20).stroke('#888');
+        doc.text('Authorized Representative', 50, y + 24);
+        doc.moveTo(280, y + 20).lineTo(460, y + 20).stroke('#888');
+        doc.text('Date', 280, y + 24);
+        doc.text(`Generated: ${new Date().toISOString()}`, 50, y + 44, { fontSize: 8, color: '#999' });
+
+        // ── Footer ───────────────────────────────────────────────────────────
+        doc.fillColor('#aaa').fontSize(8).font('Helvetica')
+           .text(
+             'This document was generated by Stellar Micro-Donation API for tax filing purposes.',
+             50,
+             doc.page.height - 40,
+             { align: 'center', width: doc.page.width - 100 }
+           );
+
+        doc.end();
+      } catch (err) {
+        reject(err);
+      }
+    });
   }
 
   /**

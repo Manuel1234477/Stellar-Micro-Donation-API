@@ -28,7 +28,44 @@ const { parseLanguage, getMessage } = require('../utils/i18n');
 const IS_PRODUCTION = process.env.NODE_ENV === 'production';
 
 /** Maximum allowed query depth to prevent deeply nested abuse */
-const MAX_QUERY_DEPTH = 5;
+const MAX_QUERY_DEPTH = parseInt(process.env.GRAPHQL_MAX_DEPTH || '6', 10);
+
+/**
+ * Default complexity budget.  Configurable via GRAPHQL_MAX_COMPLEXITY env var.
+ * Each scalar/leaf field costs 1 point; list fields cost a multiplier (default 10).
+ */
+const MAX_QUERY_COMPLEXITY = parseInt(process.env.GRAPHQL_MAX_COMPLEXITY || '1000', 10);
+
+/**
+ * Per-field complexity cost multiplier for list fields.
+ * Configurable via GRAPHQL_LIST_FIELD_COST env var.
+ */
+const LIST_FIELD_COST = parseInt(process.env.GRAPHQL_LIST_FIELD_COST || '10', 10);
+
+/**
+ * Names of fields considered "list" fields for complexity scoring.
+ * Extend this set when new list-returning fields are added to the schema.
+ */
+const LIST_FIELD_NAMES = new Set([
+  'donations', 'wallets', 'recentDonations', 'dailyStats',
+]);
+
+/**
+ * Compute a hashed fingerprint of a query document for security logging.
+ * Uses the query source string to produce a short, stable identifier.
+ *
+ * @param {object} document - Parsed GraphQL document
+ * @returns {string} Short hex fingerprint
+ */
+function hashQuery(document) {
+  try {
+    const { createHash } = require('crypto');
+    const src = document.loc?.source?.body || JSON.stringify(document.definitions);
+    return createHash('sha256').update(src).digest('hex').slice(0, 16);
+  } catch (_) {
+    return 'unknown';
+  }
+}
 
 /**
  * Build a lookup map of fragment name -> FragmentDefinition node from a parsed document.
@@ -112,6 +149,72 @@ function checkDepth(document) {
     }
   }
   return { valid: maxDepth <= MAX_QUERY_DEPTH, depth: maxDepth };
+}
+
+/**
+ * Recursively compute a complexity score for a GraphQL selection set.
+ *
+ * Scoring rules:
+ *  - Each regular field costs 1 point.
+ *  - List fields (names in LIST_FIELD_NAMES) are multiplied by LIST_FIELD_COST
+ *    because they resolve multiple objects.
+ *  - Fragment spreads are resolved to their definitions and scored.
+ *  - Inline fragments are scored without extra cost.
+ *  - Circular fragment references are guarded by a visited set.
+ *
+ * @param {object}              selectionSet - AST SelectionSet node
+ * @param {Map<string, object>} fragmentMap  - Fragment name → definition
+ * @param {Set<string>}         visited      - Fragment names on the current call stack
+ * @returns {number} Total complexity cost
+ */
+function computeComplexity(selectionSet, fragmentMap, visited = new Set()) {
+  if (!selectionSet || !selectionSet.selections) return 0;
+
+  let total = 0;
+  for (const selection of selectionSet.selections) {
+    if (selection.kind === 'FragmentSpread') {
+      const fragName = selection.name.value;
+      if (!visited.has(fragName)) {
+        const fragDef = fragmentMap.get(fragName);
+        if (fragDef && fragDef.selectionSet) {
+          const nextVisited = new Set(visited).add(fragName);
+          total += computeComplexity(fragDef.selectionSet, fragmentMap, nextVisited);
+        }
+      }
+    } else if (selection.kind === 'InlineFragment') {
+      total += computeComplexity(selection.selectionSet, fragmentMap, visited);
+    } else {
+      // Regular field
+      const fieldName = selection.name?.value;
+      const fieldCost = LIST_FIELD_NAMES.has(fieldName) ? LIST_FIELD_COST : 1;
+      total += fieldCost;
+      if (selection.selectionSet) {
+        const childCost = computeComplexity(selection.selectionSet, fragmentMap, visited);
+        // Child complexity is multiplied by the parent's list cost to model
+        // the fact that each element in a list resolves all child fields.
+        total += childCost * (LIST_FIELD_NAMES.has(fieldName) ? LIST_FIELD_COST : 1);
+      }
+    }
+  }
+  return total;
+}
+
+/**
+ * Validate that a parsed document does not exceed MAX_QUERY_COMPLEXITY.
+ *
+ * @param {object} document - Parsed GraphQL document
+ * @returns {{ valid: boolean, complexity: number }}
+ */
+function checkComplexity(document) {
+  const fragmentMap = buildFragmentMap(document);
+  let totalComplexity = 0;
+  for (const def of document.definitions) {
+    if (def.kind === 'FragmentDefinition') continue;
+    if (def.selectionSet) {
+      totalComplexity += computeComplexity(def.selectionSet, fragmentMap);
+    }
+  }
+  return { valid: totalComplexity <= MAX_QUERY_COMPLEXITY, complexity: totalComplexity };
 }
 
 // ─── Service instances ────────────────────────────────────────────────────────
@@ -220,7 +323,7 @@ const graphqlHttpHandler = createHandler({
 
   /**
    * Validate the incoming document before execution.
-   * Blocks introspection in production and enforces depth limits.
+   * Blocks introspection in production and enforces depth/complexity limits.
    * @param {object} args
    * @returns {readonly Error[] | undefined}
    */
@@ -241,14 +344,38 @@ const graphqlHttpHandler = createHandler({
       }
     }
 
-    // Enforce query depth limit
-    const { valid, depth } = checkDepth(args.documentAST);
-    if (!valid) {
-      return [
-        new Error(
-          `Query depth ${depth} exceeds maximum allowed depth of ${MAX_QUERY_DEPTH}.`
-        ),
-      ];
+    // Enforce query depth limit (#1594)
+    const { valid: depthValid, depth } = checkDepth(args.documentAST);
+    if (!depthValid) {
+      const queryHash = hashQuery(args.documentAST);
+      log.warn('GRAPHQL_SECURITY', 'Query depth limit exceeded', {
+        depth,
+        maxDepth: MAX_QUERY_DEPTH,
+        queryHash,
+        code: 'QUERY_DEPTH_EXCEEDED',
+      });
+      const err = new Error(
+        `Query depth ${depth} exceeds maximum allowed depth of ${MAX_QUERY_DEPTH}.`
+      );
+      err.extensions = { code: 'QUERY_DEPTH_EXCEEDED' };
+      return [err];
+    }
+
+    // Enforce query complexity budget (#1594)
+    const { valid: complexityValid, complexity } = checkComplexity(args.documentAST);
+    if (!complexityValid) {
+      const queryHash = hashQuery(args.documentAST);
+      log.warn('GRAPHQL_SECURITY', 'Query complexity budget exceeded', {
+        complexity,
+        maxComplexity: MAX_QUERY_COMPLEXITY,
+        queryHash,
+        code: 'QUERY_COMPLEXITY_EXCEEDED',
+      });
+      const err = new Error(
+        `Query complexity ${complexity} exceeds maximum allowed budget of ${MAX_QUERY_COMPLEXITY}.`
+      );
+      err.extensions = { code: 'QUERY_COMPLEXITY_EXCEEDED' };
+      return [err];
     }
 
     return undefined;
@@ -316,9 +443,9 @@ function attachSubscriptionServer(httpServer) {
 
       /**
        * Validate each incoming subscription document before execution.
-       * Applies the same introspection-blocking and depth-limiting rules used
+       * Applies the same introspection-blocking and depth/complexity-limiting rules used
        * by the HTTP handler, so WebSocket subscribers cannot bypass security
-       * by bypassing the HTTP layer. (#1369)
+       * by bypassing the HTTP layer. (#1369, #1594)
        *
        * @param {object} ctx - graphql-ws context (ctx.extra.apiKey is set after onConnect)
        * @param {object} msg - The subscribe message containing the document
@@ -348,13 +475,27 @@ function attachSubscriptionServer(httpServer) {
         }
 
         // Enforce query depth limit (#1369)
-        const { valid, depth } = checkDepth(document);
-        if (!valid) {
-          return [
-            new Error(
-              `Query depth ${depth} exceeds maximum allowed depth of ${MAX_QUERY_DEPTH}.`
-            ),
-          ];
+        const { valid: depthValid, depth } = checkDepth(document);
+        if (!depthValid) {
+          const queryHash = hashQuery(document);
+          log.warn('GRAPHQL_SECURITY', 'Subscription depth limit exceeded', {
+            depth, maxDepth: MAX_QUERY_DEPTH, queryHash, code: 'QUERY_DEPTH_EXCEEDED',
+          });
+          const err = new Error(`Query depth ${depth} exceeds maximum allowed depth of ${MAX_QUERY_DEPTH}.`);
+          err.extensions = { code: 'QUERY_DEPTH_EXCEEDED' };
+          return [err];
+        }
+
+        // Enforce query complexity budget (#1594)
+        const { valid: complexityValid, complexity } = checkComplexity(document);
+        if (!complexityValid) {
+          const queryHash = hashQuery(document);
+          log.warn('GRAPHQL_SECURITY', 'Subscription complexity budget exceeded', {
+            complexity, maxComplexity: MAX_QUERY_COMPLEXITY, queryHash, code: 'QUERY_COMPLEXITY_EXCEEDED',
+          });
+          const err = new Error(`Query complexity ${complexity} exceeds maximum allowed budget of ${MAX_QUERY_COMPLEXITY}.`);
+          err.extensions = { code: 'QUERY_COMPLEXITY_EXCEEDED' };
+          return [err];
         }
       },
 
@@ -396,4 +537,17 @@ function createGraphQLRouter() {
   return router;
 }
 
-module.exports = { createGraphQLRouter, attachSubscriptionServer, pubsub, schema };
+module.exports = {
+  createGraphQLRouter,
+  attachSubscriptionServer,
+  pubsub,
+  schema,
+  // Exported for testing (#1594)
+  checkDepth,
+  checkComplexity,
+  computeComplexity,
+  hashQuery,
+  MAX_QUERY_DEPTH,
+  MAX_QUERY_COMPLEXITY,
+  LIST_FIELD_COST,
+};

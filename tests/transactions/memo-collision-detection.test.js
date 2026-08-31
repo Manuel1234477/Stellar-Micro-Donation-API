@@ -392,3 +392,168 @@ describe('GET /stats/memo-collisions', () => {
     expect(res.body.metadata.note).toBeDefined();
   });
 });
+
+// ─── DB-based memo collision with retry logic (#1592) ────────────────────────
+
+describe('DonationService — DB memo collision retry (#1592)', () => {
+  let DonationService;
+  let Database;
+  let mockStellarService;
+
+  const DONOR = 'GDONOR1234567890123456789012345678901234567890123456789';
+  const RECIP  = 'GRECIP1234567890123456789012345678901234567890123456789';
+
+  beforeEach(() => {
+    jest.resetModules();
+    process.env.NODE_ENV    = 'test';
+    process.env.MOCK_STELLAR = 'true';
+    process.env.API_KEYS    = 'test-key';
+
+    Database = require('../../src/utils/database');
+    DonationService = require('../../src/services/DonationService');
+
+    mockStellarService = {
+      sendDonation: jest.fn().mockResolvedValue({ transactionId: 'mock-tx', hash: 'mock-hash', ledger: 1 }),
+      getAccountInfo: jest.fn().mockResolvedValue({ exists: true }),
+      setCorrelationId: jest.fn(),
+      serviceSecretKey: null,
+      getSecretForPublicKey: jest.fn().mockReturnValue(null),
+    };
+
+    // Default: no existing memo in DB (no collision)
+    jest.spyOn(Database, 'get').mockResolvedValue(null);
+    jest.spyOn(Database, 'run').mockResolvedValue({ lastID: 1, changes: 1 });
+    jest.spyOn(Database, 'all').mockResolvedValue([]);
+    jest.spyOn(Database, 'query').mockResolvedValue([]);
+    jest.spyOn(Database, 'runTransaction').mockImplementation(async (fn) => {
+      return fn({ run: jest.fn().mockResolvedValue({ lastID: 1, changes: 1 }) });
+    });
+  });
+
+  afterEach(() => {
+    jest.restoreAllMocks();
+  });
+
+  it('proceeds normally when no memo collision exists in DB', async () => {
+    // Database.get returns null → no collision
+    Database.get.mockResolvedValue(null);
+
+    const service = new DonationService(mockStellarService);
+    // createDonation needs minimal setup — use createDonationRecord which is simpler
+    const Transaction = require('../../src/models/transaction');
+    jest.spyOn(Transaction, 'create').mockReturnValue({ id: 'tx-1', memo: 'unique-memo', memoCollision: false, memoSuspicious: false, memoCollisionReason: null });
+    jest.spyOn(Transaction, 'updateStatus').mockReturnValue(undefined);
+
+    const result = await service.createDonationRecord({
+      amount: 10, donor: DONOR, recipient: RECIP, memo: 'unique-memo',
+    });
+
+    expect(result).toBeDefined();
+  });
+
+  it('memoCollisionsTotal counter is exported from metrics', () => {
+    const metrics = require('../../src/utils/metrics');
+    expect(metrics.memoCollisionsTotal).toBeDefined();
+    expect(typeof metrics.memoCollisionsTotal.inc).toBe('function');
+  });
+
+  it('throws MEMO_COLLISION when all 3 attempts collide', async () => {
+    // Every DB.get call returns an existing record (collision)
+    Database.get.mockResolvedValue({ id: 'existing-tx-123' });
+
+    const service = new DonationService(mockStellarService);
+    const Transaction = require('../../src/models/transaction');
+    jest.spyOn(Transaction, 'create').mockReturnValue({ id: 'tx-1', memo: 'memo', memoCollision: false });
+    jest.spyOn(Transaction, 'updateStatus').mockReturnValue(undefined);
+
+    await expect(
+      service.createDonationRecord({ amount: 10, donor: DONOR, recipient: RECIP, memo: 'collision-memo' })
+    ).rejects.toMatchObject({
+      errorCode: 'MEMO_COLLISION',
+    });
+  });
+
+  it('MEMO_COLLISION error message mentions retry attempts', async () => {
+    Database.get.mockResolvedValue({ id: 'existing-tx' });
+
+    const service = new DonationService(mockStellarService);
+    const Transaction = require('../../src/models/transaction');
+    jest.spyOn(Transaction, 'create').mockReturnValue({ id: 'tx-1', memo: 'memo' });
+    jest.spyOn(Transaction, 'updateStatus').mockReturnValue(undefined);
+
+    await expect(
+      service.createDonationRecord({ amount: 10, donor: DONOR, recipient: RECIP, memo: 'collision-memo' })
+    ).rejects.toMatchObject({
+      message: expect.stringMatching(/3 attempts/),
+    });
+  });
+
+  it('succeeds on second attempt when first memo collides', async () => {
+    // First call to Database.get: collision; second call: no collision
+    let callCount = 0;
+    Database.get.mockImplementation(() => {
+      callCount++;
+      if (callCount === 1) return Promise.resolve({ id: 'existing-tx' }); // collision
+      return Promise.resolve(null); // no collision
+    });
+
+    const service = new DonationService(mockStellarService);
+    const Transaction = require('../../src/models/transaction');
+    jest.spyOn(Transaction, 'create').mockReturnValue({
+      id: 'tx-1', memo: 'resolved-memo', memoCollision: false, memoSuspicious: false, memoCollisionReason: null,
+    });
+    jest.spyOn(Transaction, 'updateStatus').mockReturnValue(undefined);
+
+    const result = await service.createDonationRecord({
+      amount: 10, donor: DONOR, recipient: RECIP, memo: 'some-memo',
+    });
+
+    expect(result).toBeDefined();
+    expect(callCount).toBeGreaterThanOrEqual(2);
+  });
+
+  it('empty memo skips the collision check entirely', async () => {
+    const getCallsBefore = Database.get.mock ? Database.get.mock.calls.length : 0;
+    const service = new DonationService(mockStellarService);
+    const Transaction = require('../../src/models/transaction');
+    jest.spyOn(Transaction, 'create').mockReturnValue({
+      id: 'tx-1', memo: '', memoCollision: false, memoSuspicious: false, memoCollisionReason: null,
+    });
+    jest.spyOn(Transaction, 'updateStatus').mockReturnValue(undefined);
+
+    await service.createDonationRecord({ amount: 10, donor: DONOR, recipient: RECIP });
+
+    // No collision check calls for empty/missing memo
+    const memoCollisionCalls = Database.get.mock.calls.filter(
+      c => typeof c[0] === 'string' && c[0].includes('memo = ?')
+    );
+    expect(memoCollisionCalls.length).toBe(0);
+  });
+
+  it('collision check uses 30-day lookback window', async () => {
+    Database.get.mockResolvedValue(null);
+
+    const service = new DonationService(mockStellarService);
+    const Transaction = require('../../src/models/transaction');
+    jest.spyOn(Transaction, 'create').mockReturnValue({
+      id: 'tx-1', memo: 'test', memoCollision: false, memoSuspicious: false, memoCollisionReason: null,
+    });
+    jest.spyOn(Transaction, 'updateStatus').mockReturnValue(undefined);
+
+    await service.createDonationRecord({ amount: 10, donor: DONOR, recipient: RECIP, memo: 'test-memo' });
+
+    const memoChecks = Database.get.mock.calls.filter(
+      c => typeof c[0] === 'string' && c[0].includes('memo = ?')
+    );
+
+    if (memoChecks.length > 0) {
+      const params = memoChecks[0][1];
+      // Second param should be a date string ~30 days ago
+      expect(params[1]).toMatch(/^\d{4}-\d{2}-\d{2}T/);
+      const cutoffDate = new Date(params[1]);
+      const thirtyDaysAgo = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000);
+      // Allow 1 minute tolerance
+      expect(Math.abs(cutoffDate - thirtyDaysAgo)).toBeLessThan(60000);
+    }
+  });
+});

@@ -401,3 +401,156 @@ describe('Donation Tax Receipt Generation', () => {
     });
   });
 });
+
+// ─── Annual Summary Tests (#1595) ─────────────────────────────────────────────
+
+describe('TaxReceiptService — Annual Summary (#1595)', () => {
+  beforeEach(() => {
+    jest.clearAllMocks();
+    Database.get = jest.fn();
+    Database.run = jest.fn();
+    Database.query = jest.fn();
+  });
+
+  describe('getAnnualSummaryData', () => {
+    test('should throw if walletAddress is missing', async () => {
+      await expect(
+        TaxReceiptService.getAnnualSummaryData({ year: 2026 })
+      ).rejects.toThrow('walletAddress is required');
+    });
+
+    test('should throw if year is missing', async () => {
+      await expect(
+        TaxReceiptService.getAnnualSummaryData({ walletAddress: 'GTEST' })
+      ).rejects.toThrow('year must be a valid calendar year');
+    });
+
+    test('should throw if year is out of range', async () => {
+      await expect(
+        TaxReceiptService.getAnnualSummaryData({ walletAddress: 'GTEST', year: 1999 })
+      ).rejects.toThrow('year must be a valid calendar year');
+    });
+
+    test('should return summary with empty donations for unknown wallet', async () => {
+      Database.query.mockResolvedValue([]);
+
+      const result = await TaxReceiptService.getAnnualSummaryData({
+        walletAddress: 'GUNKNOWN',
+        year: 2026,
+      });
+
+      expect(result.donations).toEqual([]);
+      expect(result.grandTotalXlm).toBe(0);
+      expect(result.donationCount).toBe(0);
+      expect(result.year).toBe(2026);
+      expect(result.walletAddress).toBe('GUNKNOWN');
+      expect(result.recipientTotals).toEqual({});
+    });
+
+    test('should aggregate donations by recipient correctly', async () => {
+      const mockDonations = [
+        { id: 1, amount: 100, timestamp: '2026-03-01T00:00:00Z', fair_market_value_usd: 15, donorPublicKey: 'GDONOR', recipientPublicKey: 'GRECIP1', status: 'confirmed', stellar_tx_id: 'tx1' },
+        { id: 2, amount: 200, timestamp: '2026-06-01T00:00:00Z', fair_market_value_usd: 30, donorPublicKey: 'GDONOR', recipientPublicKey: 'GRECIP2', status: 'confirmed', stellar_tx_id: 'tx2' },
+        { id: 3, amount: 50,  timestamp: '2026-09-01T00:00:00Z', fair_market_value_usd: 7.5, donorPublicKey: 'GDONOR', recipientPublicKey: 'GRECIP1', status: 'confirmed', stellar_tx_id: 'tx3' },
+      ];
+      Database.query.mockResolvedValue(mockDonations);
+
+      const result = await TaxReceiptService.getAnnualSummaryData({
+        walletAddress: 'GDONOR',
+        year: 2026,
+      });
+
+      expect(result.donationCount).toBe(3);
+      expect(result.grandTotalXlm).toBeCloseTo(350, 2);
+      expect(result.recipientTotals['GRECIP1'].count).toBe(2);
+      expect(result.recipientTotals['GRECIP1'].xlmTotal).toBeCloseTo(150, 2);
+      expect(result.recipientTotals['GRECIP2'].count).toBe(1);
+      expect(result.recipientTotals['GRECIP2'].xlmTotal).toBeCloseTo(200, 2);
+    });
+
+    test('should query with correct year date range', async () => {
+      Database.query.mockResolvedValue([]);
+
+      await TaxReceiptService.getAnnualSummaryData({ walletAddress: 'GTEST', year: 2026 });
+
+      const callArgs = Database.query.mock.calls[0];
+      expect(callArgs[1]).toContain('2026-01-01T00:00:00.000Z');
+      expect(callArgs[1]).toContain('2026-12-31T23:59:59.999Z');
+    });
+
+    test('should exclude refunded, failed, cancelled donations', async () => {
+      Database.query.mockResolvedValue([]);
+
+      await TaxReceiptService.getAnnualSummaryData({ walletAddress: 'GTEST', year: 2026 });
+
+      const sql = Database.query.mock.calls[0][0];
+      expect(sql).toContain("NOT IN ('refunded','failed','cancelled')");
+    });
+  });
+
+  describe('generateAnnualSummaryPDF', () => {
+    test('should return a Buffer', async () => {
+      Database.query.mockResolvedValue([
+        { id: 1, amount: 100, timestamp: '2026-01-15T10:00:00Z', fair_market_value_usd: 15, donorPublicKey: 'GDONOR', recipientPublicKey: 'GRECIP1', status: 'confirmed', stellar_tx_id: 'tx1' },
+      ]);
+
+      const buffer = await TaxReceiptService.generateAnnualSummaryPDF({ walletAddress: 'GDONOR', year: 2026 });
+
+      expect(Buffer.isBuffer(buffer)).toBe(true);
+      expect(buffer.length).toBeGreaterThan(0);
+    });
+
+    test('should embed PDF header bytes (%PDF)', async () => {
+      Database.query.mockResolvedValue([]);
+
+      const buffer = await TaxReceiptService.generateAnnualSummaryPDF({ walletAddress: 'GDONOR', year: 2026 });
+      const header = buffer.slice(0, 4).toString('ascii');
+      expect(header).toBe('%PDF');
+    });
+
+    test('should generate PDF even with no donations', async () => {
+      Database.query.mockResolvedValue([]);
+
+      const buffer = await TaxReceiptService.generateAnnualSummaryPDF({ walletAddress: 'GDONOR', year: 2026 });
+      expect(Buffer.isBuffer(buffer)).toBe(true);
+    });
+
+    test('should include organization info when configured', async () => {
+      const originalConfig = config.taxReceipt;
+      config.taxReceipt = {
+        isConfigured: true,
+        ein: '12-3456789',
+        legalName: 'Stellar Foundation',
+        address: '1 Blockchain Way',
+        city: 'San Francisco',
+        state: 'CA',
+        zipCode: '94105',
+      };
+      Database.query.mockResolvedValue([]);
+
+      // Just verify it generates without throwing when org is configured
+      const buffer = await TaxReceiptService.generateAnnualSummaryPDF({ walletAddress: 'GDONOR', year: 2026 });
+      expect(Buffer.isBuffer(buffer)).toBe(true);
+
+      config.taxReceipt = originalConfig;
+    });
+
+    test('should generate multi-recipient summary correctly', async () => {
+      const donations = Array.from({ length: 10 }, (_, i) => ({
+        id: i + 1,
+        amount: 50 + i * 10,
+        timestamp: `2026-0${(i % 9) + 1}-01T00:00:00Z`,
+        fair_market_value_usd: (50 + i * 10) * 0.15,
+        donorPublicKey: 'GDONOR',
+        recipientPublicKey: `GRECIP${i % 3}`,
+        status: 'confirmed',
+        stellar_tx_id: `tx${i}`,
+      }));
+      Database.query.mockResolvedValue(donations);
+
+      const buffer = await TaxReceiptService.generateAnnualSummaryPDF({ walletAddress: 'GDONOR', year: 2026 });
+      expect(Buffer.isBuffer(buffer)).toBe(true);
+      expect(buffer.length).toBeGreaterThan(1000);
+    });
+  });
+});
