@@ -32,10 +32,10 @@ jobs:
       result: ${{ steps.audit.outputs.result }}
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Set up Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v7
         with:
           node-version: "20"
           cache: "npm"
@@ -139,10 +139,10 @@ jobs:
       result: ${{ steps.sast.outputs.result }}
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Set up Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v7
         with:
           node-version: "20"
           cache: "npm"
@@ -175,14 +175,14 @@ jobs:
       result: ${{ steps.gitleaks.outputs.result }}
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
         with:
           # Full history needed for Gitleaks to scan all commits
           fetch-depth: 0
 
       - name: Run Gitleaks for secrets scanning
         id: gitleaks
-        uses: gitleaks/gitleaks-action@v2
+        uses: gitleaks/gitleaks-action@v3
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
@@ -203,7 +203,7 @@ jobs:
        needs.secrets-scan.result == 'failure')
     steps:
       - name: Post or update sticky PR comment
-        uses: actions/github-script@v8
+        uses: actions/github-script@v9
         with:
           github-token: ${{ secrets.GITHUB_TOKEN }}
           script: |
@@ -265,10 +265,10 @@ jobs:
     if: github.event_name == 'schedule'
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Set up Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v7
         with:
           node-version: "20"
           cache: "npm"
@@ -284,7 +284,7 @@ jobs:
           echo "audit_exit=$?" >> "$GITHUB_OUTPUT"
 
       - name: Create GitHub Issue if new CVEs detected
-        uses: actions/github-script@v8
+        uses: actions/github-script@v9
         with:
           github-token: ${{ secrets.GITHUB_TOKEN }}
           script: |
