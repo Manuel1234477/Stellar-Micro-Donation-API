@@ -146,6 +146,38 @@ class StellarAccounts {
     return account.home_domain || null;
   }
 
+  /**
+   * Add (or update the weight of) a signer on an account.
+   * Used for multi-sig setups and social-recovery signer swaps (#1552).
+   */
+  async addSigner(masterSecret, signerPublicKey, weight = 1) {
+    const sourceKeypair = StellarSdk.Keypair.fromSecret(masterSecret);
+    const account = await this.loadAccount(sourceKeypair.publicKey());
+
+    const transaction = new StellarSdk.TransactionBuilder(account, {
+      fee: this.stellarService.baseFee,
+      networkPassphrase: this.stellarService.networkPassphrase,
+    })
+      .addOperation(
+        StellarSdk.Operation.setOptions({
+          signer: { ed25519PublicKey: signerPublicKey, weight },
+        })
+      )
+      .setTimeout(30)
+      .build();
+
+    transaction.sign(sourceKeypair);
+    const result = await this.stellarService._submitTransactionWithNetworkSafety(transaction);
+    return { hash: result.hash, ledger: result.ledger, signerPublicKey, weight };
+  }
+
+  /**
+   * Remove a signer from an account (weight 0).
+   */
+  async removeSigner(masterSecret, signerPublicKey) {
+    return this.addSigner(masterSecret, signerPublicKey, 0);
+  }
+
   isValidAddress(address) {
     try {
       StellarSdk.StrKey.decodeEd25519PublicKey(address);

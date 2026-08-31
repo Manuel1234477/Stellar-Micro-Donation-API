@@ -326,6 +326,139 @@ class ApiKeyUsageService {
       }));
   }
 
+  // ─── Dashboard analytics (#1554) ───────────────────────────────────────────
+
+  /**
+   * Full dashboard analytics for a single tracked API key: hourly + daily
+   * breakdowns (each with total volume, per-status-code error counts, and
+   * average latency), top endpoints, the peak hourly request rate, and — when
+   * a rate limit is supplied — which hourly buckets crossed 80% of it.
+   *
+   * @param {string} apiKey - The raw key string usage was recorded under.
+   * @param {object} [options]
+   * @param {number} [options.from]
+   * @param {number} [options.to]
+   * @param {number|null} [options.rateLimitPerMinute] - The key's configured per-minute rate limit, if any.
+   * @returns {object}
+   */
+  getDashboardAnalytics(apiKey, options = {}) {
+    this._assertKey(apiKey);
+    return this._buildDashboard(apiKey, [apiKey], options);
+  }
+
+  /**
+   * Same as getDashboardAnalytics, but merges every raw tracked key whose
+   * string starts with the given prefix. Used by admin endpoints that only
+   * know a key's DB id / prefix, not the raw secret string record() was
+   * called with.
+   *
+   * @param {string} keyPrefix
+   * @param {object} [options]
+   * @returns {object}
+   */
+  getDashboardAnalyticsByPrefix(keyPrefix, options = {}) {
+    this._purgeOldRecords();
+    const matchingKeys = Array.from(this._records.keys()).filter((k) => k.startsWith(keyPrefix));
+    return this._buildDashboard(keyPrefix, matchingKeys, options);
+  }
+
+  /** @private */
+  _buildDashboard(label, apiKeys, { from = Date.now() - RETENTION_MS, to = Date.now(), rateLimitPerMinute = null } = {}) {
+    this._purgeOldRecords();
+
+    const records = [];
+    for (const key of apiKeys) {
+      const recs = this._records.get(key) || [];
+      for (const r of recs) {
+        if (r.timestamp >= from && r.timestamp <= to) records.push(r);
+      }
+    }
+
+    const hourly = this._buildBreakdown(records, 'hour');
+    const daily = this._buildBreakdown(records, 'day');
+
+    const statusCodes = {};
+    for (const r of records) {
+      statusCodes[r.statusCode] = (statusCodes[r.statusCode] || 0) + 1;
+    }
+
+    const endpointCounts = new Map();
+    for (const r of records) {
+      const key = `${r.method} ${r.path}`;
+      endpointCounts.set(key, (endpointCounts.get(key) || 0) + 1);
+    }
+    const topEndpoints = Array.from(endpointCounts.entries())
+      .sort((a, b) => b[1] - a[1])
+      .slice(0, 10)
+      .map(([key, count]) => {
+        const [method, ...rest] = key.split(' ');
+        return { method, path: rest.join(' '), requestCount: count };
+      });
+
+    const peakHourlyRequests = hourly.reduce((max, b) => Math.max(max, b.requests), 0);
+
+    // Rate-limit proximity (#1554): flag any hourly bucket whose request
+    // count reached 80% of the key's per-hour equivalent limit.
+    let rateLimitFlags = [];
+    if (typeof rateLimitPerMinute === 'number' && rateLimitPerMinute > 0) {
+      const hourlyLimit = rateLimitPerMinute * 60;
+      rateLimitFlags = hourly
+        .filter((b) => b.requests >= hourlyLimit * 0.8)
+        .map((b) => ({
+          bucket: b.bucket,
+          requests: b.requests,
+          hourlyLimit,
+          utilizationPercent: Math.round((b.requests / hourlyLimit) * 10000) / 100,
+        }));
+    }
+
+    return {
+      apiKey: label,
+      from,
+      to,
+      totalRequests: records.length,
+      errorCount: records.filter((r) => r.statusCode >= 400).length,
+      statusCodes,
+      hourly,
+      daily,
+      topEndpoints,
+      peakHourlyRequests,
+      rateLimitPerMinute: rateLimitPerMinute ?? null,
+      rateLimitFlags,
+      rateLimitExceeded: rateLimitFlags.length > 0,
+    };
+  }
+
+  /**
+   * Bucket records at the given granularity, with per-status-code counts.
+   * @private
+   */
+  _buildBreakdown(records, granularity) {
+    const buckets = new Map();
+    for (const r of records) {
+      const key = this._bucketKey(r.timestamp, granularity);
+      if (!buckets.has(key)) {
+        buckets.set(key, { bucket: key, requests: 0, errors: 0, statusCodes: {}, latencies: [] });
+      }
+      const b = buckets.get(key);
+      b.requests += 1;
+      if (r.statusCode >= 400) b.errors += 1;
+      b.statusCodes[r.statusCode] = (b.statusCodes[r.statusCode] || 0) + 1;
+      b.latencies.push(r.latencyMs);
+    }
+
+    return Array.from(buckets.values())
+      .sort((a, b) => a.bucket.localeCompare(b.bucket))
+      .map((b) => ({
+        bucket: b.bucket,
+        requests: b.requests,
+        errors: b.errors,
+        errorRate: b.requests ? Math.round((b.errors / b.requests) * 10000) / 100 : 0,
+        statusCodes: b.statusCodes,
+        avgLatencyMs: b.latencies.length ? Math.round(b.latencies.reduce((s, l) => s + l, 0) / b.latencies.length) : 0,
+      }));
+  }
+
   // ─── Anomaly detection ─────────────────────────────────────────────────────
 
   /**

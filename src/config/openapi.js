@@ -129,6 +129,35 @@ const options = {
             prev_cursor: { type: 'string', nullable: true, example: null },
           },
         },
+        // ── /api/v2 standardized response envelope (Issue #1553) ──────────────
+        // Note: this is a different, unrelated envelope from Error/PaginationMeta
+        // above, which describe the /api/v1 { success, ... } shape. /api/v2 has
+        // no `success` field at all.
+        V2ListMeta: {
+          type: 'object',
+          description: 'Pagination metadata for a /api/v2 list response.',
+          properties: {
+            total: { type: 'integer', example: 42, description: 'Total matching items across all pages.' },
+            page: { type: 'integer', nullable: true, example: 1 },
+            pageSize: { type: 'integer', nullable: true, example: 20 },
+            cursor: { type: 'string', nullable: true, example: 'MjA=', description: 'Opaque cursor for the next page, base64-encoded; null on the last page.' },
+          },
+        },
+        V2Error: {
+          type: 'object',
+          description: 'Error envelope returned by every /api/v2 endpoint. Unlike /api/v1, there is no top-level `success` field.',
+          properties: {
+            error: {
+              type: 'object',
+              properties: {
+                code: { type: 'string', example: 'NOT_FOUND' },
+                message: { type: 'string', example: 'Resource not found' },
+                requestId: { type: 'string', nullable: true, example: '550e8400-e29b-41d4-a716-446655440000' },
+                timestamp: { type: 'string', format: 'date-time', example: '2026-08-30T09:00:00.000Z' },
+              },
+            },
+          },
+        },
       },
       responses: {
         Unauthorized: {
@@ -144,6 +173,14 @@ const options = {
           content: {
             'application/json': {
               schema: { $ref: '#/components/schemas/NotFoundError' },
+            },
+          },
+        },
+        V2Error: {
+          description: '/api/v2 error envelope: { error: { code, message, requestId, timestamp } }',
+          content: {
+            'application/json': {
+              schema: { $ref: '#/components/schemas/V2Error' },
             },
           },
         },
@@ -180,6 +217,9 @@ const options = {
     path.join(__dirname, '../routes/recurringDonation.js'),
     path.join(__dirname, '../routes/auth.js'),
     path.join(__dirname, '../routes/admin/auditLogExport.js'),
+    path.join(__dirname, '../routes/v2/donations.js'),
+    path.join(__dirname, '../routes/v2/wallets.js'),
+    path.join(__dirname, '../routes/v2/corporateMatching.js'),
   ],
 };
 

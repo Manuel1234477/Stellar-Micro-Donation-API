@@ -92,6 +92,27 @@ router.get('/:id/analytics/summary', requireApiKey, requireApiKeyOwnerOrAdmin, (
 });
 
 /**
+ * GET /api-keys/:id/analytics/dashboard
+ * Full dashboard analytics (#1554): hourly + daily breakdowns with
+ * per-status-code error counts, top endpoints, and peak hourly request rate.
+ */
+router.get('/:id/analytics/dashboard', requireApiKey, requireApiKeyOwnerOrAdmin, (req, res) => {
+  try {
+    const from = req.query.from ? new Date(req.query.from).getTime() : undefined;
+    const to = req.query.to ? new Date(req.query.to).getTime() : undefined;
+    if ((req.query.from && isNaN(from)) || (req.query.to && isNaN(to))) {
+      return res.status(400).json({ success: false, error: 'Invalid from/to date format' });
+    }
+
+    const dashboard = _service.getDashboardAnalytics(req.params.id, { from, to });
+    return res.json({ success: true, data: dashboard });
+  } catch (err) {
+    const status = err.message.includes('required') || err.message.includes('Invalid') ? 400 : 500;
+    return res.status(status).json({ success: false, error: err.message });
+  }
+});
+
+/**
  * GET /api-keys/:id/usage/timeseries
  * Query params:
  *   granularity  - 'hour' | 'day' | 'week'  (required)

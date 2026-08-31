@@ -604,11 +604,17 @@ class MockStellarService extends StellarServiceInterface {
     return this.fees.buildAndSubmitFeeBumpTransaction(envelopeXdr, newFeeStroops, feeSourceSecret); 
   }
   async bumpSequence(secret, bumpTo) { return this.accounts.bumpSequence(secret, bumpTo); }
-  async mergeAccount(sourceSecret, destinationPublic) { 
-    return this.accounts.mergeAccount(sourceSecret, destinationPublic); 
+  async mergeAccount(sourceSecret, destinationPublic) {
+    return this.accounts.mergeAccount(sourceSecret, destinationPublic);
   }
-  async validateMergeEligibility(publicKey) { 
-    return this.accounts.validateMergeEligibility(publicKey); 
+  async validateMergeEligibility(publicKey) {
+    return this.accounts.validateMergeEligibility(publicKey);
+  }
+  async addSigner(masterSecret, signerPublicKey, weight = 1) {
+    return this.accounts.addSigner(masterSecret, signerPublicKey, weight);
+  }
+  async removeSigner(masterSecret, signerPublicKey) {
+    return this.accounts.removeSigner(masterSecret, signerPublicKey);
   }
 
   // Assets / trustlines

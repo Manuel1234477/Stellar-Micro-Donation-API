@@ -448,6 +448,22 @@ class Transaction {
     return updated;
   }
 
+  /**
+   * Link a donation to its corporate/program matching donation (#1550).
+   * Sets matchedDonationId on the given transaction so both the original
+   * donation and its match can be traced to one another.
+   */
+  static updateMatchedDonationId(id, matchedDonationId) {
+    const tx = _store.get(id);
+    if (!tx) throw new Error(`Transaction not found: ${id}`);
+
+    const updated = { ...tx, matchedDonationId };
+
+    _store.set(id, updated);
+    _persist(updated);
+    return updated;
+  }
+
   static updateNftData(id, nftData) {
     const tx = _store.get(id);
     if (!tx) throw new Error(`Transaction not found: ${id}`);

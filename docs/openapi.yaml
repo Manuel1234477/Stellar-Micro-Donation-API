@@ -32,6 +32,12 @@ components:
           schema:
             $ref: '#/components/schemas/UnauthorizedError'
       description: Missing or invalid API key
+    V2Error:
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/V2Error'
+      description: '/api/v2 error envelope: { error: { code, message, requestId, timestamp } }'
     ValidationError:
       content:
         application/json:
@@ -103,6 +109,48 @@ components:
         success:
           example: false
           type: boolean
+      type: object
+    V2Error:
+      description: Error envelope returned by every /api/v2 endpoint. Unlike /api/v1, there is no top-level `success` field.
+      properties:
+        error:
+          properties:
+            code:
+              example: NOT_FOUND
+              type: string
+            message:
+              example: Resource not found
+              type: string
+            requestId:
+              example: 550e8400-e29b-41d4-a716-446655440000
+              nullable: true
+              type: string
+            timestamp:
+              example: '2026-08-30T09:00:00.000Z'
+              format: date-time
+              type: string
+          type: object
+      type: object
+    V2ListMeta:
+      description: Pagination metadata for a /api/v2 list response.
+      properties:
+        cursor:
+          description: Opaque cursor for the next page, base64-encoded; null on the last page.
+          example: MjA=
+          nullable: true
+          type: string
+        page:
+          example: 1
+          nullable: true
+          type: integer
+        pageSize:
+          example: 20
+          nullable: true
+          type: integer
+        total:
+          description: Total matching items across all pages.
+          example: 42
+          type: integer
       type: object
     ValidationError:
       allOf:
@@ -217,6 +265,187 @@ paths:
       summary: Poll export job status
       tags:
         - AuditLogExport
+  /api/v2/corporate-matching:
+    get:
+      parameters:
+        - in: query
+          name: status
+          schema:
+            enum:
+              - active
+              - paused
+              - exhausted
+            type: string
+        - in: query
+          name: sponsor_id
+          schema:
+            type: integer
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                properties:
+                  data:
+                    items:
+                      type: object
+                    type: array
+                  meta:
+                    $ref: '#/components/schemas/V2ListMeta'
+                type: object
+          description: Matching programs.
+      security:
+        - ApiKeyAuth: []
+      summary: List corporate matching programs (v2 envelope)
+      tags:
+        - V2 Corporate Matching
+  /api/v2/corporate-matching/{id}:
+    get:
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: integer
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                properties:
+                  data:
+                    type: object
+                type: object
+          description: The matching program.
+        '404':
+          $ref: '#/components/responses/V2Error'
+      security:
+        - ApiKeyAuth: []
+      summary: Get a single corporate matching program (v2 envelope)
+      tags:
+        - V2 Corporate Matching
+  /api/v2/donations:
+    get:
+      parameters:
+        - in: query
+          name: page
+          schema:
+            default: 1
+            minimum: 1
+            type: integer
+        - in: query
+          name: pageSize
+          schema:
+            default: 20
+            maximum: 100
+            minimum: 1
+            type: integer
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                properties:
+                  data:
+                    items:
+                      type: object
+                    type: array
+                  meta:
+                    $ref: '#/components/schemas/V2ListMeta'
+                type: object
+          description: A page of donations.
+        '401':
+          $ref: '#/components/responses/V2Error'
+      security:
+        - ApiKeyAuth: []
+      summary: List donations (v2 envelope)
+      tags:
+        - V2 Donations
+  /api/v2/donations/{id}:
+    get:
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                properties:
+                  data:
+                    type: object
+                type: object
+          description: The donation.
+        '404':
+          $ref: '#/components/responses/V2Error'
+      security:
+        - ApiKeyAuth: []
+      summary: Get a single donation (v2 envelope)
+      tags:
+        - V2 Donations
+  /api/v2/wallets:
+    get:
+      parameters:
+        - in: query
+          name: page
+          schema:
+            default: 1
+            minimum: 1
+            type: integer
+        - in: query
+          name: pageSize
+          schema:
+            default: 20
+            maximum: 100
+            minimum: 1
+            type: integer
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                properties:
+                  data:
+                    items:
+                      type: object
+                    type: array
+                  meta:
+                    $ref: '#/components/schemas/V2ListMeta'
+                type: object
+          description: A page of wallets.
+      security:
+        - ApiKeyAuth: []
+      summary: List wallets (v2 envelope)
+      tags:
+        - V2 Wallets
+  /api/v2/wallets/{id}:
+    get:
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: integer
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                properties:
+                  data:
+                    type: object
+                type: object
+          description: The wallet.
+        '404':
+          $ref: '#/components/responses/V2Error'
+      security:
+        - ApiKeyAuth: []
+      summary: Get a single wallet (v2 envelope)
+      tags:
+        - V2 Wallets
   /donations/{id}/approve:
     post:
       description: >
@@ -649,3 +878,9 @@ tags:
     name: LiquidityPools
   - description: Compliance audit log export with async jobs and signed URLs
     name: AuditLogExport
+  - description: /api/v2 donation endpoints, using the standardized envelope (Issue
+    name: V2 Donations
+  - description: /api/v2 wallet endpoints, using the standardized envelope (Issue
+    name: V2 Wallets
+  - description: /api/v2 corporate matching program endpoints (admin-only), using the standardized envelope (Issue
+    name: V2 Corporate Matching
