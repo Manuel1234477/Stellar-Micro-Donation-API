@@ -639,7 +639,10 @@ class StatsService {
     let granularity = 'daily';
     if (hours <= 48) granularity = 'hourly';
     else if (hours <= 24 * 14) granularity = 'daily';
-    else if (hours <= 24 * 90) granularity = 'weekly';
+    // Upper bound generous enough to cover a calendar '3m' period regardless
+    // of which months it spans (28-31 days each, so up to ~93 days) while
+    // staying well under a 1y period (365 days), which must stay monthly.
+    else if (hours <= 24 * 100) granularity = 'weekly';
     else granularity = 'monthly';
 
     return { start, end: now, granularity };

@@ -27,8 +27,19 @@ const log = require('../utils/log');
  * Role-Based Access Control (RBAC) Configuration
  * Intent: Handle the transition between legacy environment-based keys and
  * the new database-backed API key system with granular permissions.
+ *
+ * Re-reads process.env.API_KEYS on every call rather than trusting the
+ * config snapshot taken at module load: config is a singleton cached by
+ * require(), so any module that touches it before API_KEYS is set (e.g. a
+ * test file setting the env var after other setup modules have already
+ * pulled in config/index.js) would otherwise see a stale legacy key list.
  */
-const legacyKeys = config.apiKeys.legacy;
+const getLegacyKeys = () => {
+  if (process.env.API_KEYS) {
+    return process.env.API_KEYS.split(',').map((key) => key.trim()).filter(Boolean);
+  }
+  return config.apiKeys.legacy;
+};
 
 /**
  * Single Permission Validator
@@ -409,7 +420,7 @@ const attachUserRole = () => {
             }
           }
           // Priority 3: Legacy Environment variable support
-          else if (legacyKeys.includes(apiKey)) {
+          else if (getLegacyKeys().includes(apiKey)) {
             // Derive a stable, non-reversible ID for rate-limiting without storing the raw key
             const legacyKeyId = 'legacy-' + crypto.createHash('sha256').update(apiKey).digest('hex').slice(0, 16);
 
