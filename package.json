@@ -60,7 +60,8 @@
     "docs:error-codes": "node scripts/generate-error-codes.js",
     "scan:container": "bash scripts/scan-container.sh",
     "scan:container:all": "bash scripts/scan-container.sh --severity CRITICAL,HIGH,MEDIUM,LOW",
-    "scan:container:json": "bash scripts/scan-container.sh --format json --output trivy-results.json"
+    "scan:container:json": "bash scripts/scan-container.sh --format json --output trivy-results.json",
+    "check:isolation": "node scripts/check-test-isolation.js"
   },
   "dependencies": {
     "@opentelemetry/api": "^1.9.0",
