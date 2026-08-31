@@ -96,16 +96,16 @@
   "devDependencies": {
     "@babel/preset-env": "^7.29.7",
     "@types/express": "^5.0.6",
-    "@types/node": "^26.3.0",
+    "@types/node": "^26.4.0",
     "eslint": "8.57.1",
     "eslint-plugin-local": "file:./eslint-rules",
     "eslint-plugin-no-secrets": "^2.3.3",
-    "eslint-plugin-security": "^4.0.0",
+    "eslint-plugin-security": "^4.0.1",
     "fast-check": "^3.22.0",
     "jest": "^30.4.2",
     "madge": "^8.0.0",
     "nodemon": "^3.1.14",
-    "sql.js": "^1.14.1",
+    "sql.js": "^1.14.2",
     "supertest": "^6.3.3",
     "typescript": "^5.9.3"
   }
