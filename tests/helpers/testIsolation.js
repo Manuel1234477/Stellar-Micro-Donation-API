@@ -24,32 +24,34 @@ async function resetAllState() {
 }
 
 /**
- * Clear all database tables used in tests
+ * Clear all database tables used in tests.
+ * Covers core tables plus velocity/dedup tables added by issues #1580 and #1587.
  */
 async function clearDatabaseTables() {
-  try {
-    await Database.run('DELETE FROM idempotency_keys');
-  } catch (error) {
-    // Table may not exist in some test contexts
-  }
-  
-  try {
-    await Database.run('DELETE FROM api_keys WHERE created_by = ?', ['test-suite']);
-  } catch (error) {
-    // Table may not exist in some test contexts
+  const tables = [
+    'idempotency_keys',
+    'donations_store',
+    'donation_velocity',
+    'velocity_log',
+    'request_dedup_cache',
+    'dedup_cache',
+    'transactions',
+    'recurring_donations',
+    'api_keys',
+  ];
+
+  for (const table of tables) {
+    try {
+      await Database.run(`DELETE FROM ${table}`);
+    } catch (_) {
+      // Table may not exist in all test contexts — safe to ignore
+    }
   }
 
+  // Clear users added by tests (but not seed rows seeded by globalSetup)
   try {
-    await Database.run('DELETE FROM users');
-  } catch (error) {
-    // Table may not exist in some test contexts
-  }
-
-  try {
-    await Database.run('DELETE FROM transactions');
-  } catch (error) {
-    // Table may not exist in some test contexts
-  }
+    await Database.run(`DELETE FROM users WHERE created_by = 'test-suite' OR publicKey LIKE 'GTEST%'`);
+  } catch (_) {}
 }
 
 /**

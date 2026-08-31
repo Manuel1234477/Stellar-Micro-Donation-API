@@ -67,11 +67,13 @@ donationEvents.on(donationEvents.EVENTS.CREATED, () => {
 
 /**
  * GET /donations
- * List all donations with cursor-based pagination.
- * Query params: limit, cursor, sort, status, from, to, minAmount, maxAmount
+ * List all donations with cursor-based pagination and multi-field compound filtering.
+ * Query params: limit, cursor, sort, sortBy, order, status, from, to, startDate, endDate,
+ *               minAmount, maxAmount, donor, recipient, memo, tag, tags
  */
 router.get('/', checkPermission(PERMISSIONS.DONATIONS_READ), asyncHandler(async (req, res, next) => {
   try {
+    // Support both ?sort=field:dir (legacy) and ?sortBy=field&order=dir (new)
     const VALID_SORT = ['id:asc', 'id:desc', 'timestamp:asc', 'timestamp:desc', 'amount:asc', 'amount:desc'];
     const sort = req.query.sort;
     if (sort !== undefined && !VALID_SORT.includes(sort)) {
@@ -84,9 +86,81 @@ router.get('/', checkPermission(PERMISSIONS.DONATIONS_READ), asyncHandler(async 
       });
     }
 
+    // Validate sortBy and order separately (for new-style params)
+    const sortByParam = req.query.sortBy;
+    const orderParam = req.query.order;
+    const VALID_SORT_FIELDS = ['timestamp', 'amount', 'status', 'id'];
+    const VALID_ORDERS = ['asc', 'desc'];
+    if (sortByParam && !VALID_SORT_FIELDS.includes(sortByParam)) {
+      return res.status(400).json({
+        success: false,
+        error: { code: 'INVALID_SORT_BY', message: `sortBy must be one of: ${VALID_SORT_FIELDS.join(', ')}` },
+      });
+    }
+    if (orderParam && !VALID_ORDERS.includes(orderParam)) {
+      return res.status(400).json({
+        success: false,
+        error: { code: 'INVALID_ORDER', message: 'order must be "asc" or "desc"' },
+      });
+    }
+
     const pagination = parseCursorPaginationQuery(req.query);
-    const [sortBy, order] = sort ? sort.split(':') : ['timestamp', 'desc'];
-    const { status, from, to, minAmount, maxAmount, tag, tags } = req.query;
+    const [sortByFromSort, orderFromSort] = sort ? sort.split(':') : [null, null];
+    const sortBy = sortByParam || sortByFromSort || 'timestamp';
+    const order  = orderParam  || orderFromSort  || 'desc';
+
+    const { status, from, to, startDate, endDate, minAmount, maxAmount,
+            tag, tags, donor, recipient, memo } = req.query;
+
+    // Validate minAmount/maxAmount
+    if (minAmount !== undefined && isNaN(parseFloat(minAmount))) {
+      return res.status(400).json({
+        success: false,
+        error: { code: 'INVALID_MIN_AMOUNT', message: 'minAmount must be a number' },
+      });
+    }
+    if (maxAmount !== undefined && isNaN(parseFloat(maxAmount))) {
+      return res.status(400).json({
+        success: false,
+        error: { code: 'INVALID_MAX_AMOUNT', message: 'maxAmount must be a number' },
+      });
+    }
+    if (minAmount !== undefined && maxAmount !== undefined &&
+        parseFloat(minAmount) > parseFloat(maxAmount)) {
+      return res.status(400).json({
+        success: false,
+        error: { code: 'INVALID_AMOUNT_RANGE', message: 'minAmount must not exceed maxAmount' },
+      });
+    }
+
+    // Validate date range
+    if (startDate && endDate) {
+      const s = new Date(startDate);
+      const e = new Date(endDate);
+      if (!isNaN(s) && !isNaN(e) && s > e) {
+        return res.status(400).json({
+          success: false,
+          error: { code: 'INVALID_DATE_RANGE', message: 'startDate must not be after endDate' },
+        });
+      }
+    }
+
+    // Validate status values
+    const VALID_STATUSES = ['pending', 'submitted', 'confirmed', 'failed', 'cancelled', 'refunded'];
+    if (status) {
+      const statuses = status.split(',').map(s => s.trim()).filter(Boolean);
+      for (const s of statuses) {
+        if (!VALID_STATUSES.includes(s)) {
+          return res.status(400).json({
+            success: false,
+            error: {
+              code: 'INVALID_STATUS',
+              message: `Invalid status "${s}". Must be one of: ${VALID_STATUSES.join(', ')}`,
+            },
+          });
+        }
+      }
+    }
 
     let statusFilter;
     if (status) {
@@ -108,20 +182,42 @@ router.get('/', checkPermission(PERMISSIONS.DONATIONS_READ), asyncHandler(async 
       ...(tagsFilter !== undefined && { tags: tagsFilter }),
       ...(from && { startDate: from }),
       ...(to && { endDate: to }),
+      ...(startDate && !from && { startDate }),
+      ...(endDate && !to && { endDate }),
       ...(minAmount !== undefined && { minAmount }),
       ...(maxAmount !== undefined && { maxAmount }),
+      ...(donor && { donor }),
+      ...(recipient && { recipient }),
+      ...(memo && { memo }),
     };
 
     const result = donationService.getPaginatedDonations(pagination, filters);
     res.setHeader('X-Total-Count', String(result.totalCount));
 
+    // Build active filters summary — always returned as an object (possibly empty)
+    const activeFilters = {};
+    if (statusFilter !== undefined) activeFilters.status = statusFilter;
+    if (donor) activeFilters.donor = donor;
+    if (recipient) activeFilters.recipient = recipient;
+    if (memo) activeFilters.memo = memo;
+    if (minAmount !== undefined) activeFilters.minAmount = minAmount;
+    if (maxAmount !== undefined) activeFilters.maxAmount = maxAmount;
+    if (from || startDate) activeFilters.startDate = from || startDate;
+    if (to || endDate) activeFilters.endDate = to || endDate;
+    if (tagsFilter) activeFilters.tags = tagsFilter;
+
+    const meta = result.meta || {};
+
     res.json({
       success: true,
       data: result.data,
       count: result.data.length,
+      resultCount: result.totalCount,
+      filters: activeFilters,
+      meta: meta,
       pagination: {
-        nextCursor: result.meta.next_cursor,
-        hasMore: result.meta.next_cursor !== null,
+        nextCursor: meta.next_cursor || null,
+        hasMore: meta.next_cursor != null,
         total: result.totalCount,
       },
     });

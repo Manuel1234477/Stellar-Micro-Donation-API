@@ -218,13 +218,49 @@ class Transaction {
     };
   }
 
-  static getCursorPaginated({ limit = 20, cursor = null, startDate, endDate, senderPublicKey, recipientPublicKey } = {}) {
+  /**
+   * Cursor-paginated transaction list with multi-field compound filtering.
+   *
+   * Supported filters (all optional, combined with AND by default):
+   *   fromAddress    — exact match on tx.donor
+   *   toAddress      — exact match on tx.recipient
+   *   senderPublicKey  — alias for fromAddress (legacy)
+   *   recipientPublicKey — alias for toAddress (legacy)
+   *   amountMin      — inclusive lower bound on amount
+   *   amountMax      — inclusive upper bound on amount
+   *   startDate / dateFrom — ISO date, inclusive lower bound on timestamp
+   *   endDate / dateTo     — ISO date, inclusive upper bound on timestamp
+   *   status         — exact match on status
+   *   memoContains   — case-insensitive substring match on memo
+   *   sort           — "field:asc" or "field:desc" (field: amount|timestamp|status)
+   *   filterMode     — "all" (AND, default) | "any" (OR)
+   *
+   * All filter values are applied via parameterised in-memory comparisons — no
+   * user input is ever interpolated into SQL strings.
+   */
+  static getCursorPaginated({
+    limit = 20,
+    cursor = null,
+    // legacy aliases
+    startDate, endDate,
+    senderPublicKey, recipientPublicKey,
+    // new compound-filter params
+    fromAddress, toAddress,
+    amountMin, amountMax,
+    dateFrom, dateTo,
+    status,
+    memoContains,
+    sort,
+    filterMode = 'all',
+  } = {}) {
     let cursorTime = null;
     let cursorId = null;
-    let effectiveStartDate = startDate;
-    let effectiveEndDate = endDate;
-    let effectiveSenderPublicKey = senderPublicKey;
-    let effectiveRecipientPublicKey = recipientPublicKey;
+
+    // Resolve legacy aliases → canonical names
+    const effectiveFrom = fromAddress || senderPublicKey;
+    const effectiveTo = toAddress || recipientPublicKey;
+    const effectiveStart = dateFrom || startDate;
+    const effectiveEnd = dateTo || endDate;
 
     if (cursor) {
       try {
@@ -232,10 +268,6 @@ class Transaction {
         if (decoded && typeof decoded.t === 'number') {
           cursorTime = decoded.t;
           cursorId = decoded.id;
-          if (decoded.sd) effectiveStartDate = decoded.sd;
-          if (decoded.ed) effectiveEndDate = decoded.ed;
-          if (decoded.spk) effectiveSenderPublicKey = decoded.spk;
-          if (decoded.rpk) effectiveRecipientPublicKey = decoded.rpk;
         }
       } catch {
         const parts = cursor.split('_');
@@ -246,30 +278,89 @@ class Transaction {
       }
     }
 
-    let active = Array.from(_store.values()).filter(t => !t.deleted_at);
+    const all = Array.from(_store.values()).filter(t => !t.deleted_at);
 
-    if (effectiveStartDate) {
-      const start = new Date(effectiveStartDate).getTime();
-      active = active.filter(t => new Date(t.timestamp).getTime() >= start);
+    // Build a list of predicate functions from active filters.
+    // Parameterised approach: values are captured in closures, never interpolated.
+    const predicates = [];
+
+    if (effectiveFrom) {
+      predicates.push(t => t.donor === effectiveFrom);
     }
-    if (effectiveEndDate) {
-      const end = new Date(effectiveEndDate).getTime();
-      active = active.filter(t => new Date(t.timestamp).getTime() <= end);
+    if (effectiveTo) {
+      predicates.push(t => t.recipient === effectiveTo);
     }
-    if (effectiveSenderPublicKey) {
-      active = active.filter(t => t.donor === effectiveSenderPublicKey);
+    if (amountMin != null) {
+      const min = parseFloat(amountMin);
+      predicates.push(t => t.amount >= min);
     }
-    if (effectiveRecipientPublicKey) {
-      active = active.filter(t => t.recipient === effectiveRecipientPublicKey);
+    if (amountMax != null) {
+      const max = parseFloat(amountMax);
+      predicates.push(t => t.amount <= max);
+    }
+    if (effectiveStart) {
+      const startMs = new Date(effectiveStart).getTime();
+      predicates.push(t => new Date(t.timestamp).getTime() >= startMs);
+    }
+    if (effectiveEnd) {
+      const endMs = new Date(effectiveEnd).getTime();
+      predicates.push(t => new Date(t.timestamp).getTime() <= endMs);
+    }
+    if (status) {
+      const normalizedStatus = status.toLowerCase();
+      predicates.push(t => (t.status || '').toLowerCase() === normalizedStatus);
+    }
+    if (memoContains) {
+      const needle = memoContains.toLowerCase();
+      predicates.push(t => (t.memo || '').toLowerCase().includes(needle));
+    }
+
+    // Apply predicates: AND (all) or OR (any)
+    let active;
+    if (predicates.length === 0) {
+      active = all;
+    } else if (filterMode === 'any') {
+      active = all.filter(t => predicates.some(fn => fn(t)));
+    } else {
+      active = all.filter(t => predicates.every(fn => fn(t)));
+    }
+
+    // Parse sort parameter: "field:asc" | "field:dir"
+    const ALLOWED_SORT_FIELDS = new Set(['amount', 'timestamp', 'status']);
+    let sortField = 'timestamp';
+    let sortDir = 'desc';
+
+    if (sort) {
+      const [field, dir] = sort.split(':');
+      if (field && ALLOWED_SORT_FIELDS.has(field.toLowerCase())) {
+        sortField = field.toLowerCase();
+      }
+      if (dir && (dir.toLowerCase() === 'asc' || dir.toLowerCase() === 'desc')) {
+        sortDir = dir.toLowerCase();
+      }
     }
 
     const sorted = active.sort((a, b) => {
-      const timeA = new Date(a.timestamp).getTime();
-      const timeB = new Date(b.timestamp).getTime();
-      if (timeB !== timeA) return timeB - timeA;
+      let valA, valB;
+      if (sortField === 'amount') {
+        valA = a.amount ?? 0;
+        valB = b.amount ?? 0;
+      } else if (sortField === 'status') {
+        valA = (a.status || '').toLowerCase();
+        valB = (b.status || '').toLowerCase();
+      } else {
+        // timestamp (default)
+        valA = new Date(a.timestamp).getTime();
+        valB = new Date(b.timestamp).getTime();
+      }
+
+      if (valA < valB) return sortDir === 'asc' ? -1 : 1;
+      if (valA > valB) return sortDir === 'asc' ? 1 : -1;
+      // Stable tiebreaker: always descending by id
       return b.id.localeCompare(a.id);
     });
 
+    // Cursor-based slicing
     let startIndex = 0;
     if (cursorTime !== null && cursorId !== null) {
       startIndex = sorted.findIndex(t => {
@@ -283,17 +374,28 @@ class Transaction {
     const paginatedData = sorted.slice(startIndex, startIndex + pageLimit);
     const hasMore = startIndex + pageLimit < sorted.length;
 
+    // Build next cursor — carry active filters so subsequent pages are consistent.
     let nextCursor = null;
     if (hasMore && paginatedData.length > 0) {
       const lastItem = paginatedData[paginatedData.length - 1];
       const lastTimestamp = new Date(lastItem.timestamp).getTime();
-      if (effectiveStartDate || effectiveEndDate || effectiveSenderPublicKey || effectiveRecipientPublicKey) {
-        const cursorPayload = { t: lastTimestamp, id: lastItem.id };
-        if (effectiveStartDate) cursorPayload.sd = effectiveStartDate;
-        if (effectiveEndDate) cursorPayload.ed = effectiveEndDate;
-        if (effectiveSenderPublicKey) cursorPayload.spk = effectiveSenderPublicKey;
-        if (effectiveRecipientPublicKey) cursorPayload.rpk = effectiveRecipientPublicKey;
-        nextCursor = Buffer.from(JSON.stringify(cursorPayload)).toString('base64');
+
+      const hasFilters = effectiveFrom || effectiveTo || amountMin != null || amountMax != null ||
+        effectiveStart || effectiveEnd || status || memoContains || sort || filterMode !== 'all';
+
+      if (hasFilters) {
+        const payload = { t: lastTimestamp, id: lastItem.id };
+        if (effectiveFrom) payload.fa = effectiveFrom;
+        if (effectiveTo) payload.ta = effectiveTo;
+        if (amountMin != null) payload.amin = amountMin;
+        if (amountMax != null) payload.amax = amountMax;
+        if (effectiveStart) payload.sd = effectiveStart;
+        if (effectiveEnd) payload.ed = effectiveEnd;
+        if (status) payload.st = status;
+        if (memoContains) payload.mc = memoContains;
+        if (sort) payload.so = sort;
+        if (filterMode && filterMode !== 'all') payload.fm = filterMode;
+        nextCursor = Buffer.from(JSON.stringify(payload)).toString('base64');
       } else {
         nextCursor = `${lastTimestamp}_${lastItem.id}`;
       }

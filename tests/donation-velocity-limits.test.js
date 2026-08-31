@@ -12,21 +12,22 @@ const Database = require('../src/utils/database');
 
 async function seedRecipient(id = 1) {
   await Database.run(
-    `INSERT OR IGNORE INTO users (id, publicKey, tenant_id) VALUES (?, ?, 'default')`,
+    `INSERT OR IGNORE INTO users (id, publicKey) VALUES (?, ?)`,
     [id, `GRECIPIENT${String(id).padStart(46, '0')}`]
   );
 }
 
 async function seedDonor(id = 2) {
   await Database.run(
-    `INSERT OR IGNORE INTO users (id, publicKey, tenant_id) VALUES (?, ?, 'default')`,
+    `INSERT OR IGNORE INTO users (id, publicKey) VALUES (?, ?)`,
     [id, `GDONOR${String(id).padStart(50, '0')}`]
   );
 }
 
 async function clearVelocity() {
-  await Database.run('DELETE FROM donation_velocity');
-  await Database.run('DELETE FROM recipient_velocity_limits');
+  await Database.run('DELETE FROM donation_velocity').catch(() => {});
+  await Database.run('DELETE FROM recipient_velocity_limits').catch(() => {});
+  await Database.run('DELETE FROM velocity_log').catch(() => {});
 }
 
 // ── setup / teardown ─────────────────────────────────────────────────────────
@@ -50,7 +51,7 @@ beforeAll(async () => {
   await Database.run(`
     CREATE UNIQUE INDEX IF NOT EXISTS idx_velocity_donor_recipient_window
     ON donation_velocity(donorId, recipientId, windowStart)
-  `);
+  `).catch(() => {});
   await Database.run(`
     CREATE TABLE IF NOT EXISTS recipient_velocity_limits (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -63,6 +64,19 @@ beforeAll(async () => {
       FOREIGN KEY (recipientId) REFERENCES users(id)
     )
   `);
+  // New sliding-window log table (issue #1587)
+  await Database.run(`
+    CREATE TABLE IF NOT EXISTS velocity_log (
+      id         INTEGER  PRIMARY KEY AUTOINCREMENT,
+      donor_id   INTEGER  NOT NULL,
+      api_key    TEXT,
+      created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+    )
+  `);
+  await Database.run(`
+    CREATE INDEX IF NOT EXISTS idx_velocity_log_donor_created
+    ON velocity_log(donor_id, created_at)
+  `).catch(() => {});
   await seedRecipient(1);
   await seedDonor(2);
 });

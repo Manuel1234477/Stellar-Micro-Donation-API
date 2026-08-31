@@ -141,9 +141,20 @@ function errorHandler(err, req, res, next) {
       // Strip any details that might contain internal info in production
       delete errorBody.error.details;
     }
-    // Set X-Limit-Reset header for velocity limit errors
-    if (err.statusCode === 429 && err.resetAt) {
-      res.set('X-Limit-Reset', err.resetAt);
+    // Set Retry-After + X-Limit-Reset headers for rate/velocity limit errors (HTTP 429)
+    if (err.statusCode === 429) {
+      if (err.retryAfterSeconds != null) {
+        // Sliding-window VelocityLimitExceededError — precise seconds until next slot opens
+        res.set('Retry-After', String(err.retryAfterSeconds));
+      } else if (err.resetAt) {
+        // Legacy fixed-window errors — compute remaining seconds from resetAt timestamp
+        const secondsUntilReset = Math.max(
+          1,
+          Math.ceil((new Date(err.resetAt).getTime() - Date.now()) / 1000)
+        );
+        res.set('Retry-After', String(secondsUntilReset));
+        res.set('X-Limit-Reset', err.resetAt);
+      }
     }
     return res.status(err.statusCode).json(errorBody);
   }
