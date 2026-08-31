@@ -170,6 +170,9 @@ function getInstance() {
       stellar: {
         ...appConfig.stellar,
         serviceSecretKey: appConfig.stellar.serviceSecretKey || process.env.STELLAR_SECRET || process.env.SERVICE_SECRET_KEY || null,
+        horizonFallbackUrls: appConfig.stellar.horizonFallbackUrls || [],
+        failoverThreshold: appConfig.stellar.failoverThreshold || 3,
+        recoveryCooldownMs: appConfig.stellar.recoveryCooldownMs || 60000,
       },
     });
   }
