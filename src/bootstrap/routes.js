@@ -91,6 +91,7 @@ const ADMIN_ROUTES = [
   ['/admin/reconciliation',           require('../routes/admin/reconciliation')],
   ['/admin/routing',                  require('../routes/admin/routing')],
   ['/admin/traces',                   require('../routes/admin/traces')],
+  ['/admin',                          require('../routes/admin/startupReport')],
   ['/admin/wallets',                  require('../routes/admin/walletLimits')],
   ['/admin/wallets',                  require('../routes/admin/walletDonationLimits')],
   ['/admin/wallets/bulk-import',        require('../routes/admin/bulkWalletImport')],
