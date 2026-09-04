@@ -319,9 +319,11 @@ router.get('/schedules', checkPermission(PERMISSIONS.STREAM_READ), asyncHandler(
     const { status, all } = req.query;
     const isAdmin = req.user?.role === 'admin' || req.apiKey?.role === 'admin';
     const userPublicKey = req.user?.subject || req.apiKey?.subject;
+    // Legacy/system API keys (isLegacy: true) have no subject but are trusted callers
+    const isLegacyKey = (req.apiKey && req.apiKey.isLegacy) || (req.user && req.user.isLegacy);
 
-    // Non-admins must be filtered to their own schedules
-    if (!isAdmin && !userPublicKey) {
+    // Non-admins without a subject must be identified — unless they are legacy keys
+    if (!isAdmin && !userPublicKey && !isLegacyKey) {
       return res.status(403).json({
         success: false,
         error: { code: 'FORBIDDEN', message: 'Cannot identify requesting user' }
@@ -421,10 +423,12 @@ router.post('/schedules/:id/pause', checkPermission(PERMISSIONS.STREAM_UPDATE), 
     }
 
     // Authorization check: verify ownership or admin role
-    const isAdmin = req.user && req.user.role === 'admin';
-    const userPublicKey = req.user && req.user.subject;
+    const isAdmin = (req.user && req.user.role === 'admin') || (req.apiKey && req.apiKey.role === 'admin');
+    const userPublicKey = (req.user && req.user.subject) || (req.apiKey && req.apiKey.subject);
+    // Legacy/system API keys (no subject) bypass ownership check — they are trusted callers
+    const isLegacyKey = (req.apiKey && req.apiKey.isLegacy) || (req.user && req.user.isLegacy);
     
-    if (!isAdmin && userPublicKey !== schedule.donorPublicKey) {
+    if (!isAdmin && !isLegacyKey && userPublicKey !== schedule.donorPublicKey) {
       return res.status(403).json({
         success: false,
         error: {
@@ -482,10 +486,12 @@ router.post('/schedules/:id/resume', checkPermission(PERMISSIONS.STREAM_UPDATE),
     }
 
     // Authorization check: verify ownership or admin role
-    const isAdmin = req.user && req.user.role === 'admin';
-    const userPublicKey = req.user && req.user.subject;
+    const isAdmin = (req.user && req.user.role === 'admin') || (req.apiKey && req.apiKey.role === 'admin');
+    const userPublicKey = (req.user && req.user.subject) || (req.apiKey && req.apiKey.subject);
+    // Legacy/system API keys (no subject) bypass ownership check — they are trusted callers
+    const isLegacyKey = (req.apiKey && req.apiKey.isLegacy) || (req.user && req.user.isLegacy);
     
-    if (!isAdmin && userPublicKey !== schedule.donorPublicKey) {
+    if (!isAdmin && !isLegacyKey && userPublicKey !== schedule.donorPublicKey) {
       return res.status(403).json({
         success: false,
         error: {

@@ -535,12 +535,39 @@ function getCacheStats() {
   };
 }
 
+/**
+ * Clear the in-memory flag cache (forces next evaluation to reload from DB).
+ * Alias for refreshCache convenience in tests and admin operations.
+ *
+ * @returns {void}
+ */
+function clearCache() {
+  flagCache.clear();
+  lastCacheRefresh = 0;
+  log.debug('FEATURE_FLAGS', 'Cache cleared');
+}
+
+/**
+ * Initialize feature flag overrides table.
+ * The main feature_flags table already supports per-API-key overrides via
+ * scope='api_key'. This function is an alias to initializeFeatureFlagsTable
+ * for clarity and backward compatibility with code that expects a separate call.
+ *
+ * @returns {Promise<void>}
+ */
+async function initializeFeatureFlagOverridesTable() {
+  // Overrides are stored in the same feature_flags table using scope='api_key'.
+  // Calling initializeFeatureFlagsTable is idempotent, so this is safe.
+  return initializeFeatureFlagsTable();
+}
+
 module.exports = {
   // Constants
   FLAG_SCOPES,
 
   // Initialization
   initializeFeatureFlagsTable,
+  initializeFeatureFlagOverridesTable,
 
   // Evaluation
   isFeatureEnabled,
@@ -563,6 +590,7 @@ module.exports = {
 
   // Testing & Monitoring
   clearAllFlags,
+  clearCache,
   refreshCache,
   getCacheStats
 };
