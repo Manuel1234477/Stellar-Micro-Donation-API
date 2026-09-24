@@ -35,12 +35,14 @@ class TaxReceiptService {
    * @returns {boolean} True if tax receipt generation is configured
    */
   static isConfigured() {
-    return config.taxReceipt?.isConfigured || false;
+    return Boolean(config.taxReceipt?.isConfigured);
   }
 
   /**
    * Get organization tax configuration
-   * @returns {Object} Tax configuration
+   * @returns {{ein: string, legalName: string, address?: string, city?: string, state?: string,
+   *   zipCode?: string, phone?: string, email?: string, website?: string}} Tax configuration
+   * @throws {ValidationError} When the organization tax configuration is incomplete
    */
   static getOrganizationConfig() {
     if (!this.isConfigured()) {
@@ -312,7 +314,7 @@ class TaxReceiptService {
       [donationId]
     );
 
-    return donation && donation.tax_receipt_generated === 1;
+    return Boolean(donation && donation.tax_receipt_generated === 1);
   }
 
   /**

@@ -15,6 +15,8 @@ const { createHandler } = require('graphql-http/lib/use/express');
 const { useServer } = require('graphql-ws/use/ws');
 const { WebSocketServer } = require('ws');
 const { validate } = require('graphql');
+const { createHash } = require('crypto');
+const express = require('express');
 const { buildSchema } = require('./schema');
 const pubsub = require('./pubsub');
 const requireApiKey = require('../middleware/apiKey');
@@ -23,6 +25,8 @@ const DonationService = require('../services/DonationService');
 const WalletService = require('../services/WalletService');
 const StatsService = require('../services/StatsService');
 const log = require('../utils/log');
+const { validateKey } = require('../models/apiKeys');
+const { securityConfig } = require('../config/securityConfig');
 const { parseLanguage, getMessage } = require('../utils/i18n');
 
 const IS_PRODUCTION = process.env.NODE_ENV === 'production';
@@ -59,7 +63,6 @@ const LIST_FIELD_NAMES = new Set([
  */
 function hashQuery(document) {
   try {
-    const { createHash } = require('crypto');
     const src = document.loc?.source?.body || JSON.stringify(document.definitions);
     return createHash('sha256').update(src).digest('hex').slice(0, 16);
   } catch (_) {
@@ -426,8 +429,6 @@ function attachSubscriptionServer(httpServer) {
         }
 
         // Reuse the same validation logic as the REST middleware
-        const { validateKey } = require('../models/apiKeys');
-        const { securityConfig } = require('../config/securityConfig');
         const legacyKeys = securityConfig.API_KEYS || [];
 
         const keyInfo = await validateKey(apiKey).catch(() => null);
@@ -525,7 +526,6 @@ function attachSubscriptionServer(httpServer) {
  * @returns {import('express').Router}
  */
 function createGraphQLRouter() {
-  const express = require('express');
   const router = express.Router();
 
   // All GraphQL HTTP requests require a valid API key

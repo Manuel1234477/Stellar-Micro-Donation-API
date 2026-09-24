@@ -75,11 +75,11 @@ describe('Donation Tax Receipt Generation', () => {
         zipCode: '12345'
       };
 
-      const config = TaxReceiptService.getOrganizationConfig();
+      const orgConfig = TaxReceiptService.getOrganizationConfig();
 
-      expect(config.ein).toBe('12-3456789');
-      expect(config.legalName).toBe('Test Organization');
-      expect(config.address).toBe('123 Main St');
+      expect(orgConfig.ein).toBe('12-3456789');
+      expect(orgConfig.legalName).toBe('Test Organization');
+      expect(orgConfig.address).toBe('123 Main St');
 
       config.taxReceipt = originalConfig;
     });
