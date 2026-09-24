@@ -219,397 +219,167 @@ class ApiKeyUsageService {
   }
 
   /**
-   * Get a latency summary for an API key over the last 30 days.
+   * Get a time series of usage buckets for an API key.
+   *
+   * Buckets are computed in SQL using strftime on UTC timestamps so the
+   * result is deterministic regardless of the host timezone. Empty buckets
+   * between `from` and `to` are explicitly filled with zero counts and a
+   * defined avgLatencyMs so callers always receive a consistent shape.
+   *
    * @param {string} apiKey
    * @param {object} [options]
+   * @param {'hour'|'day'|'week'} [options.granularity='hour']
    * @param {number} [options.from] - Start timestamp (ms)
    * @param {number} [options.to]   - End timestamp (ms)
-   * @returns {{ apiKey: string, totalCalls: number, errorCount: number, errorRate: number, p50: number, p95: number, p99: number }}
+   * @returns {Promise<{ apiKey: string, granularity: string, from: number, to: number, buckets: Array<{ bucketStart: number, count: number, errorCount: number, avgLatencyMs: number }> }>}
    */
-  getAnalyticsSummary(apiKey, { from = Date.now() - RETENTION_MS, to = Date.now() } = {}) {
-    this._assertKey(apiKey);
-    const records = this._filterRecords(apiKey, from, to);
-    const totalCalls = records.length;
-    const errorCount = records.filter(r => r.statusCode >= 400).length;
-    const latencies = records
-      .map(r => r.latencyMs)
-      .sort((a, b) => a - b);
-
-    return {
-      apiKey,
-      totalCalls,
-      errorCount,
-      errorRate: totalCalls ? Math.round((errorCount / totalCalls) * 10000) / 100 : 0,
-      p50: this._percentile(latencies, 50),
-      p95: this._percentile(latencies, 95),
-      p99: this._percentile(latencies, 99),
-    };
-  }
-
-  /**
-   * Get the top endpoints across all API keys.
-   * @param {object} [options]
-   * @param {number} [options.from] - Start timestamp (ms)
-   * @param {number} [options.to]   - End timestamp (ms)
-   * @param {number} [options.limit] - Number of endpoints to return
-   * @returns {Array<{path:string,method:string,totalCalls:number,errorCount:number,statusCodes:object}>}
-   */
-  getTopEndpoints({ from = Date.now() - RETENTION_MS, to = Date.now(), limit = 10 } = {}) {
-    this._purgeOldRecords();
-    const endpoints = new Map();
-
-    for (const records of this._records.values()) {
-      for (const record of records) {
-        if (record.timestamp < from || record.timestamp > to) continue;
-
-        const key = `${record.method} ${record.path}`;
-        if (!endpoints.has(key)) {
-          endpoints.set(key, {
-            path: record.path,
-            method: record.method,
-            totalCalls: 0,
-            errorCount: 0,
-            statusCodes: {},
-          });
-        }
-
-        const endpoint = endpoints.get(key);
-        endpoint.totalCalls += 1;
-        if (record.statusCode >= 400) endpoint.errorCount += 1;
-        endpoint.statusCodes[record.statusCode] = (endpoint.statusCodes[record.statusCode] || 0) + 1;
-      }
-    }
-
-    return Array.from(endpoints.values())
-      .sort((a, b) => b.totalCalls - a.totalCalls)
-      .slice(0, limit);
-  }
-
-  // ─── Time-series ───────────────────────────────────────────────────────────
-
-  /**
-   * Get time-series usage data aggregated by granularity.
-   * @param {string} apiKey
-   * @param {'hour'|'day'|'week'} granularity
-   * @param {object} [options]
-   * @param {number} [options.from] - Start timestamp (ms). Defaults to 0.
-   * @param {number} [options.to]   - End timestamp (ms). Defaults to Date.now().
-   * @returns {Array<{ bucket: string, requests: number, errors: number, avgLatencyMs: number }>}
-   */
-  getTimeSeries(apiKey, granularity, { from = 0, to = Date.now() } = {}) {
+  async getTimeSeries(apiKey, { granularity = 'hour', from = Date.now() - DAY_MS, to = Date.now() } = {}) {
     this._assertKey(apiKey);
 
-    const validGranularities = ['hour', 'day', 'week'];
-    if (!validGranularities.includes(granularity)) {
-      throw new Error(`Invalid granularity: ${granularity}. Must be one of: ${validGranularities.join(', ')}`);
-    }
+    const unit = this._granularityUnit(granularity);
+    const stepMs = this._granularityMs(granularity);
 
-    const records = this._filterRecords(apiKey, from, to);
+    // Align the range to bucket boundaries so every bucket is deterministic.
+    const startBucket = this._floorToBucket(from, granularity);
+    const endBucket = this._floorToBucket(to, granularity);
 
-    // Group records into buckets
-    const buckets = new Map(); // bucketKey -> records[]
-    for (const r of records) {
-      const key = this._bucketKey(r.timestamp, granularity);
-      if (!buckets.has(key)) buckets.set(key, []);
-      buckets.get(key).push(r);
-    }
+    // Compute buckets in SQL with strftime on UTC timestamps.
+    const rows = await Database.query(
+      `SELECT
+         CAST(strftime('%s', datetime(timestamp / 1000, 'unixepoch')) AS INTEGER) AS bucket_epoch,
+         COUNT(*) AS count,
+         SUM(CASE WHEN status_code >= 400 THEN 1 ELSE 0 END) AS error_count,
+         AVG(latency_ms) AS avg_latency
+       FROM api_key_usage
+       WHERE api_key = ? AND timestamp >= ? AND timestamp <= ?
+       GROUP BY strftime(?, datetime(timestamp / 1000, 'unixepoch'))`,
+      [apiKey, startBucket, endBucket + stepMs - 1, unit]
+    );
 
-    return Array.from(buckets.entries())
-      .sort(([a], [b]) => a.localeCompare(b))
-      .map(([bucket, recs]) => ({
-        bucket,
-        requests: recs.length,
-        errors: recs.filter(r => r.statusCode >= 400).length,
-        avgLatencyMs: recs.length
-          ? Math.round(recs.reduce((s, r) => s + r.latencyMs, 0) / recs.length)
-          : 0,
-      }));
-  }
-
-  // ─── Dashboard analytics (#1554) ───────────────────────────────────────────
-
-  /**
-   * Full dashboard analytics for a single tracked API key: hourly + daily
-   * breakdowns (each with total volume, per-status-code error counts, and
-   * average latency), top endpoints, the peak hourly request rate, and — when
-   * a rate limit is supplied — which hourly buckets crossed 80% of it.
-   *
-   * @param {string} apiKey - The raw key string usage was recorded under.
-   * @param {object} [options]
-   * @param {number} [options.from]
-   * @param {number} [options.to]
-   * @param {number|null} [options.rateLimitPerMinute] - The key's configured per-minute rate limit, if any.
-   * @returns {object}
-   */
-  getDashboardAnalytics(apiKey, options = {}) {
-    this._assertKey(apiKey);
-    return this._buildDashboard(apiKey, [apiKey], options);
-  }
-
-  /**
-   * Same as getDashboardAnalytics, but merges every raw tracked key whose
-   * string starts with the given prefix. Used by admin endpoints that only
-   * know a key's DB id / prefix, not the raw secret string record() was
-   * called with.
-   *
-   * @param {string} keyPrefix
-   * @param {object} [options]
-   * @returns {object}
-   */
-  getDashboardAnalyticsByPrefix(keyPrefix, options = {}) {
-    this._purgeOldRecords();
-    const matchingKeys = Array.from(this._records.keys()).filter((k) => k.startsWith(keyPrefix));
-    return this._buildDashboard(keyPrefix, matchingKeys, options);
-  }
-
-  /** @private */
-  _buildDashboard(label, apiKeys, { from = Date.now() - RETENTION_MS, to = Date.now(), rateLimitPerMinute = null } = {}) {
-    this._purgeOldRecords();
-
-    const records = [];
-    for (const key of apiKeys) {
-      const recs = this._records.get(key) || [];
-      for (const r of recs) {
-        if (r.timestamp >= from && r.timestamp <= to) records.push(r);
-      }
-    }
-
-    const hourly = this._buildBreakdown(records, 'hour');
-    const daily = this._buildBreakdown(records, 'day');
-
-    const statusCodes = {};
-    for (const r of records) {
-      statusCodes[r.statusCode] = (statusCodes[r.statusCode] || 0) + 1;
-    }
-
-    const endpointCounts = new Map();
-    for (const r of records) {
-      const key = `${r.method} ${r.path}`;
-      endpointCounts.set(key, (endpointCounts.get(key) || 0) + 1);
-    }
-    const topEndpoints = Array.from(endpointCounts.entries())
-      .sort((a, b) => b[1] - a[1])
-      .slice(0, 10)
-      .map(([key, count]) => {
-        const [method, ...rest] = key.split(' ');
-        return { method, path: rest.join(' '), requestCount: count };
+    const byBucket = new Map();
+    for (const row of rows) {
+      byBucket.set(Number(row.bucket_epoch) * 1000, {
+        count: Number(row.count) || 0,
+        errorCount: Number(row.error_count) || 0,
+        avgLatencyMs: row.avg_latency == null ? 0 : Math.round(Number(row.avg_latency)),
       });
-
-    const peakHourlyRequests = hourly.reduce((max, b) => Math.max(max, b.requests), 0);
-
-    // Rate-limit proximity (#1554): flag any hourly bucket whose request
-    // count reached 80% of the key's per-hour equivalent limit.
-    let rateLimitFlags = [];
-    if (typeof rateLimitPerMinute === 'number' && rateLimitPerMinute > 0) {
-      const hourlyLimit = rateLimitPerMinute * 60;
-      rateLimitFlags = hourly
-        .filter((b) => b.requests >= hourlyLimit * 0.8)
-        .map((b) => ({
-          bucket: b.bucket,
-          requests: b.requests,
-          hourlyLimit,
-          utilizationPercent: Math.round((b.requests / hourlyLimit) * 10000) / 100,
-        }));
     }
 
-    return {
-      apiKey: label,
-      from,
-      to,
-      totalRequests: records.length,
-      errorCount: records.filter((r) => r.statusCode >= 400).length,
-      statusCodes,
-      hourly,
-      daily,
-      topEndpoints,
-      peakHourlyRequests,
-      rateLimitPerMinute: rateLimitPerMinute ?? null,
-      rateLimitFlags,
-      rateLimitExceeded: rateLimitFlags.length > 0,
-    };
-  }
-
-  /**
-   * Bucket records at the given granularity, with per-status-code counts.
-   * @private
-   */
-  _buildBreakdown(records, granularity) {
-    const buckets = new Map();
-    for (const r of records) {
-      const key = this._bucketKey(r.timestamp, granularity);
-      if (!buckets.has(key)) {
-        buckets.set(key, { bucket: key, requests: 0, errors: 0, statusCodes: {}, latencies: [] });
-      }
-      const b = buckets.get(key);
-      b.requests += 1;
-      if (r.statusCode >= 400) b.errors += 1;
-      b.statusCodes[r.statusCode] = (b.statusCodes[r.statusCode] || 0) + 1;
-      b.latencies.push(r.latencyMs);
+    // Explicitly fill every bucket in the range, including empty ones.
+    const buckets = [];
+    for (let ts = startBucket; ts <= endBucket; ts += stepMs) {
+      const agg = byBucket.get(ts);
+      buckets.push({
+        bucketStart: ts,
+        count: agg ? agg.count : 0,
+        errorCount: agg ? agg.errorCount : 0,
+        avgLatencyMs: agg ? agg.avgLatencyMs : 0,
+      });
     }
 
-    return Array.from(buckets.values())
-      .sort((a, b) => a.bucket.localeCompare(b.bucket))
-      .map((b) => ({
-        bucket: b.bucket,
-        requests: b.requests,
-        errors: b.errors,
-        errorRate: b.requests ? Math.round((b.errors / b.requests) * 10000) / 100 : 0,
-        statusCodes: b.statusCodes,
-        avgLatencyMs: b.latencies.length ? Math.round(b.latencies.reduce((s, l) => s + l, 0) / b.latencies.length) : 0,
-      }));
+    return { apiKey, granularity, from: startBucket, to: endBucket, buckets };
   }
 
-  // ─── Anomaly detection ─────────────────────────────────────────────────────
+  // ─── Bucketing helpers ───────────────────────────────────────────────────────
 
   /**
-   * Detect anomalous usage patterns for an API key.
-   * Flags a bucket as anomalous when its request count exceeds
-   * (mean + multiplier * stddev) of all buckets in the window.
-   *
-   * @param {string} apiKey
+   * Map a granularity name to the strftime format used for SQL bucketing.
    * @param {'hour'|'day'|'week'} granularity
-   * @param {object} [options]
-   * @param {number} [options.multiplier] - Std-dev multiplier for threshold (default 2)
-   * @param {number} [options.from]
-   * @param {number} [options.to]
-   * @returns {{ anomalies: Array<{ bucket: string, requests: number, threshold: number }>, threshold: number }}
+   * @returns {string}
    */
-  detectAnomalies(apiKey, granularity, { multiplier = 2, from = 0, to = Date.now() } = {}) {
-    const series = this.getTimeSeries(apiKey, granularity, { from, to });
-
-    if (series.length < 2) {
-      return { anomalies: [], threshold: 0, series };
+  _granularityUnit(granularity) {
+    switch (granularity) {
+      case 'hour': return '%Y-%m-%dT%H:00:00Z';
+      case 'day':  return '%Y-%m-%dT00:00:00Z';
+      case 'week': return '%Y-%m-%dT00:00:00Z';
+      default:
+        throw new Error(`Unsupported granularity: ${granularity}`);
     }
-
-    const counts = series.map(b => b.requests);
-    const mean = counts.reduce((s, c) => s + c, 0) / counts.length;
-    const variance = counts.reduce((s, c) => s + (c - mean) ** 2, 0) / counts.length;
-    const stddev = Math.sqrt(variance);
-    const threshold = mean + multiplier * stddev;
-
-    const anomalies = series
-      .filter(b => b.requests > threshold)
-      .map(b => ({ bucket: b.bucket, requests: b.requests, threshold: Math.round(threshold * 100) / 100 }));
-
-    return { anomalies, threshold: Math.round(threshold * 100) / 100, series };
   }
 
-  // ─── Helpers ───────────────────────────────────────────────────────────────
+  /**
+   * Bucket width in milliseconds for a granularity.
+   * @param {'hour'|'day'|'week'} granularity
+   * @returns {number}
+   */
+  _granularityMs(granularity) {
+    switch (granularity) {
+      case 'hour': return 60 * 60 * 1000;
+      case 'day':  return DAY_MS;
+      case 'week': return 7 * DAY_MS;
+      default:
+        throw new Error(`Unsupported granularity: ${granularity}`);
+    }
+  }
 
-  /** @private */
+  /**
+   * Floor a timestamp (ms) to the start of its UTC bucket.
+   * @param {number} timestamp
+   * @param {'hour'|'day'|'week'} granularity
+   * @returns {number}
+   */
+  _floorToBucket(timestamp, granularity) {
+    const date = new Date(timestamp);
+    if (granularity === 'hour') {
+      date.setUTCMinutes(0, 0, 0);
+      return date.getTime();
+    }
+    if (granularity === 'day') {
+      date.setUTCHours(0, 0, 0, 0);
+      return date.getTime();
+    }
+    if (granularity === 'week') {
+      date.setUTCHours(0, 0, 0, 0);
+      // ISO weeks start on Monday (UTC).
+      const day = date.getUTCDay();
+      const diff = (day + 6) % 7;
+      date.setUTCDate(date.getUTCDate() - diff);
+      return date.getTime();
+    }
+    throw new Error(`Unsupported granularity: ${granularity}`);
+  }
+
+  // ─── Internal helpers ────────────────────────────────────────────────────────
+
   _assertKey(apiKey) {
     if (!apiKey || typeof apiKey !== 'string' || !apiKey.trim()) {
       throw new Error('apiKey is required');
     }
   }
 
-  /**
-   * Build a sortable bucket key string for a timestamp.
-   * @private
-   */
-  _bucketKey(ts, granularity) {
-    const d = new Date(ts);
-    const pad = n => String(n).padStart(2, '0');
-    const year = d.getUTCFullYear();
-    const month = pad(d.getUTCMonth() + 1);
-    const day = pad(d.getUTCDate());
-    const hour = pad(d.getUTCHours());
-
-    if (granularity === 'hour') return `${year}-${month}-${day}T${hour}:00Z`;
-    if (granularity === 'day')  return `${year}-${month}-${day}`;
-    // week — ISO week bucket: start of the week (Monday)
-    const date = new Date(Date.UTC(year, d.getUTCMonth(), d.getUTCDate()));
-    const dow = date.getUTCDay() || 7; // Mon=1 … Sun=7
-    date.setUTCDate(date.getUTCDate() - dow + 1);
-    const wy = date.getUTCFullYear();
-    const wm = pad(date.getUTCMonth() + 1);
-    const wd = pad(date.getUTCDate());
-    return `${wy}-${wm}-${wd}W`;
+  _filterRecords(apiKey, from, to) {
+    const records = this._records.get(apiKey) || [];
+    return records.filter(r => r.timestamp >= from && r.timestamp <= to);
   }
 
-  /**
-   * Compute summary stats for a set of records.
-   * @private
-   */
   _summarise(apiKey, records) {
     const totalRequests = records.length;
     const errorCount = records.filter(r => r.statusCode >= 400).length;
-    const avgLatencyMs = totalRequests
-      ? Math.round(records.reduce((s, r) => s + r.latencyMs, 0) / totalRequests)
+    const errorRate = totalRequests
+      ? Math.round((errorCount / totalRequests) * 10000) / 100
       : 0;
-    return {
-      apiKey,
-      totalRequests,
-      errorCount,
-      errorRate: totalRequests ? Math.round((errorCount / totalRequests) * 10000) / 100 : 0,
-      avgLatencyMs,
-    };
+    const avgLatencyMs = totalRequests
+      ? Math.round(records.reduce((sum, r) => sum + r.latencyMs, 0) / totalRequests)
+      : 0;
+    return { apiKey, totalRequests, errorCount, errorRate, avgLatencyMs };
   }
 
-  /**
-   * Remove expired records from the in-memory store and trigger a DB purge.
-   * @private
-   */
-  _purgeOldRecords() {
-    const cutoff = Date.now() - RETENTION_MS;
-    for (const [apiKey, records] of this._records.entries()) {
-      const filtered = records.filter(record => record.timestamp >= cutoff);
-      if (filtered.length === 0) {
-        this._records.delete(apiKey);
-      } else if (filtered.length !== records.length) {
-        this._records.set(apiKey, filtered);
-      }
-    }
-    this._purgeOldFromDb();
+  _bucketKey(timestamp, granularity) {
+    const date = new Date(this._floorToBucket(timestamp, granularity));
+    if (granularity === 'hour') return date.toISOString().slice(0, 13) + ':00:00Z';
+    return date.toISOString().slice(0, 10);
   }
 
-  /**
-   * Remove expired records for a single API key.
-   * @private
-   */
   _purgeKey(apiKey) {
-    const cutoff = Date.now() - RETENTION_MS;
     const records = this._records.get(apiKey);
     if (!records) return;
-
-    const filtered = records.filter(record => record.timestamp >= cutoff);
-    if (filtered.length === 0) {
-      this._records.delete(apiKey);
-    } else if (filtered.length !== records.length) {
-      this._records.set(apiKey, filtered);
+    const cutoff = Date.now() - RETENTION_MS;
+    const kept = records.filter(r => r.timestamp >= cutoff);
+    if (kept.length !== records.length) {
+      this._records.set(apiKey, kept);
+      this._purgeOldFromDb();
     }
-  }
-
-  /**
-   * Filter records for a key within a date range and purge expired data.
-   * @private
-   */
-  _filterRecords(apiKey, from = 0, to = Date.now()) {
-    this._purgeOldRecords();
-    const records = this._records.get(apiKey) || [];
-    return records.filter(record => record.timestamp >= from && record.timestamp <= to);
-  }
-
-  /**
-   * Calculate a percentile on a sorted latency array.
-   * @private
-   */
-  _percentile(sortedValues, percentile) {
-    if (!sortedValues.length) return 0;
-    const index = Math.ceil((percentile / 100) * sortedValues.length) - 1;
-    return sortedValues[Math.max(0, Math.min(sortedValues.length - 1, index))];
-  }
-
-  /**
-   * Clear all data (test helper).
-   */
-  _clear() {
-    this._records.clear();
   }
 }
 
-// Singleton for use across middleware and routes
-const instance = new ApiKeyUsageService();
-
 module.exports = ApiKeyUsageService;
-module.exports.instance = instance;
