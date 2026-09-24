@@ -810,3 +810,7 @@ For comprehensive documentation, see the [Documentation Index](docs/README.md).
 - **[Mock Stellar Guide](docs/guides/MOCK_STELLAR_GUIDE.md)** - Testing without network calls
 - **[Versioning Strategy](docs/VERSIONING_STRATEGY.md)** - SemVer rules, release flow, and breaking change policy
 
+## Handsoff notes
+
+<!-- handsoff-issue-1712 -->
+- #1712: Donor stats and leaderboard return undefined for non-admin callers, breaking anonymization guarantees
