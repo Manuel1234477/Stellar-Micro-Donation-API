@@ -6,41 +6,44 @@
  */
 
 /**
- * Validate Stellar public key format
- * Stellar public keys start with 'G' and are 56 characters long (base32 encoded)
- * @param {unknown} key - Value to validate as Stellar public key
- * @returns {boolean} True if valid Stellar public key format
+ * Maximum donation amount in XLM.
+ * Stellar amounts are int64 stroops (1 XLM = 10^7 stroops), so the largest
+ * representable amount is 9223372036854775807 / 10^7 = 922337203685.4775807 XLM.
  */
-const isValidStellarPublicKey = (key) => {
-  if (typeof key !== 'string') return false;
-
-  // Stellar public keys: start with 'G', 56 chars, alphanumeric
-  const stellarPublicKeyRegex = /^G[A-Z2-7]{55}$/;
-  return stellarPublicKeyRegex.test(key);
-};
+const MAX_AMOUNT_XLM = 922337203685.4775807;
 
 /**
- * Validate Stellar secret key format
- * Stellar secret keys start with 'S' and are 56 characters long (base32 encoded)
- * @param {unknown} key - Value to validate as Stellar secret key
- * @returns {boolean} True if valid Stellar secret key format
- */
-const isValidStellarSecretKey = (key) => {
-  if (typeof key !== 'string') return false;
-
-  // Stellar secret keys: start with 'S', 56 chars, alphanumeric
-  const stellarSecretKeyRegex = /^S[A-Z2-7]{55}$/;
-  return stellarSecretKeyRegex.test(key);
-};
-
-/**
- * Validate amount is a positive number
+ * Validate amount is a positive number within Stellar int64 stroop bounds.
+ *
+ * Accepts numeric strings (preferred) and JSON numbers that can be represented
+ * exactly. Rejects NaN, Infinity, Number.MAX_VALUE, Number.MIN_VALUE, values
+ * with more than 7 fractional digits, zero/negative amounts, and amounts that
+ * would overflow int64 stroops.
+ *
  * @param {unknown} amount - Value to validate as positive amount
- * @returns {boolean} True if valid positive number
+ * @returns {boolean} True if valid positive amount
  */
 const isValidAmount = (amount) => {
-  const num = parseFloat(amount);
-  return !isNaN(num) && num > 0 && isFinite(num);
+  if (typeof amount === 'number') {
+    // Reject non-finite values and JSON numbers that cannot be represented
+    // exactly (e.g. Number.MAX_VALUE, Number.MIN_VALUE, 1e-8).
+    if (!Number.isFinite(amount)) return false;
+    if (!Number.isSafeInteger(amount * 1e7)) return false;
+    amount = String(amount);
+  }
+
+  if (typeof amount !== 'string') return false;
+
+  const trimmed = amount.trim();
+  // Require a plain decimal string: optional integer part, optional fraction
+  // with at most 7 digits. Rejects exponent notation, signs, and whitespace.
+  if (!/^\d+(\.\d{1,7})?$/.test(trimmed)) return false;
+
+  const num = Number(trimmed);
+  if (!Number.isFinite(num) || num <= 0) return false;
+  if (num > MAX_AMOUNT_XLM) return false;
+
+  return true;
 };
 
 /**
