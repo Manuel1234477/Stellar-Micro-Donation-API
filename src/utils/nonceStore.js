@@ -102,9 +102,9 @@ class NonceStore {
    */
   startCleanup() {
     if (this._cleanupTimer) return this;
-    this._cleanupTimer = setInterval(() => this.cleanup(), CLEANUP_INTERVAL_MS);
-    /* istanbul ignore next */
-    if (this._cleanupTimer.unref) this._cleanupTimer.unref();
+    const timerRegistry = require('./timerRegistry');
+    this._cleanupTimer = timerRegistry.createInterval(() => this.cleanup(), CLEANUP_INTERVAL_MS, 'nonce-store-cleanup');
+    this._cleanupTimer.unref();
     return this;
   }
 
@@ -115,7 +115,7 @@ class NonceStore {
    */
   stopCleanup() {
     if (this._cleanupTimer) {
-      clearInterval(this._cleanupTimer);
+      this._cleanupTimer.clear();
       this._cleanupTimer = null;
     }
     return this;
