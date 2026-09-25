@@ -32,17 +32,22 @@ const RESPONSE_STATUS = Object.freeze({
 const DONATION_FREQUENCIES = Object.freeze({
   DAILY: 'daily',
   WEEKLY: 'weekly',
+  BIWEEKLY: 'biweekly',
   MONTHLY: 'monthly',
+  QUARTERLY: 'quarterly',
   CUSTOM: 'custom',
 });
 
 /**
- * Valid frequencies array for validation (Issue #888: only daily, weekly, monthly)
+ * Valid frequencies array for validation (Issue #888, #1602)
  */
 const VALID_FREQUENCIES = Object.freeze([
   DONATION_FREQUENCIES.DAILY,
   DONATION_FREQUENCIES.WEEKLY,
+  DONATION_FREQUENCIES.BIWEEKLY,
   DONATION_FREQUENCIES.MONTHLY,
+  DONATION_FREQUENCIES.QUARTERLY,
+  DONATION_FREQUENCIES.CUSTOM,
 ]);
 
 /**

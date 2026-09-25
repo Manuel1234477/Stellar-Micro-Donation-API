@@ -633,7 +633,7 @@ class Database {
         timer: null,
       };
 
-      waiter.timer = setTimeout(() => {
+      waiter.timer = setTimeout(() => { // eslint-disable-line local/no-bare-timers
         const index = state.waitQueue.indexOf(waiter);
         if (index !== -1) {
           state.waitQueue.splice(index, 1);
@@ -1092,17 +1092,17 @@ class Database {
   static _startHealthCheck() {
     if (this._healthCheckTimer) return;
     if (process.env.NODE_ENV === 'test') return;
-    
-    this._healthCheckTimer = setInterval(() => {
+    const timerRegistry = require('./timerRegistry');
+    this._healthCheckTimer = timerRegistry.createInterval(() => {
       this._runHealthCheck().catch(() => {});
-    }, HEALTH_CHECK_INTERVAL_MS);
-    if (this._healthCheckTimer.unref) this._healthCheckTimer.unref();
+    }, HEALTH_CHECK_INTERVAL_MS, 'db-health-check');
+    this._healthCheckTimer.unref();
   }
 
   /** @private */
   static _stopHealthCheck() {
     if (this._healthCheckTimer) {
-      clearInterval(this._healthCheckTimer);
+      this._healthCheckTimer.clear();
       this._healthCheckTimer = null;
     }
   }
@@ -1206,7 +1206,7 @@ class Database {
         return;
       } catch (err) {
         log.warn('DATABASE', 'Reconnect attempt failed', { attempt, error: err.message });
-        await new Promise(resolve => setTimeout(resolve, delay));
+        await new Promise(resolve => setTimeout(resolve, delay)); // eslint-disable-line local/no-bare-timers
         delay = Math.min(delay * 2, RECONNECT_MAX_DELAY_MS);
       }
     }

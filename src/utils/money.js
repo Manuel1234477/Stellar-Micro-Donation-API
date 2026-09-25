@@ -25,6 +25,71 @@ const STROOPS_PER_XLM = 10_000_000n;
 const BPS_DIVISOR = 10_000n;
 
 /**
+ * Maximum valid amount in stroops: int64 max (922,337,203,685.4775807 XLM).
+ * @type {bigint}
+ */
+const MAX_STROOPS = 9223372036854775807n;
+
+/**
+ * Matches a strictly positive decimal XLM amount with at most 7 fractional digits.
+ * Rejects signs, exponents, whitespace, and empty strings.
+ * @type {RegExp}
+ */
+const AMOUNT_REGEX = /^\d+(\.\d{1,7})?$/;
+
+/**
+ * Validate an XLM donation amount and return its BigInt stroop value.
+ *
+ * This is the single source of truth for donation amount validation. It accepts
+ * only strings (or numbers that are exactly representable as a decimal string),
+ * enforces a strictly positive value with at most 7 fractional digits, and caps
+ * the result at the int64 stroop maximum.
+ *
+ * Rejects: Number.MAX_VALUE, Number.MIN_VALUE, 1e-8, Infinity, NaN, 0, negatives,
+ * and any value above int64 max stroops.
+ *
+ * @param {(string|number)} xlm - XLM amount as string or number
+ * @returns {bigint} BigInt stroops
+ * @throws {Error} if the amount is invalid, non-positive, or out of range
+ */
+function validateAmount(xlm) {
+  if (typeof xlm === 'number') {
+    if (!Number.isFinite(xlm)) {
+      throw new Error(`Invalid XLM amount: ${xlm}`);
+    }
+    // Reject JSON numbers that cannot be represented exactly as a decimal string
+    // (e.g. Number.MIN_VALUE -> "5e-324", Number.MAX_VALUE -> "1.7976931348623157e+308").
+    const asString = String(xlm);
+    if (asString.includes('e') || asString.includes('E')) {
+      throw new Error(`Invalid XLM amount: ${xlm}`);
+    }
+    xlm = asString;
+  }
+
+  if (typeof xlm !== 'string') {
+    throw new Error(`Invalid XLM amount: ${xlm}`);
+  }
+
+  const str = xlm.trim();
+  if (!AMOUNT_REGEX.test(str)) {
+    throw new Error(`Invalid XLM amount: ${xlm}`);
+  }
+
+  const [whole, frac = ''] = str.split('.');
+  const fracPadded = frac.padEnd(7, '0');
+  const stroops = BigInt(whole) * STROOPS_PER_XLM + BigInt(fracPadded);
+
+  if (stroops <= 0n) {
+    throw new Error(`Amount must be greater than zero: ${xlm}`);
+  }
+  if (stroops > MAX_STROOPS) {
+    throw new Error(`Amount exceeds maximum: ${xlm}`);
+  }
+
+  return stroops;
+}
+
+/**
  * Convert an XLM string or number to BigInt stroops.
  * Accepts: "1.234567", 1.234567, "5", 5
  * Throws for non-finite or negative input.
@@ -66,6 +131,36 @@ function fromStroops(stroops) {
   const whole = abs / STROOPS_PER_XLM;
   const frac = abs % STROOPS_PER_XLM;
   return `${sign}${whole}.${String(frac).padStart(7, '0')}`;
+}
+
+/**
+ * Serialise a stroop amount as an exact decimal string.
+ *
+ * Unlike `fromStroops`, this does not force a fixed 7-decimal display and does
+ * not require a BigInt: it accepts BigInt, number, or numeric string and returns
+ * the exact decimal representation as a string. This is the canonical way to
+ * serialise leaderboard totals (`totalDonated`, `totalReceived`) so values above
+ * `Number.MAX_SAFE_INTEGER` stroops are not silently coerced to lossy JS numbers.
+ *
+ * @param {(bigint|number|string)} stroops - stroop amount
+ * @returns {string} exact decimal string of the stroop amount
+ * @throws {Error} if the value is not a valid integer amount
+ */
+function stroopsToString(stroops) {
+  if (typeof stroops === 'bigint') {
+    return stroops.toString();
+  }
+  if (typeof stroops === 'number') {
+    if (!Number.isFinite(stroops) || !Number.isInteger(stroops)) {
+      throw new Error(`Invalid stroop amount: ${stroops}`);
+    }
+    return BigInt(stroops).toString();
+  }
+  const str = String(stroops).trim();
+  if (!/^-?\d+$/.test(str)) {
+    throw new Error(`Invalid stroop amount: ${stroops}`);
+  }
+  return BigInt(str).toString();
 }
 
 /**
@@ -133,8 +228,11 @@ function subtractStroops(a, b) {
 module.exports = {
   STROOPS_PER_XLM,
   BPS_DIVISOR,
+  MAX_STROOPS,
+  validateAmount,
   toStroops,
   fromStroops,
+  stroopsToString,
   calcFee,
   addStroops,
   subtractStroops,

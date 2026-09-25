@@ -13,10 +13,17 @@ const Database = require('../utils/database');
 const priceOracle = require('./PriceOracleService');
 
 /** Maximum time (ms) allowed for any single dependency check */
-const DEPENDENCY_TIMEOUT_MS = 500;
+const DEPENDENCY_TIMEOUT_MS = 400;
+
+/** How long (ms) an aggregated health result is cached to absorb probe storms */
+const HEALTH_CACHE_TTL_MS = 2000;
+
+/** Cached aggregated health result and its expiry timestamp */
+let cachedHealth = null;
+let cachedHealthExpiresAt = 0;
 
 /**
- * Run a single dependency check with a hard 2-second timeout.
+ * Run a single dependency check with a hard timeout.
  *
  * @param {string} name - Human-readable dependency name (used in logs)
  * @param {Function} checkFn - Async function that resolves on success
@@ -125,9 +132,15 @@ async function checkNetworkStatus(networkStatusService) {
  * @param {Object} [networkStatusService] - Optional NetworkStatusService instance
  * @param {Object} [scheduler] - Optional RecurringDonationScheduler instance
  * @param {boolean} [verbose=false] - Include detailed dependency info (admin only)
- * @returns {Promise<{status: string, dependencies?: Object, timestamp: string}>}
+ * @returns {Promise<{status: string, dependencies: Object, timestamp: string}>}
  */
 async function getFullHealth(stellarService, networkStatusService, scheduler, verbose = false) {
+  // Serve a cached result when fresh to protect dependencies from probe storms
+  const now = Date.now();
+  if (cachedHealth && now < cachedHealthExpiresAt) {
+    return cachedHealth;
+  }
+
   // Call through module.exports so Jest spies can intercept individual checks
   const self = module.exports;
   const checks = [
@@ -166,7 +179,7 @@ async function getFullHealth(stellarService, networkStatusService, scheduler, ve
     status = 'healthy';
   }
 
-  const response = { status, timestamp: new Date().toISOString() };
+  const response = { status, dependencies, timestamp: new Date().toISOString() };
 
   // Which source (CoinGecko or the Stellar DEX orderbook) is backing the
   // currently cached XLM rates. Reads cached state only — no network call.
@@ -176,10 +189,8 @@ async function getFullHealth(stellarService, networkStatusService, scheduler, ve
     response.priceOracle = { source: 'unknown', error: err.message };
   }
 
-  // Only include detailed dependencies if verbose mode is enabled
+  // Only include detailed diagnostics if verbose mode is enabled
   if (verbose) {
-    response.dependencies = dependencies;
-
     // Expose Horizon connection pool health when verbose
     if (stellarService && typeof stellarService.getPoolStatus === 'function') {
       response.horizonPool = stellarService.getPoolStatus();
@@ -194,6 +205,10 @@ async function getFullHealth(stellarService, networkStatusService, scheduler, ve
       // Ignore errors fetching queue depth; it's not critical to health
     }
   }
+
+  // Cache the aggregated result to absorb probe storms
+  cachedHealth = response;
+  cachedHealthExpiresAt = Date.now() + HEALTH_CACHE_TTL_MS;
 
   return response;
 }
@@ -219,12 +234,17 @@ function getLiveness() {
  * @returns {Promise<{ready: boolean, status: string, dependencies: Object, timestamp: string}>}
  */
 async function getReadiness(stellarService, networkStatusService, scheduler) {
-  const health = await getFullHealth(stellarService, networkStatusService, scheduler);
-  const ready = health.status === 'healthy';
-  return { ready, ...health };
+  const health = await getFullHealth(stellarService, networkStatusService, scheduler, false);
+  return {
+    ready: health.status !== 'unhealthy',
+    ...health,
+  };
 }
 
 module.exports = {
+  DEPENDENCY_TIMEOUT_MS,
+  HEALTH_CACHE_TTL_MS,
+  runCheck,
   checkDatabase,
   checkStellar,
   checkIdempotency,
@@ -232,5 +252,4 @@ module.exports = {
   getFullHealth,
   getLiveness,
   getReadiness,
-  DEPENDENCY_TIMEOUT_MS,
 };

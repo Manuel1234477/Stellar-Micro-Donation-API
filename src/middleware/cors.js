@@ -6,7 +6,7 @@
  * DEPENDENCIES: Database (for runtime allowlist), log utility
  *
  * Reads allowed origins from:
- *   1. Database cors_origins table (runtime, cached 60s TTL)
+ *   1. Database cors_rules table (runtime, cached 60s TTL)
  *   2. CORS_ALLOWED_ORIGINS env var (static fallback)
  *
  * Supports exact matches and wildcard subdomain patterns (e.g. *.example.com).
@@ -95,7 +95,7 @@ function parseAllowedOrigins(raw) {
 function wildcardToRegex(pattern) {
   if (!pattern.startsWith('*.')) return null;
   const escaped = pattern.slice(2).replace(/[.+?^${}()|[\]\\]/g, '\\$&');
-  return new RegExp(`^https?://[^.]+\\.${escaped}$`);
+  return new RegExp(`^https?://[^.]+\.${escaped}$`);
 }
 
 /**
@@ -239,51 +239,39 @@ function createCorsMiddleware(options = {}) {
     // Load DB origins asynchronously in the background without blocking the request
     if (!skipDbLookup && (Date.now() >= _cache.expiresAt)) {
       loadDbOrigins().catch((err) => {
-        log.warn('CORS', 'Failed to refresh DB origins cache', { error: err.message });
+        log.warn('CORS', 'Background origin load failed', { error: err.message });
       });
     }
 
-    if (!isOriginAllowed(origin, allowedOrigins)) {
-      // DEBUG log for every rejected cross-origin request
-      log.debug('CORS', 'Rejected cross-origin request', {
-        origin,
-        method: req.method,
-        path: req.path,
-      });
+    if (isOriginAllowed(origin, allowedOrigins)) {
+      res.setHeader('Access-Control-Allow-Origin', origin);
+      res.setHeader('Vary', 'Origin');
+      res.setHeader('Access-Control-Allow-Methods', methods);
+      res.setHeader('Access-Control-Allow-Headers', headers);
+      res.setHeader('Access-Control-Allow-Credentials', 'true');
 
-      return res.status(403).json({
-        success: false,
-        error: {
-          code: 'CORS_ORIGIN_NOT_ALLOWED',
-          message: 'Origin not allowed by CORS policy',
-        },
-      });
+      if (req.method === 'OPTIONS') {
+        res.setHeader('Access-Control-Max-Age', String(maxAge));
+        return res.status(204).end();
+      }
+      return next();
     }
 
-    res.setHeader('Access-Control-Allow-Origin', origin);
-    res.setHeader('Vary', 'Origin');
-    res.setHeader('Access-Control-Allow-Methods', methods);
-    res.setHeader('Access-Control-Allow-Headers', headers);
-    res.setHeader('Access-Control-Allow-Credentials', 'true');
-
+    // Origin not allowed — reject preflight, otherwise continue without CORS headers
     if (req.method === 'OPTIONS') {
-      res.setHeader('Access-Control-Max-Age', String(maxAge));
-      return res.status(204).end();
+      return res.status(403).json({ error: 'CORS origin not allowed' });
     }
-
     return next();
   };
 }
 
 module.exports = {
   createCorsMiddleware,
+  invalidateCache,
+  loadDbOrigins,
   parseAllowedOrigins,
   isOriginAllowed,
-  isWildcardAllowed,
   wildcardToRegex,
   validateCorsConfig,
-  loadDbOrigins,
-  invalidateCache,
   CORS_DEFAULTS,
-  _cache,
 };

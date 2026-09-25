@@ -393,6 +393,16 @@ class DonationService {
       log.error('DONATION_SERVICE', 'Failed to process donation matching', { error: err.message });
     }
 
+    // Detect overpayment from the on-chain amount; never let enrichment block persistence
+    let overpayment = null;
+    try {
+      if (stellarResult.amount !== undefined && stellarResult.amount !== null) {
+        overpayment = buildOverpaymentRecord(Number(stellarResult.amount), Number(amount), 0);
+      }
+    } catch (err) {
+      log.error('DONATION_SERVICE', 'Failed to compute overpayment', { error: err.message });
+    }
+
     // Record in JSON with state transitions
     const transaction = Transaction.create({
       id: dbResult.id.toString(),
@@ -2017,25 +2027,22 @@ class DonationService {
       return true;
     });
 
-    result.sort((a, b) => {
-      let aVal = a[sortBy];
-      let bVal = b[sortBy];
-      if (sortBy === 'timestamp') {
-        aVal = new Date(aVal).getTime();
-        bVal = new Date(bVal).getTime();
-      } else if (sortBy === 'amount') {
-        aVal = Number(aVal);
-        bVal = Number(bVal);
-      } else {
-        aVal = String(aVal || '');
-        bVal = String(bVal || '');
-      }
-      if (aVal < bVal) return order === 'asc' ? -1 : 1;
-      if (aVal > bVal) return order === 'asc' ? 1 : -1;
-      return 0;
-    });
+    // Precompute sort keys once so the comparator avoids per-comparison Date parsing.
+    const sortKey = (tx) => {
+      if (sortBy === 'timestamp') return new Date(tx.timestamp).getTime();
+      if (sortBy === 'amount') return Number(tx.amount);
+      return String(tx[sortBy] || '');
+    };
+    result = result
+      .map(tx => ({ tx, key: sortKey(tx) }))
+      .sort((a, b) => {
+        if (a.key < b.key) return order === 'asc' ? -1 : 1;
+        if (a.key > b.key) return order === 'asc' ? 1 : -1;
+        return 0;
+      })
+      .map(entry => entry.tx);
 
-    return result;
+    return sorted;
   }
 
   /**

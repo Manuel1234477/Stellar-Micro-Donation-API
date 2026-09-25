@@ -262,6 +262,42 @@ const memoCollisionsTotal = new client.Counter({
   registers: [registry],
 });
 
+// ─── Scheduler Leader Election Metrics (#1604) ───────────────────────────────
+
+/**
+ * Counter: total scheduler leader election lock acquisition attempts.
+ * Labels: status (acquired|contested|failed)
+ * @type {client.Counter}
+ */
+const schedulerLockAcquisitionsTotal = new client.Counter({
+  name: 'scheduler_lock_acquisitions_total',
+  help: 'Total number of scheduler leader election lock acquisitions',
+  labelNames: ['status'],
+  registers: [registry],
+});
+
+/**
+ * Counter: total scheduler leader election lock releases.
+ * @type {client.Counter}
+ */
+const schedulerLockReleasesTotal = new client.Counter({
+  name: 'scheduler_lock_releases_total',
+  help: 'Total number of scheduler leader election lock releases',
+  registers: [registry],
+});
+
+function recordSchedulerLockAcquisition(status = 'acquired') {
+  try {
+    schedulerLockAcquisitionsTotal.inc({ status });
+  } catch (_) {}
+}
+
+function recordSchedulerLockRelease() {
+  try {
+    schedulerLockReleasesTotal.inc();
+  } catch (_) {}
+}
+
 module.exports = {
   registry,
   httpRequestDuration,
@@ -271,6 +307,11 @@ module.exports = {
   recordDonation,
   // Memo collision metrics
   memoCollisionsTotal,
+  // Leaderboard cache metrics
+  leaderboardCacheLookupsTotal,
+  leaderboardComputeDuration,
+  recordLeaderboardCacheHit,
+  recordLeaderboardCacheMiss,
   // Recurring scheduler metrics
   recurringDonationsDueTotal,
   recurringDonationsExecutedTotal,
@@ -278,6 +319,11 @@ module.exports = {
   recurringDonationsSuspendedTotal,
   recurringDonationsActiveCount,
   recurringDonationsSkippedTotal,
+  // Scheduler leader election metrics (#1604)
+  schedulerLockAcquisitionsTotal,
+  schedulerLockReleasesTotal,
+  recordSchedulerLockAcquisition,
+  recordSchedulerLockRelease,
   // Horizon connection pool metrics
   horizonPoolSize,
   horizonPoolHealthyCount,
@@ -289,3 +335,4 @@ module.exports = {
   recordHorizonPoolCooldownEvent,
   recordHorizonPoolRecoveryEvent,
 };
+

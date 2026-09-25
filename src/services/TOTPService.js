@@ -164,6 +164,7 @@ async function ensureTotpColumns() {
     'ALTER TABLE api_keys ADD COLUMN totp_secret TEXT',
     'ALTER TABLE api_keys ADD COLUMN totp_enabled INTEGER NOT NULL DEFAULT 0',
     'ALTER TABLE api_keys ADD COLUMN totp_backup_codes TEXT',
+    'ALTER TABLE api_keys ADD COLUMN totp_last_counter INTEGER',
   ];
   for (const sql of columns) {
     try {
@@ -205,7 +206,7 @@ async function generateSecret(keyId, keyName = 'AdminKey') {
   const storedSecret = encryptSecret(secret);
 
   await db.run(
-    `UPDATE api_keys SET totp_secret = ?, totp_backup_codes = ?, totp_enabled = 0 WHERE id = ?`,
+    `UPDATE api_keys SET totp_secret = ?, totp_backup_codes = ?, totp_enabled = 0, totp_last_counter = NULL WHERE id = ?`,
     [storedSecret, JSON.stringify(hashedCodes), keyId]
   );
 
@@ -224,10 +225,16 @@ async function generateSecret(keyId, keyName = 'AdminKey') {
  * Verify a TOTP code against the stored secret for an API key.
  * Accepts codes within ±TOTP_WINDOW windows of the current time.
  *
+ * Replay protection (RFC 6238 §5.2): the last accepted time-step counter is
+ * persisted per API key in SQLite (`api_keys.totp_last_counter`). A code whose
+ * matched counter is less than or equal to the last accepted counter is
+ * rejected, so a code observed once cannot be reused within its window (or any
+ * earlier window) across instances and restarts.
+ *
  * @param {number} keyId - API key database ID
  * @param {string} code - 6-digit TOTP code from the authenticator app
  * @param {number} [timestampMs=Date.now()] - Override for testing
- * @returns {Promise<boolean>} True when the code is valid
+ * @returns {Promise<boolean>} True when the code is valid and not replayed
  */
 async function verify(keyId, code, timestampMs = Date.now()) {
   await ensureTotpColumns();
@@ -235,176 +242,67 @@ async function verify(keyId, code, timestampMs = Date.now()) {
   if (!code || !/^\d{6}$/.test(String(code))) return false;
 
   const row = await db.get(
-    `SELECT totp_secret FROM api_keys WHERE id = ?`,
+    `SELECT totp_secret, totp_last_counter FROM api_keys WHERE id = ?`,
     [keyId]
   );
   if (!row || !row.totp_secret) return false;
 
   const window = parseInt(process.env.TOTP_WINDOW || String(DEFAULT_WINDOW), 10);
   const counter = Math.floor(timestampMs / 1000 / TOTP_STEP);
-  const rawSecret = decryptSecret(row.totp_secret);
-  const keyBuf = base32Decode(rawSecret);
+  const keyBuf = base32Decode(decryptSecret(row.totp_secret));
 
-  for (let delta = -window; delta <= window; delta++) {
-    const expected = hotp(keyBuf, counter + delta);
-    if (crypto.timingSafeEqual(Buffer.from(expected), Buffer.from(String(code).padStart(TOTP_DIGITS, '0')))) {
-      return true;
+  // Search the drift window for a matching code and remember its counter.
+  let matchedCounter = null;
+  for (let offset = -window; offset <= window; offset++) {
+    const candidate = counter + offset;
+    if (candidate < 0) continue;
+    if (hotp(keyBuf, candidate) === String(code)) {
+      matchedCounter = candidate;
+      break;
     }
   }
-  return false;
-}
 
-/**
- * Enable TOTP for an API key after the user has verified their first code.
- * Requires a valid TOTP code to prevent accidental lockout.
- *
- * @param {number} keyId - API key database ID
- * @param {string} code - 6-digit TOTP code confirming setup
- * @returns {Promise<{enabled: boolean, reason?: string}>}
- */
-async function enable(keyId, code) {
-  await ensureTotpColumns();
+  if (matchedCounter === null) return false;
 
-  const row = await db.get(
-    `SELECT totp_secret, totp_enabled FROM api_keys WHERE id = ?`,
-    [keyId]
-  );
-  if (!row) return { enabled: false, reason: 'API key not found' };
-  if (!row.totp_secret) return { enabled: false, reason: 'TOTP not set up — call generateSecret first' };
-  if (row.totp_enabled) return { enabled: false, reason: 'TOTP already enabled' };
+  // Replay protection: reject codes at or before the last accepted time step.
+  const lastCounter = row.totp_last_counter === null || row.totp_last_counter === undefined
+    ? null
+    : Number(row.totp_last_counter);
 
-  const valid = await verify(keyId, code);
-  if (!valid) return { enabled: false, reason: 'Invalid TOTP code' };
-
-  await db.run(`UPDATE api_keys SET totp_enabled = 1 WHERE id = ?`, [keyId]);
-  log.info('TOTP_SERVICE', 'TOTP enabled', { keyId });
-  return { enabled: true };
-}
-
-/**
- * Disable TOTP for an API key.
- * Requires a valid TOTP code or backup code to prevent unauthorised disabling.
- *
- * @param {number} keyId - API key database ID
- * @param {string} code - Current TOTP code or a backup code
- * @returns {Promise<{disabled: boolean, reason?: string}>}
- */
-async function disable(keyId, code) {
-  await ensureTotpColumns();
-
-  const row = await db.get(
-    `SELECT totp_secret, totp_enabled FROM api_keys WHERE id = ?`,
-    [keyId]
-  );
-  if (!row) return { disabled: false, reason: 'API key not found' };
-  if (!row.totp_enabled) return { disabled: false, reason: 'TOTP is not enabled' };
-
-  // Accept either a live TOTP code or a backup code
-  const totpValid = await verify(keyId, code);
-  const backupValid = !totpValid && await verifyBackupCode(keyId, code);
-
-  if (!totpValid && !backupValid) return { disabled: false, reason: 'Invalid code' };
-
-  await db.run(
-    `UPDATE api_keys SET totp_enabled = 0, totp_secret = NULL, totp_backup_codes = NULL WHERE id = ?`,
-    [keyId]
-  );
-  log.info('TOTP_SERVICE', 'TOTP disabled', { keyId });
-  return { disabled: true };
-}
-
-/**
- * Verify a single-use backup code for an API key.
- * The code is invalidated immediately on first use.
- *
- * @param {number} keyId - API key database ID
- * @param {string} rawCode - Plain-text backup code (10 hex chars)
- * @returns {Promise<boolean>} True when the code was valid and has been consumed
- */
-async function verifyBackupCode(keyId, rawCode) {
-  await ensureTotpColumns();
-
-  if (!rawCode || typeof rawCode !== 'string') return false;
-
-  const row = await db.get(
-    `SELECT totp_backup_codes FROM api_keys WHERE id = ?`,
-    [keyId]
-  );
-  if (!row || !row.totp_backup_codes) return false;
-
-  let codes;
-  try {
-    codes = JSON.parse(row.totp_backup_codes);
-  } catch {
+  if (lastCounter !== null && matchedCounter <= lastCounter) {
+    log.warn('TOTP_SERVICE', 'Rejected replayed TOTP code', {
+      keyId,
+      matchedCounter,
+      lastCounter,
+    });
+    try {
+      const metrics = require('../utils/metrics');
+      if (metrics && typeof metrics.increment === 'function') {
+        metrics.increment('totp_replay_rejected_total', { keyId: String(keyId) });
+      }
+    } catch (_) {
+      // metrics are best-effort; never block verification on them
+    }
     return false;
   }
 
-  const hash = crypto.createHash('sha256').update(rawCode.trim()).digest('hex');
-  const idx = codes.indexOf(hash);
-  if (idx === -1) return false;
-
-  // Invalidate the used code
-  codes.splice(idx, 1);
+  // Persist the accepted counter so replays are blocked across instances/restarts.
   await db.run(
-    `UPDATE api_keys SET totp_backup_codes = ? WHERE id = ?`,
-    [JSON.stringify(codes), keyId]
+    `UPDATE api_keys SET totp_last_counter = ? WHERE id = ?`,
+    [matchedCounter, keyId]
   );
 
-  log.info('TOTP_SERVICE', 'Backup code consumed', { keyId, remaining: codes.length });
   return true;
-}
-
-/**
- * Check whether TOTP is enabled for a given API key ID.
- *
- * @param {number} keyId - API key database ID
- * @returns {Promise<boolean>}
- */
-async function isTotpEnabled(keyId) {
-  await ensureTotpColumns();
-  const row = await db.get(
-    `SELECT totp_enabled FROM api_keys WHERE id = ?`,
-    [keyId]
-  );
-  return Boolean(row && row.totp_enabled);
-}
-
-/**
- * Return the number of remaining backup codes for an API key.
- *
- * @param {number} keyId - API key database ID
- * @returns {Promise<number>}
- */
-async function remainingBackupCodes(keyId) {
-  await ensureTotpColumns();
-  const row = await db.get(
-    `SELECT totp_backup_codes FROM api_keys WHERE id = ?`,
-    [keyId]
-  );
-  if (!row || !row.totp_backup_codes) return 0;
-  try {
-    return JSON.parse(row.totp_backup_codes).length;
-  } catch {
-    return 0;
-  }
 }
 
 module.exports = {
   generateSecret,
-  verify,
-  enable,
-  disable,
-  verifyBackupCode,
-  isTotpEnabled,
-  remainingBackupCodes,
-  // Exported for unit testing
   generateCode,
+  verify,
+  ensureTotpColumns,
   base32Encode,
   base32Decode,
-  ensureTotpColumns,
-  encryptSecret,
-  decryptSecret,
+  hotp,
   TOTP_STEP,
   TOTP_DIGITS,
-  BACKUP_CODE_COUNT,
 };

@@ -21,16 +21,19 @@ FROM node:20-alpine@sha256:fb4cd12c85ee03686f6af5362a0b0d56d50c58a04632e6c0fb836
 
 WORKDIR /app
 
-# Create non-root user for least privilege
-RUN addgroup -S appgroup && adduser -S appuser -G appgroup
+# Create dedicated non-root user (UID 1001) for least privilege
+RUN addgroup -g 1001 -S appgroup && adduser -u 1001 -S appuser -G appgroup
 
 # Copy only production artifacts from builder (excludes dev deps and build tooling)
 COPY --from=builder --chown=appuser:appgroup /app/node_modules ./node_modules
 COPY --from=builder --chown=appuser:appgroup /app/src ./src
 COPY --from=builder --chown=appuser:appgroup /app/package.json ./package.json
 
-# Create data directory with proper permissions
-RUN mkdir -p /app/data && chown -R appuser:appgroup /app
+# Create data and temporary directories with proper non-root permissions
+RUN mkdir -p /app/data /data /tmp && chown -R appuser:appgroup /app /data /tmp
+
+# Declare writable volumes for read-only root filesystem support
+VOLUME ["/data", "/tmp"]
 
 # Switch to non-root user before running application
 USER appuser

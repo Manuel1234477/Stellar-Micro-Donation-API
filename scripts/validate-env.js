@@ -114,9 +114,26 @@ checkOptional('STELLAR_ENVIRONMENT',
   v => ['testnet', 'mainnet', 'futurenet'].includes(v),
   'must be one of: testnet, mainnet, futurenet');
 
-checkOptional('HORIZON_URL', isValidUrl, 'must be a valid URL');
-
 checkOptional('MOCK_STELLAR', isBool, 'must be true or false');
+
+// Production Mainnet Guard (#1597)
+if ((process.env.NODE_ENV || '').toLowerCase() === 'production') {
+  const network = (process.env.STELLAR_NETWORK || process.env.STELLAR_ENVIRONMENT || 'testnet').toLowerCase();
+  const isMock = process.env.MOCK_STELLAR === 'true' || process.env.USE_MOCK_STELLAR === 'true';
+  const allowOverride = process.env.ALLOW_TESTNET_IN_PRODUCTION === 'true';
+  if ((network !== 'mainnet' || isMock) && !allowOverride) {
+    error(
+      'STELLAR_NETWORK',
+      'PRODUCTION SAFETY: testnet or mock mode is not allowed in NODE_ENV=production. ' +
+      'Set STELLAR_NETWORK=mainnet and MOCK_STELLAR=false, or set ALLOW_TESTNET_IN_PRODUCTION=true for staging.'
+    );
+  } else if ((network !== 'mainnet' || isMock) && allowOverride) {
+    warn(
+      'STELLAR_NETWORK',
+      'ALLOW_TESTNET_IN_PRODUCTION=true override active: testnet or mock mode permitted in production'
+    );
+  }
+}
 
 // OPTIONAL — database
 checkOptional('DB_TYPE', v => v === 'sqlite', 'must be: sqlite');

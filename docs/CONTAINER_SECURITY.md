@@ -316,9 +316,11 @@ fi
    ```
 
 2. **Minimal Base Images**: Use Alpine Linux for smaller attack surface
-3. **Regular Updates**: Update base image digests monthly
-4. **Dependency Hygiene**: Run `npm audit` and `npm update` regularly
-5. **Multi-stage Builds**: Exclude dev dependencies from production image
+3. **Dedicated Non-Root User**: Run the process as dedicated `appuser` (UID 1001) instead of root to minimize blast radius
+4. **Read-Only Root Filesystem**: Configure container runtime with a read-only root filesystem, mounting only `/data` and `/tmp` as writable volumes (`VOLUME ["/data", "/tmp"]`)
+5. **Regular Updates**: Update base image digests monthly
+6. **Dependency Hygiene**: Run `npm audit` and `npm update` regularly
+7. **Multi-stage Builds**: Exclude dev dependencies and build tooling from production image
 
 ### Monitoring & Alerting
 

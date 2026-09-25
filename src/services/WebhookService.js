@@ -686,6 +686,10 @@ class WebhookService {
     return crypto.createHmac('sha256', secret).update(payload).digest('hex');
   }
 
+  _sign(body, secret, timestamp) {
+    return WebhookService._sign(body, secret, timestamp);
+  }
+
   /**
    * POST a JSON body to a URL with a timeout.
    * Validates the URL against SSRF rules before every request (DNS rebinding protection).
@@ -717,44 +721,53 @@ class WebhookService {
       log.error('WEBHOOK_SERVICE', 'tls_skip_verify flag suppressed in production at delivery time', { webhookId, url });
     }
 
-    return new Promise(async (resolve, reject) => {
+    return (async () => {
       try {
         await assertSafeOutboundUrl(url);
+        const parsed = new URL(url);
+        const lib = parsed.protocol === 'https:' ? https : http;
+        const options = {
+          hostname: parsed.hostname,
+          port: parsed.port || (parsed.protocol === 'https:' ? 443 : 80),
+          path: parsed.pathname + parsed.search,
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Content-Length': Buffer.byteLength(body),
+            'User-Agent': 'Stella-Donation-API/1.0',
+            'X-Signature': `sha256=${signature}`,
+            'X-Signature-Timestamp': timestamp,
+            'X-Webhook-Signature': `sha256=${signature}`,
+            'X-Webhook-Timestamp': timestamp,
+            ...correlationHeaders,
+          },
+          rejectUnauthorized: !tlsSkipVerify,
+          timeout: 10000,
+        };
+
+        return await new Promise((resolve, reject) => {
+          const req = lib.request(options, (res) => {
+            res.resume();
+            const delivered = res.statusCode >= 200 && res.statusCode < 300;
+            resolve({ delivered, statusCode: res.statusCode });
+          });
+
+          req.on('timeout', () => {
+            req.destroy();
+            reject(new Error('Request timed out'));
+          });
+          req.on('error', reject);
+          req.write(body);
+          req.end();
+        });
       } catch (err) {
-        return reject(err);
+        throw err;
       }
-      const parsed = new URL(url);
-      const lib = parsed.protocol === 'https:' ? https : http;
-      const options = {
-        hostname: parsed.hostname,
-        port: parsed.port || (parsed.protocol === 'https:' ? 443 : 80),
-        path: parsed.pathname + parsed.search,
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Content-Length': Buffer.byteLength(body),
-          'User-Agent': 'Stella-Donation-API/1.0',
-          'X-Signature': `sha256=${signature}`,
-          'X-Signature-Timestamp': timestamp,
-          'X-Webhook-Signature': `sha256=${signature}`,
-          'X-Webhook-Timestamp': timestamp,
-          ...correlationHeaders,
-        },
-        rejectUnauthorized: !tlsSkipVerify,
-        timeout: 10000,
-      };
+    })();
+  }
 
-      const req = lib.request(options, (res) => {
-        res.resume();
-        const delivered = res.statusCode >= 200 && res.statusCode < 300;
-        resolve({ delivered, statusCode: res.statusCode });
-      });
-
-      req.on('timeout', () => { req.destroy(); reject(new Error('Request timed out')); });
-      req.on('error', reject);
-      req.write(body);
-      req.end();
-    });
+  _httpPost(url, body, signature, correlationHeaders = {}, tlsSkipVerify = false, webhookId = null, timestamp = null) {
+    return WebhookService._httpPost(url, body, signature, correlationHeaders, tlsSkipVerify, webhookId, timestamp);
   }
   /**
    * Flush all pending webhook deliveries from the retry queue.

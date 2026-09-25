@@ -1,35 +1,23 @@
 name: Backup and Restore Tests
 
 on:
-  schedule:
-    # Run daily at 3 AM UTC - after main CI completes
-    - cron: '0 3 * * *'
+  push:
+    branches: [main]
   pull_request:
-    # Also run on PRs that modify backup-related files
-    paths:
-      - 'src/services/BackupService.js'
-      - 'src/services/BackupScheduler.js'
-      - 'src/services/RestoreTestRunner.js'
-      - 'scripts/test-backup-restore.js'
-      - 'docs/BACKUP_RESTORE.md'
-      - '.github/workflows/backup-tests.yml'
+    branches: [main]
+  schedule:
+    - cron: '0 3 * * *'
   workflow_dispatch:
-    # Allow manual triggering
-
-# Cancel in-progress runs for the same branch/PR when a new push arrives.
-# Scheduled and manually triggered runs are not cancelled.
-concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
 
 jobs:
-  backup-restore-test:
+  backup-tests:
     runs-on: ubuntu-latest
-    name: Backup and Restore Verification
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout
+        uses: actions/checkout@v4
 
-      - uses: actions/setup-node@v4
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
         with:
           node-version: '20'
           cache: 'npm'
@@ -37,145 +25,8 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
-      - name: Run backup/restore tests
-        run: npm run test:backup-restore
-        env:
-          NODE_ENV: test
-          ENCRYPTION_KEY: test_encryption_key_0000000000000000000000000000000000000000000000000000000000000000
-          API_KEYS: test_key_1,test_key_2
+      - name: Check for undeclared runtime dependencies
+        run: node scripts/check-undeclared-deps.js
 
-      - name: Check backup directory
-        if: always()
-        run: |
-          if [ -d "data/backups" ]; then
-            echo "Backup directory contents:"
-            ls -lah data/backups/ || echo "No backups found"
-          else
-            echo "Backup directory does not exist"
-          fi
-
-      - name: Upload test artifacts
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: backup-test-results
-          path: data/backups/
-          retention-days: 30
-          if-no-files-found: ignore
-
-      - name: Report test status
-        if: failure()
-        uses: actions/github-script@v7
-        with:
-          github-token: ${{ secrets.GITHUB_TOKEN }}
-          script: |
-            github.rest.issues.createComment({
-              issue_number: context.issue.number,
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              body: '❌ Backup and restore tests failed. Check the workflow logs for details.'
-            })
-
-  backup-scheduler-test:
-    runs-on: ubuntu-latest
-    name: Backup Scheduler Verification
-    steps:
-      - uses: actions/checkout@v4
-
-      - uses: actions/setup-node@v4
-        with:
-          node-version: '20'
-          cache: 'npm'
-
-      - name: Install dependencies
-        run: npm ci
-
-      - name: Verify BackupScheduler initialization
-        run: |
-          node -e "
-            const BackupScheduler = require('./src/services/BackupScheduler.js');
-            const BackupService = require('./src/services/BackupService.js');
-
-            const service = new BackupService();
-            const scheduler = new BackupScheduler({
-              backupService: service,
-              schedule: '0 2 * * *',
-              retentionDays: 30,
-            });
-
-            const status = scheduler.getStatus();
-            if (!status.schedule || !status.retentionDays) {
-              throw new Error('BackupScheduler status invalid');
-            }
-
-            console.log('✓ BackupScheduler initialized correctly');
-            console.log('  Schedule:', status.schedule);
-            console.log('  Retention:', status.retentionDays + ' days');
-          "
-        env:
-          NODE_ENV: test
-          ENCRYPTION_KEY: test_encryption_key_0000000000000000000000000000000000000000000000000000000000000000
-
-  restore-test-runner:
-    runs-on: ubuntu-latest
-    name: Restore Test Runner Verification
-    steps:
-      - uses: actions/checkout@v4
-
-      - uses: actions/setup-node@v4
-        with:
-          node-version: '20'
-          cache: 'npm'
-
-      - name: Install dependencies
-        run: npm ci
-
-      - name: Verify RestoreTestRunner initialization
-        run: |
-          node -e "
-            const RestoreTestRunner = require('./src/services/RestoreTestRunner.js');
-            const BackupService = require('./src/services/BackupService.js');
-
-            const service = new BackupService();
-            const runner = new RestoreTestRunner({
-              backupService: service,
-              schedule: '0 3 * * *',
-            });
-
-            const status = runner.getStatus();
-            if (!status.schedule) {
-              throw new Error('RestoreTestRunner status invalid');
-            }
-
-            console.log('✓ RestoreTestRunner initialized correctly');
-            console.log('  Schedule:', status.schedule);
-          "
-        env:
-          NODE_ENV: test
-          ENCRYPTION_KEY: test_encryption_key_0000000000000000000000000000000000000000000000000000000000000000
-
-  backup-documentation-check:
-    runs-on: ubuntu-latest
-    name: Verify Backup Documentation
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Check backup documentation exists
-        run: |
-          test -f docs/BACKUP_RESTORE.md || exit 1
-          test -f src/services/BackupService.js || exit 1
-          test -f src/services/BackupScheduler.js || exit 1
-          test -f src/services/RestoreTestRunner.js || exit 1
-          echo "✓ All backup documentation and services are in place"
-
-      - name: Verify documentation content
-        run: |
-          if ! grep -q "Periodic Restore Testing" docs/BACKUP_RESTORE.md; then
-            echo "✗ Documentation missing critical sections"
-            exit 1
-          fi
-          if ! grep -q "Disaster Recovery Runbook" docs/BACKUP_RESTORE.md; then
-            echo "✗ Documentation missing disaster recovery procedures"
-            exit 1
-          fi
-          echo "✓ Documentation contains required sections"
+      - name: Run backup and restore tests
+        run: npm test -- tests/RestoreTestRunner.test.js

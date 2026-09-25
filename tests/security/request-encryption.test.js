@@ -11,7 +11,7 @@
  * - End-to-end hybrid encryption scheme
  */
 
-const crypto = require('crypto');
+const EncryptionService = require('../../src/services/EncryptionService');
 
 // ─── Mocks ────────────────────────────────────────────────────────────────────
 
@@ -26,13 +26,10 @@ jest.mock('../../src/middleware/rbac', () => ({
 // ─────────────────────────────────────────────────────────────────────────────
 
 describe('EncryptionService', () => {
-  let EncryptionService;
   let svc;
 
   beforeEach(() => {
-    jest.resetModules();
-    // Re-require to get a fresh instance (avoids cached key pair from other tests)
-    EncryptionService = require('../../src/services/EncryptionService');
+    EncryptionService.resetKeyPair();
     svc = EncryptionService;
   });
 
@@ -65,22 +62,6 @@ describe('EncryptionService', () => {
   test('encrypt() + decrypt() round-trip restores original body', () => {
     const body = { address: 'GABC123', label: 'test wallet', secret: 'S...' };
     const pub = svc.getPublicKey();
-
-    const encrypted = EncryptionService.constructor.encrypt
-      ? EncryptionService.constructor.encrypt(body, pub)
-      : require('../../src/services/EncryptionService').constructor.encrypt(body, pub);
-
-    // Use the static method directly
-    const { EncryptionService: ES } = jest.requireActual('../src/services/EncryptionService')
-      ? { EncryptionService: require('../../src/services/EncryptionService') }
-      : {};
-
-    // Call static encrypt
-    const payload = require('../../src/services/EncryptionService').constructor.encrypt
-      ? require('../../src/services/EncryptionService').constructor.encrypt(body, pub)
-      : null;
-
-    // Fallback: call the static method directly from the class
     const EncSvcClass = Object.getPrototypeOf(svc).constructor;
     const enc = EncSvcClass.encrypt(body, pub);
 

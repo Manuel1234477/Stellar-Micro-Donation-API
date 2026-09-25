@@ -24,6 +24,10 @@ const DISPUTE_WINDOW_DAYS = parseInt(process.env.DISPUTE_WINDOW_DAYS || '30', 10
  * POST /donations/:id/dispute
  * Create a dispute for a donation.
  * Only the recipient can open a dispute within the dispute window.
+ *
+ * Auth ordering: requireApiKey (mounted at the router level) runs first so
+ * unauthenticated callers receive 401. The donation is then loaded so a
+ * missing donation yields 404, and only afterwards is ownership checked (403).
  */
 router.post('/:id/dispute', checkPermission(PERMISSIONS.DONATIONS_WRITE), payloadSizeLimiter(ENDPOINT_LIMITS.donation), asyncHandler(async (req, res, next) => {
   try {
@@ -64,7 +68,7 @@ router.post('/:id/dispute', checkPermission(PERMISSIONS.DONATIONS_WRITE), payloa
       });
     }
 
-    // Get the donation
+    // Get the donation (404 if it does not exist)
     const donation = await Database.get(
       'SELECT * FROM transactions WHERE id = ?',
       [id]
@@ -98,7 +102,7 @@ router.post('/:id/dispute', checkPermission(PERMISSIONS.DONATIONS_WRITE), payloa
       });
     }
 
-    // Verify the user is the recipient
+    // Verify the user is the recipient (403 only for authenticated non-owners)
     if (req.apiKey && req.apiKey.publicKey !== recipient.publicKey) {
       return res.status(403).json({
         success: false,
@@ -278,8 +282,8 @@ router.patch('/:id', checkPermission(PERMISSIONS.ADMIN_ALL), payloadSizeLimiter(
       resource: `/admin/disputes/${id}`,
       details: {
         disputeId: id,
-        donationId: dispute.donationId,
-        newStatus: status,
+        status,
+        resolutionNotes: resolutionNotes ? resolutionNotes.substring(0, 100) : null,
       },
     }).catch(() => {});
 
@@ -289,75 +293,10 @@ router.patch('/:id', checkPermission(PERMISSIONS.ADMIN_ALL), payloadSizeLimiter(
         id: updated.id,
         donationId: updated.donationId,
         status: updated.status,
-        reason: updated.reason,
         resolutionNotes: updated.resolutionNotes,
         resolvedAt: updated.resolvedAt,
-        createdAt: updated.createdAt,
         updatedAt: updated.updatedAt,
       },
-    });
-  } catch (err) {
-    next(err);
-  }
-}));
-
-/**
- * GET /admin/disputes
- * List all disputes (admin only).
- */
-router.get('/', checkPermission(PERMISSIONS.ADMIN_ALL), asyncHandler(async (req, res, next) => {
-  try {
-    const { status, limit = 50, offset = 0 } = req.query;
-
-    let query = 'SELECT * FROM disputes';
-    const params = [];
-
-    if (status) {
-      query += ' WHERE status = ?';
-      params.push(status);
-    }
-
-    query += ' ORDER BY createdAt DESC LIMIT ? OFFSET ?';
-    params.push(parseInt(limit, 10), parseInt(offset, 10));
-
-    const disputes = await Database.query(query, params);
-
-    res.json({
-      success: true,
-      data: disputes,
-    });
-  } catch (err) {
-    next(err);
-  }
-}));
-
-/**
- * GET /admin/disputes/:id
- * Get a specific dispute (admin only).
- */
-router.get('/:id', checkPermission(PERMISSIONS.ADMIN_ALL), asyncHandler(async (req, res, next) => {
-  try {
-    const { id } = req.params;
-
-    const dispute = await Database.get(
-      'SELECT * FROM disputes WHERE id = ?',
-      [id]
-    );
-
-    if (!dispute) {
-      return res.status(404).json({
-        success: false,
-        error: {
-          code: 'DISPUTE_NOT_FOUND',
-          message: 'Dispute not found',
-          requestId: req.id,
-        },
-      });
-    }
-
-    res.json({
-      success: true,
-      data: dispute,
     });
   } catch (err) {
     next(err);

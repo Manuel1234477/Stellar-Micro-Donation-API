@@ -85,6 +85,7 @@ describe('Dockerfile Hardening', () => {
       expect(dockerfileContent).toContain('adduser');
       expect(dockerfileContent).toContain('appuser');
       expect(dockerfileContent).toContain('appgroup');
+      expect(dockerfileContent).toMatch(/1001/);
     });
 
     it('should switch to non-root user before CMD', () => {
@@ -173,6 +174,10 @@ describe('Dockerfile Hardening', () => {
 
     it('should create data directory for persistence', () => {
       expect(dockerfileContent).toContain('mkdir -p /app/data');
+    });
+
+    it('should declare writable volumes for read-only root filesystem support', () => {
+      expect(dockerfileContent).toMatch(/VOLUME\s+\[.*"\/data".*"\/tmp".*\]/);
     });
 
     it('should not include unnecessary files in production image', () => {

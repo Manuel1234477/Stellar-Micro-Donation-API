@@ -411,10 +411,17 @@ class Transaction {
   }
 
   static getByDateRange(startDate, endDate) {
-    return Array.from(_store.values()).filter(t => {
-      const txDate = new Date(t.timestamp);
-      return txDate >= startDate && txDate <= endDate;
-    });
+    // Compare numeric epoch values in a single pass instead of copying the
+    // store and allocating a Date per transaction (hot path for /stats/summary).
+    const startMs = new Date(startDate).getTime();
+    const endMs = new Date(endDate).getTime();
+    const result = [];
+    for (const t of _store.values()) {
+      const ts = t.timestamp;
+      const txMs = typeof ts === 'string' ? Date.parse(ts) : new Date(ts).getTime();
+      if (txMs >= startMs && txMs <= endMs) result.push(t);
+    }
+    return result;
   }
 
   static getAll({ includeDeleted = false } = {}) {
