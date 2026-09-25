@@ -267,13 +267,7 @@ class DonationExportService {
 
       // Generate signed URL
       const expiresAt = new Date(Date.now() + SIGNED_URL_EXPIRY_MS).toISOString();
-      const token = crypto
-        .createHmac('sha256', process.env.ENCRYPTION_KEY || 'dev-secret')
-        .update(`${jobId}:${expiresAt}`)
-        .digest('hex');
-      const signedUrl = `/donations/export/${jobId}/download?token=${token}&expires=${encodeURIComponent(
-        expiresAt
-      )}`;
+      const signedUrl = this.generateSignedUrl(jobId, expiresAt);
 
       // Update job as completed
       await Database.run(
@@ -294,258 +288,245 @@ class DonationExportService {
 
       log.info('DONATION_EXPORT_SERVICE', 'Export job completed', {
         jobId,
-        records: rowCount,
-        format: job.format,
+        recordCount: rowCount,
       });
+
+      // Schedule deletion of export file after SIGNED_URL_EXPIRY_MS
+      const cleanupTimer = setTimeout(() => {
+        fs.unlink(filePath).catch(() => {});
+      }, SIGNED_URL_EXPIRY_MS);
+      if (cleanupTimer.unref) {
+        cleanupTimer.unref();
+      }
+
+      // Fire webhook event: export.ready
+      try {
+        const WebhookService = require('./WebhookService');
+        const webhookService = new WebhookService();
+        await webhookService.deliver('export.ready', {
+          jobId,
+          status: 'ready',
+          format: job.format,
+          recordCount: rowCount,
+          downloadUrl: signedUrl,
+          urlExpiresAt: expiresAt,
+        });
+      } catch (webhookErr) {
+        log.warn('DONATION_EXPORT_SERVICE', 'Webhook delivery failed for export.ready', {
+          jobId,
+          error: webhookErr.message,
+        });
+      }
+
+      // Send email notification if SMTP is configured
+      if (process.env.SMTP_HOST || process.env.SMTP_USER) {
+        try {
+          const nodemailer = require('nodemailer');
+          const transporter = nodemailer.createTransport({
+            host: process.env.SMTP_HOST || 'localhost',
+            port: parseInt(process.env.SMTP_PORT || '587', 10),
+            secure: process.env.SMTP_SECURE === 'true',
+            auth: process.env.SMTP_USER
+              ? { user: process.env.SMTP_USER, pass: process.env.SMTP_PASS }
+              : undefined,
+          });
+
+          const toEmail = job.email || process.env.NOTIFICATION_EMAIL || process.env.SMTP_TO || 'admin@stellar-donations.local';
+          await transporter.sendMail({
+            from: process.env.SMTP_FROM || 'exports@stellar-donations.local',
+            to: toEmail,
+            subject: `Donation Export Ready — ${jobId}`,
+            text: [
+              `Your requested donation export is ready.`,
+              ``,
+              `Job ID: ${jobId}`,
+              `Records: ${rowCount}`,
+              `Format: ${job.format.toUpperCase()}`,
+              `Download URL: ${signedUrl}`,
+              `URL Expires At: ${expiresAt}`,
+              ``,
+              `Please download your file before expiration.`,
+            ].join('\n'),
+          });
+        } catch (emailErr) {
+          log.warn('DONATION_EXPORT_SERVICE', 'Failed to send export completion email', {
+            jobId,
+            error: emailErr.message,
+          });
+        }
+      }
     } catch (err) {
-      await this.updateExportStatus(jobId, EXPORT_STATUS.FAILED, err.message);
       log.error('DONATION_EXPORT_SERVICE', 'Export job failed', {
         jobId,
         error: err.message,
       });
+
+      await this.updateExportStatus(jobId, EXPORT_STATUS.FAILED, err.message);
+      throw err;
     }
   }
 
   /**
-   * Build SQL query with filters for donations export.
-   * Returns the query and parameters for use with streaming or batching.
-   * @param {Object} filters - Query filters
-   * @returns {Object} { sql: string, params: Array }
-   */
-  static buildQuerySQL(filters = {}) {
-    let query = `
-      SELECT
-        t.id,
-        t.amount,
-        json_extract(sender_data.data, '$.donor') AS senderPublicKey,
-        json_extract(receiver_data.data, '$.recipient') AS recipientPublicKey,
-        t.memo,
-        t.status,
-        t.timestamp,
-        t.stellar_tx_id AS transactionHash
-      FROM donations_store t
-      LEFT JOIN donations_store sender_data ON t.donor = sender_data.donor
-      LEFT JOIN donations_store receiver_data ON t.recipient = receiver_data.recipient
-      WHERE t.deleted_at IS NULL
-    `;
-    const params = [];
-
-    if (filters.startDate) {
-      query += ' AND t.timestamp >= ?';
-      params.push(filters.startDate);
-    }
-    if (filters.endDate) {
-      query += ' AND t.timestamp <= ?';
-      params.push(filters.endDate);
-    }
-    if (filters.status) {
-      query += ' AND json_extract(t.data, "$.status") = ?';
-      params.push(filters.status);
-    }
-    if (filters.senderPublicKey) {
-      query += ' AND t.donor = ?';
-      params.push(filters.senderPublicKey);
-    }
-    if (filters.recipientPublicKey) {
-      query += ' AND t.recipient = ?';
-      params.push(filters.recipientPublicKey);
-    }
-
-    query += ' ORDER BY t.timestamp DESC';
-
-    return { sql: query, params };
-  }
-
-  /**
-   * Serialize a single row to CSV format.
-   * Handles quoting and escaping for CSV compliance.
-   * @param {Object} row - Data row
-   * @param {Array} headers - Column headers
-   * @returns {string} CSV line
-   */
-  static serializeCSVRow(row, headers) {
-    return headers.map(header => {
-      const value = row[header];
-      if (value === null || value === undefined) return '';
-      const stringValue = String(value);
-      // Quote if contains comma, quote, or newline
-      if (stringValue.includes(',') || stringValue.includes('"') || stringValue.includes('\n')) {
-        return `"${stringValue.replace(/"/g, '""')}"`;
-      }
-      return stringValue;
-    }).join(',');
-  }
-
-  /**
-   * Update export job status.
+   * Update the status of an export job.
    * @param {string} jobId - Export job ID
    * @param {string} status - New status
-   * @param {string|null} errorMessage - Error message if failed
+   * @param {string} [errorMessage] - Optional error message
    */
   static async updateExportStatus(jobId, status, errorMessage = null) {
     await Database.run(
-      `UPDATE donation_exports 
-       SET status = ?, error_message = ?, updated_at = ? 
+      `UPDATE donation_exports
+       SET status = ?, error_message = ?, updated_at = ?
        WHERE export_id = ?`,
       [status, errorMessage, new Date().toISOString(), jobId]
     );
   }
 
   /**
-   * Get export job status.
+   * Get the status of an export job.
    * @param {string} jobId - Export job ID
-   * @returns {Promise<Object>} Job status
+   * @param {string} apiKeyId - API key / user ID for ownership check
+   * @returns {Promise<Object>} Job status details
    */
-  static async getJobStatus(jobId) {
+  static async getExportStatus(jobId, apiKeyId) {
     const job = await Database.get(
-      'SELECT * FROM donation_exports WHERE export_id = ?',
-      [jobId]
+      'SELECT * FROM donation_exports WHERE export_id = ? AND api_key_id = ?',
+      [jobId, apiKeyId]
     );
 
     if (!job) {
       throw new NotFoundError('Export job not found', ERROR_CODES.NOT_FOUND);
-    }
-
-    const response = {
-      jobId: job.export_id,
-      status: job.status,
-      progress: {
-        processed: job.record_count || 0,
-        total: job.record_count || 0,
-      },
-      downloadUrl: null,
-      urlExpiresAt: null,
-      error: job.error_message,
-      createdAt: job.created_at,
-      updatedAt: job.updated_at,
-    };
-
-    // Include download URL if completed and not expired
-    if (job.status === EXPORT_STATUS.COMPLETED && job.signed_url) {
-      const expiresAt = new Date(job.signed_url_expires_at);
-      if (expiresAt > new Date()) {
-        response.downloadUrl = job.signed_url;
-        response.urlExpiresAt = job.signed_url_expires_at;
-      } else {
-        // Regenerate expired URL
-        const newExpiresAt = new Date(Date.now() + SIGNED_URL_EXPIRY_MS).toISOString();
-        const token = crypto
-          .createHmac('sha256', process.env.ENCRYPTION_KEY || 'dev-secret')
-          .update(`${jobId}:${newExpiresAt}`)
-          .digest('hex');
-        const signedUrl = `/donations/export/${jobId}/download?token=${token}&expires=${encodeURIComponent(
-          newExpiresAt
-        )}`;
-
-        await Database.run(
-          `UPDATE donation_exports 
-           SET signed_url = ?, signed_url_expires_at = ?, updated_at = ? 
-           WHERE export_id = ?`,
-          [signedUrl, newExpiresAt, new Date().toISOString(), jobId]
-        );
-
-        response.downloadUrl = signedUrl;
-        response.urlExpiresAt = newExpiresAt;
-      }
-    }
-
-    return response;
-  }
-
-  /**
-   * Verify signed download URL and return file path.
-   * @param {string} jobId - Export job ID
-   * @param {string} token - HMAC token
-   * @param {string} expires - Expiry timestamp
-   * @returns {Promise<{filePath: string, format: string}>}
-   */
-  static async verifyAndGetDownload(jobId, token, expires) {
-    // Verify expiry
-    const expiresAt = new Date(expires);
-    if (expiresAt <= new Date()) {
-      throw new ValidationError('Download URL has expired', null, ERROR_CODES.INVALID_REQUEST);
-    }
-
-    // Verify token
-    const expectedToken = crypto
-      .createHmac('sha256', process.env.ENCRYPTION_KEY || 'dev-secret')
-      .update(`${jobId}:${expires}`)
-      .digest('hex');
-
-    if (token !== expectedToken) {
-      throw new ValidationError('Invalid download token', null, ERROR_CODES.INVALID_REQUEST);
-    }
-
-    // Get job
-    const job = await Database.get(
-      'SELECT * FROM donation_exports WHERE export_id = ?',
-      [jobId]
-    );
-
-    if (!job) {
-      throw new NotFoundError('Export job not found', ERROR_CODES.NOT_FOUND);
-    }
-
-    if (job.status !== EXPORT_STATUS.COMPLETED) {
-      throw new ValidationError('Export is not completed', null, ERROR_CODES.INVALID_REQUEST);
-    }
-
-    if (!job.file_path) {
-      throw new NotFoundError('Export file not found', ERROR_CODES.NOT_FOUND);
     }
 
     return {
-      filePath: job.file_path,
+      jobId: job.export_id,
+      status: job.status,
       format: job.format,
+      recordCount: job.record_count,
+      errorMessage: job.error_message,
+      signedUrl: job.signed_url,
+      signedUrlExpiresAt: job.signed_url_expires_at,
+      createdAt: job.created_at,
+      updatedAt: job.updated_at,
     };
   }
 
   /**
-   * Delete expired export jobs and files.
-   * @returns {Promise<number>} Number of deleted jobs
+   * Build SQL query with filters for donation export.
+   * @param {Object} filters - Filter options
+   * @returns {{sql: string, params: Array}}
    */
-  static async deleteExpiredExports() {
-    const cutoffDate = new Date(Date.now() - EXPORT_RETENTION_MS).toISOString();
+  static buildQuerySQL(filters = {}) {
+    const conditions = [];
+    const params = [];
 
-    // Get expired jobs
-    const expiredJobs = await Database.all(
+    if (filters.startDate) {
+      conditions.push('timestamp >= ?');
+      params.push(filters.startDate);
+    }
+    if (filters.endDate) {
+      conditions.push('timestamp <= ?');
+      params.push(filters.endDate);
+    }
+    if (filters.status) {
+      conditions.push('status = ?');
+      params.push(filters.status);
+    }
+    if (filters.senderPublicKey) {
+      conditions.push('senderPublicKey = ?');
+      params.push(filters.senderPublicKey);
+    }
+    if (filters.recipientPublicKey) {
+      conditions.push('recipientPublicKey = ?');
+      params.push(filters.recipientPublicKey);
+    }
+
+    const where = conditions.length ? `WHERE ${conditions.join(' AND ')}` : '';
+    const sql = `SELECT id, amount, senderPublicKey, recipientPublicKey, memo, status, timestamp, transactionHash FROM transactions ${where} ORDER BY timestamp ASC`;
+
+    return { sql, params };
+  }
+
+  /**
+   * Serialize a single row to CSV using the shared csvSerializer.
+   * @param {Object} row - Row data
+   * @param {Array<string>} headers - Column headers
+   * @returns {string} CSV line
+   */
+  static serializeCSVRow(row, headers) {
+    return csvSerialize([row], headers).trim();
+  }
+
+  /**
+   * Generate a signed URL for downloading an export file.
+   * @param {string} jobId - Export job ID
+   * @param {string} expiresAt - ISO expiry timestamp
+   * @returns {string} Signed URL
+   */
+  static generateSignedUrl(jobId, expiresAt) {
+    const secret = process.env.EXPORT_SIGNING_SECRET || 'export-signing-secret';
+    const signature = crypto
+      .createHmac('sha256', secret)
+      .update(`${jobId}:${expiresAt}`)
+      .digest('hex');
+    return `/donations/export/${jobId}/download?expires=${encodeURIComponent(expiresAt)}&signature=${signature}`;
+  }
+
+  /**
+   * Verify a signed download URL.
+   * @param {string} jobId - Export job ID
+   * @param {string} expiresAt - ISO expiry timestamp
+   * @param {string} signature - Provided signature
+   * @returns {boolean} True if valid and not expired
+   */
+  static verifySignedUrl(jobId, expiresAt, signature) {
+    if (!expiresAt || !signature) {
+      return false;
+    }
+    if (new Date(expiresAt).getTime() < Date.now()) {
+      return false;
+    }
+    const secret = process.env.EXPORT_SIGNING_SECRET || 'export-signing-secret';
+    const expected = crypto
+      .createHmac('sha256', secret)
+      .update(`${jobId}:${expiresAt}`)
+      .digest('hex');
+    return crypto.timingSafeEqual(
+      Buffer.from(expected),
+      Buffer.from(signature)
+    );
+  }
+
+  /**
+   * Clean up expired export files and records.
+   * @returns {Promise<number>} Number of records cleaned up
+   */
+  static async cleanupExpiredExports() {
+    const cutoff = new Date(Date.now() - EXPORT_RETENTION_MS).toISOString();
+    const expired = await Database.all(
       'SELECT export_id, file_path FROM donation_exports WHERE created_at < ?',
-      [cutoffDate]
+      [cutoff]
     );
 
-    let deletedCount = 0;
-
-    for (const job of expiredJobs) {
-      try {
-        // Delete file if exists
-        if (job.file_path) {
-          await fs.unlink(job.file_path).catch(() => {
-            // Ignore if file doesn't exist
-          });
+    for (const job of expired) {
+      if (job.file_path) {
+        try {
+          await fs.unlink(job.file_path);
+        } catch (err) {
+          if (err.code !== 'ENOENT') {
+            log.warn('DONATION_EXPORT_SERVICE', 'Failed to delete export file', {
+              jobId: job.export_id,
+              error: err.message,
+            });
+          }
         }
-
-        // Delete database record
-        await Database.run('DELETE FROM donation_exports WHERE export_id = ?', [
-          job.export_id,
-        ]);
-
-        deletedCount++;
-      } catch (err) {
-        log.error('DONATION_EXPORT_SERVICE', 'Failed to delete expired export', {
-          jobId: job.export_id,
-          error: err.message,
-        });
       }
     }
 
-    if (deletedCount > 0) {
-      log.info('DONATION_EXPORT_SERVICE', 'Deleted expired exports', {
-        count: deletedCount,
-      });
-    }
-
-    return deletedCount;
+    await Database.run('DELETE FROM donation_exports WHERE created_at < ?', [cutoff]);
+    return expired.length;
   }
 }
 
 module.exports = DonationExportService;
+module.exports.EXPORT_STATUS = EXPORT_STATUS;
+module.exports.EXPORT_FORMAT = EXPORT_FORMAT;

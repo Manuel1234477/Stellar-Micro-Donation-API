@@ -812,5 +812,5 @@ For comprehensive documentation, see the [Documentation Index](docs/README.md).
 
 ## Handsoff notes
 
-<!-- handsoff-issue-1716 -->
-- #1716: Admin crowdfunding campaign routes fail every request with DatabaseError
+<!-- handsoff-issue-1731 -->
+- #1731: Account merge endpoint does not return the merge result or soft-delete the source wallet

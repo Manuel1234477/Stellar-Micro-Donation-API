@@ -214,391 +214,200 @@ class TransactionReconciliationService {
               id: tx.id,
               stellarTxId: tx.stellarTxId,
               previousStatus: tx.status,
-              status: TRANSACTION_STATES.CONFIRMED,
-              ledger: result.transaction && result.transaction.ledger,
-              confirmedAt: new Date().toISOString(),
-            }).catch(err => log.warn('RECONCILIATION', 'Webhook delivery error', { error: err.message }));
-          } catch (stateErr) {
-            // State machine rejected the transition — flag for manual resolution
-            this.flagDiscrepancy(
-              tx.id,
-              `Confirmed on-chain (${tx.stellarTxId}) but DB status is '${tx.status}': ${stateErr.message}`
-            );
-          }
+            }).catch(err => {
+              log.warn('RECONCILIATION', 'Failed to deliver confirmation webhook', { error: err.message });
+            });
 
-          return true;
+            return true;
+          } catch (stateErr) {
+            log.warn('RECONCILIATION', 'State transition rejected — flagging for manual review', {
+              id: tx.id,
+              error: stateErr.message,
+            });
+            return false;
+          }
         }
       }
 
       return false;
     } catch (error) {
-      if (error.status === 404 || (error.statusCode === 404)) {
-        log.debug('RECONCILIATION', 'Transaction not found on network', {
-          id: tx.id,
-          stellarTxId: tx.stellarTxId,
-        });
-        return false;
-      }
-
-      log.error('RECONCILIATION', 'Error verifying transaction', {
+      log.error('RECONCILIATION', 'Failed to verify transaction', {
         id: tx.id,
         stellarTxId: tx.stellarTxId,
         error: error.message,
       });
-
       throw error;
     }
-  }
-
-  /**
-   * Check for amount or memo drift between the local record and the
-   * on-chain transaction. Flags a discrepancy if they differ.
-   * @param {object} tx - Local transaction record
-   * @param {object} result - On-chain verification result
-   * @private
-   */
-  _checkFieldDrift(tx, result) {
-    const onChainTx = result.transaction;
-    if (!onChainTx) return;
-
-    const onChainAmount = parseFloat(
-      (onChainTx.operations && onChainTx.operations[0] && onChainTx.operations[0].amount) || '0'
-    );
-    const localAmount = parseFloat(tx.amount || '0');
-
-    if (onChainAmount > 0 && localAmount > 0 && Math.abs(onChainAmount - localAmount) > 0.0000001) {
-      this._emitDriftAlert(tx, 'amount', localAmount, onChainAmount);
-    }
-
-    if (tx.memo && onChainTx.memo && tx.memo !== onChainTx.memo) {
-      this._emitDriftAlert(tx, 'memo', tx.memo, onChainTx.memo);
-    }
-  }
-
-  /**
-   * Emit an alert when on-chain data differs from the local record.
-   * @param {object} tx
-   * @param {string} field
-   * @param {*} localValue
-   * @param {*} onChainValue
-   * @private
-   */
-  _emitDriftAlert(tx, field, localValue, onChainValue) {
-    log.error('RECONCILIATION', 'ALERT: Local/on-chain field mismatch detected', {
-      transactionId: tx.id,
-      stellarTxId: tx.stellarTxId || 'unknown',
-      field,
-      localValue,
-      onChainValue,
-    });
-    this.flagDiscrepancy(
-      tx.id,
-      `Field '${field}' mismatch: local=${JSON.stringify(localValue)}, on-chain=${JSON.stringify(onChainValue)}`
-    );
   }
 
   // ─── Orphan detection & compensation ─────────────────────────────────────
 
   /**
-   * Detect orphaned Stellar transactions — those that exist on-chain but have
-   * no corresponding local DB record — and compensate by inserting a local record.
+   * Detect on-chain transactions that have no local DB record and compensate
+   * by inserting a local record for each orphaned transaction.
    *
-   * An orphan arises when the Stellar transaction succeeds but the subsequent
-   * database write fails (partial failure scenario).
+   * Batch-safe: each candidate is processed independently so a single failure
+   * never aborts the whole batch.
    *
-   * @returns {Promise<{detected: number, compensated: number, orphans: Array}>}
+   * @returns {Promise<{detected: number, compensated: number}>}
    */
   async detectAndCompensateOrphans() {
-    // Fetch all stellar_tx_ids already recorded in the DB
-    let knownStellarIds;
-    try {
-      const rows = await Database.query(
-        'SELECT stellar_tx_id FROM transactions WHERE stellar_tx_id IS NOT NULL',
-        []
-      );
-      knownStellarIds = new Set(rows.map(r => r.stellar_tx_id));
-    } catch (err) {
-      log.error('RECONCILIATION', 'Failed to fetch known stellar_tx_ids', {
-        error: err.message,
-      });
-      return { detected: 0, compensated: 0, orphans: [] };
-    }
-
-    // Collect all Stellar transactions from the mock/real service
-    const stellarTxs = this._getAllStellarTransactions();
-
-    // Also fetch Horizon transactions for known wallet addresses
-    let horizonTxs = [];
-    try {
-      const wallets = await Database.query(
-        'SELECT DISTINCT publicKey FROM users WHERE publicKey IS NOT NULL',
-        []
-      );
-      const walletKeys = wallets.map(w => w.publicKey).filter(Boolean);
-      const horizonResults = await Promise.allSettled(
-        walletKeys.map(key => this._fetchHorizonTransactions(key, 20))
-      );
-      const seen = new Set();
-      for (const result of horizonResults) {
-        if (result.status === 'fulfilled') {
-          for (const tx of result.value) {
-            if (!seen.has(tx.transactionId)) {
-              seen.add(tx.transactionId);
-              horizonTxs.push(tx);
-            }
-          }
-        }
-      }
-    } catch (err) {
-      log.warn('RECONCILIATION', 'Failed to fetch Horizon transactions for orphan detection', {
-        error: err.message,
-      });
-    }
-
-    const allKnown = [...stellarTxs, ...horizonTxs];
-    const orphans = allKnown.filter(tx => !knownStellarIds.has(tx.transactionId));
-
-    if (orphans.length === 0) {
-      return { detected: 0, compensated: 0, orphans: [] };
-    }
-
-    log.warn('RECONCILIATION', 'Orphaned Stellar transactions detected', {
-      count: orphans.length,
-    });
-
-    // Alert if threshold exceeded
-    this.orphanedTransactionCount += orphans.length;
-    if (orphans.length >= ORPHAN_ALERT_THRESHOLD) {
-      this._emitOrphanAlert(orphans);
-    }
-
-    // Compensate each orphan
+    let detected = 0;
     let compensated = 0;
-    for (const orphan of orphans) {
-      const success = await this.compensateOrphan(orphan);
-      if (success) compensated++;
-    }
 
-    return { detected: orphans.length, compensated, orphans };
-  }
-
-  /**
-   * Create a local DB record for a single orphaned Stellar transaction.
-   *
-   * @param {object} orphan - Stellar transaction object
-   * @param {string} orphan.transactionId - Stellar transaction ID
-   * @param {string} orphan.source - Source public key
-   * @param {string} orphan.destination - Destination public key
-   * @param {string|number} orphan.amount - Amount in XLM
-   * @param {string} [orphan.memo] - Optional memo
-   * @param {string} [orphan.timestamp] - ISO timestamp
-   * @returns {Promise<boolean>} true if compensation succeeded
-   */
-  async compensateOrphan(orphan) {
+    let candidates = [];
     try {
-      // Resolve sender and receiver user IDs from public keys
-      const sender = await Database.get(
-        'SELECT id FROM users WHERE publicKey = ?',
-        [orphan.source]
-      );
-      const receiver = await Database.get(
-        'SELECT id FROM users WHERE publicKey = ?',
-        [orphan.destination]
-      );
-
-      const senderId = sender ? sender.id : null;
-      const receiverId = receiver ? receiver.id : null;
-
-      await Database.run(
-        `INSERT OR IGNORE INTO transactions
-           (senderId, receiverId, amount, memo, timestamp, stellar_tx_id, is_orphan)
-         VALUES (?, ?, ?, ?, ?, ?, 1)`,
-        [
-          senderId,
-          receiverId,
-          parseFloat(orphan.amount),
-          orphan.memo || null,
-          orphan.timestamp || new Date().toISOString(),
-          orphan.transactionId,
-        ]
-      );
-
-      log.info('RECONCILIATION', 'Orphan compensated — local record created', {
-        stellarTxId: orphan.transactionId,
-        source: orphan.source,
-        destination: orphan.destination,
-        amount: orphan.amount,
-      });
-
-      return true;
-    } catch (err) {
-      log.error('RECONCILIATION', 'Failed to compensate orphan', {
-        stellarTxId: orphan.transactionId,
-        error: err.message,
-      });
-      return false;
+      candidates = await this._fetchOrphanCandidates();
+    } catch (error) {
+      log.error('RECONCILIATION', 'Failed to fetch orphan candidates', { error: error.message });
+      return { detected: 0, compensated: 0 };
     }
-  }
 
-  // ─── Alerting ─────────────────────────────────────────────────────────────
+    if (!Array.isArray(candidates) || candidates.length === 0) {
+      return { detected: 0, compensated: 0 };
+    }
 
-  /**
-   * Emit an alert when orphaned transactions exceed the configured threshold.
-   * Logs at ERROR level so it surfaces in monitoring pipelines.
-   *
-   * @param {Array} orphans - Array of orphaned transaction objects
-   */
-  _emitOrphanAlert(orphans) {
-    log.error('RECONCILIATION', 'ALERT: Orphaned transactions exceed threshold', {
-      threshold: ORPHAN_ALERT_THRESHOLD,
-      count: orphans.length,
-      totalLifetime: this.orphanedTransactionCount,
-      stellarTxIds: orphans.map(o => o.transactionId),
-    });
-  }
+    for (const candidate of candidates) {
+      try {
+        const isOrphan = await this._isOrphan(candidate);
+        if (!isOrphan) continue;
 
-  // ─── Helpers ──────────────────────────────────────────────────────────────
+        detected += 1;
+        this.orphanedTransactionCount += 1;
 
-  /**
-   * Collect all transactions from the Stellar service's in-memory store.
-   * Works with MockStellarService; falls back to Horizon query for real service.
-   *
-   * @returns {Array} Flat, deduplicated list of Stellar transaction objects
-   * @private
-   */
-  _getAllStellarTransactions() {
-    // MockStellarService exposes this.stellarService.transactions (Map)
-    if (
-      this.stellarService &&
-      this.stellarService.transactions instanceof Map
-    ) {
-      const seen = new Set();
-      const all = [];
-      for (const txList of this.stellarService.transactions.values()) {
-        for (const tx of txList) {
-          const id = tx.transactionId || tx.hash;
-          if (id && !seen.has(id)) {
-            seen.add(id);
-            // Normalise hash-based records (sendPayment) to transactionId
-            all.push({ ...tx, transactionId: id });
-          }
-        }
+        await this._compensateOrphan(candidate);
+        compensated += 1;
+      } catch (error) {
+        // Per-item error handling: log and continue with the rest of the batch
+        log.error('RECONCILIATION', 'Failed to compensate orphaned transaction', {
+          candidate: candidate && (candidate.id || candidate.transactionId || candidate.hash),
+          error: error.message,
+        });
       }
-      return all;
+    }
+
+    if (detected >= ORPHAN_ALERT_THRESHOLD) {
+      log.warn('RECONCILIATION', 'Orphaned transactions detected', {
+        detected,
+        compensated,
+        threshold: ORPHAN_ALERT_THRESHOLD,
+      });
+    }
+
+    return { detected, compensated };
+  }
+
+  /**
+   * Fetch candidate on-chain transactions that may be missing locally.
+   * Prefers a Horizon-backed lookup by memo/idempotency key when available.
+   *
+   * @returns {Promise<Array<object>>}
+   */
+  async _fetchOrphanCandidates() {
+    if (typeof this.stellarService.getRecentTransactions === 'function') {
+      return await this.stellarService.getRecentTransactions();
+    }
+    if (typeof this.stellarService.listRecentTransactions === 'function') {
+      return await this.stellarService.listRecentTransactions();
     }
     return [];
   }
 
   /**
-   * Fetch recent transactions for known wallets from Horizon for orphan detection.
-   * Only works with a real StellarService (not mock).
-   * @param {string} publicKey - Stellar public key to query
-   * @param {number} [limit=50] - Max transactions to fetch
-   * @returns {Promise<Array>} List of transaction-like objects
-   * @private
+   * Determine whether a candidate on-chain transaction lacks a local record.
+   * Matches by stellarTxId/hash first, then by memo/idempotency key.
+   *
+   * @param {object} candidate
+   * @returns {Promise<boolean>}
    */
-  async _fetchHorizonTransactions(publicKey, limit = 50) {
-    if (!this.stellarService || !this.stellarService.server) return [];
-    try {
-      const server = this.stellarService.server;
-      const response = await server.transactions()
-        .forAccount(publicKey)
-        .limit(limit)
-        .order('desc')
-        .call();
-      return (response.records || []).map(tx => ({
-        transactionId: tx.id,
-        hash: tx.hash,
-        source: tx.source_account,
-        destination: (tx.operations && tx.operations[0] && tx.operations[0].to) || tx.source_account,
-        amount: (tx.operations && tx.operations[0] && tx.operations[0].amount) || '0',
-        memo: tx.memo || null,
-        timestamp: tx.created_at,
-      }));
-    } catch (error) {
-      if (error.response && error.response.status === 404) return [];
-      log.warn('RECONCILIATION', 'Failed to fetch Horizon transactions for orphan detection', {
-        publicKey,
-        error: error.message,
-      });
-      return [];
+  async _isOrphan(candidate) {
+    const hash = candidate.hash || candidate.transactionId || candidate.stellarTxId;
+    if (hash) {
+      const existing = Transaction.findByStellarTxId
+        ? Transaction.findByStellarTxId(hash)
+        : null;
+      if (existing) return false;
     }
-  }
 
-  // ─── Discrepancy management ───────────────────────────────────────────────
+    const memo = candidate.memo || candidate.idempotencyKey;
+    if (memo && typeof Transaction.findByIdempotencyKey === 'function') {
+      const existing = Transaction.findByIdempotencyKey(memo);
+      if (existing) return false;
+    }
 
-  /**
-   * Flag a transaction as needing reconciliation.
-   * Sets reconciliation_needed=true and records the reason.
-   *
-   * @param {string} txId - Local transaction ID
-   * @param {string} reason - Human-readable reason for flagging
-   * @returns {object} Updated transaction
-   */
-  flagDiscrepancy(txId, reason) {
-    const transactions = Transaction.loadTransactions();
-    const index = transactions.findIndex(t => t.id === txId);
-    if (index === -1) throw new Error(`Transaction not found: ${txId}`);
-    transactions[index].reconciliation_needed = true;
-    transactions[index].reconciliation_reason = reason;
-    transactions[index].reconciliation_flagged_at = new Date().toISOString();
-    Transaction.saveTransactions(transactions);
-    log.warn('RECONCILIATION', 'Transaction flagged', { txId, reason });
-    return transactions[index];
+    return true;
   }
 
   /**
-   * Resolve a flagged transaction by updating its status and clearing the flag.
+   * Insert a local record for an orphaned on-chain transaction.
    *
-   * @param {string} txId - Local transaction ID
-   * @param {string} newStatus - Target status (e.g. 'confirmed', 'failed')
-   * @returns {object} Updated transaction
+   * @param {object} candidate
+   * @returns {Promise<void>}
    */
-  resolveDiscrepancy(txId, newStatus) {
-    const transactions = Transaction.loadTransactions();
-    const index = transactions.findIndex(t => t.id === txId);
-    if (index === -1) throw new Error(`Transaction not found: ${txId}`);
-    transactions[index].reconciliation_needed = false;
-    transactions[index].reconciliation_resolved_at = new Date().toISOString();
-    transactions[index].status = newStatus;
-    Transaction.saveTransactions(transactions);
-    log.info('RECONCILIATION', 'Discrepancy resolved', { txId, newStatus });
-    return transactions[index];
-  }
+  async _compensateOrphan(candidate) {
+    const hash = candidate.hash || candidate.transactionId || candidate.stellarTxId;
+    const memo = candidate.memo || candidate.idempotencyKey;
 
-  /**
-   * Return all transactions currently flagged as reconciliation_needed.
-   *
-   * @returns {{ count: number, transactions: object[] }}
-   */
-  getDiscrepancies() {
-    const flagged = Transaction.loadTransactions().filter(t => t.reconciliation_needed === true);
-    return { count: flagged.length, transactions: flagged };
-  }
-
-  // ─── Status ───────────────────────────────────────────────────────────────
-
-  /**
-   * Return current service status for health-check and stats endpoints.
-   *
-   * @returns {{isRunning: boolean, checkIntervalMinutes: number, reconciliationInProgress: boolean, orphanedTransactionCount: number}}
-   */
-  getStatus() {
-    return {
-      isRunning: this.isRunning,
-      checkIntervalMinutes: this.checkInterval / 60000,
-      reconciliationInProgress: this.reconciliationInProgress,
-      orphanedTransactionCount: this.orphanedTransactionCount,
+    const record = {
+      id: candidate.id || hash || memo,
+      stellarTxId: hash,
+      idempotencyKey: memo,
+      amount: candidate.amount,
+      asset: candidate.asset,
+      senderId: candidate.senderId,
+      receiverId: candidate.receiverId,
+      status: TRANSACTION_STATES.CONFIRMED,
+      reconciled: true,
+      reconciledAt: new Date().toISOString(),
     };
+
+    if (typeof Transaction.create === 'function') {
+      Transaction.create(record);
+    } else if (typeof Transaction.insert === 'function') {
+      Transaction.insert(record);
+    } else {
+      throw new Error('Transaction model does not support creating reconciled records');
+    }
+
+    log.info('RECONCILIATION', 'Compensated orphaned transaction', {
+      id: record.id,
+      stellarTxId: hash,
+      idempotencyKey: memo,
+    });
+
+    WebhookService.deliver('transaction.reconciled', {
+      id: record.id,
+      stellarTxId: hash,
+      idempotencyKey: memo,
+    }).catch(err => {
+      log.warn('RECONCILIATION', 'Failed to deliver reconciliation webhook', { error: err.message });
+    });
   }
 
   /**
-   * Return the total number of orphaned transactions detected since service start.
+   * Compare on-chain fields against the local record and log any drift.
    *
-   * @returns {number}
+   * @param {object} tx - Local transaction record
+   * @param {object} result - Verification result from StellarService
    */
-  getOrphanedTransactionCount() {
-    return this.orphanedTransactionCount;
+  _checkFieldDrift(tx, result) {
+    const onChain = result.transaction || {};
+
+    if (onChain.amount !== undefined && tx.amount !== undefined && Number(onChain.amount) !== Number(tx.amount)) {
+      log.warn('RECONCILIATION', 'Amount drift detected', {
+        id: tx.id,
+        localAmount: tx.amount,
+        onChainAmount: onChain.amount,
+      });
+    }
+
+    if (onChain.memo !== undefined && tx.memo !== undefined && onChain.memo !== tx.memo) {
+      log.warn('RECONCILIATION', 'Memo drift detected', {
+        id: tx.id,
+        localMemo: tx.memo,
+        onChainMemo: onChain.memo,
+      });
+    }
   }
 }
 

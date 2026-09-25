@@ -88,12 +88,13 @@ router.post('/', checkPermission(PERMISSIONS.STREAM_CREATE), payloadSizeLimiter(
     const normalizedFreq = freqResult.value;
 
     // ── Custom interval ──────────────────────────────────────────────────────
+    const intervalDays = req.body.intervalDays !== undefined ? req.body.intervalDays : customIntervalDays;
     if (normalizedFreq === DONATION_FREQUENCIES.CUSTOM) {
-      const intervalResult = validateInteger(customIntervalDays, { min: 1 });
+      const intervalResult = validateInteger(intervalDays, { min: 1, max: 365 });
       if (!intervalResult.valid) {
         return res.status(400).json({
           success: false,
-          error: `customIntervalDays is required and must be >= 1 for custom frequency`,
+          error: `intervalDays (or customIntervalDays) is required and must be between 1 and 365 for custom frequency`,
         });
       }
     }
@@ -147,7 +148,7 @@ router.post('/', checkPermission(PERMISSIONS.STREAM_CREATE), payloadSizeLimiter(
       firstExecution = scheduler.calculateNextExecutionDate(
         new Date(),
         normalizedFreq,
-        customIntervalDays ? parseInt(customIntervalDays, 10) : undefined
+        intervalDays ? parseInt(intervalDays, 10) : undefined
       );
     }
 
@@ -162,7 +163,7 @@ router.post('/', checkPermission(PERMISSIONS.STREAM_CREATE), payloadSizeLimiter(
         recipient.id,
         amountResult.xlm,
         normalizedFreq,
-        customIntervalDays ? parseInt(customIntervalDays, 10) : null,
+        intervalDays ? parseInt(intervalDays, 10) : null,
         maxExecutions ? parseInt(maxExecutions, 10) : null,
         webhookUrl || null,
         firstExecution.toISOString(),
@@ -401,6 +402,7 @@ function formatSchedule(row) {
     amount: row.amount,
     frequency: row.frequency,
     customIntervalDays: row.customIntervalDays || null,
+    intervalDays: row.customIntervalDays || null,
     maxExecutions: row.maxExecutions || null,
     webhookUrl: row.webhookUrl || null,
     nextExecutionDate: row.nextExecutionDate,

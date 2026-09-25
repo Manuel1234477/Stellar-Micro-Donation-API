@@ -81,8 +81,16 @@ class LeaderElection {
 
       const isLeader = Boolean(row && row.holder_id === this.instanceId);
 
-      if (!isLeader) {
-        log.debug('LEADER_ELECTION', 'Lease held by another instance — skipping tick', {
+      const metrics = getMetrics();
+      if (isLeader) {
+        if (metrics && typeof metrics.recordSchedulerLockAcquisition === 'function') {
+          metrics.recordSchedulerLockAcquisition('acquired');
+        }
+      } else {
+        if (metrics && typeof metrics.recordSchedulerLockAcquisition === 'function') {
+          metrics.recordSchedulerLockAcquisition('contested');
+        }
+        log.info('LEADER_ELECTION', 'Instance is in standby — skipping tick', {
           job: name,
           holder: row && row.holder_id,
           ourId: this.instanceId,
@@ -91,6 +99,10 @@ class LeaderElection {
 
       return isLeader;
     } catch (err) {
+      const metrics = getMetrics();
+      if (metrics && typeof metrics.recordSchedulerLockAcquisition === 'function') {
+        metrics.recordSchedulerLockAcquisition('failed');
+      }
       log.warn('LEADER_ELECTION', 'acquireLease error — failing open', {
         job: name,
         error: err.message,
@@ -114,6 +126,10 @@ class LeaderElection {
         'DELETE FROM scheduler_locks WHERE name = ? AND holder_id = ?',
         [name, this.instanceId]
       );
+      const metrics = getMetrics();
+      if (metrics && typeof metrics.recordSchedulerLockRelease === 'function') {
+        metrics.recordSchedulerLockRelease();
+      }
     } catch (_) { /* non-critical */ }
   }
 }

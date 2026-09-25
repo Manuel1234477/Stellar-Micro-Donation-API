@@ -221,3 +221,98 @@ describe('attachLifecycleTracking', () => {
     finish();
   });
 });
+
+describe('Request Lifecycle Hooks System (#1600)', () => {
+  const {
+    onRequestStart,
+    onRequestEnd,
+    onRequestError,
+    registerHook,
+    handleLifecycleError,
+    attachLifecycleTracking: tracking,
+  } = require('../../src/middleware/requestLifecycle');
+
+  test('exposes hook slots as arrays', () => {
+    expect(Array.isArray(onRequestStart)).toBe(true);
+    expect(Array.isArray(onRequestEnd)).toBe(true);
+    expect(Array.isArray(onRequestError)).toBe(true);
+  });
+
+  test('registerHook adds hooks to appropriate slots', () => {
+    const customStart = jest.fn();
+    const customEnd = jest.fn();
+    const customError = jest.fn();
+
+    registerHook('onRequestStart', customStart);
+    registerHook('onRequestEnd', customEnd);
+    registerHook('onRequestError', customError);
+
+    expect(onRequestStart).toContain(customStart);
+    expect(onRequestEnd).toContain(customEnd);
+    expect(onRequestError).toContain(customError);
+
+    // Clean up
+    onRequestStart.splice(onRequestStart.indexOf(customStart), 1);
+    onRequestEnd.splice(onRequestEnd.indexOf(customEnd), 1);
+    onRequestError.splice(onRequestError.indexOf(customError), 1);
+  });
+
+  test('executes onRequestStart hooks in sequential order', async () => {
+    const executionOrder = [];
+    const hook1 = jest.fn(async () => { executionOrder.push('hook1'); });
+    const hook2 = jest.fn(async () => { executionOrder.push('hook2'); });
+
+    onRequestStart.push(hook1, hook2);
+
+    const { req, res, next } = makeReqRes();
+    tracking(req, res, next);
+
+    await new Promise(resolve => setImmediate(resolve));
+
+    expect(hook1).toHaveBeenCalledWith(req, res);
+    expect(hook2).toHaveBeenCalledWith(req, res);
+    expect(executionOrder).toEqual(['hook1', 'hook2']);
+
+    // Clean up
+    onRequestStart.splice(onRequestStart.indexOf(hook1), 1);
+    onRequestStart.splice(onRequestStart.indexOf(hook2), 1);
+  });
+
+  test('executes onRequestEnd hooks in sequential order on response finish', async () => {
+    const executionOrder = [];
+    const endHook1 = jest.fn(async () => { executionOrder.push('end1'); });
+    const endHook2 = jest.fn(async () => { executionOrder.push('end2'); });
+
+    onRequestEnd.push(endHook1, endHook2);
+
+    const { req, res, next, finish } = makeReqRes();
+    tracking(req, res, next);
+    finish();
+
+    await new Promise(resolve => setImmediate(resolve));
+
+    expect(endHook1).toHaveBeenCalledWith(req, res);
+    expect(endHook2).toHaveBeenCalledWith(req, res);
+    expect(executionOrder).toEqual(['end1', 'end2']);
+
+    // Clean up
+    onRequestEnd.splice(onRequestEnd.indexOf(endHook1), 1);
+    onRequestEnd.splice(onRequestEnd.indexOf(endHook2), 1);
+  });
+
+  test('propagates errors to onRequestError hooks', async () => {
+    const errorHook = jest.fn();
+    onRequestError.push(errorHook);
+
+    const testError = new Error('Hook failure');
+    const { req, res } = makeReqRes();
+
+    await handleLifecycleError(testError, req, res);
+
+    expect(errorHook).toHaveBeenCalledWith(testError, req, res);
+
+    // Clean up
+    onRequestError.splice(onRequestError.indexOf(errorHook), 1);
+  });
+});
+

@@ -220,123 +220,66 @@ class ExportService {
     await this.ensureStorage();
     this.validateTypeAndFormat(type, format);
     const { startDate, endDate } = this.validateDateRange(dateRange);
+    const now = new Date().toISOString();
+    const expiresAt = new Date(Date.now() + EXPORT_RETENTION_MS).toISOString();
 
-    const createdAt = new Date().toISOString();
     const result = await db.run(
-      `INSERT INTO export_jobs (type, format, status, dateStart, dateEnd, requestedBy, createdAt)
-       VALUES (?, ?, 'pending', ?, ?, ?, ?)`,
-      [type, format, startDate, endDate, requestedBy, createdAt]
+      `INSERT INTO export_jobs (type, format, status, dateStart, dateEnd, requestedBy, createdAt, expiresAt)
+       VALUES (?, ?, 'pending', ?, ?, ?, ?, ?)`,
+      [type, format, startDate, endDate, requestedBy, now, expiresAt]
     );
 
-    setImmediate(() => {
-      this.generateExport(result.id).catch((error) => {
-        log.error('EXPORT_SERVICE', 'Background export generation failed', {
-          exportId: result.id,
-          error: error.message,
-        });
-      });
+    const exportId = result.lastID;
+    this.processExport(exportId).catch((err) => {
+      log.error('Export processing failed', { exportId, error: err.message });
     });
 
-    return result.id;
+    return exportId;
   }
 
   /**
-   * Generate export content, persist it, and update job status.
+   * Process a queued export job: pending → processing → completed/failed.
    * @param {number|string} exportId - Export job ID.
    * @returns {Promise<void>}
    */
-  static async generateExport(exportId) {
+  static async processExport(exportId) {
     await this.ensureStorage();
     const job = await db.get('SELECT * FROM export_jobs WHERE id = ?', [exportId]);
-
     if (!job) {
       throw new NotFoundError('Export job not found', ERROR_CODES.NOT_FOUND);
     }
 
+    await db.run(`UPDATE export_jobs SET status = 'processing' WHERE id = ?`, [exportId]);
+
     try {
       const { rows, headers } = await this.fetchRowsForJob(job);
-      const serialized = job.format === 'csv'
-        ? toCsv(rows, headers)
-        : JSON.stringify(rows, null, rows.length > 1000 ? 0 : 2);
-
-      const filePath = await this.writeExportFile(job.id, job.format, serialized);
+      const content = job.format === 'json' ? JSON.stringify(rows, null, 2) : toCsv(rows, headers);
+      const filePath = await this.writeExportFile(exportId, job.format, content);
+      const downloadUrl = this.buildSignedUrl(exportId);
       const completedAt = new Date().toISOString();
-      const expiresAt = new Date(Date.now() + EXPORT_RETENTION_MS).toISOString();
-      const downloadUrl = this.buildSignedUrl(job.id);
 
       await db.run(
-        `UPDATE export_jobs
-         SET status = 'completed', filePath = ?, downloadUrl = ?, completedAt = ?, expiresAt = ?, error = NULL
-         WHERE id = ?`,
-        [filePath, downloadUrl, completedAt, expiresAt, job.id]
+        `UPDATE export_jobs SET status = 'completed', filePath = ?, downloadUrl = ?, completedAt = ? WHERE id = ?`,
+        [filePath, downloadUrl, completedAt, exportId]
       );
-    } catch (error) {
-      await db.run(
-        `UPDATE export_jobs
-         SET status = 'failed', error = ?, completedAt = ?
-         WHERE id = ?`,
-        [error.message, new Date().toISOString(), exportId]
-      );
-      throw error;
+    } catch (err) {
+      await db.run(`UPDATE export_jobs SET status = 'failed', error = ? WHERE id = ?`, [err.message, exportId]);
+      throw err;
     }
   }
 
   /**
-   * Get the status record for an export job.
+   * Fetch export job status.
    * @param {number|string} exportId - Export job ID.
-   * @returns {Promise<Object>} Job status projection.
+   * @returns {Promise<Object>} Export job record.
    */
   static async getExportStatus(exportId) {
     await this.ensureStorage();
-    const row = await db.get(
-      `SELECT id, status, type, format, createdAt, expiresAt, downloadUrl
-       FROM export_jobs
-       WHERE id = ?`,
-      [exportId]
-    );
-    if (!row) {
+    const job = await db.get('SELECT * FROM export_jobs WHERE id = ?', [exportId]);
+    if (!job) {
       throw new NotFoundError('Export job not found', ERROR_CODES.NOT_FOUND);
     }
-    return row;
-  }
-
-  /**
-   * Delete expired exports and associated files.
-   * Safe for scheduled invocation.
-   * @returns {Promise<number>} Number of deleted export records.
-   */
-  static async deleteExpiredExports() {
-    await this.ensureStorage();
-    const cutoff = new Date(Date.now() - EXPORT_RETENTION_MS).toISOString();
-    const expired = await db.all(
-      `SELECT id, filePath FROM export_jobs
-       WHERE createdAt < ? OR (expiresAt IS NOT NULL AND expiresAt < ?)`,
-      [cutoff, new Date().toISOString()]
-    );
-
-    for (const job of expired) {
-      if (job.filePath) {
-        try {
-          await fs.unlink(job.filePath);
-        } catch (error) {
-          if (error.code !== 'ENOENT') {
-            log.warn('EXPORT_SERVICE', 'Failed to delete export file', {
-              exportId: job.id,
-              filePath: job.filePath,
-              error: error.message,
-            });
-          }
-        }
-      }
-    }
-
-    if (expired.length > 0) {
-      const ids = expired.map((item) => item.id);
-      const placeholders = ids.map(() => '?').join(', ');
-      await db.run(`DELETE FROM export_jobs WHERE id IN (${placeholders})`, ids);
-    }
-
-    return expired.length;
+    return job;
   }
 }
 

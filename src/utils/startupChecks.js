@@ -664,6 +664,37 @@ function checkCoRequiredFlags() {
   return allOk;
 }
 
+/** Check — Mainnet deployment guard in production (#1597) */
+function checkMainnetProductionGuard() {
+  const isProduction = (process.env.NODE_ENV || '').toLowerCase() === 'production';
+  if (!isProduction) {
+    return true;
+  }
+
+  const allowOverride = process.env.ALLOW_TESTNET_IN_PRODUCTION === 'true';
+  const network = (process.env.STELLAR_NETWORK || process.env.STELLAR_ENVIRONMENT || 'testnet').toLowerCase();
+  const isMock = process.env.MOCK_STELLAR === 'true' || process.env.USE_MOCK_STELLAR === 'true';
+
+  if (network !== 'mainnet' || isMock) {
+    if (allowOverride) {
+      warn(
+        'Mainnet guard',
+        'ALLOW_TESTNET_IN_PRODUCTION=true override active: testnet or mock mode permitted in NODE_ENV=production'
+      );
+      return true;
+    }
+
+    fail(
+      'Mainnet guard',
+      'PRODUCTION SAFETY: testnet or mock mode is not allowed in NODE_ENV=production.'
+    );
+    return false;
+  }
+
+  pass('Mainnet guard', 'mainnet active and mock mode disabled in production');
+  return true;
+}
+
 /** Check — Geo-blocking database presence when strict mode is active (#1533) */
 function checkGeoBlocking() {
   const strictMode = process.env.GEO_STRICT_MODE !== 'false';
@@ -748,6 +779,7 @@ async function run({ exitOnFailure = false } = {}) {
     checkStellarSigningKeys(),  // #1234
     checkNumericRanges(),       // #1234
     checkCoRequiredFlags(),     // #1234
+    checkMainnetProductionGuard(), // #1597
     checkGeoBlocking(),         // #1533
     await checkDatabase(),
     await checkDatabaseDiagnostics(), // #1483
@@ -768,7 +800,7 @@ async function run({ exitOnFailure = false } = {}) {
   return { passed, results };
 }
 
-module.exports = { run, results };
+module.exports = { run, results, checkMainnetProductionGuard };
 
 // Allow running directly: `node src/utils/startupChecks.js`
 if (require.main === module) {

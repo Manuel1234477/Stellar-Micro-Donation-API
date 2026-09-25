@@ -59,6 +59,7 @@ class ReceiptService {
    * @param {boolean} [options.isPending=false]      - Add "PENDING CONFIRMATION" watermark
    * @param {string}  [options.receiptNumber]        - Receipt number to print; auto-generated if omitted
    * @param {number|null} [options.usdAmount=null]   - USD equivalent; omitted if null/undefined
+   * @param {boolean} [options.anonymous=false]      - Omit donor identity from metadata and body
    * @returns {Promise<Buffer>} PDF file as a Buffer
    */
   static async generatePDF(transaction, {
@@ -67,6 +68,7 @@ class ReceiptService {
     isPending = false,
     receiptNumber,
     usdAmount = null,
+    anonymous = false,
   } = {}) {
     const explorerUrl = transaction.stellarTxId
       ? `${EXPLORER_BASE}/${transaction.stellarTxId}`
@@ -74,13 +76,20 @@ class ReceiptService {
 
     const rcptNumber = receiptNumber || `RCP-${String(transaction.id).padStart(6, '0')}`;
 
+    // Anonymous donations deliberately omit donor identity everywhere.
+    const isAnonymous = anonymous || !transaction.donor;
+
     // Apply public key masking unless caller opts into full disclosure
-    const displayDonor = maskKeys
-      ? maskPublicKey(transaction.donor)
-      : (transaction.donor || 'Anonymous');
+    const displayDonor = isAnonymous
+      ? 'Anonymous'
+      : (maskKeys ? maskPublicKey(transaction.donor) : transaction.donor);
     const displayRecipient = maskKeys
       ? maskPublicKey(transaction.recipient)
       : (transaction.recipient || 'N/A');
+
+    // Metadata donor/recipient values (full keys, not masked) for indexing.
+    const metadataDonor = isAnonymous ? null : (transaction.donor || null);
+    const metadataRecipient = transaction.recipient || null;
 
     // Generate QR code as a PNG data URL (or placeholder if no hash)
     let qrDataUrl = null;
@@ -101,6 +110,8 @@ class ReceiptService {
             transaction.id,
             transaction.stellarTxId,
             rcptNumber,
+            metadataDonor ? `donor:${metadataDonor}` : null,
+            metadataRecipient ? `recipient:${metadataRecipient}` : null,
           ].filter(Boolean).join(' '),
         },
       });
@@ -227,12 +238,12 @@ class ReceiptService {
       throw Object.assign(new Error('Invalid email address'), { status: 400 });
     }
 
-    const pdf = pdfBuffer || (await this.generatePDF(transaction));
+    const pdf = pdfBuffer || (await ReceiptService.generatePDF(transaction));
 
     const transporter = nodemailer.createTransport({
       host: process.env.SMTP_HOST || 'localhost',
-      port: parseInt(process.env.SMTP_PORT || '587', 10),
-      secure: process.env.SMTP_SECURE === 'true',
+      port: Number(process.env.SMTP_PORT) || 587,
+      secure: Number(process.env.SMTP_PORT) === 465,
       auth: process.env.SMTP_USER
         ? { user: process.env.SMTP_USER, pass: process.env.SMTP_PASS }
         : undefined,
@@ -241,19 +252,8 @@ class ReceiptService {
     const info = await transporter.sendMail({
       from: process.env.SMTP_FROM || 'receipts@stellar-donations.local',
       to: toEmail,
-      subject: `Donation Receipt — ${transaction.id}`,
-      text: [
-        'Thank you for your donation.',
-        '',
-        `Transaction ID : ${transaction.id}`,
-        `Stellar Hash   : ${transaction.stellarTxId || 'N/A'}`,
-        `Amount         : ${transaction.amount} XLM`,
-        `Date           : ${new Date(transaction.timestamp).toUTCString()}`,
-        `Donor          : ${transaction.donor || 'Anonymous'}`,
-        `Recipient      : ${transaction.recipient}`,
-        '',
-        'Please find your PDF receipt attached.',
-      ].join('\n'),
+      subject: `Donation Receipt ${transaction.id}`,
+      text: 'Please find your donation receipt attached.',
       attachments: [
         {
           filename: `receipt-${transaction.id}.pdf`,
@@ -263,16 +263,9 @@ class ReceiptService {
       ],
     });
 
-    log.info('RECEIPT_SERVICE', 'Receipt email sent', {
-      messageId: info.messageId,
-      to: toEmail,
-      transactionId: transaction.id,
-    });
-
+    log.info('Receipt email sent', { toEmail, messageId: info.messageId });
     return { messageId: info.messageId };
   }
 }
-
-ReceiptService.maskPublicKey = maskPublicKey;
 
 module.exports = ReceiptService;

@@ -7,7 +7,7 @@
  * 
  * Provides secure catch-all for all application errors, preventing sensitive data leaks
  * and ensuring consistent JSON error responses with request correlation.
- * 
+ *
  * Intent: Provide a centralized, secure catch-all for all application errors to 
  * prevent leaking sensitive stack traces and ensure a consistent JSON error format.
  * Flow:
@@ -59,6 +59,55 @@ function sanitizeMessage(message, errorCode = 'INTERNAL_ERROR') {
   }
 
   return message;
+}
+
+/**
+ * Normalize a single validation detail into the documented contract shape:
+ * { field, value, expected, example }
+ * Intent: Guarantee every validation detail exposes field path, invalid value,
+ * expected type and an example, regardless of how the validator threw it.
+ * @param {Object} detail - Raw detail from a ValidationError
+ * @returns {Object} - Normalized detail
+ */
+function normalizeValidationDetail(detail) {
+  const d = detail && typeof detail === 'object' ? detail : {};
+  const field = d.field || d.path || d.param || d.property || 'body';
+  const expected = d.expected || d.type || d.expectedType || 'valid value';
+  const value = d.value !== undefined ? d.value : (d.received !== undefined ? d.received : null);
+  const example = d.example !== undefined
+    ? d.example
+    : (d.sample !== undefined ? d.sample : `valid ${expected}`);
+
+  return { field, value, expected, example };
+}
+
+/**
+ * Build the single documented validation error envelope.
+ * Intent: Centralize validation error formatting so all validators produce the
+ * same contract: { success:false, error:{ code, message, requestId, details:[...] } }
+ * @param {Object} err - ValidationError instance
+ * @param {string} requestId - Request ID for tracing
+ * @param {string} lang - Resolved request language
+ * @returns {Object} - Documented validation error envelope
+ */
+function buildValidationErrorResponse(err, requestId, lang) {
+  const rawDetails = Array.isArray(err.details)
+    ? err.details
+    : (err.details && Array.isArray(err.details.errors) ? err.details.errors : []);
+
+  const details = rawDetails.map(normalizeValidationDetail);
+
+  return {
+    success: false,
+    error: {
+      code: ERROR_CODES.VALIDATION_ERROR.code,
+      numericCode: ERROR_CODES.VALIDATION_ERROR.numeric,
+      message: getMessage('VALIDATION_ERROR', lang) || err.message || 'Validation failed',
+      requestId,
+      timestamp: new Date().toISOString(),
+      details,
+    },
+  };
 }
 
 /**
@@ -181,18 +230,9 @@ function errorHandler(err, req, res, next) {
   // Handle named validation errors — 422 Unprocessable Entity:
   // The request was well-formed (parseable) but failed semantic validation rules.
   // 400 Bad Request is reserved for syntactically malformed requests (e.g. invalid JSON).
+  // All validation failures are formatted here into the single documented envelope.
   if (err.name === "ValidationError" || err.name === "SchemaValidationError") {
-    return res.status(422).json({
-      success: false,
-      error: {
-        code: ERROR_CODES.VALIDATION_ERROR.code,
-        numericCode: ERROR_CODES.VALIDATION_ERROR.numeric,
-        message: getMessage('VALIDATION_ERROR', lang) || err.message,
-        requestId: req.id,
-        timestamp: new Date().toISOString(),
-        ...(!isProduction && { debug: { name: err.name } }),
-      },
-    });
+    return res.status(422).json(buildValidationErrorResponse(err, req.id, lang));
   }
 
   // Default: unexpected errors
@@ -216,22 +256,16 @@ function errorHandler(err, req, res, next) {
 
 /**
  * 404 Not Found Handler
- * Intent: Gracefully catch requests to undefined routes.
- * Flow: Triggered when no routes in app.js match the requested URL. Returns 404 JSON.
+ * Intent: Gracefully catch requests to undefined routes
  */
 function notFoundHandler(req, res) {
-  const isProduction = process.env.NODE_ENV === 'production';
-  const lang = parseLanguage(req.headers && req.headers['accept-language']);
-  res.set('Content-Language', lang);
   res.status(404).json({
     success: false,
     error: {
-      code: ERROR_CODES.ENDPOINT_NOT_FOUND.code,
-      numericCode: ERROR_CODES.ENDPOINT_NOT_FOUND.numeric,
-      message: getMessage('ENDPOINT_NOT_FOUND', lang) || `Endpoint not found: ${req.method} ${req.path}`,
+      code: 'NOT_FOUND',
+      message: 'The requested resource was not found',
       requestId: req.id,
       timestamp: new Date().toISOString(),
-      ...(!isProduction && { debug: { name: 'NotFoundError' } }),
     },
   });
 }
@@ -239,5 +273,8 @@ function notFoundHandler(req, res) {
 module.exports = {
   errorHandler,
   notFoundHandler,
-  formatErrorResponse
+  sanitizeMessage,
+  formatErrorResponse,
+  buildValidationErrorResponse,
+  normalizeValidationDetail,
 };

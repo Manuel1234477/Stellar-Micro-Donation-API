@@ -23,6 +23,35 @@
 
 const express = require('express');
 const router = express.Router();
+const { toWalletResponse, ALLOWED_WALLET_FIELDS } = require('../utils/responseSanitizer');
+
+/**
+  * Response sanitizer middleware applied to all wallet endpoints.
+  * Ensures internal/sensitive fields are stripped from all wallet responses.
+  */
+function walletResponseSanitizer(req, res, next) {
+  const originalJson = res.json.bind(res);
+  res.json = function (body) {
+    if (body && typeof body === 'object') {
+      if (body.data) {
+        if (Array.isArray(body.data)) {
+          body.data = body.data.map(item => (item && typeof item === 'object' && (item.id || item.publicKey || item.address) ? toWalletResponse(item) : item));
+        } else if (typeof body.data === 'object') {
+          if (Array.isArray(body.data.wallets)) {
+            body.data.wallets = body.data.wallets.map(item => (item && typeof item === 'object' ? toWalletResponse(item) : item));
+          } else if (body.data.id || body.data.publicKey || body.data.address) {
+            body.data = toWalletResponse(body.data);
+          }
+        }
+      }
+    }
+    return originalJson(body);
+  };
+  next();
+}
+
+// Apply response sanitizer middleware to all wallet endpoints
+router.use(walletResponseSanitizer);
 
 // Mount decomposed sub-routers
 const indexRouter = require('./wallets/index');
@@ -49,3 +78,6 @@ router.use('/', mergeRouter);
 router.use('/', limitsConfigRouter);
 
 module.exports = router;
+module.exports.ALLOWED_WALLET_FIELDS = ALLOWED_WALLET_FIELDS;
+module.exports.walletResponseSanitizer = walletResponseSanitizer;
+

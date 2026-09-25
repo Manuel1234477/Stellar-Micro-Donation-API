@@ -69,6 +69,36 @@ function fromStroops(stroops) {
 }
 
 /**
+ * Serialise a stroop amount as an exact decimal string.
+ *
+ * Unlike `fromStroops`, this does not force a fixed 7-decimal display and does
+ * not require a BigInt: it accepts BigInt, number, or numeric string and returns
+ * the exact decimal representation as a string. This is the canonical way to
+ * serialise leaderboard totals (`totalDonated`, `totalReceived`) so values above
+ * `Number.MAX_SAFE_INTEGER` stroops are not silently coerced to lossy JS numbers.
+ *
+ * @param {(bigint|number|string)} stroops - stroop amount
+ * @returns {string} exact decimal string of the stroop amount
+ * @throws {Error} if the value is not a valid integer amount
+ */
+function stroopsToString(stroops) {
+  if (typeof stroops === 'bigint') {
+    return stroops.toString();
+  }
+  if (typeof stroops === 'number') {
+    if (!Number.isFinite(stroops) || !Number.isInteger(stroops)) {
+      throw new Error(`Invalid stroop amount: ${stroops}`);
+    }
+    return BigInt(stroops).toString();
+  }
+  const str = String(stroops).trim();
+  if (!/^-?\d+$/.test(str)) {
+    throw new Error(`Invalid stroop amount: ${stroops}`);
+  }
+  return BigInt(str).toString();
+}
+
+/**
  * Calculate a fee in stroops using basis points (integer math, floors in platform's favor).
  * feeStroops = floor(amountStroops * bps / 10000)
  *
@@ -135,6 +165,7 @@ module.exports = {
   BPS_DIVISOR,
   toStroops,
   fromStroops,
+  stroopsToString,
   calcFee,
   addStroops,
   subtractStroops,

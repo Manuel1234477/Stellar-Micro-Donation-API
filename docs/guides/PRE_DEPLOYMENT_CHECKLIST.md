@@ -14,7 +14,8 @@ This checklist ensures the Stellar Micro-Donation API is production-ready before
 
 ### Optional Environment Variables (Verify if Used)
 - [ ] `HORIZON_URL` - Custom Horizon URL if not using default
-- [ ] `MOCK_STELLAR` - Set to `false` (or remove) for production
+- [ ] `MOCK_STELLAR` - Set to `false` (or remove) for production (enforced by startup check)
+- [ ] `ALLOW_TESTNET_IN_PRODUCTION` - Set to `true` only for staging environments that explicitly run in NODE_ENV=production but connect to testnet or mock
 - [ ] `MIN_DONATION_AMOUNT` - Configured appropriately (default: 0.01 XLM)
 - [ ] `MAX_DONATION_AMOUNT` - Configured appropriately (default: 10000 XLM)
 - [ ] `MAX_DAILY_DONATION_PER_DONOR` - Set if rate limiting is needed

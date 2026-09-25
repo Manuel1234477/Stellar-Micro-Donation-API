@@ -19,16 +19,29 @@ class StellarErrorHandler {
    * @returns {Object} - Formatted error response with code, message, and status
    */
   static handle(error, context = 'operation') {
+    const message = typeof error?.message === 'string' ? error.message : '';
+    const resultCodes = error?.response?.data?.extras?.result_codes || error?.extras?.result_codes || error?.result_codes || {};
+    const structuredCodeText = [
+      resultCodes?.transaction,
+      resultCodes?.operations,
+      resultCodes?.op,
+    ]
+      .flatMap((entry) => Array.isArray(entry) ? entry : [entry])
+      .filter(Boolean)
+      .join(' ')
+      .toLowerCase();
+    const normalizedMessage = message.toLowerCase();
+
     // Log detailed error internally
     log.error('STELLAR_ERROR_HANDLER', `Stellar operation failed in ${context}`, {
-      message: error.message,
-      stack: error.stack,
-      response: error.response?.data,
+      message,
+      stack: error?.stack,
+      response: error?.response?.data,
       timestamp: new Date().toISOString()
     });
 
     // Network errors
-    if (error.message?.includes('ENOTFOUND') || error.message?.includes('ECONNREFUSED')) {
+    if (normalizedMessage.includes('enotfound') || normalizedMessage.includes('econnrefused')) {
       return {
         status: 503,
         code: 'NETWORK_ERROR',
@@ -36,7 +49,7 @@ class StellarErrorHandler {
       };
     }
 
-    if (error.message?.includes('timeout') || error.message?.includes('ETIMEDOUT')) {
+    if (normalizedMessage.includes('timeout') || normalizedMessage.includes('etimedout')) {
       return {
         status: 504,
         code: 'NETWORK_TIMEOUT',
@@ -44,8 +57,8 @@ class StellarErrorHandler {
       };
     }
 
-    // Insufficient balance
-    if (error.message?.includes('insufficient') || error.message?.includes('underfunded')) {
+    // Insufficient balance: prefer structured result codes when available
+    if (structuredCodeText.includes('op_underfunded') || normalizedMessage.includes('insufficient') || normalizedMessage.includes('underfunded')) {
       return {
         status: 400,
         code: 'INSUFFICIENT_BALANCE',
@@ -53,17 +66,8 @@ class StellarErrorHandler {
       };
     }
 
-    // Invalid destination
-    if (error.message?.includes('destination') || error.message?.includes('not found')) {
-      return {
-        status: 400,
-        code: 'INVALID_DESTINATION',
-        message: 'Destination account does not exist or is invalid.'
-      };
-    }
-
-    // Account not funded
-    if (error.message?.includes('not funded') || error.message?.includes('op_no_destination')) {
+    // Account not funded / missing destination should win before generic destination matches
+    if (structuredCodeText.includes('op_no_destination') || normalizedMessage.includes('not funded') || normalizedMessage.includes('op_no_destination')) {
       return {
         status: 400,
         code: 'ACCOUNT_NOT_FUNDED',
@@ -71,8 +75,34 @@ class StellarErrorHandler {
       };
     }
 
+    // Domain-specific not-found errors should not be swallowed by the generic destination bucket
+    if (normalizedMessage.includes('wallet not found')) {
+      return {
+        status: 404,
+        code: 'WALLET_NOT_FOUND',
+        message: message
+      };
+    }
+
+    if (normalizedMessage.includes('transaction not found') || structuredCodeText.includes('tx_not_found')) {
+      return {
+        status: 404,
+        code: 'TRANSACTION_NOT_FOUND',
+        message: 'Transaction not found.'
+      };
+    }
+
+    // Invalid destination
+    if (normalizedMessage.includes('destination') || (normalizedMessage.includes('not found') && !normalizedMessage.includes('wallet not found') && !normalizedMessage.includes('transaction not found'))) {
+      return {
+        status: 400,
+        code: 'INVALID_DESTINATION',
+        message: 'Destination account does not exist or is invalid.'
+      };
+    }
+
     // Invalid secret key
-    if (error.message?.includes('Invalid source') || error.message?.includes('secret key')) {
+    if (normalizedMessage.includes('invalid source') || normalizedMessage.includes('secret key')) {
       return {
         status: 400,
         code: 'INVALID_CREDENTIALS',
@@ -81,7 +111,7 @@ class StellarErrorHandler {
     }
 
     // Transaction failed
-    if (error.message?.includes('tx_failed') || error.message?.includes('transaction failed')) {
+    if (normalizedMessage.includes('tx_failed') || normalizedMessage.includes('transaction failed')) {
       return {
         status: 400,
         code: 'TRANSACTION_FAILED',
@@ -89,30 +119,12 @@ class StellarErrorHandler {
       };
     }
 
-    // Wallet not found (from mock service)
-    if (error.message?.includes('Wallet not found')) {
-      return {
-        status: 404,
-        code: 'WALLET_NOT_FOUND',
-        message: error.message
-      };
-    }
-
     // Same sender/recipient
-    if (error.message?.includes('must be different')) {
+    if (normalizedMessage.includes('must be different')) {
       return {
         status: 400,
         code: 'INVALID_TRANSACTION',
-        message: error.message
-      };
-    }
-
-    // Transaction not found
-    if (error.message?.includes('Transaction not found')) {
-      return {
-        status: 404,
-        code: 'TRANSACTION_NOT_FOUND',
-        message: 'Transaction not found.'
+        message: message
       };
     }
 
