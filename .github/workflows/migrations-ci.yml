@@ -29,9 +29,9 @@ jobs:
     runs-on: ubuntu-latest
     name: Validate Migration Files
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         with:
           node-version: '20'
           cache: 'npm'
@@ -48,9 +48,9 @@ jobs:
     runs-on: ubuntu-latest
     name: Test Migrations on Fresh Database
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         with:
           node-version: '20'
           cache: 'npm'
@@ -67,7 +67,7 @@ jobs:
 
       - name: Upload test database
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: test-migration-db
           path: data/test-migrations.db
@@ -78,9 +78,9 @@ jobs:
     runs-on: ubuntu-latest
     name: Verify Migration Order
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         with:
           node-version: '20'
           cache: 'npm'
@@ -112,7 +112,7 @@ jobs:
     runs-on: ubuntu-latest
     name: Detect Duplicate Migration Prefixes
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Check for duplicate migration prefixes
         run: |
@@ -145,7 +145,7 @@ jobs:
     runs-on: ubuntu-latest
     name: Verify Migration Documentation
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Check migration documentation
         run: |
