@@ -153,3 +153,4 @@ reports/
 trivy-results.sarif
 trivy-results.json
 trivy-report.txt
+.kiro/
