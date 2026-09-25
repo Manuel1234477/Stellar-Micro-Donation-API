@@ -155,8 +155,9 @@ function cleanupCache() {
  */
 function startCacheCleanup() {
   if (_cleanupTimer) return;
-  _cleanupTimer = setInterval(cleanupCache, CLEANUP_INTERVAL_MS);
-  if (_cleanupTimer.unref) _cleanupTimer.unref();
+  const timerRegistry = require('./timerRegistry');
+  _cleanupTimer = timerRegistry.createInterval(cleanupCache, CLEANUP_INTERVAL_MS, 'federation-cache-cleanup');
+  _cleanupTimer.unref();
 }
 
 /**
@@ -164,7 +165,7 @@ function startCacheCleanup() {
  */
 function stopCacheCleanup() {
   if (_cleanupTimer) {
-    clearInterval(_cleanupTimer);
+    _cleanupTimer.clear();
     _cleanupTimer = null;
   }
 }

@@ -98,7 +98,7 @@ function createSequenceManager(config = {}) {
    * @returns {Promise<void>}
    */
   function sleep(ms) {
-    return new Promise((resolve) => setTimeout(resolve, ms));
+    return new Promise((resolve) => setTimeout(resolve, ms)); // eslint-disable-line local/no-bare-timers
   }
 
   /**

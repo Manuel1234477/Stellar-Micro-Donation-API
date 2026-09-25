@@ -104,10 +104,11 @@ class AbuseDetector {
 
     // Auto-unflag after 1 hour (skip in test environment)
     if (process.env.NODE_ENV !== 'test') {
-      setTimeout(() => {
+      const timerRegistry = require('./timerRegistry');
+      timerRegistry.createTimeout(() => {
         this.suspiciousIPs.delete(ip);
         log.info('ABUSE_DETECTION', `IP unflagged after cooldown`, { ip });
-      }, 3600000);
+      }, 3600000, 'abuse-unflag').unref();
     }
   }
 
@@ -161,9 +162,10 @@ class AbuseDetector {
   startCleanup() {
     // Only start if not in test environment
     if (process.env.NODE_ENV !== 'test' && process.env.NODE_ENV !== 'testing') {
-      this.cleanupTimer = setInterval(() => {
+      const timerRegistry = require('./timerRegistry');
+      this.cleanupTimer = timerRegistry.createInterval(() => {
         this.cleanup();
-      }, this.config.cleanupInterval);
+      }, this.config.cleanupInterval, 'abuse-detector-cleanup');
     }
   }
 
@@ -172,7 +174,7 @@ class AbuseDetector {
    */
   stop() {
     if (this.cleanupTimer) {
-      clearInterval(this.cleanupTimer);
+      this.cleanupTimer.clear();
     }
   }
 }
