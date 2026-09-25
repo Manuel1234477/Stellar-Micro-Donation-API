@@ -21,8 +21,12 @@ const MAX_FEE_BUMP_ATTEMPTS = 3;
 /** Transactions in SUBMITTED state longer than this are considered stuck */
 const STUCK_THRESHOLD_MS = 5 * 60 * 1000; // 5 minutes
 
-/** Hard cap on fee bump fee in stroops (0.1 XLM) */
-const MAX_FEE_CAP_STROOPS = 1_000_000;
+/** Hard cap on fee bump fee in stroops (from MAXIMUM_FEE_XLM env var, default 0.1 XLM) */
+const getMaxFeeCapStroops = () => {
+  const config = require('../config');
+  const maxXLM = config.fees?.maxXLM || 0.1;
+  return Math.round(maxXLM * 1e7);
+};
 
 class FeeBumpService {
   /**
@@ -39,7 +43,7 @@ class FeeBumpService {
     this.auditLogService = auditLogService;
     this.maxAttempts = config.maxAttempts || MAX_FEE_BUMP_ATTEMPTS;
     this.stuckThresholdMs = config.stuckThresholdMs || STUCK_THRESHOLD_MS;
-    this.maxFeeCapStroops = config.maxFeeCapStroops || MAX_FEE_CAP_STROOPS;
+    this.maxFeeCapStroops = config.maxFeeCapStroops || getMaxFeeCapStroops();
     this.feeSourceSecret = config.feeSourceSecret || null;
   }
 
