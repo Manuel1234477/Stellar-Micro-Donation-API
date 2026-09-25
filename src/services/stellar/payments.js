@@ -3,6 +3,7 @@ const StellarErrorHandler = require('../../utils/stellarErrorHandler');
 const log = require('../../utils/log');
 const { withTimeout } = require('../../utils/timeoutHandler');
 const { toStellarSdkAsset, serializeAsset, isSameAsset, normalizeHorizonAsset } = require('../../utils/stellarAsset');
+const { ValidationError, ERROR_CODES } = require('../../utils/errors');
 
 class StellarPayments {
   constructor(service) {
@@ -618,7 +619,7 @@ class StellarPayments {
   stroopsToXlm(stroops) {
     const numberValue = Number(stroops);
     if (Number.isNaN(numberValue)) {
-      throw new ValidationError('Invalid stroops amount');
+      throw new ValidationError('Invalid stroops amount', null, ERROR_CODES.INVALID_AMOUNT);
     }
     return (numberValue / 1e7).toFixed(7);
   }
@@ -626,7 +627,7 @@ class StellarPayments {
   xlmToStroops(xlm) {
     const numberValue = Number(xlm);
     if (Number.isNaN(numberValue)) {
-      throw new ValidationError('Invalid XLM amount');
+      throw new ValidationError('Invalid XLM amount', null, ERROR_CODES.INVALID_AMOUNT);
     }
     return Math.round(numberValue * 1e7);
   }

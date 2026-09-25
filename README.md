@@ -812,5 +812,5 @@ For comprehensive documentation, see the [Documentation Index](docs/README.md).
 
 ## Handsoff notes
 
-<!-- handsoff-issue-1712 -->
-- #1712: Donor stats and leaderboard return undefined for non-admin callers, breaking anonymization guarantees
+<!-- handsoff-issue-1731 -->
+- #1731: Account merge endpoint does not return the merge result or soft-delete the source wallet

@@ -120,14 +120,45 @@ const STELLAR_SECRET_PATTERN = /S[A-Z2-7]{55}/g;
 const STELLAR_SECRET_REDACTED = '[STELLAR_SECRET_REDACTED]';
 
 /**
- * Patterns for values that should be masked when the entire value matches (regex-based)
+ * Patterns for values that should be masked when the entire value matches (regex-based).
+ * Targets actual secrets: hex strings of exactly 64 characters (encryption keys),
+ * JWT tokens, bcrypt hashes, and Stellar secret keys.
  */
 const VALUE_PATTERNS = [
   // Stellar secret keys (start with S, 56 chars) — public keys (G…) are not matched
   /^S[A-Z2-7]{55}$/,
+  // Hex strings of exactly 64 characters (256-bit encryption / private keys)
+  /^[0-9a-fA-F]{64}$/,
+  // Bcrypt password hashes
+  /^\$2[aby]?\$\d{1,2}\$[./A-Za-z0-9]{53}$/,
   // JWT tokens (three base64 segments separated by dots)
   /eyJ[A-Za-z0-9_-]+\.eyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+/,
 ];
+
+/**
+ * Check if a string is a Stellar public key (56 characters, starts with G).
+ * Stellar public keys must NEVER be masked.
+ * @param {*} value
+ * @returns {boolean}
+ */
+function isStellarPublicKey(value) {
+  return typeof value === 'string' && /^G[A-Z2-7]{55}$/.test(value.trim());
+}
+
+/**
+ * Check if a value represents a legitimate numeric or XLM amount.
+ * Amounts must NEVER be masked.
+ * @param {*} value
+ * @returns {boolean}
+ */
+function isXlmAmount(value) {
+  if (typeof value === 'number') return true;
+  if (typeof value === 'string') {
+    const trimmed = value.trim();
+    return /^\d+(\.\d+)?(\s*XLM)?$/i.test(trimmed) && !isNaN(parseFloat(trimmed));
+  }
+  return false;
+}
 
 /**
  * Mask Stellar secret key substrings inside any string (issue #938).
@@ -152,22 +183,37 @@ function maskStellarSecretsInString(str) {
  */
 function isSensitiveKey(key) {
   if (typeof key !== 'string') return false;
-  
+
   const lowerKey = key.toLowerCase().replace(/[-_\s]/g, '');
-  
-  return SENSITIVE_PATTERNS.some(pattern => {
-    const normalizedPattern = pattern.toLowerCase().replace(/[-_\s]/g, '');
-    return lowerKey === normalizedPattern;
-  });
+
+  return getNormalizedSensitiveKeys().has(lowerKey);
+}
+
+// Normalised SENSITIVE_PATTERNS cached as a Set so isSensitiveKey (hot path:
+// every logged key) is O(1). Rebuilt when the pattern list grows.
+let normalizedSensitiveKeys = null;
+let normalizedSensitiveKeysSize = -1;
+
+function getNormalizedSensitiveKeys() {
+  if (normalizedSensitiveKeysSize !== SENSITIVE_PATTERNS.length) {
+    normalizedSensitiveKeys = new Set(
+      SENSITIVE_PATTERNS.map(pattern => pattern.toLowerCase().replace(/[-_\s]/g, ''))
+    );
+    normalizedSensitiveKeysSize = SENSITIVE_PATTERNS.length;
+  }
+  return normalizedSensitiveKeys;
 }
 
 /**
- * Check if a value looks like sensitive data
+ * Check if a value looks like sensitive data.
+ * Stellar public keys and XLM amounts are never flagged as sensitive values.
  * @param {*} value - The value to check
  * @returns {boolean} True if the value appears sensitive
  */
 function isSensitiveValue(value) {
   if (typeof value !== 'string') return false;
+  if (isStellarPublicKey(value)) return false;
+  if (isXlmAmount(value)) return false;
   return VALUE_PATTERNS.some(pattern => pattern.test(value));
 }
 
@@ -328,12 +374,44 @@ function maskError(error) {
 }
 
 /**
- * Add custom sensitive patterns
- * @param {string[]} patterns - Array of patterns to add
+ * Add custom sensitive key patterns
+ * @param {string[]|string} patterns - Array of key names or single key name to add
  */
 function addSensitivePatterns(patterns) {
   if (Array.isArray(patterns)) {
     SENSITIVE_PATTERNS.push(...patterns);
+  } else if (typeof patterns === 'string') {
+    SENSITIVE_PATTERNS.push(patterns);
+  }
+}
+
+/**
+ * Add custom value patterns (regex or string)
+ * @param {RegExp|string|Array<RegExp|string>} patterns
+ */
+function addValuePatterns(patterns) {
+  const list = Array.isArray(patterns) ? patterns : [patterns];
+  for (const p of list) {
+    if (p instanceof RegExp) {
+      VALUE_PATTERNS.push(p);
+    } else if (typeof p === 'string') {
+      VALUE_PATTERNS.push(new RegExp(p));
+    }
+  }
+}
+
+/**
+ * Expose configuration API for operators to add custom sensitive key or value patterns.
+ * @param {Object} config
+ * @param {string[]} [config.keyPatterns] - Additional field names to treat as sensitive
+ * @param {Array<RegExp|string>} [config.valuePatterns] - Additional regex patterns for sensitive values
+ */
+function configureMasker(config = {}) {
+  if (config.keyPatterns) {
+    addSensitivePatterns(config.keyPatterns);
+  }
+  if (config.valuePatterns) {
+    addValuePatterns(config.valuePatterns);
   }
 }
 
@@ -344,8 +422,13 @@ module.exports = {
   maskStellarSecretsInString,
   isSensitiveKey,
   isSensitiveValue,
+  isStellarPublicKey,
+  isXlmAmount,
   addSensitivePatterns,
+  addValuePatterns,
+  configureMasker,
   SENSITIVE_PATTERNS,
+  VALUE_PATTERNS,
   STELLAR_SECRET_PATTERN,
   STELLAR_SECRET_REDACTED,
 };

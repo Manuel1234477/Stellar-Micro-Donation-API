@@ -216,6 +216,9 @@ function mountRoutes(app, services = {}) {
     }
   }));
 
+  // Donation and entity export endpoints (#1596)
+  apiV1.use('/exports', require('../routes/exports'));
+
   app.use('/api/v1', apiV1);
 
   // ── /api/v2 standardized response envelope (Issue #1553) ─────────────────
@@ -225,6 +228,7 @@ function mountRoutes(app, services = {}) {
   // Payment channels were introduced as an unversioned API; keep that path
   // available for existing clients while also exposing the versioned route.
   app.use('/channels', require('../routes/channels'));
+  app.use('/exports', require('../routes/exports'));
 
   // Stellar federation protocol server (SEP-0002).
   // The versioned lookup router above is for consumers; this router serves

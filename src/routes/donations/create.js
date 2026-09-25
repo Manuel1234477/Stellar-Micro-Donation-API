@@ -61,7 +61,7 @@ const stellarService = getStellarService();
  * Requires idempotency key to prevent duplicate transactions.
  * Rate limited: 10 requests per minute per IP.
  */
-router.post('/send', rotationLockMiddleware(), payloadSizeLimiter(ENDPOINT_LIMITS.singleDonation), donationRateLimiter, requireIdempotency, sendDonationSchema, async (req, res, next) => {
+router.post('/send', rotationLockMiddleware(), payloadSizeLimiter(ENDPOINT_LIMITS.singleDonation), donationRateLimiter, requireIdempotency, sendDonationSchema, asyncHandler(async (req, res, next) => {
   try {
     const { senderId, receiverId, amount, memo, campaign_id, asset } = req.body;
 
@@ -279,13 +279,13 @@ async function processCustodialDonation(req, res, next) {
  * both senderId and receiverId are present.
  * Requires Idempotency-Key header (UUID v4) to prevent duplicate donations.
  */
-router.post('/', rotationLockMiddleware(), payloadSizeLimiter(ENDPOINT_LIMITS.singleDonation), donationRateLimiter, perKeyRateLimit, requireApiKey, requireIdempotency, createDonationSchema, async (req, res, next) => {
+router.post('/', rotationLockMiddleware(), payloadSizeLimiter(ENDPOINT_LIMITS.singleDonation), donationRateLimiter, perKeyRateLimit, requireApiKey, requireIdempotency, createDonationSchema, asyncHandler(async (req, res, next) => {
   try {
     if (req.body.senderId != null && req.body.receiverId != null) {
       return await processCustodialDonation(req, res, next);
     }
 
-    const { amount, currency, donor, recipient, memo, memoType, notes, tags, encryptMemo, anonymous, sourceAsset, sourceAmount, sendAsset, receiveAsset, slippageTolerance, validAfter, validBefore, validFrom, validUntil, contractAddress } = req.body;
+    const { amount, asset, currency, donor, recipient, memo, memoType, notes, tags, encryptMemo, anonymous, sourceAsset, sourceAmount, sendAsset, receiveAsset, slippageTolerance, validAfter, validBefore, validFrom, validUntil, contractAddress } = req.body;
 
     if (!amount || !recipient) {
       throw new ValidationError('Missing required fields: amount, recipient', null, ERROR_CODES.MISSING_REQUIRED_FIELD);
@@ -456,7 +456,7 @@ router.post('/', rotationLockMiddleware(), payloadSizeLimiter(ENDPOINT_LIMITS.si
   } catch (error) {
     next(error);
   }
-});
+}));
 
 // ─── POST /donations/batch (simple, no RBAC) ──────────────────────────────────
 
@@ -465,7 +465,7 @@ router.post('/', rotationLockMiddleware(), payloadSizeLimiter(ENDPOINT_LIMITS.si
  * Create up to 100 donations in a single request.
  * Rate limited: 1 batch request per minute per IP.
  */
-router.post('/batch', rotationLockMiddleware(), payloadSizeLimiter(ENDPOINT_LIMITS.batchDonation), batchRateLimiter, requireApiKey, async (req, res, next) => {
+router.post('/batch', rotationLockMiddleware(), payloadSizeLimiter(ENDPOINT_LIMITS.batchDonation), batchRateLimiter, requireApiKey, asyncHandler(async (req, res, next) => {
   try {
     const { donations } = req.body;
 
@@ -506,7 +506,7 @@ router.post('/batch', rotationLockMiddleware(), payloadSizeLimiter(ENDPOINT_LIMI
   } catch (error) {
     next(error);
   }
-});
+}));
 
 // ─── POST /donations/batch (RBAC-guarded authenticated batch) ─────────────────
 

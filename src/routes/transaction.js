@@ -766,7 +766,7 @@ router.get(
 /**
  * GET /transactions/stream
  * SSE endpoint for real-time confirmed transaction events.
- * Query params: ?walletAddress=  ?campaignId=
+ * Query params: ?walletAddress=  ?campaignId=  ?minAmount=  ?status=
  * Header: x-api-key (used as connection key; defaults to 'anonymous')
  */
 router.get('/stream', (req, res) => {
@@ -774,29 +774,51 @@ router.get('/stream', (req, res) => {
   const filters = {
     walletAddress: req.query.walletAddress || null,
     campaignId: req.query.campaignId || null,
+    status: req.query.status || null,
+    minAmount: req.query.minAmount !== undefined ? parseFloat(req.query.minAmount) : null,
   };
 
   const { added, limitExceeded } = sseManager.addClient(apiKey, res, filters);
 
   if (limitExceeded) {
     return res.status(429).json({
-      success: false,
-      error: { code: 'CONNECTION_LIMIT_EXCEEDED', message: 'Max 5 concurrent SSE connections per API key' },
+      error: 'CONNECTION_LIMIT_EXCEEDED',
+      code: 'CONNECTION_LIMIT_EXCEEDED',
+      message: 'Max 5 concurrent SSE connections per API key',
     });
   }
 
   if (!added) {
-    return res.status(500).json({ success: false, error: { code: 'SSE_ERROR', message: 'Failed to add SSE client' } });
+    return res.status(500).json({
+      error: 'SSE_ERROR',
+      code: 'SSE_ERROR',
+      message: 'Failed to add SSE client',
+    });
   }
 
   res.setHeader('Content-Type', 'text/event-stream');
   res.setHeader('Cache-Control', 'no-cache');
   res.setHeader('Connection', 'keep-alive');
-  res.flushHeaders();
+  if (typeof res.flushHeaders === 'function') {
+    res.flushHeaders();
+  }
 
   // Send initial connection event
   res.write(`data: ${JSON.stringify({ type: 'connected' })}\n\n`);
 });
+
+// Wire donationEvents to sseManager so real-time donation events are streamed
+try {
+  const donationEvents = require('../events/donationEvents');
+  const broadcastHandler = (tx) => {
+    if (tx) {
+      sseManager.broadcastTransaction(tx);
+    }
+  };
+  donationEvents.on(donationEvents.EVENTS.CONFIRMED, broadcastHandler);
+  donationEvents.on(donationEvents.EVENTS.CREATED, broadcastHandler);
+  donationEvents.on(donationEvents.EVENTS.SUBMITTED, broadcastHandler);
+} catch (_) {}
 
 /**
  * GET /transactions/:id

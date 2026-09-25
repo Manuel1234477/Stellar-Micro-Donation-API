@@ -11,7 +11,8 @@
  *   DELETE /admin/cors/rules/:id    – remove a rule
  *
  * The CORS middleware reloads active rules from the database on each request
- * with a 60-second in-memory cache. Changes take effect within one cache TTL.
+ * with a 60-second in-memory cache. Writes invalidate that cache so changes
+ * take effect immediately.
  *
  * Requires admin role.
  */
@@ -26,6 +27,7 @@ const asyncHandler = require('../../utils/asyncHandler');
 const { payloadSizeLimiter, ENDPOINT_LIMITS } = require('../../middleware/payloadSizeLimiter');
 const { requireAdmin } = require('../../middleware/rbac');
 const { invalidateCache } = require('../../middleware/cors');
+const AuditLogService = require('../../services/AuditLogService');
 
 /**
  * Ensure the cors_rules table exists.
@@ -41,6 +43,31 @@ async function ensureTable() {
       createdAt   DATETIME DEFAULT CURRENT_TIMESTAMP
     )
   `, []);
+}
+
+/**
+ * Validate an origin strictly: scheme + host, optional port, no path/query/fragment.
+ * Returns the normalized origin string, or null when invalid.
+ */
+function normalizeOrigin(value) {
+  if (typeof value !== 'string') return null;
+  const trimmed = value.trim();
+  if (!trimmed) return null;
+
+  let parsed;
+  try {
+    parsed = new URL(trimmed);
+  } catch (err) {
+    return null;
+  }
+
+  if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') return null;
+  if (!parsed.hostname) return null;
+  if (parsed.pathname && parsed.pathname !== '/') return null;
+  if (parsed.search || parsed.hash) return null;
+  if (parsed.username || parsed.password) return null;
+
+  return parsed.origin;
 }
 
 /**
@@ -73,15 +100,13 @@ router.post('/', requireApiKey, requireAdmin(), payloadSizeLimiter(ENDPOINT_LIMI
     });
   }
 
-  const trimmed = origin.trim();
-  const isWildcard = trimmed.startsWith('*.');
-  const isUrl = /^https?:\/\/.+/.test(trimmed);
-  if (!isWildcard && !isUrl) {
+  const normalized = normalizeOrigin(origin);
+  if (!normalized) {
     return res.status(400).json({
       success: false,
       error: {
         code: 'VALIDATION_ERROR',
-        message: 'origin must be a valid URL (https://example.com) or wildcard pattern (*.example.com)',
+        message: 'origin must be a valid URL with scheme and host (https://example.com), optional port, and no path',
       },
     });
   }
@@ -89,7 +114,7 @@ router.post('/', requireApiKey, requireAdmin(), payloadSizeLimiter(ENDPOINT_LIMI
   try {
     const result = await Database.run(
       'INSERT INTO cors_rules (origin, active, description) VALUES (?, 1, ?)',
-      [trimmed, description || null]
+      [normalized, description || null]
     );
 
     invalidateCache();
@@ -98,6 +123,15 @@ router.post('/', requireApiKey, requireAdmin(), payloadSizeLimiter(ENDPOINT_LIMI
       'SELECT id, origin, active, description, createdAt FROM cors_rules WHERE id = ?',
       [result.id]
     );
+
+    await AuditLogService.log({
+      action: 'cors_rule.created',
+      actorId: req.user && req.user.id,
+      targetType: 'cors_rule',
+      targetId: row.id,
+      metadata: { origin: row.origin, description: row.description },
+    });
+
     return res.status(201).json({ success: true, data: row });
   } catch (err) {
     if (err.message && (err.message.includes('UNIQUE') || err.message.includes('Duplicate'))) {
@@ -137,6 +171,15 @@ router.patch('/:id', requireApiKey, requireAdmin(), asyncHandler(async (req, res
     'SELECT id, origin, active, description, createdAt FROM cors_rules WHERE id = ?',
     [id]
   );
+
+  await AuditLogService.log({
+    action: 'cors_rule.updated',
+    actorId: req.user && req.user.id,
+    targetType: 'cors_rule',
+    targetId: updated.id,
+    metadata: { origin: updated.origin, active: updated.active },
+  });
+
   res.json({ success: true, data: updated });
 }));
 
@@ -148,7 +191,7 @@ router.delete('/:id', requireApiKey, requireAdmin(), asyncHandler(async (req, re
   await ensureTable();
 
   const { id } = req.params;
-  const existing = await Database.get('SELECT id FROM cors_rules WHERE id = ?', [id]);
+  const existing = await Database.get('SELECT id, origin FROM cors_rules WHERE id = ?', [id]);
   if (!existing) {
     return res.status(404).json({
       success: false,
@@ -158,6 +201,14 @@ router.delete('/:id', requireApiKey, requireAdmin(), asyncHandler(async (req, re
 
   await Database.run('DELETE FROM cors_rules WHERE id = ?', [id]);
   invalidateCache();
+
+  await AuditLogService.log({
+    action: 'cors_rule.deleted',
+    actorId: req.user && req.user.id,
+    targetType: 'cors_rule',
+    targetId: existing.id,
+    metadata: { origin: existing.origin },
+  });
 
   res.json({ success: true, message: 'CORS rule removed' });
 }));

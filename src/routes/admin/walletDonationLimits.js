@@ -22,7 +22,8 @@ const asyncHandler = require('../../utils/asyncHandler');
 /**
  * PATCH /admin/wallets/:id/limits
  * Set per-wallet donation limit overrides (min/max amounts in stroops).
- * When limits are set to null, the wallet falls back to global env settings.
+ * Passing null explicitly clears the corresponding limit so the wallet
+ * falls back to global env settings.
  */
 router.patch('/:id/limits', requireAdmin(), asyncHandler(async (req, res) => {
   const walletId = String(req.params.id).trim();
@@ -57,10 +58,14 @@ router.patch('/:id/limits', requireAdmin(), asyncHandler(async (req, res) => {
   if (!validateLimit(donation_limit_min, 'donation_limit_min')) return;
   if (!validateLimit(donation_limit_max, 'donation_limit_max')) return;
 
+  // Resolve the effective values: explicit null clears the limit.
+  const nextMin = donation_limit_min === undefined ? wallet.donation_limit_min : donation_limit_min;
+  const nextMax = donation_limit_max === undefined ? wallet.donation_limit_max : donation_limit_max;
+
   // Validate min < max if both are set
-  if (donation_limit_min !== null && donation_limit_min !== undefined &&
-      donation_limit_max !== null && donation_limit_max !== undefined &&
-      donation_limit_min >= donation_limit_max) {
+  if (nextMin !== null && nextMin !== undefined &&
+      nextMax !== null && nextMax !== undefined &&
+      nextMin >= nextMax) {
     return res.status(400).json({
       success: false,
       error: {
@@ -70,10 +75,10 @@ router.patch('/:id/limits', requireAdmin(), asyncHandler(async (req, res) => {
     });
   }
 
-  // Update the wallet with new limits
+  // Update the wallet with new limits (null clears the override)
   const updatedWallet = await Wallet.update(walletId, {
-    donation_limit_min: donation_limit_min !== undefined ? donation_limit_min : wallet.donation_limit_min,
-    donation_limit_max: donation_limit_max !== undefined ? donation_limit_max : wallet.donation_limit_max,
+    donation_limit_min: nextMin,
+    donation_limit_max: nextMax,
   });
 
   // Log the limit change to audit trail
@@ -96,9 +101,8 @@ router.patch('/:id/limits', requireAdmin(), asyncHandler(async (req, res) => {
         donation_limit_max: updatedWallet.donation_limit_max,
       },
     }
-  }).catch(err => {
+  }).catch(() => {
     // Non-blocking: audit log failure should not prevent the update
-    console.error('Failed to log wallet limit override to audit trail:', err);
   });
 
   res.json({

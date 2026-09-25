@@ -521,11 +521,13 @@ class WalletService {
   }
 
   /**
-   * Set or update an account data entry
+   * Set or update an account data entry.
+   * Preserves the validation from both historical implementations and ensures
+   * the account is owned by the wallet being modified.
    * @param {string|number} walletId - Wallet ID
    * @param {string} secretKey - Secret key of the wallet owner
    * @param {string} key - Data entry key (max 64 bytes)
-   * @param {string} value - Data entry value (max 64 bytes)
+   * @param {string|Buffer|null} value - Data entry value (max 64 bytes)
    * @returns {Promise<Object>} Transaction result with hash and ledger
    */
   async setAccountData(walletId, secretKey, key, value) {
@@ -538,37 +540,21 @@ class WalletService {
       throw new NotFoundError('Wallet not found', ERROR_CODES.WALLET_NOT_FOUND);
     }
 
-    // Call Stellar service to set the data entry
-    const result = await this.stellarService.setDataEntry(secretKey, key, value);
-    return result;
-  }
-
-  /**
-   * Delete an account data entry
-   * @param {string|number} walletId - Wallet ID
-   * @param {string} secretKey - Secret key of the wallet owner
-   * @param {string} key - Data entry key to delete
-   * @returns {Promise<Object>} Transaction result with hash and ledger
-   */
-  /**
-   * Set a data entry on a Stellar account using ManageDataOperation.
-   * @param {string|number} walletId - Wallet ID
-   * @param {string} secretKey - Secret key of the wallet
-   * @param {string} key - Data entry key (max 64 bytes)
-   * @param {string|Buffer} value - Data entry value (max 64 bytes)
-   * @returns {Promise<{hash: string, ledger: number}>}
-   */
-  async setAccountData(walletId, secretKey, key, value) {
-    if (!this.stellarService) {
-      throw new ValidationError('Stellar service not available', null, ERROR_CODES.SERVICE_UNAVAILABLE);
+    if (!key || typeof key !== 'string') {
+      throw new ValidationError('key is required and must be a string', null, ERROR_CODES.INVALID_REQUEST);
     }
 
-    const wallet = this.getWalletById(walletId);
-    if (!wallet) {
-      throw new NotFoundError('Wallet not found', ERROR_CODES.WALLET_NOT_FOUND);
+    if (Buffer.byteLength(key, 'utf8') > 64) {
+      throw new ValidationError('key must be 64 bytes or less', null, ERROR_CODES.INVALID_REQUEST);
     }
 
-    // Call Stellar service to set the data entry
+    if (value !== null && value !== undefined) {
+      const valueBuffer = Buffer.isBuffer(value) ? value : Buffer.from(String(value), 'utf8');
+      if (valueBuffer.length > 64) {
+        throw new ValidationError('value must be 64 bytes or less', null, ERROR_CODES.INVALID_REQUEST);
+      }
+    }
+
     const result = await this.stellarService.accounts.setAccountData(secretKey, key, value);
     return result;
   }

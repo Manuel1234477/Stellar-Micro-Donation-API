@@ -351,9 +351,9 @@ class RetentionService {
     const scheduleTime = `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')} UTC`;
     log.info('RETENTION_SERVICE', 'Scheduled daily retention run', {
       scheduledAt: scheduleTime,
-      donationDays: parseDays('RETENTION_DONATIONS_DAYS', 2555),
-      auditLogDays: parseDays('RETENTION_AUDIT_LOGS_DAYS', 365),
-      idempotencyDays: parseDays('RETENTION_IDEMPOTENCY_DAYS', 30),
+      donationDays: resolveRetentionDays('donations'),
+      auditLogDays: resolveRetentionDays('auditLogs'),
+      idempotencyDays: resolveRetentionDays('idempotency'),
       dryRun: this.dryRun,
     });
     this._scheduleNext();

@@ -58,9 +58,10 @@ const RECENT_MAX_LIMIT = parseInt(process.env.RECENT_DONATIONS_MAX_LIMIT || '100
 const RECENT_CACHE_TTL_MS = parseInt(process.env.RECENT_DONATIONS_CACHE_TTL_SECONDS || '5', 10) * 1000;
 const STUCK_THRESHOLD_SECONDS = 600; // 10 minutes
 
-// Invalidate recent donations cache when a new donation is created
+// Invalidate recent donations and list donations cache when a new donation is created
 donationEvents.on(donationEvents.EVENTS.CREATED, () => {
   Cache.clearPrefix('donations:recent:');
+  Cache.clearPrefix('donations:list:');
 });
 
 // ─── GET /donations/ ──────────────────────────────────────────────────────────
@@ -191,6 +192,14 @@ router.get('/', checkPermission(PERMISSIONS.DONATIONS_READ), asyncHandler(async 
       ...(memo && { memo }),
     };
 
+    const cacheKey = `donations:list:${JSON.stringify(req.query)}`;
+    const cached = Cache.get(cacheKey);
+    if (cached) {
+      res.setHeader('X-Cache', 'HIT');
+      res.setHeader('X-Total-Count', String(cached.totalCount));
+      return res.json(cached.body);
+    }
+
     const result = donationService.getPaginatedDonations(pagination, filters);
     res.setHeader('X-Total-Count', String(result.totalCount));
 
@@ -208,7 +217,7 @@ router.get('/', checkPermission(PERMISSIONS.DONATIONS_READ), asyncHandler(async 
 
     const meta = result.meta || {};
 
-    res.json({
+    const responsePayload = {
       success: true,
       data: result.data,
       count: result.data.length,
@@ -220,7 +229,11 @@ router.get('/', checkPermission(PERMISSIONS.DONATIONS_READ), asyncHandler(async 
         hasMore: meta.next_cursor != null,
         total: result.totalCount,
       },
-    });
+    };
+
+    Cache.set(cacheKey, { totalCount: result.totalCount, body: responsePayload }, RECENT_CACHE_TTL_MS);
+    res.setHeader('X-Cache', 'MISS');
+    res.json(responsePayload);
   } catch (error) {
     next(error);
   }
@@ -674,7 +687,7 @@ router.get('/cost-breakdown', checkPermission(PERMISSIONS.DONATIONS_READ), (req,
  * GET /donations/verify-anonymous
  * Allow a donor to prove their anonymous donation using their wallet address.
  */
-router.get('/verify-anonymous', checkPermission(PERMISSIONS.DONATIONS_READ), async (req, res, next) => {
+router.get('/verify-anonymous', checkPermission(PERMISSIONS.DONATIONS_READ), asyncHandler(async (req, res, next) => {
   try {
     const { donationId, walletAddress } = req.query;
 

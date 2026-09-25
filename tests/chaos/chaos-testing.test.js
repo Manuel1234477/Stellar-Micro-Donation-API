@@ -22,6 +22,8 @@ const Database = require('../../src/utils/database');
 const log = require('../../src/utils/log');
 const MockStellarService = require('../../src/services/MockStellarService');
 
+const createTestTables = require('../helpers/dbBootstrap');
+
 // Chaos configuration
 const CHAOS_CONFIG = {
   // Probability of random failures (0-1)
@@ -43,7 +45,9 @@ describe('Chaos Testing Suite', () => {
     recoveries: 0,
   };
 
-  beforeAll(() => {
+  beforeAll(async () => {
+    await createTestTables(Database);
+
     // Use MockStellarService directly
     stellarService = new MockStellarService({
       networkDelay: 0,
