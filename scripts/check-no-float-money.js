@@ -207,7 +207,7 @@ async function main() {
   console.log('1. Import the money.js utility: const { toStroops, fromStroops } = require("./utils/money");');
   console.log('2. Convert amounts to stroops before arithmetic: amount = toStroops(xlmAmount);');
   console.log('3. Convert back to XLM for display: fromStroops(stroops);');
-  console.log('\nSee docs/ADR-004.md for architectural decision on stroop-based arithmetic.\n');
+  console.log('\nSee docs/adr/004-money-as-stroops.md for architectural decision on stroop-based arithmetic.\n');
 
   process.exit(totalIssues > 0 ? 1 : 0);
 }
