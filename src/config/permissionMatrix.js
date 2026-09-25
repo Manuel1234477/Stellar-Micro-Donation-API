@@ -101,7 +101,11 @@ const PERMISSION_MATRIX = {
 
 /**
  * Route Permission Requirements - Maps routes to required permissions
- * Format: { method: 'GET|POST|PATCH|DELETE', path: '/path', permission: 'permission:action' }
+ * Format: { method: 'GET|POST|PATCH|DELETE', path: '/path', permission: 'permission:action', unversioned?: true }
+ *
+ * Paths are relative to the /api/v1 router unless `unversioned: true`, in which
+ * case `path` is the absolute mount path (admin and observability routes that
+ * are registered directly on the app). Use getFullRoutePath() to resolve.
  */
 const ROUTE_PERMISSIONS = [
   // Donation routes
@@ -147,21 +151,31 @@ const ROUTE_PERMISSIONS = [
   { method: 'POST', path: '/api-keys/:id/deprecate', permission: PERMISSIONS.ADMIN_ALL },
   { method: 'DELETE', path: '/api-keys/:id', permission: PERMISSIONS.ADMIN_ALL },
   { method: 'POST', path: '/api-keys/cleanup', permission: PERMISSIONS.ADMIN_ALL },
-  { method: 'GET', path: '/abuse-signals', permission: PERMISSIONS.ADMIN_ALL },
-  { method: 'POST', path: '/reconcile', permission: PERMISSIONS.ADMIN_ALL },
-  { method: 'GET', path: '/geo-blocking', permission: PERMISSIONS.ADMIN_ALL },
-  { method: 'PUT', path: '/geo-blocking', permission: PERMISSIONS.ADMIN_ALL },
-  { method: 'POST', path: '/geo-blocking/reload-db', permission: PERMISSIONS.ADMIN_ALL },
-  { method: 'GET', path: '/geo/rules', permission: PERMISSIONS.ADMIN_ALL },
-  { method: 'POST', path: '/geo/block', permission: PERMISSIONS.ADMIN_ALL },
-  { method: 'DELETE', path: '/geo/block/:countryCode', permission: PERMISSIONS.ADMIN_ALL },
-  { method: 'POST', path: '/geo/allow', permission: PERMISSIONS.ADMIN_ALL },
-  { method: 'DELETE', path: '/geo/allow/:countryCode', permission: PERMISSIONS.ADMIN_ALL }
+  { method: 'GET', path: '/abuse-signals', permission: PERMISSIONS.ADMIN_ALL, unversioned: true },
+  { method: 'POST', path: '/reconcile', permission: PERMISSIONS.ADMIN_ALL, unversioned: true },
+  { method: 'GET', path: '/admin/geo-blocking', permission: PERMISSIONS.ADMIN_ALL, unversioned: true },
+  { method: 'PUT', path: '/admin/geo-blocking', permission: PERMISSIONS.ADMIN_ALL, unversioned: true },
+  { method: 'POST', path: '/admin/geo-blocking/reload-db', permission: PERMISSIONS.ADMIN_ALL, unversioned: true },
+  { method: 'GET', path: '/admin/geo-blocking/rules', permission: PERMISSIONS.ADMIN_ALL, unversioned: true },
+  { method: 'POST', path: '/admin/geo-blocking/block', permission: PERMISSIONS.ADMIN_ALL, unversioned: true },
+  { method: 'DELETE', path: '/admin/geo-blocking/block/:countryCode', permission: PERMISSIONS.ADMIN_ALL, unversioned: true },
+  { method: 'POST', path: '/admin/geo-blocking/allow', permission: PERMISSIONS.ADMIN_ALL, unversioned: true },
+  { method: 'DELETE', path: '/admin/geo-blocking/allow/:countryCode', permission: PERMISSIONS.ADMIN_ALL, unversioned: true }
 ];
+
+/**
+ * Resolve the absolute request path for a ROUTE_PERMISSIONS entry.
+ * @param {{path: string, unversioned?: boolean}} route
+ * @returns {string} e.g. '/api/v1/donations/send' or '/admin/geo-blocking'
+ */
+function getFullRoutePath(route) {
+  return route.unversioned ? route.path : `/api/v1${route.path}`;
+}
 
 module.exports = {
   PERMISSION_MATRIX,
   ROUTE_PERMISSIONS,
+  getFullRoutePath,
   TIER_FEATURES,
   TIER_ORDER,
   tierMeetsMinimum,

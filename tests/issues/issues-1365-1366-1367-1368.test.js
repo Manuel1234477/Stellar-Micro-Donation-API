@@ -6,10 +6,10 @@
  *   FragmentDefinition nodes so chained fragment spreads (A→B→C) accumulate
  *   depth toward MAX_QUERY_DEPTH and are rejected when the limit is exceeded.
  *
- * #1367 — Mismatched Parameter Field Names in createDonation Mutation
- *   Verifies that the createDonation resolver maps senderId→donor and
- *   receiverId→recipient before calling createDonationRecord(), so the
- *   service never receives undefined for those fields.
+ * #1367 / #1693 — createDonation Mutation Service Contract
+ *   Verifies that the createDonation resolver forwards senderId/receiverId to
+ *   the custodial sendCustodialDonation() contract (matching REST
+ *   POST /donations/send) and never forwards undefined optional fields.
  *
  * #1366 — Unmounted GraphQL HTTP Router
  *   Verifies that POST /graphql returns HTTP 200 (not 404) against the live
@@ -407,23 +407,22 @@ describe('Issue #1368 — GraphQL Depth-Limiter: Chained Fragment Bypass', () =>
 // ISSUE #1367 — Mismatched Parameter Field Names in createDonation Mutation
 // ============================================================================
 
-describe('Issue #1367 — createDonation Mutation: Correct Field Mapping', () => {
-  const mockCreateRecord = jest.fn(async ({ donor, recipient, amount, memo, currency }) => ({
+describe('Issue #1367 / #1693 — createDonation Mutation: Custodial Service Contract', () => {
+  const mockSendCustodial = jest.fn(async ({ amount }) => ({
     id: 42,
-    donor,
-    recipient,
     amount,
-    memo,
-    currency,
+    stellarTxId: 'mock-tx',
     status: 'pending',
     timestamp: new Date().toISOString(),
   }));
+  const mockCreateRecord = jest.fn();
 
   const donationService = {
     getAllDonations: jest.fn(() => []),
     getDonationById: jest.fn(() => null),
     getRecentDonations: jest.fn(() => []),
     createDonationRecord: mockCreateRecord,
+    sendCustodialDonation: mockSendCustodial,
     updateDonationStatus: jest.fn(),
   };
   const walletService = {
@@ -440,10 +439,11 @@ describe('Issue #1367 — createDonation Mutation: Correct Field Mapping', () =>
   const userContext = { apiKey: { role: 'user', isLegacy: true } };
 
   beforeEach(() => {
+    mockSendCustodial.mockClear();
     mockCreateRecord.mockClear();
   });
 
-  test('createDonation maps senderId to donor field', async () => {
+  test('createDonation calls sendCustodialDonation with senderId/receiverId', async () => {
     const result = await graphql({
       schema,
       source: `
@@ -459,56 +459,13 @@ describe('Issue #1367 — createDonation Mutation: Correct Field Mapping', () =>
 
     expect(result.errors).toBeUndefined();
     expect(result.data.createDonation.success).toBe(true);
-
-    // The resolver MUST call createDonationRecord with donor=7 (the senderId)
-    expect(mockCreateRecord).toHaveBeenCalledTimes(1);
-    const callArg = mockCreateRecord.mock.calls[0][0];
-    expect(callArg.donor).toBe(7);
-    expect(callArg.senderId).toBeUndefined();
+    expect(mockSendCustodial).toHaveBeenCalledTimes(1);
+    expect(mockSendCustodial).toHaveBeenCalledWith({ senderId: 7, receiverId: 8, amount: 15.0 });
+    // The non-custodial (wallet address) path must not be used for user IDs
+    expect(mockCreateRecord).not.toHaveBeenCalled();
   });
 
-  test('createDonation maps receiverId to recipient field', async () => {
-    await graphql({
-      schema,
-      source: `
-        mutation {
-          createDonation(input: { senderId: 1, receiverId: 99, amount: 5.0 }) {
-            success
-          }
-        }
-      `,
-      contextValue: userContext,
-    });
-
-    expect(mockCreateRecord).toHaveBeenCalledTimes(1);
-    const callArg = mockCreateRecord.mock.calls[0][0];
-    expect(callArg.recipient).toBe(99);
-    expect(callArg.receiverId).toBeUndefined();
-  });
-
-  test('createDonation passes amount, memo, and currency correctly', async () => {
-    await graphql({
-      schema,
-      source: `
-        mutation {
-          createDonation(input: {
-            senderId: 2, receiverId: 3,
-            amount: 42.5, memo: "hello", currency: "USD"
-          }) {
-            success
-          }
-        }
-      `,
-      contextValue: userContext,
-    });
-
-    const callArg = mockCreateRecord.mock.calls[0][0];
-    expect(callArg.amount).toBe(42.5);
-    expect(callArg.memo).toBe('hello');
-    expect(callArg.currency).toBe('USD');
-  });
-
-  test('donor and recipient are never undefined after mapping', async () => {
+  test('createDonation does not forward donor/recipient or undefined optional fields', async () => {
     await graphql({
       schema,
       source: `
@@ -521,24 +478,59 @@ describe('Issue #1367 — createDonation Mutation: Correct Field Mapping', () =>
       contextValue: userContext,
     });
 
-    const callArg = mockCreateRecord.mock.calls[0][0];
-    expect(callArg.donor).not.toBeUndefined();
-    expect(callArg.recipient).not.toBeUndefined();
-    // Regression: before the fix these would be undefined because the raw
-    // input object {senderId, receiverId} was passed directly
-    expect(callArg.donor).toBe(5);
-    expect(callArg.recipient).toBe(6);
+    const callArg = mockSendCustodial.mock.calls[0][0];
+    expect(callArg).not.toHaveProperty('donor');
+    expect(callArg).not.toHaveProperty('recipient');
+    expect(callArg).not.toHaveProperty('memo');
+    expect(callArg).not.toHaveProperty('currency');
   });
 
-  test('createDonation returns donation data with mapped values in response', async () => {
-    // The mock returns donor/recipient; the resolver wraps it in success+donation
+  test('createDonation passes amount and memo, and accepts XLM currency', async () => {
+    const result = await graphql({
+      schema,
+      source: `
+        mutation {
+          createDonation(input: {
+            senderId: 2, receiverId: 3,
+            amount: 42.5, memo: "hello", currency: "XLM"
+          }) {
+            success
+          }
+        }
+      `,
+      contextValue: userContext,
+    });
+
+    expect(result.errors).toBeUndefined();
+    expect(mockSendCustodial).toHaveBeenCalledWith({ senderId: 2, receiverId: 3, amount: 42.5, memo: 'hello' });
+  });
+
+  test('createDonation rejects currencies the custodial path cannot settle', async () => {
+    const result = await graphql({
+      schema,
+      source: `
+        mutation {
+          createDonation(input: { senderId: 2, receiverId: 3, amount: 42.5, currency: "USD" }) {
+            success
+          }
+        }
+      `,
+      contextValue: userContext,
+    });
+
+    expect(result.errors).toBeDefined();
+    expect(result.errors[0].extensions.code).toBe('BAD_USER_INPUT');
+    expect(mockSendCustodial).not.toHaveBeenCalled();
+  });
+
+  test('createDonation returns donation data with sender/receiver IDs in response', async () => {
     const result = await graphql({
       schema,
       source: `
         mutation {
           createDonation(input: { senderId: 10, receiverId: 20, amount: 100.0 }) {
             success
-            donation { id amount status }
+            donation { id senderId receiverId amount status stellar_tx_id currency }
           }
         }
       `,
@@ -547,8 +539,15 @@ describe('Issue #1367 — createDonation Mutation: Correct Field Mapping', () =>
 
     expect(result.errors).toBeUndefined();
     expect(result.data.createDonation.success).toBe(true);
-    expect(result.data.createDonation.donation.id).toBe(42);
-    expect(result.data.createDonation.donation.amount).toBe(100.0);
+    expect(result.data.createDonation.donation).toEqual({
+      id: 42,
+      senderId: 10,
+      receiverId: 20,
+      amount: 100.0,
+      status: 'pending',
+      stellar_tx_id: 'mock-tx',
+      currency: 'XLM',
+    });
   });
 });
 

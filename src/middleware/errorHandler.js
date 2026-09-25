@@ -182,7 +182,9 @@ function errorHandler(err, req, res, next) {
   if (err instanceof AppError) {
     const errorBody = err.toJSON();
     errorBody.error.requestId = req.id;
-    const translated = getMessage(err.errorCode, lang);
+    // English callers keep the specific message (e.g. which permission was
+    // missing); other languages get the localised generic message.
+    const translated = lang !== 'en' ? getMessage(err.errorCode, lang) : null;
     if (translated) errorBody.error.message = translated;
     if (!isProduction) {
       errorBody.error.debug = { name: err.name };

@@ -51,7 +51,7 @@ async function main() {
   const activeVersion = memoKeyManager.getActiveKeyVersion();
   const allVersions = memoKeyManager.getAllKeyVersions();
   console.log(`Active key version: ${activeVersion}`);
-  console.log(`Key versions in store: ${allVersions.map(k => `v${k.version}${k.retiredAt ? ' (retired)' : ' (active)'}`).join(', ')}`);
+  console.log(`Key versions in store: ${allVersions.map(k => `v${k.version} (${k.status})`).join(', ')}`);
 
   // Load from in-memory store (seeded from SQLite on startup)
   await Transaction._reloadFromDb();

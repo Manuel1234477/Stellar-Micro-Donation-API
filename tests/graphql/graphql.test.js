@@ -17,6 +17,14 @@ process.env.MOCK_STELLAR = 'true';
 process.env.NODE_ENV = 'test';
 process.env.API_KEYS = 'test-key-graphql';
 
+// src/graphql/index instantiates real services at load time, which kicks off
+// background SQLite loads that can outlive the test environment. These tests
+// only exercise its pure helpers, so stub the service layer.
+jest.mock('../../src/config/stellar', () => ({ getStellarService: () => ({}) }));
+jest.mock('../../src/services/DonationService', () => jest.fn());
+jest.mock('../../src/services/WalletService', () => jest.fn());
+jest.mock('../../src/services/StatsService', () => ({}));
+
 const { buildSchema } = require('../../src/graphql/schema');
 const pubsub = require('../../src/graphql/pubsub');
 const { graphql, parse, validate } = require('graphql');
@@ -37,7 +45,7 @@ const donationService = {
   getAllDonations: jest.fn(() => mockDonations),
   getDonationById: jest.fn((id) => mockDonations.find((d) => d.id === id) ?? null),
   getRecentDonations: jest.fn((limit) => mockDonations.slice(0, limit)),
-  createDonationRecord: jest.fn(async (input) => ({ id: 99, ...input, status: 'pending', timestamp: new Date().toISOString() })),
+  sendCustodialDonation: jest.fn(async ({ amount }) => ({ id: 99, amount, stellarTxId: 'mock-tx', status: 'pending', timestamp: new Date().toISOString() })),
   updateDonationStatus: jest.fn((id, status) => {
     const d = mockDonations.find((x) => x.id === id);
     if (!d) throw new Error('Not found');
@@ -198,14 +206,12 @@ describe('GraphQL — Mutations', () => {
     expect(result.errors).toBeUndefined();
     expect(result.data.createDonation.success).toBe(true);
     expect(result.data.createDonation.donation.amount).toBe(25.0);
-    expect(donationService.createDonationRecord).toHaveBeenCalledWith(
-      expect.objectContaining({
-        senderId: 1,
-        receiverId: 2,
-        amount: 25.0,
-        memo: 'hello',
-      })
-    );
+    expect(donationService.sendCustodialDonation).toHaveBeenCalledWith({
+      senderId: 1,
+      receiverId: 2,
+      amount: 25.0,
+      memo: 'hello',
+    });
   });
 
   test('createDonation mutation works without optional fields', async () => {
@@ -219,6 +225,25 @@ describe('GraphQL — Mutations', () => {
     `, {}, userContext);
     expect(result.errors).toBeUndefined();
     expect(result.data.createDonation.success).toBe(true);
+    // Undefined optional fields must not be forwarded to the service
+    expect(donationService.sendCustodialDonation).toHaveBeenCalledWith({
+      senderId: 1,
+      receiverId: 2,
+      amount: 5.0,
+    });
+  });
+
+  test('createDonation mutation rejects non-XLM currency', async () => {
+    const result = await run(`
+      mutation {
+        createDonation(input: { senderId: 1, receiverId: 2, amount: 5.0, currency: "USD" }) {
+          success
+        }
+      }
+    `, {}, userContext);
+    expect(result.errors).toBeDefined();
+    expect(result.errors[0].message).toMatch(/Unsupported currency/);
+    expect(donationService.sendCustodialDonation).not.toHaveBeenCalled();
   });
 
   test('createDonation mutation fails when required fields are missing', async () => {
@@ -454,14 +479,14 @@ describe('GraphQL — Error handling', () => {
   });
 
   test('async service error in mutation propagates as GraphQL error', async () => {
-    donationService.createDonationRecord.mockRejectedValueOnce(new Error('Validation failed'));
+    donationService.sendCustodialDonation.mockRejectedValueOnce(new Error('Validation failed'));
     const result = await run(`
       mutation {
         createDonation(input: { senderId: 1, receiverId: 2, amount: 5.0 }) {
           success
         }
       }
-    `);
+    `, {}, userContext);
     expect(result.errors).toBeDefined();
     expect(result.errors[0].message).toMatch(/Validation failed/);
   });

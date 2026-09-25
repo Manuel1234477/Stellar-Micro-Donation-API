@@ -361,8 +361,9 @@ function buildMutationType({ donationService, walletService }) {
     name: 'Mutation',
     fields: () => ({
       /**
-       * Create a new donation record.
-       * Requires donations:create permission (matching REST POST /donations). (#1371)
+       * Create a custodial donation between two users.
+       * Requires donations:create permission (matching REST POST /donations/send). (#1371)
+       * Uses the same service contract as the REST custodial route (#1693).
        * @param {object} _ - Parent (unused)
        * @param {object} args
        * @param {object} args.input - CreateDonationInput fields
@@ -374,17 +375,26 @@ function buildMutationType({ donationService, walletService }) {
         args: { input: { type: new GraphQLNonNull(CreateDonationInput) } },
         resolve: async (_, { input }, context) => {
           assertPermission(context, 'donations:create');
-          // Map GraphQL input field names to the DonationService parameter contract.
-          // The schema uses senderId/receiverId (integer IDs) while createDonationRecord
-          // expects donor/recipient (wallet address strings or identifiers). (#1367)
           const { senderId, receiverId, amount, memo, currency } = input;
-          const donation = await donationService.createDonationRecord({
-            donor: senderId,
-            recipient: receiverId,
-            amount,
-            memo,
-            currency,
-          });
+          // The custodial path settles in XLM only, matching REST POST /donations/send.
+          if (currency != null && currency.toUpperCase() !== 'XLM') {
+            throw new GraphQLError(`Unsupported currency: ${currency}. Only XLM is supported.`, {
+              extensions: { code: 'BAD_USER_INPUT' },
+            });
+          }
+          // senderId/receiverId are user IDs, so this is the custodial contract;
+          // createDonationRecord is the non-custodial (wallet address) path.
+          const params = { senderId, receiverId, amount };
+          if (memo != null) params.memo = memo;
+          const result = await donationService.sendCustodialDonation(params);
+          const donation = {
+            ...result,
+            senderId,
+            receiverId,
+            memo: memo ?? null,
+            stellar_tx_id: result.stellarTxId ?? null,
+            currency: 'XLM',
+          };
           return { success: true, donation };
         },
       },
