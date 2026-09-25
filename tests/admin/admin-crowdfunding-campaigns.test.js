@@ -13,6 +13,20 @@
  * Auth: admin role required; 401 without key, 403 with non-admin key.
  */
 
+/**
+ * Tests: Admin Crowdfunding Campaign Management Endpoints
+ *
+ * Covers:
+ *   GET    /admin/crowdfunding/campaigns              — list all campaigns
+ *   POST   /admin/crowdfunding/campaigns              — create campaign with milestones
+ *   PATCH  /admin/crowdfunding/campaigns/:id          — update campaign details
+ *   POST   /admin/crowdfunding/campaigns/:id/close    — close + trigger milestone payouts
+ *   GET    /admin/crowdfunding/campaigns/:id/milestones — list milestones with reached status
+ *
+ * Auth: admin role required; 401 without key, 403 with non-admin key.
+ */
+
+
 const request = require('supertest');
 const crypto = require('crypto');
 

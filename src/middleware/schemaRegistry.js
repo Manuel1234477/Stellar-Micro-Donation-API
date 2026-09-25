@@ -280,6 +280,51 @@ registerSchema('createDonation', {
         metadata: {
           type: 'object',
           required: false,
-          descri
+          description: 'Additional metadata for the donation'
+        }
+      },
+      allowUnknown: false
+    }
+  }
+}, {
+  deprecated: ['1.0.0'],
+  migrationGuides: {
+    '1.0.0': 'Upgrade to v2.0.0: rename donor_name→donorName, recipient_address→recipient, amount_xlm→amount. Add required currency field.'
+  }
+});
 
-/* … truncated 1738 chars — edit only what you need near the top … */
+/**
+ * Wallet Creation Schema Versions
+ */
+registerSchema('createWallet', {
+  '1.0.0': {
+    body: {
+      fields: {
+        publicKey: {
+          type: 'string',
+          required: true,
+          minLength: 56,
+          maxLength: 56,
+          pattern: /^G[A-Z2-7]{55}$/,
+          description: 'Stellar public key'
+        },
+        label: {
+          type: 'string',
+          required: false,
+          minLength: 1,
+          maxLength: 255,
+          description: 'Human-readable wallet label'
+        }
+      },
+      allowUnknown: false
+    }
+  }
+});
+
+module.exports = {
+  registerSchema,
+  getSchema,
+  applyTransformations,
+  TRANSFORMATION_TABLE,
+  schemaRegistry,
+};
