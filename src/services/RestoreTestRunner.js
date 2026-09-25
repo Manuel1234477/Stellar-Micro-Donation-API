@@ -3,7 +3,7 @@
  *
  * RESPONSIBILITY: Periodically test backup restoration to verify disaster recovery capability
  * OWNER: Backend Team
- * DEPENDENCIES: node-cron, BackupService, logger
+ * DEPENDENCIES: timerRegistry, BackupService, logger
  *
  * This service proves backups are complete, restorable, and current by:
  * 1. Selecting the latest backup
@@ -12,11 +12,11 @@
  * 4. Alerting on failures
  */
 
-const cron = require('node-cron');
 const fs = require('fs');
 const path = require('path');
 const os = require('os');
 const log = require('../utils/log');
+const timerRegistry = require('../utils/timerRegistry');
 
 class RestoreTestRunner {
   /**
@@ -50,7 +50,7 @@ class RestoreTestRunner {
 
     log.info('RESTORE_TEST', 'Starting restore test scheduler', { schedule: this.schedule });
 
-    this.task = cron.schedule(this.schedule, () => {
+    this.task = timerRegistry.scheduleCron(this.schedule, () => {
       this.executeTest().catch(error => {
         log.error('RESTORE_TEST', 'Unhandled error in restore test task', {
           error: error.message,

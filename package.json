@@ -57,6 +57,7 @@
     "check:test-naming": "node scripts/check-test-naming.js",
     "check:i18n-orphans": "node scripts/check-i18n-orphans.js",
     "check:no-float-money": "node scripts/check-no-float-money.js",
+    "check:declared-deps": "node scripts/check-declared-deps.js",
     "docs:error-codes": "node scripts/generate-error-codes.js",
     "scan:container": "bash scripts/scan-container.sh",
     "scan:container:all": "bash scripts/scan-container.sh --severity CRITICAL,HIGH,MEDIUM,LOW",
