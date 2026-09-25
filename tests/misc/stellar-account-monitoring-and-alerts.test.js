@@ -6,13 +6,9 @@
  */
 
 const request = require('supertest');
-const axios = require('axios');
 
 const MockStellarService = require('../../src/services/MockStellarService');
 const AccountMonitorService = require('../../src/services/AccountMonitorService');
-
-// ─── Mock axios so webhook calls never hit the network ───────────────────────
-jest.mock('axios');
 
 // ─── App setup ───────────────────────────────────────────────────────────────
 jest.mock('../../src/config/stellar', () => ({
