@@ -206,31 +206,35 @@ describe('Validation Utilities - Unit Tests', () => {
       jest.restoreAllMocks();
     });
 
-    test('should return true when wallet exists', () => {
+    test('should return true when wallet exists', async () => {
       User.getById.mockReturnValue({ id: 1, wallet: 'GTEST...' });
-      expect(walletExists(1)).toBe(true);
+      await expect(walletExists(1)).resolves.toBe(true);
     });
 
-    test('should return false when wallet does not exist', () => {
+    test('should return false when wallet does not exist', async () => {
       User.getById.mockReturnValue(null);
-      expect(walletExists(999)).toBe(false);
+      await expect(walletExists(999)).resolves.toBe(false);
     });
 
-    test('should return false when null wallet ID', () => {
-      expect(walletExists(null)).toBe(false);
+    test('should return false when null wallet ID', async () => {
+      await expect(walletExists(null)).resolves.toBe(false);
     });
 
-    test('should return false when undefined wallet ID', () => {
-      expect(walletExists(undefined)).toBe(false);
+    test('should return false when undefined wallet ID', async () => {
+      await expect(walletExists(undefined)).resolves.toBe(false);
     });
 
-    test('should return false when empty string wallet ID', () => {
-      expect(walletExists('')).toBe(false);
+    test('should return false when empty string wallet ID', async () => {
+      await expect(walletExists('')).resolves.toBe(false);
     });
 
-    test('should return false when zero wallet ID', () => {
+    test('should return false when zero wallet ID', async () => {
       User.getById.mockReturnValue(null);
-      expect(walletExists(0)).toBe(false);
+      await expect(walletExists(0)).resolves.toBe(false);
+    });
+
+    test('always returns a promise so callers cannot accidentally treat it as synchronous', () => {
+      expect(walletExists(1)).toBeInstanceOf(Promise);
     });
   });
 
