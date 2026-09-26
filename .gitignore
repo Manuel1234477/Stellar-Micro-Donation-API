@@ -153,4 +153,7 @@ reports/
 trivy-results.sarif
 trivy-results.json
 trivy-report.txt
+tmp-*
+data/*.json
+data/memo-keys/
 .kiro/
