@@ -156,3 +156,4 @@ trivy-report.txt
 tmp-*
 data/*.json
 data/memo-keys/
+.kiro/
