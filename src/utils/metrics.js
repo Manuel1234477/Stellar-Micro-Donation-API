@@ -262,6 +262,39 @@ const memoCollisionsTotal = new client.Counter({
   registers: [registry],
 });
 
+// ─── Leaderboard Cache Metrics ───────────────────────────────────────────────
+
+/**
+ * Counter: total leaderboard cache lookup attempts.
+ * Labels: result (hit|miss)
+ * @type {client.Counter}
+ */
+const leaderboardCacheLookupsTotal = new client.Counter({
+  name: 'leaderboard_cache_lookups_total',
+  help: 'Total number of leaderboard cache lookup attempts',
+  labelNames: ['result'],
+  registers: [registry],
+});
+
+/**
+ * Histogram: duration of leaderboard compute operations in seconds.
+ * @type {client.Histogram}
+ */
+const leaderboardComputeDuration = new client.Histogram({
+  name: 'leaderboard_compute_duration_seconds',
+  help: 'Duration of leaderboard compute operations in seconds',
+  buckets: [0.01, 0.05, 0.1, 0.5, 1, 2, 5],
+  registers: [registry],
+});
+
+function recordLeaderboardCacheHit() {
+  try { leaderboardCacheLookupsTotal.inc({ result: 'hit' }); } catch (_) {}
+}
+
+function recordLeaderboardCacheMiss() {
+  try { leaderboardCacheLookupsTotal.inc({ result: 'miss' }); } catch (_) {}
+}
+
 // ─── Scheduler Leader Election Metrics (#1604) ───────────────────────────────
 
 /**

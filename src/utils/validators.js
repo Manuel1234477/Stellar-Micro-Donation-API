@@ -5,6 +5,8 @@
  * Cleaned up to remove unused functions and dependencies
  */
 
+const StellarSdk = require('stellar-sdk');
+
 /**
  * Maximum donation amount in XLM.
  * Stellar amounts are int64 stroops (1 XLM = 10^7 stroops), so the largest
@@ -141,7 +143,6 @@ const transactionExists = (id) => {
 };
 
 module.exports = {
-  isValidStellarPublicKey,
   isValidStellarSecretKey,
   isValidAmount,
   isValidDate,
