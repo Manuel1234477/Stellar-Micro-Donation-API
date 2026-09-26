@@ -814,3 +814,6 @@ For comprehensive documentation, see the [Documentation Index](docs/README.md).
 
 <!-- handsoff-issue-1731 -->
 - #1731: Account merge endpoint does not return the merge result or soft-delete the source wallet
+
+<!-- handsoff-issue-1772 -->
+- #1772: Continue decomposing DonationService.js (2,552 lines)
