@@ -40,13 +40,15 @@ function _persist(tx) {
   Database.run(
     `INSERT INTO donations_store
        (id, donor, recipient, amount_stroops, amount_text, status,
-        idempotency_key, stellar_tx_id, timestamp, status_updated_at, deleted_at, data)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        idempotency_key, stellar_tx_id, timestamp, status_updated_at, deleted_at, valid_after, valid_before, data)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
      ON CONFLICT(id) DO UPDATE SET
        status = excluded.status,
        stellar_tx_id = excluded.stellar_tx_id,
        status_updated_at = excluded.status_updated_at,
        deleted_at = excluded.deleted_at,
+       valid_after = excluded.valid_after,
+       valid_before = excluded.valid_before,
        data = excluded.data`,
     [
       tx.id,
@@ -60,6 +62,8 @@ function _persist(tx) {
       tx.timestamp || new Date().toISOString(),
       tx.statusUpdatedAt || null,
       tx.deleted_at || null,
+      tx.validAfter || 0,
+      tx.validBefore || 0,
       data,
     ]
   ).catch(err => {

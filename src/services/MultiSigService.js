@@ -149,7 +149,7 @@ class MultiSigService {
     // different (possibly attacker-controlled) key.
     this._verifySignerXdr(signer, signed_xdr, tx.network_passphrase);
 
-    const updatedSignatures = [...tx.collected_signatures, { signer, signed_xdr }];
+    const updatedSignatures = [...tx.collected_signatures, { signer, signature_xdr: signed_xdr }];
     const thresholdMet = updatedSignatures.length >= tx.required_signers;
     const newStatus = thresholdMet ? 'complete' : 'pending';
 
