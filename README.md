@@ -817,3 +817,6 @@ For comprehensive documentation, see the [Documentation Index](docs/README.md).
 
 <!-- handsoff-issue-1772 -->
 - #1772: Continue decomposing DonationService.js (2,552 lines)
+
+<!-- handsoff-issue-1773 -->
+- #1773: Merge duplicate sequence-number managers (utils/sequenceManager.js, services/SequenceManager.js, SequenceCacheService)
