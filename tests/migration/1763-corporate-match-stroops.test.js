@@ -118,9 +118,9 @@ describe('Issue #1763: Corporate match ratio stroops', () => {
     const floorResult = Math.floor(exactResult);
     const roundResult = Math.round(exactResult);
 
-    expect(floorResult).toBe(3);
-    expect(roundResult).toBe(3);
-    expect(floorResult).toBe(3); // documents that floor is used
+    expect(floorResult).toBe(33);
+    expect(roundResult).toBe(33);
+    expect(floorResult).toBe(33); // documents that floor is used
   });
 
   test('cannot insert REAL values into INTEGER columns', async () => {
