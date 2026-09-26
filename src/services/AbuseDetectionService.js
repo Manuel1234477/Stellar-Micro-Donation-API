@@ -1,10 +1,14 @@
 /**
  * IP-based Abuse Detection and Auto-Blocking Service
- * 
+ *
+ * Unified abuse-detection service with pluggable detectors (rate, pattern,
+ * velocity, anomaly). Detector state is backed by the shared rate-limit
+ * store (Redis when configured) so counters are shared across instances.
+ *
  * Tracks suspicious patterns per IP, auto-blocks repeat offenders
  * Persists blocks with expiry in data/blockedIps.json
  * Admin API for management
- * 
+ *
  * Threshold: 10 suspicious events in 1 hour → auto-block 24h
  */
 
@@ -13,23 +17,122 @@ const path = require('path');
 const log = require('../utils/log');
 const { v4: uuidv4 } = require('uuid');
 const timerRegistry = require('../utils/timerRegistry');
+const rateLimitStore = require('../utils/rateLimitStore');
 
 const DB_PATH = process.env.ABUSE_DB_PATH || path.join(__dirname, '../../../data/blockedIps.json');
 
+/**
+ * Pluggable detector contract:
+ *   { name, evaluate(context) -> { suspicious: boolean, reason?: string } }
+ *
+ * Detectors keep no per-instance state; counters live in the shared
+ * rate-limit store so all pods observe the same values.
+ */
+class RateDetector {
+  constructor(service) {
+    this.service = service;
+    this.name = 'rate';
+  }
+
+  async evaluate({ ip }) {
+    if (!ip) return { suspicious: false };
+    const key = `abuse:rate:${ip}`;
+    const count = await this.service.incrementCounter(key, this.service.config.windowMs);
+    return {
+      suspicious: count >= this.service.config.suspiciousThreshold,
+      reason: 'suspicious_threshold_exceeded'
+    };
+  }
+}
+
+class PatternDetector {
+  constructor(service) {
+    this.service = service;
+    this.name = 'pattern';
+  }
+
+  async evaluate({ ip, pattern }) {
+    if (!ip || !pattern) return { suspicious: false };
+    const key = `abuse:pattern:${ip}:${pattern}`;
+    const count = await this.service.incrementCounter(key, this.service.config.windowMs);
+    return {
+      suspicious: count >= this.service.config.patternThreshold,
+      reason: `suspicious_pattern:${pattern}`
+    };
+  }
+}
+
+class VelocityDetector {
+  constructor(service) {
+    this.service = service;
+    this.name = 'velocity';
+  }
+
+  async evaluate({ ip }) {
+    if (!ip) return { suspicious: false };
+    const key = `abuse:velocity:${ip}`;
+    const count = await this.service.incrementCounter(key, this.service.config.velocityWindowMs);
+    return {
+      suspicious: count >= this.service.config.velocityThreshold,
+      reason: 'velocity_threshold_exceeded'
+    };
+  }
+}
+
+class AnomalyDetector {
+  constructor(service) {
+    this.service = service;
+    this.name = 'anomaly';
+  }
+
+  async evaluate({ ip, anomalyScore }) {
+    if (!ip || typeof anomalyScore !== 'number') return { suspicious: false };
+    return {
+      suspicious: anomalyScore >= this.service.config.anomalyThreshold,
+      reason: 'anomaly_threshold_exceeded'
+    };
+  }
+}
+
 class AbuseDetectionService {
   constructor() {
-    this.suspiciousCounts = new Map(); // ip → {count: number, windowStart: number}
     this.blockedIps = this.loadBlocked();
     this.config = {
       suspiciousThreshold: parseInt(process.env.ABUSE_SUSPICIOUS_THRESHOLD) || 10,
       windowMs: parseInt(process.env.ABUSE_WINDOW_MS) || 3600000, // 1h
       blockDurationMs: parseInt(process.env.ABUSE_BLOCK_DURATION_MS) || 86400000, // 24h
-      cleanupInterval: 300000 // 5min
+      cleanupInterval: 300000, // 5min
+      patternThreshold: parseInt(process.env.ABUSE_PATTERN_THRESHOLD) || 5,
+      velocityThreshold: parseInt(process.env.ABUSE_VELOCITY_THRESHOLD) || 30,
+      velocityWindowMs: parseInt(process.env.ABUSE_VELOCITY_WINDOW_MS) || 60000, // 1min
+      anomalyThreshold: parseFloat(process.env.ABUSE_ANOMALY_THRESHOLD) || 0.8
     };
+
+    // Pluggable detectors — one service, many strategies.
+    this.detectors = [
+      new RateDetector(this),
+      new PatternDetector(this),
+      new VelocityDetector(this),
+      new AnomalyDetector(this)
+    ];
 
     this.ensureDbDir();
     this.startCleanup();
     log.info('ABUSE_DETECTION', 'Service initialized', this.config);
+  }
+
+  /**
+   * Increment a counter in the shared rate-limit store.
+   * Falls back to an in-memory store when Redis is not configured.
+   */
+  async incrementCounter(key, windowMs) {
+    if (rateLimitStore && typeof rateLimitStore.increment === 'function') {
+      return rateLimitStore.increment(key, windowMs);
+    }
+    if (rateLimitStore && typeof rateLimitStore.incr === 'function') {
+      return rateLimitStore.incr(key, windowMs);
+    }
+    return 0;
   }
 
   ensureDbDir() {
@@ -62,27 +165,32 @@ class AbuseDetectionService {
   }
 
   /**
-   * Track a suspicious event for IP
+   * Track a suspicious event for IP.
+   * Runs every pluggable detector; auto-blocks when any detector fires.
    */
-  trackSuspicious(ip) {
+  async trackSuspicious(ip, context = {}) {
     if (!ip) return false;
     // Never auto-block in test environment — tests generate expected 4xx responses
     if (process.env.NODE_ENV === 'test' || process.env.NODE_ENV === 'testing') return false;
 
-    const now = Date.now();
-    let data = this.suspiciousCounts.get(ip);
+    const ctx = { ip, ...context };
 
-    if (!data || now - data.windowStart > this.config.windowMs) {
-      data = { count: 0, windowStart: now };
-    }
-
-    data.count += 1;
-    this.suspiciousCounts.set(ip, data);
-
-    log.warn('ABUSE_DETECTION', 'Suspicious event tracked', { ip, total: data.count });
-
-    if (data.count >= this.config.suspiciousThreshold) {
-      return this.autoBlock(ip, 'suspicious_threshold_exceeded');
+    for (const detector of this.detectors) {
+      let result;
+      try {
+        result = await detector.evaluate(ctx);
+      } catch (error) {
+        log.error('ABUSE_DETECTION', `Detector ${detector.name} failed`, error);
+        continue;
+      }
+      if (result && result.suspicious) {
+        log.warn('ABUSE_DETECTION', 'Suspicious event tracked', {
+          ip,
+          detector: detector.name,
+          reason: result.reason
+        });
+        return this.autoBlock(ip, result.reason || detector.name);
+      }
     }
     return false;
   }
@@ -105,7 +213,6 @@ class AbuseDetectionService {
 
     this.blockedIps.push(block);
     this.saveBlocked();
-    this.suspiciousCounts.delete(ip); // Reset count
 
     log.error('ABUSE_DETECTION', 'IP AUTO-BLOCKED', {
       ip,
@@ -158,19 +265,13 @@ class AbuseDetectionService {
   }
 
   /**
-   * Cleanup expired blocks and old counts
+   * Cleanup expired blocks
    */
   cleanup() {
     const now = Date.now();
     const before = this.blockedIps.length;
     this.blockedIps = this.blockedIps.filter(b => b.expiresAt > now);
     if (this.blockedIps.length < before) this.saveBlocked();
-
-    for (const [ip, data] of this.suspiciousCounts) {
-      if (now - data.windowStart > this.config.windowMs * 2) {
-        this.suspiciousCounts.delete(ip);
-      }
-    }
     log.debug('ABUSE_DETECTION', 'Cleanup complete');
   }
 
@@ -197,4 +298,3 @@ class AbuseDetectionService {
 const abuseDetectionService = new AbuseDetectionService();
 
 module.exports = abuseDetectionService;
-
