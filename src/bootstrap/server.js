@@ -138,6 +138,9 @@ async function startServer(app, overrideServices = {}) {
       try {
         const { runMigrations } = require('../utils/migrationRunner');
         await runMigrations();
+        // Load the donation store only after migration 033 has created
+        // donations_store; a failure here aborts startup (never "starts empty").
+        await require('../models/transaction').initialize();
         await initializeApiKeysTable();
         initializeDefaultStore(Database);
 

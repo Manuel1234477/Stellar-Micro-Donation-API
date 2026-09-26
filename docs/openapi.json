@@ -393,6 +393,230 @@
         ]
       }
     },
+    "/admin/backups": {
+      "get": {
+        "responses": {
+          "200": {
+            "description": "Backup list"
+          },
+          "401": {
+            "description": "Missing or invalid API key"
+          },
+          "403": {
+            "description": "Admin role required"
+          }
+        },
+        "security": [
+          {
+            "ApiKeyAuth": []
+          }
+        ],
+        "summary": "List available backups (newest first)",
+        "tags": [
+          "AdminBackups"
+        ]
+      },
+      "post": {
+        "responses": {
+          "201": {
+            "description": "Backup created"
+          },
+          "401": {
+            "description": "Missing or invalid API key"
+          },
+          "403": {
+            "description": "Admin role required"
+          }
+        },
+        "security": [
+          {
+            "ApiKeyAuth": []
+          }
+        ],
+        "summary": "Trigger an immediate encrypted database backup",
+        "tags": [
+          "AdminBackups"
+        ]
+      }
+    },
+    "/admin/backups/restore/{backupId}": {
+      "post": {
+        "parameters": [
+          {
+            "in": "path",
+            "name": "backupId",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "properties": {
+                  "confirmationToken": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "confirmationToken"
+                ],
+                "type": "object"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Database restored"
+          },
+          "400": {
+            "description": "Missing, invalid or expired confirmation token"
+          },
+          "404": {
+            "description": "Backup not found"
+          },
+          "409": {
+            "description": "Restore blocked by in-flight requests"
+          }
+        },
+        "security": [
+          {
+            "ApiKeyAuth": []
+          }
+        ],
+        "summary": "Restore the database from a backup",
+        "tags": [
+          "AdminBackups"
+        ]
+      }
+    },
+    "/admin/backups/restore/{backupId}/confirm": {
+      "post": {
+        "parameters": [
+          {
+            "in": "path",
+            "name": "backupId",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Confirmation token issued (valid for 5 minutes)"
+          },
+          "400": {
+            "description": "Invalid backupId"
+          },
+          "404": {
+            "description": "Backup not found"
+          }
+        },
+        "security": [
+          {
+            "ApiKeyAuth": []
+          }
+        ],
+        "summary": "Issue a short-lived, single-use restore confirmation token",
+        "tags": [
+          "AdminBackups"
+        ]
+      }
+    },
+    "/admin/backups/status": {
+      "get": {
+        "responses": {
+          "200": {
+            "description": "Backup status"
+          }
+        },
+        "security": [
+          {
+            "ApiKeyAuth": []
+          }
+        ],
+        "summary": "Show the last backup time and verification result",
+        "tags": [
+          "AdminBackups"
+        ]
+      }
+    },
+    "/admin/backups/{backupId}/download": {
+      "get": {
+        "parameters": [
+          {
+            "in": "path",
+            "name": "backupId",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/octet-stream": {}
+            },
+            "description": "Encrypted backup stream"
+          },
+          "400": {
+            "description": "Invalid backupId"
+          },
+          "404": {
+            "description": "Backup not found"
+          }
+        },
+        "security": [
+          {
+            "ApiKeyAuth": []
+          }
+        ],
+        "summary": "Download an encrypted backup file",
+        "tags": [
+          "AdminBackups"
+        ]
+      }
+    },
+    "/admin/backups/{backupId}/verify": {
+      "post": {
+        "parameters": [
+          {
+            "in": "path",
+            "name": "backupId",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Verification result"
+          },
+          "400": {
+            "description": "Invalid backupId"
+          },
+          "404": {
+            "description": "Backup not found"
+          }
+        },
+        "security": [
+          {
+            "ApiKeyAuth": []
+          }
+        ],
+        "summary": "Run integrity and row-count verification against a backup",
+        "tags": [
+          "AdminBackups"
+        ]
+      }
+    },
     "/api/v2/corporate-matching": {
       "get": {
         "parameters": [
@@ -1406,6 +1630,10 @@
     {
       "description": "Compliance audit log export with async jobs and signed URLs",
       "name": "AuditLogExport"
+    },
+    {
+      "description": "Encrypted database backup and restore (admin only)",
+      "name": "AdminBackups"
     },
     {
       "description": "/api/v2 donation endpoints, using the standardized envelope (Issue",

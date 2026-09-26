@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- `SocialRecoveryService.setGuardians()` failed with `DatabaseError` because the test schema lacked the migration 045 columns; guardian replacement is now atomic and rejects duplicate keys (#1695)
+- Transaction model no longer queries `donations_store` at require time; the store loads after migrations in the bootstrap sequence and `/health/ready` reports not-ready until it has loaded (#1696)
+- `rotationLockMiddleware` caches rotation status (`ROTATION_LOCK_CACHE_TTL_MS`), fails open with a rate-limited warning when the lock is unreadable, and migration 040 now actually creates `rotation_locks` (#1697)
+- Admin backup routes are mounted at `/admin/backups` as documented; added `POST /admin/backups/:backupId/verify` and OpenAPI/RBAC coverage (#1698)
+
 ### Security
 - Remove `clientIp` and `protocol` from `GET /health` response to prevent IP enumeration (#758)
 - Add allowlist validation for `category` and `severity` filter parameters in `GET /admin/audit-logs` to prevent SQL injection (#760)

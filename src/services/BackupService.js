@@ -283,6 +283,32 @@ class BackupService {
   }
 
   /**
+   * Resolve a backupId to its encrypted file path inside the backup directory.
+   * Returns null for IDs containing path separators or traversal sequences.
+   *
+   * @param {string} backupId
+   * @returns {string|null}
+   */
+  resolveBackupPath(backupId) {
+    if (typeof backupId !== 'string' || !/^[\w.-]+$/.test(backupId)) return null;
+    const resolvedDir = path.resolve(this.backupDir);
+    const filePath = path.resolve(resolvedDir, `${backupId}.enc`);
+    if (!filePath.startsWith(resolvedDir + path.sep)) return null;
+    return filePath;
+  }
+
+  /**
+   * Check whether a local backup with the given ID exists.
+   *
+   * @param {string} backupId
+   * @returns {Promise<boolean>}
+   */
+  async hasBackup(backupId) {
+    const filePath = this.resolveBackupPath(backupId);
+    return Boolean(filePath && fs.existsSync(filePath));
+  }
+
+  /**
    * List all available local backups sorted by creation time (newest first).
    *
    * @returns {Promise<Array<{backupId: string, filePath: string, size: number, createdAt: string}>>}
