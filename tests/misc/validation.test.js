@@ -207,12 +207,12 @@ describe('Validation Utilities - Unit Tests', () => {
     });
 
     test('should return true when wallet exists', async () => {
-      User.getById.mockReturnValue({ id: 1, wallet: 'GTEST...' });
+      User.getById.mockResolvedValue({ id: 1, wallet: 'GTEST...' });
       await expect(walletExists(1)).resolves.toBe(true);
     });
 
     test('should return false when wallet does not exist', async () => {
-      User.getById.mockReturnValue(null);
+      User.getById.mockResolvedValue(null);
       await expect(walletExists(999)).resolves.toBe(false);
     });
 
@@ -229,7 +229,6 @@ describe('Validation Utilities - Unit Tests', () => {
     });
 
     test('should return false when zero wallet ID', async () => {
-      User.getById.mockReturnValue(null);
       await expect(walletExists(0)).resolves.toBe(false);
     });
 
@@ -250,33 +249,33 @@ describe('Validation Utilities - Unit Tests', () => {
       jest.restoreAllMocks();
     });
 
-    test('should return true when wallet address exists', () => {
+    test('should return true when wallet address exists', async () => {
       const address = 'GBRPYHIL2CI3FNQ4BXLFMNDLFJUNPU2HY3ZMFSHONUCEOASW7QC7OX2H';
-      User.getByWallet.mockReturnValue({ id: 1, wallet: address });
-      expect(walletAddressExists(address)).toBe(true);
+      User.getByWallet.mockResolvedValue({ id: 1, wallet: address });
+      await expect(walletAddressExists(address)).resolves.toBe(true);
     });
 
-    test('should return false when wallet address does not exist', () => {
-      User.getByWallet.mockReturnValue(null);
-      expect(walletAddressExists('GINVALIDADDRESS')).toBe(false);
+    test('should return false when wallet address does not exist', async () => {
+      User.getByWallet.mockResolvedValue(null);
+      await expect(walletAddressExists('GINVALIDADDRESS')).resolves.toBe(false);
     });
 
-    test('should return false when null wallet address', () => {
-      expect(walletAddressExists(null)).toBe(false);
+    test('should return false when null wallet address', async () => {
+      await expect(walletAddressExists(null)).resolves.toBe(false);
     });
 
-    test('should return false when undefined wallet address', () => {
-      expect(walletAddressExists(undefined)).toBe(false);
+    test('should return false when undefined wallet address', async () => {
+      await expect(walletAddressExists(undefined)).resolves.toBe(false);
     });
 
-    test('should return false when empty string wallet address', () => {
-      expect(walletAddressExists('')).toBe(false);
+    test('should return false when empty string wallet address', async () => {
+      await expect(walletAddressExists('')).resolves.toBe(false);
     });
 
-    test('should handle malformed addresses', () => {
-      User.getByWallet.mockReturnValue(null);
-      expect(walletAddressExists('invalid')).toBe(false);
-      expect(walletAddressExists('123')).toBe(false);
+    test('should handle malformed addresses', async () => {
+      User.getByWallet.mockResolvedValue(null);
+      await expect(walletAddressExists('invalid')).resolves.toBe(false);
+      await expect(walletAddressExists('123')).resolves.toBe(false);
     });
   });
 
