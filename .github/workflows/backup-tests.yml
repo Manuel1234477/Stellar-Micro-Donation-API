@@ -30,3 +30,13 @@ jobs:
 
       - name: Run backup and restore tests
         run: npm test -- tests/RestoreTestRunner.test.js
+
+      - name: Run backup service and admin backup route tests
+        run: npm test -- tests/admin/backup-restore.test.js
+
+      - name: Run backup/restore verification script
+        run: npm run test:backup-restore
+        env:
+          NODE_ENV: test
+          ENCRYPTION_KEY: test_encryption_key_0000000000000000000000000000000000000000000000000000000000000000
+          API_KEYS: test_key_1,test_key_2

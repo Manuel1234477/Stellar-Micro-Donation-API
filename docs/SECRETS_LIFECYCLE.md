@@ -59,6 +59,22 @@ The rotation script (`src/scripts/rotateKEK.js`) is:
 - **Crash-safe** — each row is updated atomically; no record is left unreadable if the process
   is killed between rows.
 
+#### Rotation lock (donation writes return 503)
+
+While the script runs it sets `rotation_locks.status = 'in_progress'` for `memoEncryption`,
+and donation write endpoints (`POST /donations`, `/donations/send`, `/batch`, `/bulk`,
+`/cross-asset`) return `503 SERVICE_UNAVAILABLE` with `Retry-After: 5`.
+
+- **Caching** — each API instance caches the lock status in memory for
+  `ROTATION_LOCK_CACHE_TTL_MS` (default `5000`). The script waits one TTL after taking the
+  lock before re-encrypting, so every instance has observed it; keep the same value for the
+  script and the API.
+- **Fail-open** — if the lock cannot be read (for example `rotation_locks` does not exist yet
+  on a fresh database), requests are allowed. A rotation cannot start without a readable
+  `rotation_locks` table, and a database that is actually down fails the request downstream.
+  The condition is logged as one `WARN` per `ROTATION_LOCK_WARN_INTERVAL_MS` (default `60000`)
+  with a count of suppressed repeats, not one error per request.
+
 ### Emergency Rotation (Suspected Compromise)
 
 ```bash

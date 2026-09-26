@@ -77,6 +77,7 @@ function buildTestApp() {
   app.use('/api/v1/transactions', require('../../src/routes/transaction'));
   app.use('/api/v1/api-keys',     require('../../src/routes/apiKeys'));
   app.use('/admin/geo-blocking',  require('../../src/routes/admin/geoBlocking'));
+  app.use('/admin/backups',       require('../../src/routes/admin/backup'));
 
   // /abuse-signals and /reconcile are registered inline in
   // src/bootstrap/routes.js behind rbac.requireAdmin(); mirror that guard here
@@ -333,6 +334,10 @@ const MATRIX_ENTRIES = [
     ['DELETE', '/admin/geo-blocking/block/999'],
     ['POST',   '/admin/geo-blocking/allow'],
     ['DELETE', '/admin/geo-blocking/allow/999'],
+    // Backup routes (#1698): read-only entries so the matrix never creates or
+    // restores a real backup
+    ['GET',    '/admin/backups'],
+    ['GET',    '/admin/backups/status'],
   ].map(([method, path]) => ({
     method, path,
     permission: '*',

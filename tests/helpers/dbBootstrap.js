@@ -108,6 +108,7 @@ module.exports = async function createTestTables(Database) {
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     walletId INTEGER NOT NULL,
     guardianPublicKey TEXT NOT NULL,
+    guardianEmail TEXT,
     threshold INTEGER,
     createdAt DATETIME DEFAULT CURRENT_TIMESTAMP,
     UNIQUE (walletId, guardianPublicKey)
@@ -120,7 +121,9 @@ module.exports = async function createTestTables(Database) {
     threshold INTEGER NOT NULL,
     executeAfter DATETIME NOT NULL,
     createdAt DATETIME DEFAULT CURRENT_TIMESTAMP,
-    executedAt DATETIME
+    executedAt DATETIME,
+    expiresAt DATETIME,
+    notifiedAt DATETIME
   )`);
   await Database.run(`CREATE TABLE IF NOT EXISTS recovery_approvals (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -283,6 +286,14 @@ module.exports = async function createTestTables(Database) {
     strategy  TEXT NOT NULL,
     updatedAt DATETIME DEFAULT CURRENT_TIMESTAMP
   )`);
+
+  // Backing table for the Transaction model — use the real migrations so the
+  // test schema cannot drift from production (033 creates the table, 046 adds
+  // valid_after / valid_before). 046's ALTERs are not idempotent.
+  await require('../../src/migrations/033_donations_store').up(Database);
+  try {
+    await require('../../src/migrations/046_add_time_bounds_to_donations').up(Database);
+  } catch (_) { /* columns already exist */ }
 
   // Pre-aggregated donation totals (migration 027)
   await Database.run(`CREATE TABLE IF NOT EXISTS donation_totals (
