@@ -2,11 +2,15 @@ const log = require('./log');
 
 /**
  * Lightweight abuse detection system
- * Tracks suspicious patterns without blocking traffic
+ * Tracks suspicious patterns without blocking traffic.
+ *
+ * State is backed by the shared rate-limit store (Redis when configured) so
+ * counters and flags are shared across instances. Falls back to in-memory
+ * Maps when no shared store is available.
  */
 class AbuseDetector {
   constructor() {
-    // In-memory tracking (use Redis in production)
+    // In-memory fallback tracking (used when no shared store is configured)
     this.requestCounts = new Map(); // ip -> { count, windowStart }
     this.failureCounts = new Map(); // ip -> { count, windowStart }
     this.suspiciousIPs = new Set();
@@ -20,33 +24,83 @@ class AbuseDetector {
       cleanupInterval: 600000 // 10 minutes
     };
 
+    // Shared rate-limit store (Redis when configured), resolved lazily.
+    this._store = null;
+    this._storeResolved = false;
+
     // Start cleanup
     this.startCleanup();
   }
 
   /**
-   * Track a request from an IP
-   * @param {string} ip - Client IP address
+   * Resolve the shared rate-limit store, if one is configured.
+   * @returns {Object|null}
    */
-  trackRequest(ip) {
-    if (!ip) return;
+  getStore() {
+    if (this._storeResolved) return this._store;
+    this._storeResolved = true;
+    try {
+      const rateLimitStore = require('./rateLimitStore');
+      this._store = rateLimitStore && typeof rateLimitStore.increment === 'function'
+        ? rateLimitStore
+        : null;
+    } catch (err) {
+      this._store = null;
+    }
+    return this._store;
+  }
+
+  /**
+   * Increment a counter in the shared store, falling back to in-memory.
+   * @param {string} key - Counter key
+   * @param {number} window - Window in ms
+   * @param {Map} fallbackMap - In-memory fallback map
+   * @returns {Promise<number>} Current count in the window
+   */
+  async incrementCounter(key, window, fallbackMap) {
+    const store = this.getStore();
+    if (store) {
+      try {
+        const result = await store.increment(key, window);
+        if (typeof result === 'number') return result;
+        if (result && typeof result.count === 'number') return result.count;
+      } catch (err) {
+        log.warn('ABUSE_DETECTION', 'Shared store increment failed, using in-memory fallback', {
+          key,
+          error: err.message
+        });
+      }
+    }
 
     const now = Date.now();
-    const data = this.requestCounts.get(ip) || { count: 0, windowStart: now };
-
-    // Reset window if expired
-    if (now - data.windowStart > this.config.burstWindow) {
+    const data = fallbackMap.get(key) || { count: 0, windowStart: now };
+    if (now - data.windowStart > window) {
       data.count = 0;
       data.windowStart = now;
     }
-
     data.count++;
-    this.requestCounts.set(ip, data);
+    fallbackMap.set(key, data);
+    return data.count;
+  }
+
+  /**
+   * Track a request from an IP
+   * @param {string} ip - Client IP address
+   * @returns {Promise<void>}
+   */
+  async trackRequest(ip) {
+    if (!ip) return;
+
+    const count = await this.incrementCounter(
+      `abuse:req:${ip}`,
+      this.config.burstWindow,
+      this.requestCounts
+    );
 
     // Check for burst
-    if (data.count > this.config.burstThreshold) {
-      this.flagSuspicious(ip, 'request_burst', {
-        count: data.count,
+    if (count > this.config.burstThreshold) {
+      await this.flagSuspicious(ip, 'request_burst', {
+        count,
         threshold: this.config.burstThreshold,
         window: this.config.burstWindow
       });
@@ -57,26 +111,21 @@ class AbuseDetector {
    * Track a failed request from an IP
    * @param {string} ip - Client IP address
    * @param {string} reason - Failure reason
+   * @returns {Promise<void>}
    */
-  trackFailure(ip, reason) {
+  async trackFailure(ip, reason) {
     if (!ip) return;
 
-    const now = Date.now();
-    const data = this.failureCounts.get(ip) || { count: 0, windowStart: now };
-
-    // Reset window if expired
-    if (now - data.windowStart > this.config.failureWindow) {
-      data.count = 0;
-      data.windowStart = now;
-    }
-
-    data.count++;
-    this.failureCounts.set(ip, data);
+    const count = await this.incrementCounter(
+      `abuse:fail:${ip}`,
+      this.config.failureWindow,
+      this.failureCounts
+    );
 
     // Check for repeated failures
-    if (data.count > this.config.failureThreshold) {
-      this.flagSuspicious(ip, 'repeated_failures', {
-        count: data.count,
+    if (count > this.config.failureThreshold) {
+      await this.flagSuspicious(ip, 'repeated_failures', {
+        count,
         threshold: this.config.failureThreshold,
         window: this.config.failureWindow,
         reason
@@ -89,9 +138,27 @@ class AbuseDetector {
    * @param {string} ip - Client IP address
    * @param {string} signal - Signal type
    * @param {Object} metadata - Additional context
+   * @returns {Promise<void>}
    */
-  flagSuspicious(ip, signal, metadata) {
+  async flagSuspicious(ip, signal, metadata) {
     if (this.suspiciousIPs.has(ip)) return; // Already flagged
+
+    const store = this.getStore();
+    if (store && typeof store.set === 'function') {
+      try {
+        const already = await store.get(`abuse:flag:${ip}`);
+        if (already) {
+          this.suspiciousIPs.add(ip);
+          return;
+        }
+        await store.set(`abuse:flag:${ip}`, '1', 3600);
+      } catch (err) {
+        log.warn('ABUSE_DETECTION', 'Shared store flag failed, using in-memory fallback', {
+          ip,
+          error: err.message
+        });
+      }
+    }
 
     this.suspiciousIPs.add(ip);
 
@@ -115,10 +182,28 @@ class AbuseDetector {
   /**
    * Check if an IP is flagged as suspicious
    * @param {string} ip - Client IP address
-   * @returns {boolean}
+   * @returns {Promise<boolean>}
    */
-  isSuspicious(ip) {
-    return this.suspiciousIPs.has(ip);
+  async isSuspicious(ip) {
+    if (this.suspiciousIPs.has(ip)) return true;
+
+    const store = this.getStore();
+    if (store && typeof store.get === 'function') {
+      try {
+        const flagged = await store.get(`abuse:flag:${ip}`);
+        if (flagged) {
+          this.suspiciousIPs.add(ip);
+          return true;
+        }
+      } catch (err) {
+        log.warn('ABUSE_DETECTION', 'Shared store lookup failed, using in-memory fallback', {
+          ip,
+          error: err.message
+        });
+      }
+    }
+
+    return false;
   }
 
   /**
@@ -129,7 +214,8 @@ class AbuseDetector {
     return {
       suspiciousIPs: this.suspiciousIPs.size,
       trackedIPs: this.requestCounts.size,
-      failureTracking: this.failureCounts.size
+      failureTracking: this.failureCounts.size,
+      sharedStore: Boolean(this.getStore())
     };
   }
 
