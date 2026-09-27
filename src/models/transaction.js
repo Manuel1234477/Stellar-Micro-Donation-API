@@ -2,7 +2,9 @@
  * Transaction Model - Data Access Layer (SQLite-backed)
  * No longer reads from or writes to data/donations.json.
  *
- * Uses an in-memory store initialised from SQLite on first access.
+ * Uses an in-memory store loaded from SQLite by Transaction.initialize(),
+ * which the server bootstrap calls after migrations have run. Requiring this
+ * module performs no database I/O.
  * All mutations are persisted to SQLite (fire-and-forget with error logging).
  * The synchronous public API is preserved for backward compatibility.
  */
@@ -27,6 +29,8 @@ const _store = new Map();
 const _idempotencyIndex = new Map();
 let _loaded = false;
 let _loading = null; // Promise<void> | null
+/** @type {Error|null} Error from the most recent failed load, if any. */
+let _loadError = null;
 
 /**
  * Persist a single record to SQLite (fire-and-forget).
@@ -81,7 +85,9 @@ function _persist(tx) {
 
 /**
  * Load all records from SQLite into the in-memory store.
- * Called once lazily; subsequent calls are no-ops.
+ * Concurrent callers share one in-flight load; once loaded, calls are no-ops.
+ * A failed load leaves the store unloaded and rejects, so callers can retry
+ * and the readiness probe can report the failure.
  */
 async function _ensureLoaded() {
   if (_loaded) return;
@@ -98,13 +104,16 @@ async function _ensureLoaded() {
           if (tx.idempotencyKey) {
             _idempotencyIndex.set(tx.idempotencyKey, tx);
           }
-        } catch (_) { /* skip corrupt rows */ }
+        } catch (err) {
+          log.warn('TRANSACTION_MODEL', 'Skipping corrupt donations_store row', { error: err.message });
+        }
       }
       _loaded = true;
+      _loadError = null;
     } catch (err) {
-      // If DB isn't ready yet (e.g. first startup before migrations), start empty
-      log.warn('TRANSACTION_MODEL', 'Could not load from SQLite, starting empty', { error: err.message });
-      _loaded = true;
+      _loadError = err;
+      log.error('TRANSACTION_MODEL', 'Failed to load donations_store', { error: err.message });
+      throw err;
     } finally {
       _loading = null;
     }
@@ -113,12 +122,29 @@ async function _ensureLoaded() {
   return _loading;
 }
 
-// Kick off the load immediately so most requests find the store ready
-_ensureLoaded().catch(() => {});
-
 // ── Model class ──────────────────────────────────────────────────────────────
 
 class Transaction {
+  /**
+   * Load the in-memory store from SQLite. Must be called after migrations
+   * have created donations_store (see src/bootstrap/server.js).
+   *
+   * @returns {Promise<void>}
+   * @throws {Error} When donations_store cannot be read.
+   */
+  static async initialize() {
+    await _ensureLoaded();
+  }
+
+  /**
+   * Store initialisation status, used by the readiness probe.
+   *
+   * @returns {{ loaded: boolean, error: string|null }}
+   */
+  static getStoreStatus() {
+    return { loaded: _loaded, error: _loadError ? _loadError.message : null };
+  }
+
   /** @deprecated No longer used — retained for test compatibility only */
   static getDbPath() {
     return null;
@@ -190,8 +216,12 @@ class Transaction {
     if (Array.isArray(newTransaction.tags) && newTransaction.tags.length > 0) {
       try {
         const TagService = require('../services/TagService');
-        TagService.associateTags(newTransaction.id, newTransaction.tags).catch(() => {});
-      } catch (_) {}
+        TagService.associateTags(newTransaction.id, newTransaction.tags).catch((err) => {
+          log.warn('TRANSACTION_MODEL', 'Failed to associate tags', { id: newTransaction.id, error: err.message });
+        });
+      } catch (err) {
+        log.warn('TRANSACTION_MODEL', 'TagService unavailable, tags not associated', { id: newTransaction.id, error: err.message });
+      }
     }
 
     const emitter = this.eventEmitter;
@@ -599,6 +629,7 @@ class Transaction {
     _store.clear();
     _idempotencyIndex.clear();
     _loaded = true;
+    _loadError = null;
     const Database = require('../utils/database');
     Database.run('DELETE FROM donations_store').catch(err =>
       log.error('TRANSACTION_MODEL', 'Failed to clear donations_store', { error: err.message })
@@ -611,6 +642,7 @@ class Transaction {
    */
   static async _reloadFromDb() {
     _loaded = false;
+    _loadError = null;
     _store.clear();
     _idempotencyIndex.clear();
     await _ensureLoaded();

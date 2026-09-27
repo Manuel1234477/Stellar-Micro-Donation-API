@@ -74,7 +74,7 @@ const ADMIN_ROUTES = [
   ['/admin/system-info',              require('../routes/admin/systemInfo')],
   ['/admin/feature-flags',            require('../routes/admin/featureFlags')],
   ['/admin',                          require('../routes/admin')],
-  ['/admin',                          require('../routes/admin/backup')],
+  ['/admin/backups',                  require('../routes/admin/backup')],
   ['/admin/audit-logs/export',        require('../routes/admin/auditLogExport')],
   ['/admin/security/scan',            require('../routes/admin/securityScan')],
   ['/admin/analytics',                require('../routes/admin/analytics')],
@@ -339,6 +339,15 @@ function mountRoutes(app, services = {}) {
       return res.status(503).json({
         status: 'not_ready',
         reason: initErr ? `initialization failed: ${initErr}` : 'server still initializing',
+      });
+    }
+    const donationStore = require('../models/transaction').getStoreStatus();
+    if (!donationStore.loaded) {
+      return res.status(503).json({
+        status: 'not_ready',
+        reason: donationStore.error
+          ? `donation store failed to load: ${donationStore.error}`
+          : 'donation store not loaded',
       });
     }
     try {

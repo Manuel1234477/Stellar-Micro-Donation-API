@@ -160,7 +160,9 @@ const ROUTE_PERMISSIONS = [
   { method: 'POST', path: '/admin/geo-blocking/block', permission: PERMISSIONS.ADMIN_ALL, unversioned: true },
   { method: 'DELETE', path: '/admin/geo-blocking/block/:countryCode', permission: PERMISSIONS.ADMIN_ALL, unversioned: true },
   { method: 'POST', path: '/admin/geo-blocking/allow', permission: PERMISSIONS.ADMIN_ALL, unversioned: true },
-  { method: 'DELETE', path: '/admin/geo-blocking/allow/:countryCode', permission: PERMISSIONS.ADMIN_ALL, unversioned: true }
+  { method: 'DELETE', path: '/admin/geo-blocking/allow/:countryCode', permission: PERMISSIONS.ADMIN_ALL, unversioned: true },
+  { method: 'GET', path: '/admin/backups', permission: PERMISSIONS.ADMIN_ALL, unversioned: true },
+  { method: 'GET', path: '/admin/backups/status', permission: PERMISSIONS.ADMIN_ALL, unversioned: true }
 ];
 
 /**

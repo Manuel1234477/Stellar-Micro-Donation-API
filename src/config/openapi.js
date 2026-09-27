@@ -217,6 +217,7 @@ const options = {
     path.join(__dirname, '../routes/recurringDonation.js'),
     path.join(__dirname, '../routes/auth.js'),
     path.join(__dirname, '../routes/admin/auditLogExport.js'),
+    path.join(__dirname, '../routes/admin/backup.js'),
     path.join(__dirname, '../routes/v2/donations.js'),
     path.join(__dirname, '../routes/v2/wallets.js'),
     path.join(__dirname, '../routes/v2/corporateMatching.js'),

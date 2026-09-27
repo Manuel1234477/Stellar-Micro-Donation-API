@@ -46,8 +46,8 @@ describe('Transaction.create idempotency atomicity', () => {
     const key = `atomic-idem-${Date.now()}`;
     const payload = {
       amount: 7,
-      donor: 'GCONCURRENCY',
-      recipient: 'GTEST',
+      donor: 'G' + 'C'.repeat(55),
+      recipient: 'G' + 'T'.repeat(55),
       idempotencyKey: key,
     };
 

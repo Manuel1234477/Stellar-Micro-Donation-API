@@ -29,6 +29,7 @@ require('dotenv').config();
 const path = require('path');
 const crypto = require('crypto');
 const Database = require('../utils/database');
+const { getCacheTtlMs: getRotationLockCacheTtlMs } = require('../middleware/rotationLock');
 
 const ALGORITHM = 'aes-256-gcm';
 const IV_LENGTH = 12;
@@ -110,6 +111,13 @@ async function rotate({ oldKey, newKey, verifyOnly }) {
       ['in_progress', new Date().toISOString(), new Date().toISOString(), 'memoEncryption']
     );
 
+    // API instances cache the lock status for up to one TTL; wait it out so
+    // every instance is rejecting donation writes before memos are rewritten.
+    const lockPropagationMs = getRotationLockCacheTtlMs();
+    if (lockPropagationMs > 0) {
+      console.log(`Waiting ${lockPropagationMs}ms for API instances to observe the rotation lock...`);
+      await new Promise((resolve) => setTimeout(resolve, lockPropagationMs)); // eslint-disable-line local/no-bare-timers
+    }
     console.log('✓ Rotation lock acquired; API donations now return 503.');
 
     // Perform all re-encryption inside a single database transaction

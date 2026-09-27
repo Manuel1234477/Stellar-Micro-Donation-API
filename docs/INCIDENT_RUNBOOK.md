@@ -140,10 +140,12 @@
 6. **As a last resort** (SEV-1 only), restore from the most recent clean backup:
 
    ```bash
-   POST /admin/backup/restore   # or manually copy the .db file
+   GET  /admin/backups                                  # find the latest backupId
+   POST /admin/backups/restore/<backupId>/confirm       # returns confirmationToken
+   POST /admin/backups/restore/<backupId>               # body: {"confirmationToken": "..."}
    ```
 
-   See [Backup & Restore docs](../RUNTIME_ASSUMPTIONS.md) for details.
+   See [Backup & Restore docs](BACKUP_RESTORE.md) for details.
 
 ### Rollback / recovery
 

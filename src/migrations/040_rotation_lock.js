@@ -15,27 +15,30 @@
  * HTTP 503 Service Unavailable with Retry-After header if rotation is in progress.
  */
 
-module.exports = {
-  name: '040_rotation_lock',
+exports.name = '040_rotation_lock';
 
-  async up(db) {
-    await db.exec(`
-      CREATE TABLE IF NOT EXISTS rotation_locks (
-        name TEXT PRIMARY KEY,
-        status TEXT NOT NULL DEFAULT 'idle',
-        startedAt TEXT,
-        completedAt TEXT,
-        error TEXT,
-        createdAt TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-        updatedAt TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
-      );
+// Uses db.run (one statement per call): the Database wrapper passed in by
+// the migration runner has no exec(), so a multi-statement exec() here
+// never created the table (#1697).
+exports.up = async (db) => {
+  await db.run(`
+    CREATE TABLE IF NOT EXISTS rotation_locks (
+      name TEXT PRIMARY KEY,
+      status TEXT NOT NULL DEFAULT 'idle',
+      startedAt TEXT,
+      completedAt TEXT,
+      error TEXT,
+      createdAt TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      updatedAt TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+    )
+  `);
 
-      INSERT OR IGNORE INTO rotation_locks (name, status, createdAt, updatedAt)
-      VALUES ('memoEncryption', 'idle', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP);
-    `);
-  },
+  await db.run(`
+    INSERT OR IGNORE INTO rotation_locks (name, status, createdAt, updatedAt)
+    VALUES ('memoEncryption', 'idle', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+  `);
+};
 
-  async down(db) {
-    await db.exec('DROP TABLE IF EXISTS rotation_locks');
-  },
+exports.down = async (db) => {
+  await db.run('DROP TABLE IF EXISTS rotation_locks');
 };

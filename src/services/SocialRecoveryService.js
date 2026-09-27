@@ -46,6 +46,10 @@ class SocialRecoveryService {
       throw new ValidationError('Every guardian must have a publicKey', ERROR_CODES.VALIDATION_ERROR);
     }
 
+    if (new Set(normalized.map((g) => g.publicKey)).size !== normalized.length) {
+      throw new ValidationError('Guardian public keys must be unique', ERROR_CODES.VALIDATION_ERROR);
+    }
+
     if (!Number.isInteger(threshold) || threshold < 1 || threshold > normalized.length) {
       throw new ValidationError(
         `threshold must be an integer between 1 and ${normalized.length}`,
@@ -53,14 +57,18 @@ class SocialRecoveryService {
       );
     }
 
-    // Replace guardians atomically; store threshold on first guardian row as sentinel
-    await Database.run('DELETE FROM recovery_guardians WHERE walletId = ?', [walletId]);
-    for (let i = 0; i < normalized.length; i++) {
-      await Database.run(
-        'INSERT INTO recovery_guardians (walletId, guardianPublicKey, guardianEmail, threshold) VALUES (?, ?, ?, ?)',
-        [walletId, normalized[i].publicKey, normalized[i].email, i === 0 ? threshold : null]
-      );
-    }
+    // Replace guardians in a single transaction so a failed insert never leaves
+    // the wallet with no guardians (or a partial set). The threshold is stored
+    // on the first guardian row as a sentinel.
+    await Database.runTransaction(async (tx) => {
+      await tx.run('DELETE FROM recovery_guardians WHERE walletId = ?', [walletId]);
+      for (let i = 0; i < normalized.length; i++) {
+        await tx.run(
+          'INSERT INTO recovery_guardians (walletId, guardianPublicKey, guardianEmail, threshold) VALUES (?, ?, ?, ?)',
+          [walletId, normalized[i].publicKey, normalized[i].email, i === 0 ? threshold : null]
+        );
+      }
+    });
 
     log.info('SOCIAL_RECOVERY', 'Guardians set', { walletId, count: normalized.length, threshold });
     return { guardians: normalized.map((g) => g.publicKey), threshold };

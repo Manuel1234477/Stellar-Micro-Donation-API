@@ -106,66 +106,101 @@ if (process.env.BACKUP_ENABLED === 'true') {
 
 ## Manual Backup Operations
 
+All backup endpoints live under `/admin/backups`. Like every `/admin` route they
+are unversioned (there is no `/api/v1` prefix) and require an **admin** API key
+in the `X-API-Key` header (admin TOTP applies when enabled).
+
+| Method | Path | Purpose |
+|--------|------|---------|
+| `POST` | `/admin/backups` | Trigger an immediate encrypted backup |
+| `GET`  | `/admin/backups` | List backups, newest first |
+| `GET`  | `/admin/backups/status` | Last backup time and last verification result |
+| `POST` | `/admin/backups/:backupId/verify` | Re-run integrity + row-count verification |
+| `GET`  | `/admin/backups/:backupId/download` | Download the encrypted `.enc` file |
+| `POST` | `/admin/backups/restore/:backupId/confirm` | Issue a 5-minute, single-use restore token |
+| `POST` | `/admin/backups/restore/:backupId` | Restore (body: `{ "confirmationToken": "..." }`) |
+
 ### Create a Backup
 
 ```bash
-# Via API endpoint
 curl -X POST http://localhost:3000/admin/backups \
-  -H "Authorization: Bearer YOUR_API_KEY" \
-  -H "Content-Type: application/json"
+  -H "X-API-Key: YOUR_ADMIN_API_KEY"
 
-# Response:
+# 201 Created
 # {
-#   "backupId": "backup_1721900400000_a1b2c3d4",
-#   "filePath": "/app/data/backups/backup_1721900400000_a1b2c3d4.enc",
-#   "size": 4194304,
-#   "createdAt": "2024-07-24T14:00:00.000Z"
+#   "success": true,
+#   "data": {
+#     "backupId": "backup_1721900400000_a1b2c3d4",
+#     "path": "/app/data/backups/backup_1721900400000_a1b2c3d4.enc",
+#     "sizeBytes": 4194304,
+#     "createdAt": "2024-07-24T14:00:00.000Z"
+#   }
 # }
 ```
 
 ### List Available Backups
 
 ```bash
-# Via API endpoint
 curl http://localhost:3000/admin/backups \
-  -H "Authorization: Bearer YOUR_API_KEY"
+  -H "X-API-Key: YOUR_ADMIN_API_KEY"
 
-# Response:
 # {
-#   "backups": [
+#   "success": true,
+#   "data": [
 #     {
 #       "backupId": "backup_1721900400000_a1b2c3d4",
-#       "size": 4194304,
-#       "createdAt": "2024-07-24T14:00:00.000Z",
-#       "verified": true,
-#       "lastVerification": "2024-07-24T14:00:05.000Z"
+#       "path": "/app/data/backups/backup_1721900400000_a1b2c3d4.enc",
+#       "sizeBytes": 4194304,
+#       "createdAt": "2024-07-24T14:00:00.000Z"
 #     }
 #   ]
+# }
+```
+
+### Check Backup Status
+
+```bash
+curl http://localhost:3000/admin/backups/status \
+  -H "X-API-Key: YOUR_ADMIN_API_KEY"
+
+# {
+#   "success": true,
+#   "data": {
+#     "lastBackupTime": "2024-07-24T14:00:00.000Z",
+#     "lastBackupId": "backup_1721900400000_a1b2c3d4",
+#     "lastVerification": { "backupId": "...", "passed": true, "checkedAt": "...", "details": { ... } }
+#   }
 # }
 ```
 
 ### Verify a Backup
 
 ```bash
-# Via API endpoint
 curl -X POST http://localhost:3000/admin/backups/backup_1721900400000_a1b2c3d4/verify \
-  -H "Authorization: Bearer YOUR_API_KEY"
+  -H "X-API-Key: YOUR_ADMIN_API_KEY"
 
-# Response:
 # {
-#   "backupId": "backup_1721900400000_a1b2c3d4",
-#   "passed": true,
-#   "checkedAt": "2024-07-24T14:00:05.000Z",
-#   "details": {
-#     "integrityOk": true,
-#     "rowCounts": {
-#       "users": 1250,
-#       "transactions": 45800,
-#       "recurring_donations": 320
-#     },
-#     "rowCountMismatches": []
+#   "success": true,
+#   "data": {
+#     "backupId": "backup_1721900400000_a1b2c3d4",
+#     "passed": true,
+#     "checkedAt": "2024-07-24T14:00:05.000Z",
+#     "details": {
+#       "integrityOk": true,
+#       "rowCounts": { "users": 1250, "transactions": 45800, "recurring_donations": 320 },
+#       "sourceRowCounts": { "users": 1250, "transactions": 45800, "recurring_donations": 320 },
+#       "rowCountMismatches": []
+#     }
 #   }
 # }
+```
+
+### Download a Backup
+
+```bash
+curl -o backup_1721900400000_a1b2c3d4.enc \
+  http://localhost:3000/admin/backups/backup_1721900400000_a1b2c3d4/download \
+  -H "X-API-Key: YOUR_ADMIN_API_KEY"
 ```
 
 ### Restore from Backup
@@ -176,21 +211,38 @@ curl -X POST http://localhost:3000/admin/backups/backup_1721900400000_a1b2c3d4/v
 - Planned maintenance window
 - Team notification
 
-```bash
-# Via API endpoint (requires admin authentication)
-curl -X POST http://localhost:3000/admin/backups/backup_1721900400000_a1b2c3d4/restore \
-  -H "Authorization: Bearer YOUR_API_KEY" \
-  -H "X-Confirm-Restore: true"
+Restore is a two-step operation. First request a confirmation token (valid for
+5 minutes, single use), then submit it with the restore request. The restore is
+rejected with `409 RESTORE_BLOCKED` while other requests are in flight.
 
-# Response:
+```bash
+# 1. Request a confirmation token
+curl -X POST http://localhost:3000/admin/backups/restore/backup_1721900400000_a1b2c3d4/confirm \
+  -H "X-API-Key: YOUR_ADMIN_API_KEY"
+
+# { "success": true, "data": { "confirmationToken": "9f2c...", "expiresAt": "2024-07-24T14:10:00.000Z" } }
+
+# 2. Restore using the token
+curl -X POST http://localhost:3000/admin/backups/restore/backup_1721900400000_a1b2c3d4 \
+  -H "X-API-Key: YOUR_ADMIN_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{"confirmationToken": "9f2c..."}'
+
 # {
-#   "backupId": "backup_1721900400000_a1b2c3d4",
-#   "restoredAt": "2024-07-24T14:05:00.000Z"
+#   "success": true,
+#   "data": { "backupId": "backup_1721900400000_a1b2c3d4", "restoredAt": "2024-07-24T14:05:00.000Z" }
 # }
 
-# Pre-restore backup is saved at:
+# Pre-restore copy of the replaced database is saved at:
 # data/stellar_donations.db.pre-restore
 ```
+
+| Status | Meaning |
+|--------|---------|
+| `400 VALIDATION_ERROR` | Invalid `backupId` or missing `confirmationToken` |
+| `400 INVALID_CONFIRMATION_TOKEN` | Token unknown, already used, or expired |
+| `404 NOT_FOUND` | No backup with that ID |
+| `409 RESTORE_BLOCKED` | Other requests are in flight; retry when idle |
 
 ## Backup Verification
 
@@ -232,13 +284,13 @@ The verification process:
 
 ```bash
 # Check specific backup
-curl http://localhost:3000/admin/backups/backup_1721900400000_a1b2c3d4/verify \
-  -H "Authorization: Bearer YOUR_API_KEY"
+curl -X POST http://localhost:3000/admin/backups/backup_1721900400000_a1b2c3d4/verify \
+  -H "X-API-Key: YOUR_ADMIN_API_KEY"
 
 # Verify all backups
-for backup in $(curl -s http://localhost:3000/admin/backups -H "Authorization: Bearer YOUR_API_KEY" | jq -r '.backups[].backupId'); do
+for backup in $(curl -s http://localhost:3000/admin/backups -H "X-API-Key: YOUR_ADMIN_API_KEY" | jq -r '.data[].backupId'); do
   curl -X POST "http://localhost:3000/admin/backups/$backup/verify" \
-    -H "Authorization: Bearer YOUR_API_KEY"
+    -H "X-API-Key: YOUR_ADMIN_API_KEY"
 done
 ```
 
