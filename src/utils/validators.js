@@ -14,6 +14,26 @@ const StellarSdk = require('stellar-sdk');
  */
 const MAX_AMOUNT_XLM = 922337203685.4775807;
 
+/** Validate a Stellar Ed25519 public key. */
+const isValidStellarPublicKey = (key) => {
+  if (typeof key !== 'string') return false;
+  try {
+    return StellarSdk.StrKey.isValidEd25519PublicKey(key);
+  } catch {
+    return false;
+  }
+};
+
+/** Validate a Stellar Ed25519 secret seed without exposing or decoding it. */
+const isValidStellarSecretKey = (key) => {
+  if (typeof key !== 'string') return false;
+  try {
+    return StellarSdk.StrKey.isValidEd25519SecretSeed(key);
+  } catch {
+    return false;
+  }
+};
+
 /**
  * Validate amount is a positive number within Stellar int64 stroop bounds.
  *
@@ -143,6 +163,7 @@ const transactionExists = (id) => {
 };
 
 module.exports = {
+  isValidStellarPublicKey,
   isValidStellarSecretKey,
   isValidAmount,
   isValidDate,
