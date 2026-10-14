@@ -13,7 +13,8 @@
 const fs = require('fs');
 const path = require('path');
 
-const ROOT = path.join(__dirname, '..');
+const ROOT = path.join(__dirname, '../..');
+process.env.ENCRYPTION_KEY = process.env.ENCRYPTION_KEY || '01234567890123456789012345678901';
 
 // ─── File Existence ───────────────────────────────────────────────────────────
 
