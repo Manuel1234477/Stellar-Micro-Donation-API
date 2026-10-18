@@ -23,7 +23,7 @@ jobs:
           cache: 'npm'
       - run: npm ci
       # Restore the ESLint cache so unchanged files are not re-linted. Refs #1789.
-      - uses: actions/cache@v4
+      - uses: actions/cache@v6
         with:
           path: .eslintcache
           key: eslint-${{ runner.os }}-${{ hashFiles('package-lock.json', '.eslintrc.js', 'eslint-rules/**') }}-${{ github.sha }}
