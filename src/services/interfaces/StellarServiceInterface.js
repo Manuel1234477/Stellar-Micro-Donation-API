@@ -255,9 +255,62 @@ class StellarServiceInterface {
    * @param {string} _destAmount
    * @returns {Promise<Array<Object>>}
    */
-  async findPaymentPaths(_sourcePublicKey, _destPublicKey, _destAsset, _destAmount) {
+  async findPaths(_sourcePublicKey, _destPublicKey, _destAsset, _destAmount) {
     void _sourcePublicKey; void _destPublicKey; void _destAsset; void _destAmount;
-    throw new Error('findPaymentPaths() must be implemented');
+    throw new Error('findPaths() must be implemented');
+  }
+
+  /**
+   * Fetch the order book for a trading pair.
+   * @param {Object} _selling - Asset being sold
+   * @param {Object} _buying - Asset being bought
+   * @param {Object} [_options] - Horizon order book options (limit, etc.)
+   * @returns {Promise<{bids: Array<Object>, asks: Array<Object>, base: Object, counter: Object}>}
+   */
+  async getOrderBook(_selling, _buying, _options = {}) {
+    void _selling; void _buying; void _options;
+    throw new Error('getOrderBook() must be implemented');
+  }
+
+  /**
+   * Fetch open offers for an account.
+   * @param {string} _publicKey - Account public key
+   * @param {Object} [_options] - Horizon offers options
+   * @returns {Promise<Array<Object>>}
+   */
+  async getOffers(_publicKey, _options = {}) {
+    void _publicKey; void _options;
+    throw new Error('getOffers() must be implemented');
+  }
+
+  /**
+   * Fetch liquidity pools, optionally filtered by pool id.
+   * @param {Object} [_options] - Horizon liquidity pool options
+   * @returns {Promise<Array<Object>>}
+   */
+  async getLiquidityPools(_options = {}) {
+    void _options;
+    throw new Error('getLiquidityPools() must be implemented');
+  }
+
+  /**
+   * Fetch a single liquidity pool by id.
+   * @param {string} _poolId - Liquidity pool id
+   * @returns {Promise<Object>}
+   */
+  async getLiquidityPool(_poolId) {
+    void _poolId;
+    throw new Error('getLiquidityPool() must be implemented');
+  }
+
+  /**
+   * Fetch payment channels managed by the service.
+   * @param {Object} [_options] - Channel options
+   * @returns {Promise<Array<Object>>}
+   */
+  async getChannels(_options = {}) {
+    void _options;
+    throw new Error('getChannels() must be implemented');
   }
 }
 
