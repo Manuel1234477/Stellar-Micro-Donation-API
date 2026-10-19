@@ -51,5 +51,8 @@
 
 # =============================================================================
 # Active exceptions below this line
-# (none at this time — add entries as VULN-ID | package | reason | expires: DATE)
 # =============================================================================
+GHSA-q7rr-3cgh-j5r3 | @opentelemetry/exporter-prometheus | Optional tracing dependency, only loaded when OTEL tracing is enabled; the Prometheus exporter is never started. Upgrade requires OTel SDK 2.x Resource API migration. expires: 2026-12-31
+GHSA-45rx-2jwx-cxfr | @opentelemetry/propagator-jaeger | Optional tracing dependency pulled in by auto-instrumentations; Jaeger propagation is not configured. Upgrade requires OTel SDK 2.x migration. expires: 2026-12-31
+GHSA-82x6-q7mm-w9cf | toml | Transitive dependency of stellar-sdk (stellar.toml resolver); no patched release in the stellar-sdk tree and the resolver is not used by this API. expires: 2026-12-31
+GHSA-v5mp-jgw5-2x6j | toml | Transitive dependency of stellar-sdk (stellar.toml resolver); no patched release in the stellar-sdk tree and the resolver is not used by this API. expires: 2026-12-31

@@ -5,7 +5,7 @@ const Cache = require('../../src/utils/cache');
 
 // Mock the http/https fetch so no real network calls are made
 jest.mock('../../src/services/NetworkFeeService', () => {
-  const actual = jest.requireActual('../src/services/NetworkFeeService');
+  const actual = jest.requireActual('../../src/services/NetworkFeeService');
   return {
     ...actual,
     // We'll override fetchJson via the module internals by mocking https

@@ -6,7 +6,7 @@
  * RESPONSIBILITY: Expose federation address resolution and reverse lookup
  *   as public HTTP endpoints backed by TTL caching.
  * OWNER: Backend Team
- * DEPENDENCIES: stellar-sdk (lazy), log
+ * DEPENDENCIES: @stellar/stellar-sdk (lazy), log
  *
  * Endpoints (no auth required):
  *   GET /federation/resolve?address=user*domain.org  → resolves to public key
@@ -47,7 +47,7 @@ async function resolveFederationAddress(address, _resolverFn) {
   if (_resolverFn) {
     result = await _resolverFn(address);
   } else {
-    const { Federation } = require('stellar-sdk');
+    const { Federation } = require('../services/stellar/sdk.js');
     const server = new Federation.Server('https://horizon-testnet.stellar.org');
     result = await server.resolveAddress(address);
   }
@@ -145,7 +145,7 @@ router.get('/reverse', asyncHandler(async (req, res) => {
     if (req._reverseResolverFn) {
       result = await req._reverseResolverFn(publicKey);
     } else {
-      const { Federation } = require('stellar-sdk');
+      const { Federation } = require('../services/stellar/sdk.js');
       const server = new Federation.Server('https://horizon-testnet.stellar.org');
       result = await server.resolveAccountId(publicKey);
     }

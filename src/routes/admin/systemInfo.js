@@ -15,6 +15,7 @@ const { requireAdmin } = require('../../middleware/rbac');
 const { createRateLimiter } = require('../../middleware/rateLimiter');
 const serviceContainer = require('../../config/serviceContainer');
 const asyncHandler = require('../../utils/asyncHandler');
+const { readEnv } = require('../../config/env');
 
 const systemInfoRateLimiter = process.env.NODE_ENV === 'test'
   ? (req, res, next) => next()
@@ -127,9 +128,9 @@ router.get('/', requireAdmin(), systemInfoRateLimiter, asyncHandler(async (req, 
     ]);
 
     const rateLimitSettings = {
-      maxRequests: parseInt(process.env.RATE_LIMIT_MAX_REQUESTS, 10) || 100,
-      windowMs: parseInt(process.env.RATE_LIMIT_WINDOW_MS, 10) || 60000,
-      enabled: process.env.DISABLE_RATE_LIMIT !== 'true',
+      maxRequests: readEnv('RATE_LIMIT_MAX_REQUESTS'),
+      windowMs: readEnv('RATE_LIMIT_WINDOW_MS'),
+      enabled: !readEnv('DISABLE_RATE_LIMIT'),
     };
 
     res.json({

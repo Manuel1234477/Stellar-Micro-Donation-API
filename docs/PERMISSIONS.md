@@ -182,6 +182,42 @@ router.post('/bulk-action',
 );
 ```
 
+### Middleware Ordering on Mutating Routes
+
+Authentication and RBAC must run **before** any middleware that touches shared
+state or can fail for reasons unrelated to identity (rotation-lock DB lookups,
+rate-limit counters, idempotency storage). Otherwise an unauthenticated caller
+can receive a 429/500/503 instead of 401/403, probe server behaviour, and
+consume resources. Only cheap, identity-independent guards such as the body
+size limiter may run ahead of authentication.
+
+Donation creation routes (`POST /donations`, `/donations/send`, `/batch`,
+`/bulk`, `/cross-asset`) share this leading chain via
+`authenticatedCreateGuards()` in `src/routes/donations/create.js`:
+
+```javascript
+payloadSizeLimiter(limit)                      // identity-independent
+requireApiKey                                  // 401 when no/invalid key
+checkPermission(PERMISSIONS.DONATIONS_CREATE)  // 403 when role/scope lacks it
+rotationLockMiddleware()                       // only authorised callers reach DB
+// ...then rate limiters, idempotency, schema validation, handler
+```
+
+### API Key Scopes vs. Roles
+
+Access requires **both** the role permission **and**, when the API key has
+scopes, a matching scope (`checkPermission` in `src/middleware/rbac.js`):
+
+- A scope can only **narrow** a role, never widen it. A `user` key with
+  `donations:*` still cannot perform `donations:delete`, because the `user`
+  role does not hold that permission.
+- **Admin keys with narrowed scopes are restricted to those scopes.** The
+  admin role's `*` wildcard does not bypass the scope check: an admin key
+  issued with `['donations:read']` can read donations but cannot create
+  wallets. This is deliberate (least privilege): narrowly-scoped admin keys
+  are issued precisely to limit blast radius if they leak. An admin key with
+  no scopes, or with the `admin:*` scope, has unrestricted access.
+
 ## Authentication
 
 Currently, the system uses API keys for authentication (development mode):
@@ -307,9 +343,18 @@ router.post('/new-endpoint',
 
 ## Testing Permissions
 
+Every route in `ROUTE_PERMISSIONS` (`src/config/permissionMatrix.js`) must have
+a matching entry in `MATRIX_ENTRIES` in
+`tests/security/rbac-authorization-matrix.test.js`; the coverage sentinel fails
+on both uncovered and stale entries. Route paths are relative to `/api/v1`
+unless the entry sets `unversioned: true` (admin/observability routes mounted
+directly on the app); `getFullRoutePath()` resolves the absolute path.
+
 Run the permission tests:
 
 ```bash
+npm test tests/security/rbac-authorization-matrix.test.js
+npm test tests/security/negative-authorization.test.js
 npm test tests/permissions.test.js
 npm test tests/rbac-middleware.test.js
 ```

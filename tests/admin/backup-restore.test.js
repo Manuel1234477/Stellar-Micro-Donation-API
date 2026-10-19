@@ -210,6 +210,7 @@ describe('Admin backup routes', () => {
       backupId: 'backup_123_abcd1234',
       restoredAt: '2026-01-01T01:00:00.000Z',
     });
+    jest.spyOn(BackupService.prototype, 'hasBackup').mockResolvedValue(true);
 
     const express = require('express');
     const backupRoutes = require('../../src/routes/admin/backup');
@@ -247,18 +248,80 @@ describe('Admin backup routes', () => {
     expect(res.body.data[0].backupId).toBe('backup_123_abcd1234');
   });
 
-  it('POST /restore/:backupId restores from a backup', async () => {
-    const res = await request(app).post('/restore/backup_123_abcd1234');
+  it('GET /status returns the most recent backup', async () => {
+    const res = await request(app).get('/status');
+    expect(res.status).toBe(200);
+    expect(res.body.data.lastBackupId).toBe('backup_123_abcd1234');
+  });
+
+  it('POST /restore/:backupId restores from a backup after confirmation', async () => {
+    const confirm = await request(app).post('/restore/backup_123_abcd1234/confirm');
+    expect(confirm.status).toBe(200);
+    const { confirmationToken } = confirm.body.data;
+    expect(confirmationToken).toBeTruthy();
+
+    const res = await request(app)
+      .post('/restore/backup_123_abcd1234')
+      .send({ confirmationToken });
     expect(res.status).toBe(200);
     expect(res.body.success).toBe(true);
     expect(res.body.data.backupId).toBe('backup_123_abcd1234');
     expect(res.body.data.restoredAt).toBeTruthy();
   });
 
-  it('POST /restore/:backupId returns 500 when backup not found', async () => {
+  it('POST /restore/:backupId rejects a restore without a confirmation token', async () => {
+    const res = await request(app).post('/restore/backup_123_abcd1234');
+    expect(res.status).toBe(400);
+    expect(BackupService.prototype.restore).not.toHaveBeenCalled();
+  });
+
+  it('POST /restore/:backupId rejects a reused confirmation token', async () => {
+    const confirm = await request(app).post('/restore/backup_123_abcd1234/confirm');
+    const { confirmationToken } = confirm.body.data;
+    await request(app).post('/restore/backup_123_abcd1234').send({ confirmationToken });
+
+    const res = await request(app).post('/restore/backup_123_abcd1234').send({ confirmationToken });
+    expect(res.status).toBe(400);
+    expect(res.body.error.code).toBe('INVALID_CONFIRMATION_TOKEN');
+  });
+
+  it('POST /restore/:backupId/confirm returns 404 when backup not found', async () => {
+    BackupService.prototype.hasBackup.mockResolvedValue(false);
+    const res = await request(app).post('/restore/bad_id/confirm');
+    expect(res.status).toBe(404);
+  });
+
+  it('POST /restore/:backupId returns 404 when the backup disappears before restore', async () => {
+    const confirm = await request(app).post('/restore/bad_id/confirm');
+    const { confirmationToken } = confirm.body.data;
     BackupService.prototype.restore.mockRejectedValue(new Error('Backup not found: bad_id'));
-    const res = await request(app).post('/restore/bad_id');
-    expect(res.status).toBe(500);
+
+    const res = await request(app).post('/restore/bad_id').send({ confirmationToken });
+    expect(res.status).toBe(404);
+  });
+
+  it('POST /:backupId/verify returns the verification result', async () => {
+    jest.spyOn(BackupService.prototype, 'verifyBackup').mockResolvedValue({
+      backupId: 'backup_123_abcd1234', passed: true, checkedAt: '2026-01-01T00:00:00.000Z', details: {},
+    });
+    const res = await request(app).post('/backup_123_abcd1234/verify');
+    expect(res.status).toBe(200);
+    expect(res.body.data.passed).toBe(true);
+  });
+
+  it('rejects backupIds containing path traversal', async () => {
+    const res = await request(app).post('/restore/..%2F..%2Fetc/confirm');
+    expect(res.status).toBe(400);
+  });
+});
+
+describe('Admin backup routes — mounting', () => {
+  // Static check: requiring src/bootstrap/routes.js loads every router in the
+  // app, so assert on the route table source instead.
+  it('mounts the backup router at /admin/backups', () => {
+    const source = fs.readFileSync(path.join(__dirname, '../../src/bootstrap/routes.js'), 'utf8');
+    const mounts = [...source.matchAll(/\['([^']+)',\s*require\('\.\.\/routes\/admin\/backup'\)\]/g)].map((m) => m[1]);
+    expect(mounts).toEqual(['/admin/backups']);
   });
 });
 
@@ -288,7 +351,7 @@ describe('RecurringDonationScheduler backup scheduling', () => {
       }
     });
 
-    const scheduler = new Scheduler(null);
+    const scheduler = new Scheduler({});
     scheduler.backupInterval = 100;
     scheduler.lastBackupAt = Date.now() - 200;
 
@@ -311,7 +374,7 @@ describe('RecurringDonationScheduler backup scheduling', () => {
       }
     });
 
-    const scheduler = new Scheduler(null);
+    const scheduler = new Scheduler({});
     scheduler.backupInterval = 100;
     scheduler.lastBackupAt = Date.now(); // just ran
 

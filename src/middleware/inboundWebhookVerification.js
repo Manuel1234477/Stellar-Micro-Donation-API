@@ -12,15 +12,15 @@
  * re-serialized JSON.
  *
  * Usage:
- *   const { registerWebhookSource, verifyInboundWebhook } = require('../middleware/inboundWebhookVerification');
- *
- *   registerWebhookSource('stripe', {
- *     secret: process.env.STRIPE_WEBHOOK_SECRET,
- *     headerName: 'stripe-signature',
- *     signaturePrefix: '',
- *   });
+ *   Declare sources in INBOUND_WEBHOOK_SOURCES (see src/config/inboundWebhooks.js);
+ *   they are registered at boot by registerWebhookSourcesFromConfig(). Then:
  *
  *   router.post('/webhooks/inbound/stripe', verifyInboundWebhook('stripe'), handler);
+ *
+ * Multi-instance (#1786): the registry below is per-process configuration, not
+ * shared state. It is consistent across replicas because every replica loads
+ * the same INBOUND_WEBHOOK_SOURCES at boot. Avoid calling registerWebhookSource()
+ * from request handlers — a source registered that way exists on one replica only.
  */
 
 'use strict';
@@ -110,6 +110,25 @@ function verifyInboundWebhook(sourceName) {
   };
 }
 
+/**
+ * Register every source declared in INBOUND_WEBHOOK_SOURCES. Invalid entries
+ * are logged and skipped.
+ *
+ * @param {object} [source] - variables to read; defaults to the process environment
+ * @returns {number} number of sources registered
+ */
+function registerWebhookSourcesFromConfig(source) {
+  const { loadInboundWebhookSources } = require('../config/inboundWebhooks');
+  const { sources: defs, errors } = loadInboundWebhookSources(source);
+  for (const message of errors) {
+    log.error('INBOUND_WEBHOOK', 'Invalid inbound webhook source configuration', { error: message });
+  }
+  for (const def of defs) {
+    registerWebhookSource(def.name, def);
+  }
+  return defs.length;
+}
+
 /** Test/administrative helper to clear registered sources. */
 function _clearWebhookSources() {
   sources.clear();
@@ -117,6 +136,7 @@ function _clearWebhookSources() {
 
 module.exports = {
   registerWebhookSource,
+  registerWebhookSourcesFromConfig,
   getWebhookSource,
   verifyInboundWebhook,
   _clearWebhookSources,

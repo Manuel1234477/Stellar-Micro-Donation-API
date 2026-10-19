@@ -28,7 +28,7 @@ router.use(v2ResponseFormatterMiddleware());
 
 router.use('/donations', require('./donations'));
 router.use('/wallets', require('./wallets'));
-router.use('/corporate-matching', require('./corporateMatching'));
+router.use('/corporate-matching', require('../corporateMatching').v2Router);
 
 // v2-shaped 404 for anything under /api/v2 that doesn't match a mounted resource.
 router.use((req, res) => {

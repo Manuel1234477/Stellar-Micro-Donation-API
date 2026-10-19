@@ -78,7 +78,7 @@ For detailed architecture documentation, see:
 
 ### Prerequisites
 
-- Node.js (v20 or higher)
+- Node.js 24 (or Node.js 22+)
 - npm or yarn
 - SQLite3
 
@@ -317,6 +317,7 @@ API_KEYS=your-api-key-here
 
 Required at startup:
 - `API_KEYS` (legacy method, or use database-backed keys)
+  - Legacy keys are rejected after `LEGACY_API_KEYS_DISABLED_AFTER` (default `2026-12-31`). See [docs/MIGRATION_LEGACY_API_KEYS.md](docs/MIGRATION_LEGACY_API_KEYS.md) for migrating to database-backed keys.
 - `ENCRYPTION_KEY` (required only when `NODE_ENV=production`)
 
 Validated at startup (if provided):
@@ -810,3 +811,13 @@ For comprehensive documentation, see the [Documentation Index](docs/README.md).
 - **[Mock Stellar Guide](docs/guides/MOCK_STELLAR_GUIDE.md)** - Testing without network calls
 - **[Versioning Strategy](docs/VERSIONING_STRATEGY.md)** - SemVer rules, release flow, and breaking change policy
 
+## Handsoff notes
+
+<!-- handsoff-issue-1731 -->
+- #1731: Account merge endpoint does not return the merge result or soft-delete the source wallet
+
+<!-- handsoff-issue-1772 -->
+- #1772: Continue decomposing DonationService.js (2,552 lines)
+
+<!-- handsoff-issue-1773 -->
+- #1773: Merge duplicate sequence-number managers (utils/sequenceManager.js, services/SequenceManager.js, SequenceCacheService)

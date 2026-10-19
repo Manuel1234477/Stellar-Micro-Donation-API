@@ -168,6 +168,8 @@ class CircuitBreaker {
     this._maybeTransitionToHalfOpen();
 
     if (this._state === STATES.OPEN) {
+      // Fast-fail: no operation runs, so no application state can be touched.
+      // Only the breaker's own in-memory counters are read here.
       const err = new Error(`Circuit breaker open: ${this.name} is unavailable`);
       err.status = 503;
       err.circuitOpen = true;
@@ -176,6 +178,7 @@ class CircuitBreaker {
 
     if (this._state === STATES.HALF_OPEN) {
       if (this._probeInFlight) {
+        // Fast-fail: another probe owns the circuit; do not run the operation.
         const err = new Error(`Circuit breaker half-open: ${this.name} probe in progress`);
         err.status = 503;
         err.circuitOpen = true;
@@ -213,11 +216,21 @@ class CircuitBreaker {
     }
   }
 
-  /** @private */
+  /**
+   * Run an operation in CLOSED state.
+   *
+   * The breaker never writes application state itself: the operation is fully
+   * awaited before any breaker bookkeeping happens, and on failure only the
+   * breaker's own failure window is updated.  The original error is re-thrown
+   * unchanged so callers can roll back / reconcile as needed.
+   * @private
+   */
   async _runOperation(operation) {
     try {
-      return await operation();
+      const result = await operation();
+      return result;
     } catch (err) {
+      // Only breaker-internal counters are mutated here — never app state.
       this._recordFailure();
       throw err;
     }
@@ -242,13 +255,17 @@ class CircuitBreaker {
 
     // Best-effort: advertise our probe ownership to other cluster instances.
     // We do NOT await this — the in-process flag is the true concurrency guard.
+    // This only touches circuit_breaker_state, never application tables.
     this._writeProbeHolder();
 
     try {
       const result = await operation();
+      // Only close the circuit after the operation has fully resolved.
       this._onSuccess();
       return result;
     } catch (err) {
+      // Operation failed: reopen the circuit.  No application state is written
+      // by the breaker; the caller sees the original error and can reconcile.
       this._onProbeFailure();
       throw err;
     }

@@ -1,39 +1,55 @@
-const abuseDetector = require('../utils/abuseDetector');
+const AbuseDetectionService = require('../services/AbuseDetectionService');
 const log = require('../utils/log');
 const AuditLogService = require('../services/AuditLogService');
 
 /**
- * Middleware to track requests for abuse detection
- * Does NOT block traffic - only observes and logs
+ * Single middleware entry point for abuse detection.
+ *
+ * Delegates all tracking and evaluation to the unified
+ * AbuseDetectionService, which owns the pluggable detectors
+ * (rate, pattern, velocity, anomaly) and the shared state store.
+ *
+ * Does NOT block traffic - only observes and logs.
  */
 function abuseDetectionMiddleware(req, res, next) {
   const ip = req.ip || req.connection.remoteAddress;
 
-  // Track the request
-  abuseDetector.trackRequest(ip);
+  // Track the request through the unified service
+  Promise.resolve(AbuseDetectionService.trackRequest(ip)).catch(err => {
+    log.error('ABUSE_DETECTION', 'Track request failed', { error: err && err.message });
+  });
 
-  // Add flag to response headers if suspicious (for observability)
-  if (abuseDetector.isSuspicious(ip)) {
-    res.setHeader('X-Abuse-Signal', 'flagged');
-
-    // Audit log: IP flagged as suspicious
-    AuditLogService.log({
-      category: AuditLogService.CATEGORY.ABUSE_DETECTION,
-      action: AuditLogService.ACTION.IP_FLAGGED,
-      severity: AuditLogService.SEVERITY.HIGH,
-      result: 'SUCCESS',
-      requestId: req.id,
-      ipAddress: ip,
-      resource: req.path,
-      details: {
-        method: req.method,
-        userAgent: req.get('User-Agent')
+  // Evaluate the request against all detectors and flag if suspicious
+  Promise.resolve(AbuseDetectionService.isSuspicious(ip))
+    .then(suspicious => {
+      if (!suspicious) {
+        return;
       }
-    }).catch(err => {
-      // Don't block request if audit logging fails
-      log.error('ABUSE_DETECTION', 'Audit log failed', { error: err && err.message });
+
+      // Add flag to response headers if suspicious (for observability)
+      if (!res.headersSent) {
+        res.setHeader('X-Abuse-Signal', 'flagged');
+      }
+
+      // Audit log: IP flagged as suspicious
+      return AuditLogService.log({
+        category: AuditLogService.CATEGORY.ABUSE_DETECTION,
+        action: AuditLogService.ACTION.IP_FLAGGED,
+        severity: AuditLogService.SEVERITY.HIGH,
+        result: 'SUCCESS',
+        requestId: req.id,
+        ipAddress: ip,
+        resource: req.path,
+        details: {
+          method: req.method,
+          userAgent: req.get('User-Agent')
+        }
+      });
+    })
+    .catch(err => {
+      // Don't block request if detection or audit logging fails
+      log.error('ABUSE_DETECTION', 'Abuse detection failed', { error: err && err.message });
     });
-  }
 
   // Track failures on response
   const originalSend = res.send;
@@ -41,7 +57,9 @@ function abuseDetectionMiddleware(req, res, next) {
     // Track 4xx and 5xx as potential abuse signals
     if (res.statusCode >= 400) {
       const reason = res.statusCode >= 500 ? 'server_error' : 'client_error';
-      abuseDetector.trackFailure(ip, reason);
+      Promise.resolve(AbuseDetectionService.trackFailure(ip, reason)).catch(err => {
+        log.error('ABUSE_DETECTION', 'Track failure failed', { error: err && err.message });
+      });
     }
 
     return originalSend.call(this, data);

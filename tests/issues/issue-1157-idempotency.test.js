@@ -12,6 +12,10 @@
 const Database = require('../../src/utils/database');
 const Transaction = require('../../src/models/transaction');
 
+// donations_store enforces 56-character G... addresses (migration 033)
+const VALID_DONOR = 'GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA';
+const VALID_RECIPIENT = 'GBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB';
+
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
 async function ensureSchema() {
@@ -191,15 +195,15 @@ describe('#1157 Idempotency keys / unique constraints for donation creation', ()
 
       const first = Transaction.create({
         amount: 1.5,
-        donor: 'GABC',
-        recipient: 'GXYZ',
+        donor: VALID_DONOR,
+        recipient: VALID_RECIPIENT,
         idempotencyKey: key,
       });
 
       const second = Transaction.create({
         amount: 99,
-        donor: 'GABC',
-        recipient: 'GXYZ',
+        donor: VALID_DONOR,
+        recipient: VALID_RECIPIENT,
         idempotencyKey: key,
       });
 
@@ -211,15 +215,15 @@ describe('#1157 Idempotency keys / unique constraints for donation creation', ()
     it('creates distinct records for different idempotency keys', () => {
       const first = Transaction.create({
         amount: 2,
-        donor: 'GABC',
-        recipient: 'GXYZ',
+        donor: VALID_DONOR,
+        recipient: VALID_RECIPIENT,
         idempotencyKey: `key-first-${Date.now()}`,
       });
 
       const second = Transaction.create({
         amount: 2,
-        donor: 'GABC',
-        recipient: 'GXYZ',
+        donor: VALID_DONOR,
+        recipient: VALID_RECIPIENT,
         idempotencyKey: `key-second-${Date.now()}`,
       });
 
@@ -260,8 +264,8 @@ describe('#1157 Idempotency keys / unique constraints for donation creation', ()
       const results = Array.from({ length: 10 }, () =>
         Transaction.create({
           amount: 3,
-          donor: 'GABC',
-          recipient: 'GXYZ',
+          donor: VALID_DONOR,
+          recipient: VALID_RECIPIENT,
           idempotencyKey: key,
         })
       );
@@ -275,8 +279,8 @@ describe('#1157 Idempotency keys / unique constraints for donation creation', ()
       const key = `concurrent-idem-agreement-${Date.now()}`;
       const payload = {
         amount: 4,
-        donor: 'GABC',
-        recipient: 'GXYZ',
+        donor: VALID_DONOR,
+        recipient: VALID_RECIPIENT,
         idempotencyKey: key,
       };
 

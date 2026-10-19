@@ -1,9 +1,9 @@
 
 const crypto = require('crypto');
 const StellarServiceInterface = require('./interfaces/StellarServiceInterface');
-const { ValidationError, NotFoundError, BusinessLogicError, ERROR_CODES } = require('../utils/errors');
+const { ValidationError, BusinessLogicError, ERROR_CODES } = require('../utils/errors');
 const log = require('../utils/log');
-const { getAssetKey, isSameAsset, serializeAsset } = require('../utils/stellarAsset');
+const { getAssetKey, isSameAsset } = require('../utils/stellarAsset');
 
 // Import decomposed modules
 const MockAccounts = require('./mock/accounts');
@@ -14,7 +14,6 @@ const MockFees = require('./mock/fees');
 const MockOffers = require('./mock/offers');
 const MockPayments = require('./mock/payments');
 
-const NATIVE_ASSET = { type: 'native', code: 'XLM', issuer: null };
 
 class MockStellarService extends StellarServiceInterface {
   constructor(config = {}) {
@@ -238,6 +237,65 @@ class MockStellarService extends StellarServiceInterface {
 
     this._setWalletAssetBalance(sourceWallet, asset, sourceBalance - amountNum);
     this._setWalletAssetBalance(destWallet, asset, destBalance + amountNum);
+  }
+
+  /**
+   * Snapshot the mutable state touched by a payment/donation so that a
+   * failure occurring after validation (e.g. a simulated network error)
+   * can be rolled back, leaving balances and transaction history equal to
+   * the pre-operation state.
+   */
+  _snapshotPaymentState(wallets) {
+    const walletSnapshots = [];
+    for (const wallet of wallets) {
+      if (!wallet) continue;
+      walletSnapshots.push({
+        wallet,
+        balance: wallet.balance,
+        assetBalances: wallet.assetBalances
+          ? { ...wallet.assetBalances }
+          : undefined,
+      });
+    }
+
+    const transactionSnapshots = new Map();
+    for (const [key, list] of this.transactions.entries()) {
+      transactionSnapshots.set(key, list.slice());
+    }
+
+    return { walletSnapshots, transactionSnapshots };
+  }
+
+  _restorePaymentState(snapshot) {
+    if (!snapshot) return;
+    for (const entry of snapshot.walletSnapshots) {
+      entry.wallet.balance = entry.balance;
+      if (entry.assetBalances === undefined) {
+        delete entry.wallet.assetBalances;
+      } else {
+        entry.wallet.assetBalances = { ...entry.assetBalances };
+      }
+    }
+
+    this.transactions.clear();
+    for (const [key, list] of snapshot.transactionSnapshots.entries()) {
+      this.transactions.set(key, list.slice());
+    }
+  }
+
+  /**
+   * Run a state-mutating operation atomically: if the operation throws
+   * (including simulated network failures), all wallet balances and
+   * transaction history are restored to their pre-operation values.
+   */
+  async _runAtomically(wallets, operation) {
+    const snapshot = this._snapshotPaymentState(wallets);
+    try {
+      return await operation();
+    } catch (error) {
+      this._restorePaymentState(snapshot);
+      throw error;
+    }
   }
 
   _storeTransaction(transaction) {
@@ -521,6 +579,14 @@ class MockStellarService extends StellarServiceInterface {
   // === Delegate to modules ===
   // Accounts module methods
   async createWallet() { return this.accounts.createWallet(); }
+  getSecretForPublicKey(publicKey) {
+    for (const wallet of this.wallets.values()) {
+      if (wallet.publicKey === publicKey) {
+        return wallet.secretKey;
+      }
+    }
+    return null;
+  }
   async getBalance(publicKey) { return this.accounts.getBalance(publicKey); }
   async fundTestnetWallet(publicKey) { return this.accounts.fundTestnetWallet(publicKey); }
   async fundWithFriendbot(publicKey) { return this.accounts.fundWithFriendbot(publicKey); }

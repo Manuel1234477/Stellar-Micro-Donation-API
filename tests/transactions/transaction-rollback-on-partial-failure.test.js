@@ -17,9 +17,10 @@ const Database = require('../../src/utils/database');
 const MockStellarService = require('../../src/services/MockStellarService');
 const TransactionReconciliationService = require('../../src/services/TransactionReconciliationService');
 const encryption = require('../../src/utils/encryption');
+const { uniqueKeyName } = require('../builders/uniqueId');
 
-const ADMIN_KEY = 'admin-test-key';
-const USER_KEY = 'test-key-1';
+const ADMIN_KEY = uniqueKeyName('admin-test-key');
+const USER_KEY = uniqueKeyName('test-key-1');
 
 // Valid Stellar key format: prefix + 55 base32 chars = 56 total
 const SENDER_SECRET = 'SAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA';

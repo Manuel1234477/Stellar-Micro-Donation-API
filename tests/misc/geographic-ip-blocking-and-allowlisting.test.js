@@ -75,7 +75,7 @@ jest.mock('../../src/services/TOTPService', () => ({
   verifyBackupCode: jest.fn().mockResolvedValue(false)
 }));
 
-const geoBlockingAdminRouter = require('../../src/routes/admin/geoBlocking');
+const geoBlockingAdminRouter = require('../../src/routes/admin/geoRules').deprecatedRouter;
 
 // Save original fs.existsSync so tests that mock it don't leak into other suites
 const _originalExistsSync = require('fs').existsSync;
@@ -158,6 +158,41 @@ describe('GeoBlockMiddleware', () => {
       expect(log.warn).toHaveBeenCalledWith(
         'GEO_BLOCK',
         expect.stringContaining('MaxMind database not found')
+      );
+    });
+
+    it('should fail startup when GEO_STRICT_MODE=true and database is missing', async () => {
+      require('fs').existsSync = jest.fn().mockReturnValue(false);
+      const originalStrictMode = config.geoBlocking.strictMode;
+      config.geoBlocking.strictMode = true;
+
+      try {
+        await expect(middleware.initialize()).rejects.toThrow(/MaxMind database not found/);
+        expect(middleware.initialized).toBe(false);
+        expect(log.error).toHaveBeenCalledWith(
+          'GEO_BLOCK',
+          expect.stringContaining('MaxMind database not found'),
+          expect.objectContaining({ strictMode: true })
+        );
+      } finally {
+        config.geoBlocking.strictMode = originalStrictMode;
+      }
+    });
+
+    it('should expose geo-block status via getStatus()', async () => {
+      require('fs').existsSync = jest.fn().mockReturnValue(false);
+
+      await middleware.initialize();
+
+      const status = middleware.getStatus();
+
+      expect(status).toEqual(
+        expect.objectContaining({
+          initialized: false,
+          databasePath: './data/GeoLite2-Country.mmdb',
+          databaseFound: false,
+          strictMode: false
+        })
       );
     });
 
@@ -435,7 +470,7 @@ describe('Geo-blocking Admin API', () => {
     });
 
     // Add routes
-    app.use('/admin/geo-blocking', require('../../src/routes/admin/geoBlocking'));
+    app.use('/admin/geo-blocking', require('../../src/routes/admin/geoRules').deprecatedRouter);
 
     server = app.listen(0);
   });

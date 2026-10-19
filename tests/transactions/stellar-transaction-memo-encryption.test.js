@@ -23,7 +23,7 @@ process.env.ENCRYPTION_KEY = 'test-encryption-key-32-chars-xxx';
 
 const request = require('supertest');
 const express = require('express');
-const StellarSdk = require('stellar-sdk');
+const StellarSdk = require('@stellar/stellar-sdk');
 
 const {
   encryptMemo,

@@ -686,6 +686,10 @@ class WebhookService {
     return crypto.createHmac('sha256', secret).update(payload).digest('hex');
   }
 
+  _sign(body, secret, timestamp) {
+    return WebhookService._sign(body, secret, timestamp);
+  }
+
   /**
    * POST a JSON body to a URL with a timeout.
    * Validates the URL against SSRF rules before every request (DNS rebinding protection).
@@ -717,12 +721,8 @@ class WebhookService {
       log.error('WEBHOOK_SERVICE', 'tls_skip_verify flag suppressed in production at delivery time', { webhookId, url });
     }
 
-    return new Promise(async (resolve, reject) => {
-      try {
-        await assertSafeOutboundUrl(url);
-      } catch (err) {
-        return reject(err);
-      }
+    return (async () => {
+      await assertSafeOutboundUrl(url);
       const parsed = new URL(url);
       const lib = parsed.protocol === 'https:' ? https : http;
       const options = {
@@ -744,17 +744,26 @@ class WebhookService {
         timeout: 10000,
       };
 
-      const req = lib.request(options, (res) => {
-        res.resume();
-        const delivered = res.statusCode >= 200 && res.statusCode < 300;
-        resolve({ delivered, statusCode: res.statusCode });
-      });
+      return await new Promise((resolve, reject) => {
+        const req = lib.request(options, (res) => {
+          res.resume();
+          const delivered = res.statusCode >= 200 && res.statusCode < 300;
+          resolve({ delivered, statusCode: res.statusCode });
+        });
 
-      req.on('timeout', () => { req.destroy(); reject(new Error('Request timed out')); });
-      req.on('error', reject);
-      req.write(body);
-      req.end();
-    });
+        req.on('timeout', () => {
+          req.destroy();
+          reject(new Error('Request timed out'));
+        });
+        req.on('error', reject);
+        req.write(body);
+        req.end();
+      });
+    })();
+  }
+
+  _httpPost(url, body, signature, correlationHeaders = {}, tlsSkipVerify = false, webhookId = null, timestamp = null) {
+    return WebhookService._httpPost(url, body, signature, correlationHeaders, tlsSkipVerify, webhookId, timestamp);
   }
   /**
    * Flush all pending webhook deliveries from the retry queue.

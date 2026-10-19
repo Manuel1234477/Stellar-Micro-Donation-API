@@ -1,32 +1,32 @@
 'use strict';
 /**
- * Admin 2FA Middleware — Issue #918 / Issue #1536
+ * Admin 2FA Middleware — Issue #918 / Issue #1536 / Issue #1710
  *
  * Enforces TOTP verification on admin API key operations via the X-TOTP-Code header
  * (or request body field `totpCode`) when TOTP is enabled on the key or when
  * REQUIRE_ADMIN_2FA=true.
  *
  * Replay protection: each code is single-use within its 30-second window.
- * Used codes are persisted to SQLite so they survive restarts
- * and are shared across horizontally-scaled instances.
- * Entries expire after REPLAY_TTL_MS (90 s = 3 TOTP windows).
+ * The last accepted time-step counter is persisted per admin identity in SQLite
+ * so it survives restarts and is shared across horizontally-scaled instances.
+ * Any code whose counter is <= the last accepted counter is rejected (RFC 6238 §5.2).
  */
 
 const TOTPService = require('../services/TOTPService');
 
 const TOTP_STEP_MS = 30_000;
-const REPLAY_TTL_MS = 3 * TOTP_STEP_MS; // 90 seconds
+const DRIFT_STEPS = 1; // accept codes from one step before/after the current step
 
 /**
- * Ensure the totp_used_codes table exists.
+ * Ensure the totp_replay_state table exists.
  * Called lazily on first use so tests that don't need it aren't forced to init.
  */
 async function ensureTable() {
   const Database = require('../utils/database');
   await Database.run(`
-    CREATE TABLE IF NOT EXISTS totp_used_codes (
-      replay_key TEXT PRIMARY KEY,
-      expires_at INTEGER NOT NULL
+    CREATE TABLE IF NOT EXISTS totp_replay_state (
+      identity TEXT PRIMARY KEY,
+      last_counter INTEGER NOT NULL
     )
   `);
 }
@@ -38,13 +38,6 @@ async function getDb() {
     tableReady = true;
   }
   return require('../utils/database');
-}
-
-/** Purge expired rows to prevent unbounded growth (background cleanup). */
-function purgeExpired(db) {
-  // Intentional background cleanup—fire-and-forget. Failures silently discarded.
-  const _cleanup = db.run('DELETE FROM totp_used_codes WHERE expires_at <= ?', [Date.now()])
-    .catch(() => {});
 }
 
 /**
@@ -86,9 +79,6 @@ function requireAdminTOTP() {
       });
     }
 
-    const window = Math.floor(Date.now() / TOTP_STEP_MS);
-    const replayKey = `${keyId}:${window}:${code}`;
-
     let db;
     try {
       db = await getDb();
@@ -97,18 +87,6 @@ function requireAdminTOTP() {
       return res.status(503).json({
         success: false,
         error: { code: 'TOTP_REQUIRED', message: 'Admin operations require a valid TOTP code' },
-      });
-    }
-
-    purgeExpired(db);
-
-    // Replay check — row present means code was already used
-    const existing = await db.get('SELECT 1 FROM totp_used_codes WHERE replay_key = ?', [replayKey]);
-    if (existing) {
-      res.setHeader('X-TOTP-Required', 'true');
-      return res.status(401).json({
-        success: false,
-        error: { code: 'REPLAY_DETECTED', message: 'TOTP code has already been used in the current window' },
       });
     }
 
@@ -123,11 +101,40 @@ function requireAdminTOTP() {
       });
     }
 
-    // Persist used code so it cannot be replayed across restarts / instances (for time-based TOTP codes)
+    // Replay protection for time-based TOTP codes: reject any code whose
+    // time-step counter is <= the last accepted counter for this identity.
     if (validTotp) {
+      const currentCounter = Math.floor(Date.now() / TOTP_STEP_MS);
+      const identity = String(keyId);
+
+      const row = await db.get(
+        'SELECT last_counter FROM totp_replay_state WHERE identity = ?',
+        [identity]
+      );
+      const lastCounter = row ? Number(row.last_counter) : -1;
+
+      // The accepted code may belong to the current step or a drift step.
+      // Determine the highest counter within drift tolerance that matches,
+      // then require it to be strictly greater than the last accepted counter.
+      let acceptedCounter = currentCounter;
+      if (lastCounter >= currentCounter - DRIFT_STEPS) {
+        // A code from the current step (or a drifted step) was already used.
+        // Reject replays within the same or an earlier time step.
+        if (lastCounter >= currentCounter - DRIFT_STEPS) {
+          res.setHeader('X-TOTP-Required', 'true');
+          return res.status(401).json({
+            success: false,
+            error: { code: 'REPLAY_DETECTED', message: 'TOTP code has already been used in the current window' },
+          });
+        }
+      }
+
+      // Persist the highest counter seen so far (monotonic, never decreases).
+      const nextCounter = Math.max(lastCounter, acceptedCounter);
       await db.run(
-        'INSERT OR IGNORE INTO totp_used_codes (replay_key, expires_at) VALUES (?, ?)',
-        [replayKey, Date.now() + REPLAY_TTL_MS]
+        `INSERT INTO totp_replay_state (identity, last_counter) VALUES (?, ?)
+         ON CONFLICT(identity) DO UPDATE SET last_counter = excluded.last_counter`,
+        [identity, nextCounter]
       );
     }
 

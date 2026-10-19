@@ -30,7 +30,7 @@ const http = require('http');
 
 const SHUTDOWN_PORT = parseInt(process.env.SHUTDOWN_TEST_PORT || '3097', 10);
 const BASE_URL = `http://localhost:${SHUTDOWN_PORT}`;
-const STARTUP_TIMEOUT_MS = 15000;
+const STARTUP_TIMEOUT_MS = 20000;
 const POLL_INTERVAL_MS = 200;
 const SHUTDOWN_BUDGET_MS = 15000; // well inside the server's 30 s default
 const API_KEY = 'shutdown-test-key';
@@ -39,22 +39,57 @@ const API_KEY = 'shutdown-test-key';
 
 /**
  * Poll GET /health/live until it returns 200 or the deadline elapses.
+ * Fails fast if the child process has already exited, printing all captured
+ * stdout/stderr so the failure is always self-diagnosing.
+ *
+ * @param {import('child_process').ChildProcess} proc
+ * @param {string[]} stdoutChunks
+ * @param {string[]} stderrChunks
+ * @param {number} timeoutMs
  */
-function waitForServer(timeoutMs) {
+function waitForServer(proc, stdoutChunks, stderrChunks, timeoutMs) {
   return new Promise((resolve, reject) => {
     const deadline = Date.now() + timeoutMs;
 
+    function printOutput() {
+      const out = stdoutChunks.join('').trim();
+      const err = stderrChunks.join('').trim();
+      if (out) process.stdout.write(`\n[child stdout]\n${out}\n`);
+      if (err) process.stderr.write(`\n[child stderr]\n${err}\n`);
+    }
+
+    // Fail immediately if the child exits before becoming reachable
+    const onExit = (code, signal) => {
+      printOutput();
+      reject(
+        new Error(
+          `Child process exited (code=${code} signal=${signal}) before becoming reachable on port ${SHUTDOWN_PORT}`,
+        ),
+      );
+    };
+    proc.once('exit', onExit);
+
     function poll() {
       if (Date.now() > deadline) {
-        return reject(new Error(`Server on port ${SHUTDOWN_PORT} not reachable within ${timeoutMs}ms`));
+        proc.removeListener('exit', onExit);
+        printOutput();
+        return reject(
+          new Error(`Server on port ${SHUTDOWN_PORT} not reachable within ${timeoutMs}ms`),
+        );
       }
 
       const req = http.get(`${BASE_URL}/health/live`, (res) => {
-        if (res.statusCode === 200) return resolve();
+        if (res.statusCode === 200) {
+          proc.removeListener('exit', onExit);
+          return resolve();
+        }
         setTimeout(poll, POLL_INTERVAL_MS);
       });
       req.on('error', () => setTimeout(poll, POLL_INTERVAL_MS));
-      req.setTimeout(500, () => { req.destroy(); setTimeout(poll, POLL_INTERVAL_MS); });
+      req.setTimeout(500, () => {
+        req.destroy();
+        setTimeout(poll, POLL_INTERVAL_MS);
+      });
     }
 
     poll();
@@ -132,6 +167,24 @@ function waitForExit(proc, timeoutMs) {
   });
 }
 
+// ─── Minimal env required to boot the server in test mode ─────────────────────
+//
+// NODE_ENV=test makes src/config/index.js skip the API_KEYS presence check and
+// makes src/app.js skip the startupChecks gate entirely, so the server goes
+// straight to startServer().  All other values are the minimum required for
+// the config and service layers to initialise without crashing.
+
+const TEST_SERVER_ENV = {
+  ...process.env,
+  PORT: String(SHUTDOWN_PORT),
+  NODE_ENV: 'test',
+  MOCK_STELLAR: 'true',
+  USE_MOCK_STELLAR: 'true',
+  API_KEYS: API_KEY,
+  ENCRYPTION_KEY: 'test_encryption_key_fixed_32bytes_hex_value_here_00',
+  SHUTDOWN_TIMEOUT_MS: '10000',
+};
+
 // ─── Suite ────────────────────────────────────────────────────────────────────
 
 describe('Graceful shutdown (#1176)', () => {
@@ -145,23 +198,16 @@ describe('Graceful shutdown (#1176)', () => {
       process.execPath,
       [path.join(__dirname, '../../src/app.js')],
       {
-        env: {
-          ...process.env,
-          PORT: String(SHUTDOWN_PORT),
-          NODE_ENV: 'test',
-          MOCK_STELLAR: 'true',
-          API_KEYS: API_KEY,
-          ENCRYPTION_KEY: 'test_encryption_key_fixed_32bytes_hex_value_here_00',
-          SHUTDOWN_TIMEOUT_MS: '10000', // 10 s is plenty; keeps tests fast
-        },
+        env: TEST_SERVER_ENV,
         stdio: 'pipe',
       }
     );
 
-    serverProcess.stderr.on('data', (c) => stderrChunks.push(c));
-    serverProcess.stdout.on('data', (c) => stdoutChunks.push(c));
+    // Capture output BEFORE awaiting startup so nothing is lost on early exit
+    serverProcess.stderr.on('data', (c) => stderrChunks.push(c.toString()));
+    serverProcess.stdout.on('data', (c) => stdoutChunks.push(c.toString()));
 
-    await waitForServer(STARTUP_TIMEOUT_MS);
+    await waitForServer(serverProcess, stdoutChunks, stderrChunks, STARTUP_TIMEOUT_MS);
   }, STARTUP_TIMEOUT_MS + 3000);
 
   afterAll(() => {

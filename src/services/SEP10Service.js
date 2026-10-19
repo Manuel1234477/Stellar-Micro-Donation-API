@@ -11,7 +11,7 @@
  */
 
 const crypto = require('crypto');
-const StellarSdk = require('stellar-sdk');
+const StellarSdk = require('./stellar/sdk.js');
 const { issueAccessToken } = require('./JwtService');
 const log = require('../utils/log');
 const { ValidationError, ERROR_CODES } = require('../utils/errors');
@@ -35,7 +35,9 @@ class SEP10Service {
 
   /**
    * Generate a SEP-0010 challenge transaction
-   * Creates a manageData operation with a time-bound memo for client signing
+   * Creates a manageData operation bounded by transaction time bounds for client signing.
+   * No memo is attached: Stellar text memos are capped at 28 bytes, and SEP-10 does not
+   * require one on the challenge.
    *
    * @param {string} clientAccount - The client's Stellar public key
    * @returns {string} XDR-encoded challenge transaction
@@ -58,7 +60,6 @@ class SEP10Service {
       const challengeId = this._generateChallengeString();
       const expiresAtMs = Date.now() + this.config.challengeExpiresIn;
       const expiresAtSeconds = Math.floor(expiresAtMs / 1000);
-      const memo = `${this.config.homeDomain} auth ${challengeId} ${expiresAtSeconds}`;
       const operationName = `${this.challengePrefix}${challengeId}`;
 
       const transaction = new StellarSdk.TransactionBuilder(serverAccount, {
@@ -69,8 +70,7 @@ class SEP10Service {
           name: operationName,
           value: clientAccount,
         }))
-        .addMemo(StellarSdk.Memo.text(memo))
-        .setTimeout(0)
+        .setTimebounds(0, expiresAtSeconds)
         .build();
 
       transaction.sign(serverKeypair);
@@ -104,24 +104,16 @@ class SEP10Service {
         this.stellarService.networkPassphrase
       );
 
-      const memoPayload = this._verifyTransactionMemo(transaction);
-      const { clientAccount, challengeId: operationChallengeId } = this._verifyChallengeStructure(transaction);
+      this._verifyTransactionTimeBounds(transaction);
+      const { clientAccount, challengeId } = this._verifyChallengeStructure(transaction);
 
-      if (memoPayload.challengeId !== operationChallengeId) {
-        throw new ValidationError(
-          'Challenge transaction metadata mismatch',
-          null,
-          ERROR_CODES.INVALID_REQUEST
-        );
-      }
-
-      await this._checkNonceReplay(memoPayload.challengeId);
+      await this._checkNonceReplay(challengeId);
       this._verifyServerSignature(transaction);
       this._verifyTransactionSignatures(transaction, clientAccount);
 
-      await this._getChallengeEntry(memoPayload.challengeId, clientAccount);
-      await this._markChallengeUsed(memoPayload.challengeId);
-      await this._consumeNonce(memoPayload.challengeId);
+      await this._getChallengeEntry(challengeId, clientAccount);
+      await this._markChallengeUsed(challengeId);
+      await this._consumeNonce(challengeId);
 
       log.info('SEP10', 'Challenge verification successful', {
         account: this._maskPublicKey(clientAccount)
@@ -231,42 +223,22 @@ class SEP10Service {
   }
 
   /**
-   * Verify transaction memo and extract expiration time
+   * Verify the transaction time bounds and return the expiry (epoch seconds)
    * @private
    * @param {Transaction} transaction
    * @returns {{ challengeId: string, expiresAt: number }}
    */
-  _verifyTransactionMemo(transaction) {
-    if (!transaction.memo || transaction.memo.type !== StellarSdk.MemoText) {
+  _verifyTransactionTimeBounds(transaction) {
+    const maxTime = parseInt(transaction.timeBounds && transaction.timeBounds.maxTime, 10);
+    if (!maxTime) {
       throw new ValidationError(
-        'Invalid challenge transaction: missing or invalid memo',
+        'Invalid challenge transaction: missing time bounds',
         null,
         ERROR_CODES.INVALID_REQUEST
       );
     }
 
-    const memoText = transaction.memo.value.toString();
-    const parts = memoText.split(' ');
-
-    if (parts.length !== 4 || parts[0] !== this.config.homeDomain || parts[1] !== 'auth') {
-      throw new ValidationError(
-        'Invalid challenge transaction: malformed memo',
-        null,
-        ERROR_CODES.INVALID_REQUEST
-      );
-    }
-
-    const challengeId = parts[2];
-    const expiresAt = parseInt(parts[3], 10);
-    if (!challengeId || isNaN(expiresAt)) {
-      throw new ValidationError(
-        'Invalid challenge transaction: malformed memo',
-        null,
-        ERROR_CODES.INVALID_REQUEST
-      );
-    }
-
-    if (Date.now() / 1000 > expiresAt) {
+    if (Date.now() / 1000 > maxTime) {
       throw new ValidationError(
         'Challenge transaction has expired',
         null,
@@ -274,7 +246,7 @@ class SEP10Service {
       );
     }
 
-    return { challengeId, expiresAt };
+    return { expiresAt: maxTime };
   }
 
   /**

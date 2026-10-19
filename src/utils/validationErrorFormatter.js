@@ -57,6 +57,23 @@ function isSensitive(field) {
 }
 
 /**
+ * Build a human-readable example for a given expected format.
+ * @param {string} expectedFormat
+ * @returns {string}
+ */
+function exampleFor(expectedFormat) {
+  if (!expectedFormat) return 'See documentation';
+  const match = expectedFormat.match(/\(e\.g\.\s*([^)]+)\)/);
+  if (match) return match[1].trim();
+  if (/starts with G/i.test(expectedFormat)) return 'GABCDEFGHIJKLMNOPQRSTUVWXYZ234567ABCDEFGHIJKLMNOPQRSTUV';
+  if (/One of:/i.test(expectedFormat)) return expectedFormat.replace(/^One of:\s*/i, '').split(',')[0].trim();
+  if (/integer/i.test(expectedFormat)) return '1';
+  if (/number/i.test(expectedFormat)) return '10.5';
+  if (/string/i.test(expectedFormat)) return 'example';
+  return 'See documentation';
+}
+
+/**
  * Format a single validation error into the standard structure.
  *
  * @param {string} code - Error code from ERROR_REGISTRY
@@ -105,11 +122,11 @@ function buildErrorResponse(errors, langOrReq = 'en') {
 }
 
 function formatRequiredError(fieldPath, rules) {
-  return { field: fieldPath, message: `${fieldPath} is required`, code: 'REQUIRED', constraint: 'required', value: null };
+  return { field: fieldPath, message: `${fieldPath} is required`, code: 'REQUIRED', constraint: 'required', value: null, expected: 'required', example: 'example' };
 }
 
 function formatNullError(fieldPath, rules) {
-  return { field: fieldPath, message: `${fieldPath} cannot be null`, code: 'NULL_NOT_ALLOWED', constraint: 'notNull', value: null };
+  return { field: fieldPath, message: `${fieldPath} cannot be null`, code: 'NULL_NOT_ALLOWED', constraint: 'notNull', value: null, expected: 'non-null value', example: 'example' };
 }
 
 function formatTypeError(fieldPath, value, expectedTypes, rules) {
@@ -119,7 +136,9 @@ function formatTypeError(fieldPath, value, expectedTypes, rules) {
     message: `${fieldPath} must be of type ${types}`, 
     code: 'INVALID_TYPE', 
     constraint: 'type',
-    value: isSensitive(fieldPath) ? maskValue(value) : value 
+    value: isSensitive(fieldPath) ? maskValue(value) : value,
+    expected: types,
+    example: exampleFor(types)
   };
 }
 
@@ -129,7 +148,9 @@ function formatEnumError(fieldPath, value, enumValues) {
     message: `${fieldPath} must be one of: ${enumValues.join(', ')}`, 
     code: 'INVALID_ENUM', 
     constraint: 'enum',
-    value: isSensitive(fieldPath) ? maskValue(value) : value 
+    value: isSensitive(fieldPath) ? maskValue(value) : value,
+    expected: enumValues.join(', '),
+    example: enumValues[0]
   };
 }
 
@@ -141,7 +162,7 @@ function formatLengthError(fieldPath, value, minLength, maxLength) {
   const constraint = minLength !== undefined && maxLength !== undefined
     ? 'length'
     : minLength !== undefined ? 'minLength' : 'maxLength';
-  return { field: fieldPath, message: msg, code: 'INVALID_LENGTH', constraint, value: isSensitive(fieldPath) ? maskValue(value) : value };
+  return { field: fieldPath, message: msg, code: 'INVALID_LENGTH', constraint, value: isSensitive(fieldPath) ? maskValue(value) : value, expected: constraint, example: 'example' };
 }
 
 function formatRangeError(fieldPath, value, min, max) {
@@ -151,82 +172,21 @@ function formatRangeError(fieldPath, value, min, max) {
     : `${fieldPath} must not exceed ${max}`;
   const constraint = min !== undefined && max !== undefined
     ? 'range'
-    : min !== undefined ? 'minimum' : 'maximum';
-  return { field: fieldPath, message: msg, code: 'OUT_OF_RANGE', constraint, value };
-}
-
-function formatPatternError(fieldPath, value, pattern, rules) {
-  return { field: fieldPath, message: `${fieldPath} does not match required pattern`, code: 'INVALID_PATTERN', constraint: 'pattern', value: isSensitive(fieldPath) ? maskValue(value) : value };
-}
-
-function formatCustomError(fieldPath, value, message) {
-  return { field: fieldPath, message: typeof message === 'string' ? message : `${fieldPath} is invalid`, code: 'VALIDATION_FAILED', constraint: 'custom', value: isSensitive(fieldPath) ? maskValue(value) : value };
-}
-
-function formatSegmentError(segmentName, message) {
-  return { field: segmentName, message, code: 'SEGMENT_ERROR' };
-}
-
-function formatUnknownFieldsError(segmentName, unknownFields) {
-  return { field: segmentName, message: `Unknown fields: ${unknownFields.join(', ')}`, code: 'UNKNOWN_FIELDS' };
-}
-
-/**
- * Render a received value as a short, safe, human-readable display string for
- * inclusion in validation error messages.
- * @param {*} value
- * @returns {string}
- */
-function sanitizeValueForDisplay(value) {
-  if (value === null) return 'null';
-  if (value === undefined) return 'undefined';
-  if (typeof value === 'boolean' || typeof value === 'number') return String(value);
-  if (typeof value === 'string') {
-    let s = value;
-    const MAX = 80;
-    if (s.length > MAX) s = `${s.slice(0, MAX)}...`;
-    s = s.replace(/"/g, '\\"');
-    return `"${s}"`;
-  }
-  if (Array.isArray(value)) return `array[${value.length}]`;
-  if (typeof value === 'object') return `object{${Object.keys(value).length} keys}`;
-  return String(value);
-}
-
-/**
- * Produce an example value (as a display string) for a field given its schema
- * rules, used to guide callers toward a valid value.
- * @param {object} [rules={}]
- * @returns {string}
- */
-function generateExampleValue(rules = {}) {
-  if (Array.isArray(rules.enum) && rules.enum.length > 0) {
-    return `"${rules.enum[0]}"`;
-  }
-  switch (rules.type) {
-    case 'string':
-      return rules.minLength ? `"${'a'.repeat(rules.minLength)}"` : '"example"';
-    case 'number':
-      return String(rules.min != null ? rules.min : 10.5);
-    case 'integer':
-      return String(rules.min != null ? rules.min : 10);
-    case 'boolean':
-      return 'true';
-    case 'dateString':
-      return '"2024-01-01T00:00:00.000Z"';
-    case 'array':
-      return '[]';
-    case 'object':
-      return '{}';
-    default:
-      return '"example"';
-  }
+    : min !== undefined ? 'min' : 'max';
+  return { field: fieldPath, message: msg, code: 'INVALID_RANGE', constraint, value: isSensitive(fieldPath) ? maskValue(value) : value, expected: constraint, example: min !== undefined ? String(min) : String(max) };
 }
 
 module.exports = {
-  formatError, buildErrorResponse, maskValue, isSensitive, ERROR_REGISTRY, SENSITIVE_FIELDS,
-  formatRequiredError, formatNullError, formatTypeError, formatEnumError,
-  formatLengthError, formatRangeError, formatPatternError, formatCustomError,
-  formatSegmentError, formatUnknownFieldsError,
-  sanitizeValueForDisplay, generateExampleValue,
+  ERROR_REGISTRY,
+  SENSITIVE_FIELDS,
+  maskValue,
+  isSensitive,
+  formatError,
+  buildErrorResponse,
+  formatRequiredError,
+  formatNullError,
+  formatTypeError,
+  formatEnumError,
+  formatLengthError,
+  formatRangeError,
 };

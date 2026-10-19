@@ -24,6 +24,7 @@ decision. It covers:
 | [002](./002-mock-vs-real-stellar.md) | Introduce a mock Stellar service layer | Accepted |
 | [003](./003-signing-provider-strategy.md) | Pluggable signing-provider strategy | Accepted |
 | [004](./004-money-as-stroops.md) | Represent monetary amounts as stroops internally | Accepted |
+| [005](./005-canonical-donations-table.md) | Use `donations_store` as the canonical donation table | Proposed |
 
 ## When to write an ADR
 

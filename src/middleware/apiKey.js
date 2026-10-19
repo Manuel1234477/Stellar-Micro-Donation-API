@@ -13,11 +13,19 @@ const { securityConfig } = require("../config/securityConfig");
 const { validateKey} = require("../models/apiKeys");
 const { verifyAccessToken } = require("../services/JwtService");
 const log = require("../utils/log");
+const { isLegacyKeyDisabled, getLegacyKeySunsetDate } = require("../utils/legacyApiKeySunset");
+const { allowAuditEvent } = require("../utils/authAuditThrottle");
+const { recordAuthFailure, recordLegacyKeyUsage } = require("../utils/metrics");
+
+// Authentication audit rows are written at most once per key per window (issue #1887)
+const AUTH_AUDIT_WINDOW_MS = 60 * 1000;
+const LEGACY_AUDIT_WINDOW_MS = 60 * 60 * 1000;
 const AuditLogService = require("../services/AuditLogService");
 const { verify: verifySignature } = require("../utils/requestSigner");
 const { isIpAllowed } = require("../utils/ipAllowlist");
 const { defaultStore: nonceStore } = require("../utils/nonceStore");
 const { safeEqual } = require("../utils/safeEqual");
+const crypto = require("crypto");
 const WebhookService = require("../services/WebhookService");
 
 /**
@@ -25,6 +33,60 @@ const WebhookService = require("../services/WebhookService");
  * Uses security configuration for API keys with safe defaults
  */
 const legacyKeys = securityConfig.API_KEYS || [];
+
+/**
+ * Short-TTL cache for API key validation results.
+ *
+ * Listing donations is the most frequent read path, and re-querying the
+ * api_keys table on every request was a measurable contributor to the
+ * list-donations p95 regression (see issue #1796). Validation results are
+ * cached for a short window so repeated requests with the same key avoid the
+ * DB round-trip while revocation/rotation still takes effect quickly.
+ *
+ * The cache stores the keyed hash of the raw key (never the raw key itself)
+ * and is bounded in size to avoid unbounded memory growth.
+ */
+const API_KEY_CACHE_TTL_MS = Number(
+  process.env.API_KEY_CACHE_TTL_MS || 30_000,
+);
+const API_KEY_CACHE_MAX_ENTRIES = Number(
+  process.env.API_KEY_CACHE_MAX_ENTRIES || 5_000,
+);
+
+const apiKeyCache = new Map();
+
+const hashApiKey = (apiKey) =>
+  crypto.createHash("sha256").update(apiKey).digest("hex");
+
+const getCachedKeyInfo = (apiKey) => {
+  if (API_KEY_CACHE_TTL_MS <= 0) return undefined;
+  const cacheKey = hashApiKey(apiKey);
+  const entry = apiKeyCache.get(cacheKey);
+  if (!entry) return undefined;
+  if (entry.expiresAt <= Date.now()) {
+    apiKeyCache.delete(cacheKey);
+    return undefined;
+  }
+  return entry.keyInfo;
+};
+
+const setCachedKeyInfo = (apiKey, keyInfo) => {
+  if (API_KEY_CACHE_TTL_MS <= 0) return;
+  const cacheKey = hashApiKey(apiKey);
+  if (apiKeyCache.size >= API_KEY_CACHE_MAX_ENTRIES) {
+    // Evict the oldest entry (Map preserves insertion order).
+    const oldest = apiKeyCache.keys().next().value;
+    if (oldest !== undefined) apiKeyCache.delete(oldest);
+  }
+  apiKeyCache.set(cacheKey, {
+    keyInfo,
+    expiresAt: Date.now() + API_KEY_CACHE_TTL_MS,
+  });
+};
+
+const invalidateCachedKeyInfo = (apiKey) => {
+  apiKeyCache.delete(hashApiKey(apiKey));
+};
 
 /**
  * API Key Authentication Middleware
@@ -76,27 +138,32 @@ const requireApiKey = async (req, res, next) => {
   const apiKey = req.get("x-api-key");
 
   if (!apiKey) {
-    log.warn("API_KEY", "Missing API key in request", {
-      ip: req.ip,
-      userAgent: req.get("User-Agent"),
-      path: req.path,
-    });
+    recordAuthFailure("missing_key");
 
-    // Audit log: Missing API key
-    AuditLogService.log({
-      category: AuditLogService.CATEGORY.AUTHENTICATION,
-      action: AuditLogService.ACTION.API_KEY_VALIDATION_FAILED,
-      severity: AuditLogService.SEVERITY.HIGH,
-      result: 'FAILURE',
-      requestId: req.id,
-      ipAddress: req.ip,
-      resource: req.path,
-      reason: 'Missing API key header',
-      details: {
+    // Audit at most once per IP per minute: unauthenticated traffic must not
+    // turn every request into an audit write (see issue #1887).
+    if (allowAuditEvent(`missing:${req.ip}`, AUTH_AUDIT_WINDOW_MS)) {
+      log.warn("API_KEY", "Missing API key in request", {
+        ip: req.ip,
         userAgent: req.get("User-Agent"),
-        method: req.method
-      }
-    }).catch(() => {});
+        path: req.path,
+      });
+
+      AuditLogService.log({
+        category: AuditLogService.CATEGORY.AUTHENTICATION,
+        action: AuditLogService.ACTION.API_KEY_VALIDATION_FAILED,
+        severity: AuditLogService.SEVERITY.LOW,
+        result: 'FAILURE',
+        requestId: req.id,
+        ipAddress: req.ip,
+        resource: req.path,
+        reason: 'Missing API key header',
+        details: {
+          userAgent: req.get("User-Agent"),
+          method: req.method
+        }
+      }).catch(() => {});
+    }
 
     return res.status(401).json({
       success: false,
@@ -111,7 +178,15 @@ const requireApiKey = async (req, res, next) => {
 
   try {
     // Stage 1: Attempt Database-backed validation (Supports key rotation & granular roles)
-    const keyInfo = await validateKey(apiKey);
+    // Results are memoized per key for a short TTL to avoid re-querying the
+    // api_keys table on every request (see issue #1796).
+    let keyInfo = getCachedKeyInfo(apiKey);
+    if (keyInfo === undefined) {
+      keyInfo = await validateKey(apiKey);
+      if (keyInfo) {
+        setCachedKeyInfo(apiKey, keyInfo);
+      }
+    }
 
     if (keyInfo) {
       req.apiKey = keyInfo;
@@ -323,26 +398,46 @@ const requireApiKey = async (req, res, next) => {
       // Use constant-time comparison to prevent timing attacks
       for (const legacyKey of legacyKeys) {
         if (safeEqual(apiKey, legacyKey)) {
+          if (isLegacyKeyDisabled()) {
+            log.warn("API_KEY_AUTH", "Rejected legacy API key after sunset", {
+              sunsetDate: getLegacyKeySunsetDate(),
+            });
+            return res.status(401).json({
+              success: false,
+              error: {
+                code: "LEGACY_API_KEY_DISABLED",
+                message: `Legacy API keys were disabled on ${getLegacyKeySunsetDate()}. Create a database-backed key with "npm run keys:create".`,
+                requestId: req.id,
+                timestamp: new Date().toISOString(),
+              },
+            });
+          }
+
           log.warn("API_KEY_AUTH", "Using legacy environment-based API key", {
             message:
               "Consider migrating to database-backed keys for rotation support",
           });
 
-          // Audit log: Legacy key usage
-          AuditLogService.log({
-            category: AuditLogService.CATEGORY.AUTHENTICATION,
-            action: AuditLogService.ACTION.LEGACY_KEY_USED,
-            severity: AuditLogService.SEVERITY.MEDIUM,
-            result: 'SUCCESS',
-            requestId: req.id,
-            ipAddress: req.ip,
-            resource: req.path,
-            details: {
-              role: 'user',
-              isLegacy: true,
-              warning: 'Consider migrating to database-backed keys'
-            }
-          }).catch(() => {});
+          // Audit log: Legacy key usage, sampled to once per key per hour (see issue #1887)
+          const legacyKeyHash = crypto.createHash('sha256').update(apiKey).digest('hex').slice(0, 16);
+          recordLegacyKeyUsage(`legacy-${legacyKeyHash}`);
+          if (allowAuditEvent(`legacy:${legacyKeyHash}`, LEGACY_AUDIT_WINDOW_MS)) {
+            AuditLogService.log({
+              category: AuditLogService.CATEGORY.AUTHENTICATION,
+              action: AuditLogService.ACTION.LEGACY_KEY_USED,
+              severity: AuditLogService.SEVERITY.LOW,
+              result: 'SUCCESS',
+              requestId: req.id,
+              ipAddress: req.ip,
+              resource: req.path,
+              details: {
+                role: 'user',
+                isLegacy: true,
+                keyIdHash: legacyKeyHash,
+                warning: 'Consider migrating to database-backed keys'
+              }
+            }).catch(() => {});
+          }
 
           req.apiKey = {
             role: "user",
@@ -355,20 +450,24 @@ const requireApiKey = async (req, res, next) => {
     }
 
     // Stage 3: Rejection (Key is either invalid, revoked, or expired)
-    // Audit log: Invalid API key
-    AuditLogService.log({
-      category: AuditLogService.CATEGORY.AUTHENTICATION,
-      action: AuditLogService.ACTION.API_KEY_VALIDATION_FAILED,
-      severity: AuditLogService.SEVERITY.HIGH,
-      result: 'FAILURE',
-      requestId: req.id,
-      ipAddress: req.ip,
-      resource: req.path,
-      reason: 'Invalid or expired API key',
-      details: {
-        keyPrefix: apiKey.substring(0, 8) + '...'
-      }
-    }).catch(() => {});
+    recordAuthFailure("invalid_key");
+
+    // Audit log: Invalid API key, at most once per IP per minute (see issue #1887)
+    if (allowAuditEvent(`invalid:${req.ip}`, AUTH_AUDIT_WINDOW_MS)) {
+      AuditLogService.log({
+        category: AuditLogService.CATEGORY.AUTHENTICATION,
+        action: AuditLogService.ACTION.API_KEY_VALIDATION_FAILED,
+        severity: AuditLogService.SEVERITY.MEDIUM,
+        result: 'FAILURE',
+        requestId: req.id,
+        ipAddress: req.ip,
+        resource: req.path,
+        reason: 'Invalid or expired API key',
+        details: {
+          keyPrefix: apiKey.substring(0, 8) + '...'
+        }
+      }).catch(() => {});
+    }
 
     return res.status(401).json({
       success: false,
@@ -401,3 +500,5 @@ const requireApiKey = async (req, res, next) => {
 };
 
 module.exports = requireApiKey;
+module.exports.invalidateCachedKeyInfo = invalidateCachedKeyInfo;
+module.exports._apiKeyCache = apiKeyCache;

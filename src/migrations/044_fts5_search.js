@@ -8,6 +8,14 @@
  *
  * - donations_fts: indexes memo, notes, tags from donations_store
  * - campaigns_fts: indexes name, description from campaigns
+ *
+ * Performance note (issue #1796):
+ * The triggers below only fire on INSERT/UPDATE/DELETE of donations_store and
+ * campaigns, so they add no cost to the read path (list-donations). The FTS
+ * tables are external-content virtual tables (content='') and must only be
+ * queried by the /donations/search endpoint; the default list query must not
+ * join donations_fts. The default list query is served by the composite
+ * indexes added in migration 045.
  */
 
 exports.name = '044_fts5_search';

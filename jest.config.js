@@ -9,6 +9,9 @@ module.exports = {
   testPathIgnorePatterns: [
     '/node_modules/',
     'tests/e2e/',
+    // Quarantined suites run only via jest.config.quarantine.js (see
+    // tests/quarantine.js and docs/testing/FLAKY_TEST_POLICY.md).
+    '\\.quarantine\\.test\\.js$',
     'tests/donation-routes-integration.test.js', // Temporarily disabled - pre-existing failures
     'tests/scheduler-resilience.test.js',
     'tests/advanced-failure-scenarios.test.js',

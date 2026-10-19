@@ -7,16 +7,35 @@ The `src/routes/wallet.js` file (originally 2240 lines) has been decomposed into
 ## Architecture
 
 ### Composition Layer
-**File:** `src/routes/wallet.js`  
-**Responsibility:** Mount sub-routers  
-**Lines:** ~30
+**File:** `src/routes/wallets/index.js`  
+**Responsibility:** Mount sub-routers and the wallet response sanitizer  
+**Lines:** ~80
 
 ```javascript
-const indexRouter = require('./wallets/index');
-const metadataRouter = require('./wallets/metadata');
-router.use('/', indexRouter);
-router.use('/:id', metadataRouter);
+const crudRouter = require('./crud');
+const metadataRouter = require('./metadata');
+router.use('/', crudRouter);
+router.use('/', metadataRouter);
 ```
+
+`src/routes/wallet.js` only re-exports `./wallets` so existing imports keep
+working. Add new wallet endpoints to a file in `src/routes/wallets/`, never to
+`wallet.js`.
+
+### One location per resource (issue #1779)
+
+Donations, wallets and transactions each live in one directory with an
+`index.js` composition root:
+
+| Resource | Composition root | Legacy re-export |
+|----------|------------------|------------------|
+| Donations | `src/routes/donations/index.js` | `src/routes/donation.js` |
+| Wallets | `src/routes/wallets/index.js` | `src/routes/wallet.js` |
+| Transactions | `src/routes/transactions/index.js` | `src/routes/transaction.js` |
+
+Startup fails if the same method + path is registered twice
+(`assertNoDuplicateRoutes()` in `src/middleware/methodRegistry.js`, called from
+`mountRoutes()`). Express would otherwise silently run only the first one.
 
 ### Sub-Routers
 
@@ -32,7 +51,7 @@ router.use('/:id', metadataRouter);
 - **Constants:** `STELLAR_MAX_LIMIT`, `WALLET_ANALYTICS_CACHE_TTL_MS`
 - **Utilities:** `validateTrustLimit()`
 
-#### `index.js` (CRUD & Bulk Operations)
+#### `crud.js` (CRUD & Bulk Operations)
 - **Endpoints:**
   - `POST /` — Create wallet metadata
   - `GET /` — List wallets with cursor pagination and sorting
@@ -120,9 +139,9 @@ router.use('/:id', metadataRouter);
 
 ### Phase 1 (Complete)
 - ✅ Create `helpers.js` with all schemas and constants
-- ✅ Create `index.js` with CRUD and bulk operations
+- ✅ Create `crud.js` (originally `index.js`) with CRUD and bulk operations
 - ✅ Create `metadata.js` with wallet details
-- ✅ Update `wallet.js` to composition layer
+- ✅ Move the composition layer to `wallets/index.js`; `wallet.js` re-exports it (#1779)
 
 ### Phase 2 (In Progress)
 - ⏳ Create remaining sub-routers (balance-history, home-domain, inflation, etc.)
@@ -148,7 +167,7 @@ router.use('/:id', metadataRouter);
 All routes maintain their original paths and behavior. No breaking changes.
 
 Example:
-- `POST /wallets` — available via `index.js` mounted at `/`
+- `POST /wallets` — available via `crud.js` mounted at `/`
 - `GET /wallets/:id` — available via `metadata.js` mounted at `/:id`
 - `PATCH /wallets/:id/label` — available via `metadata.js` mounted at `/:id`
 

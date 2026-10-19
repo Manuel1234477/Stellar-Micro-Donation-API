@@ -5,7 +5,7 @@
  *  - detectOverpayment utility (unit)
  *  - buildOverpaymentRecord utility (unit)
  *  - DonationService.createDonationRecord overpayment integration
- *  - GET /stats/overpayments endpoint
+ *  - GET /api/v1/stats/overpayments endpoint
  *  - Edge cases and validation errors
  */
 
@@ -219,9 +219,9 @@ describe('DonationService — overpayment detection', () => {
   });
 });
 
-// ─── Integration: GET /stats/overpayments ────────────────────────────────────
+// ─── Integration: GET /api/v1/stats/overpayments ─────────────────────────────
 
-describe('GET /stats/overpayments', () => {
+describe('GET /api/v1/stats/overpayments', () => {
   const request = require('supertest');
   const path = require('path');
   const os = require('os');
@@ -245,7 +245,7 @@ describe('GET /stats/overpayments', () => {
 
   it('returns 200 with empty overpayments when no transactions exist', async () => {
     const res = await request(app)
-      .get('/stats/overpayments')
+      .get('/api/v1/stats/overpayments')
       .set('x-api-key', 'test-key');
 
     expect(res.status).toBe(200);
@@ -279,7 +279,7 @@ describe('GET /stats/overpayments', () => {
     fs.writeFileSync(tmpDb, JSON.stringify([flaggedTx], null, 2));
 
     const res = await request(app)
-      .get('/stats/overpayments')
+      .get('/api/v1/stats/overpayments')
       .set('x-api-key', 'test-key');
 
     expect(res.status).toBe(200);
@@ -320,7 +320,7 @@ describe('GET /stats/overpayments', () => {
 
     const startDate = '2025-01-01';
     const res = await request(app)
-      .get(`/stats/overpayments?startDate=${startDate}`)
+      .get(`/api/v1/stats/overpayments?startDate=${startDate}`)
       .set('x-api-key', 'test-key');
 
     expect(res.status).toBe(200);
@@ -330,7 +330,7 @@ describe('GET /stats/overpayments', () => {
 
   it('returns 400 for invalid startDate', async () => {
     const res = await request(app)
-      .get('/stats/overpayments?startDate=not-a-date')
+      .get('/api/v1/stats/overpayments?startDate=not-a-date')
       .set('x-api-key', 'test-key');
 
     expect(res.status).toBe(400);
@@ -339,7 +339,7 @@ describe('GET /stats/overpayments', () => {
 
   it('returns 400 when startDate is after endDate', async () => {
     const res = await request(app)
-      .get('/stats/overpayments?startDate=2026-01-01&endDate=2025-01-01')
+      .get('/api/v1/stats/overpayments?startDate=2026-01-01&endDate=2025-01-01')
       .set('x-api-key', 'test-key');
 
     expect(res.status).toBe(400);
@@ -348,7 +348,7 @@ describe('GET /stats/overpayments', () => {
 
   it('includes metadata note in response', async () => {
     const res = await request(app)
-      .get('/stats/overpayments')
+      .get('/api/v1/stats/overpayments')
       .set('x-api-key', 'test-key');
 
     expect(res.body.metadata.note).toBeDefined();
@@ -362,7 +362,7 @@ describe('GET /stats/overpayments', () => {
     fs.writeFileSync(tmpDb, JSON.stringify(txs, null, 2));
 
     const res = await request(app)
-      .get('/stats/overpayments')
+      .get('/api/v1/stats/overpayments')
       .set('x-api-key', 'test-key');
 
     expect(res.body.data.totalOverpayments).toBe(2);
@@ -378,7 +378,7 @@ describe('GET /stats/overpayments', () => {
     fs.writeFileSync(tmpDb, JSON.stringify(txs, null, 2));
 
     const res = await request(app)
-      .get('/stats/overpayments')
+      .get('/api/v1/stats/overpayments')
       .set('x-api-key', 'test-key');
 
     expect(res.body.data.totalOverpayments).toBe(1);

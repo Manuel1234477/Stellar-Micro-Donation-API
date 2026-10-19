@@ -4,8 +4,10 @@
  * Sets environment variables BEFORE Jest spawns worker processes so all modules
  * (securityConfig, database, stellar config) load with the correct settings.
  *
- * Runs once before the entire e2e suite. Creates a clean SQLite database and
- * backs up any pre-existing wallets.json so e2e tests start from a known state.
+ * Runs once before the entire e2e suite. Creates a clean SQLite database in a
+ * temporary directory so the repository's `data/` directory is never touched.
+ * No JSON persistence files (e.g. data/wallets.json) are read, backed up, or
+ * modified by this setup.
  */
 
 'use strict';
@@ -30,28 +32,25 @@ if (!process.env.ENCRYPTION_KEY) {
 
 module.exports = async () => {
   const fs = require('fs');
+  const os = require('os');
   const path = require('path');
 
-  const ROOT = path.join(__dirname, '..', '..');
-  const DATA_DIR = path.join(ROOT, 'data');
-  const DB_PATH = path.join(DATA_DIR, 'stellar_donations.db');
-  const WALLETS_PATH = path.join(DATA_DIR, 'wallets.json');
-  const WALLETS_BACKUP = path.join(DATA_DIR, 'wallets.e2e_backup.json');
-
-  // Ensure data directory exists
-  if (!fs.existsSync(DATA_DIR)) {
-    fs.mkdirSync(DATA_DIR, { recursive: true });
+  // Use a fresh temp directory for the e2e database so the repo's data/
+  // directory (and any JSON persistence files in it) is left untouched.
+  const E2E_TMP_DIR = path.join(os.tmpdir(), `stellar-e2e-${process.pid}-${Date.now()}`);
+  if (!fs.existsSync(E2E_TMP_DIR)) {
+    fs.mkdirSync(E2E_TMP_DIR, { recursive: true });
   }
+
+  const DB_PATH = path.join(E2E_TMP_DIR, 'stellar_donations.db');
+
+  // Point the database layer at the temp DB path. Workers inherit this env var.
+  process.env.DB_PATH = DB_PATH;
+  process.env.DATABASE_PATH = DB_PATH;
 
   // Drop stale database so tables are always created fresh with the correct schema
   if (fs.existsSync(DB_PATH)) {
     fs.unlinkSync(DB_PATH);
-  }
-
-  // Back up any existing wallets.json so the e2e run starts with an empty store
-  if (fs.existsSync(WALLETS_PATH)) {
-    fs.copyFileSync(WALLETS_PATH, WALLETS_BACKUP);
-    fs.unlinkSync(WALLETS_PATH);
   }
 
   // Bootstrap the database schema
@@ -168,5 +167,5 @@ module.exports = async () => {
   }
 
   // eslint-disable-next-line no-console
-  console.log('[e2e/setup] Database initialised. Targeting Stellar testnet.');
+  console.log(`[e2e/setup] Database initialised at ${DB_PATH}. Targeting Stellar testnet.`);
 };

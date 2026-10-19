@@ -1,13 +1,10 @@
 {
   "testRunner": "jest",
-  "testFramework": "jest",
   "coverageAnalysis": "perTest",
   "mutate": [
-    "src/services/DonationService.js",
-    "src/routes/donation.js",
-    "src/lib/transactionStateMachine.js",
-    "src/lib/validators.js",
-    "src/lib/moneyMath.js"
+    "src/utils/money.js",
+    "src/utils/validators.js",
+    "src/utils/transactionStateMachine.js"
   ],
   "mutators": [
     "ArithmeticOperator",
@@ -36,7 +33,7 @@
     "low": 40
   },
   "plugins": [
-    "@stryker-mutator/core"
+    "@stryker-mutator/jest-runner"
   ],
   "jest": {
     "projectType": "custom",

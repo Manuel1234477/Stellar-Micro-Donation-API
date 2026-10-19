@@ -13,11 +13,38 @@
 
 const path = require('path');
 const fs = require('fs');
+const os = require('os');
+const sqlite3 = require('sqlite3');
 const BackupService = require('../src/services/BackupService');
 const log = require('../src/utils/log');
 
-const TEST_DB_PATH = process.env.TEST_DB_PATH || path.join(__dirname, '../data/test-backup.db');
-const BACKUP_DIR = process.env.BACKUP_DIR || path.join(__dirname, '../data/backups');
+// Run against an isolated scratch directory by default so the suite starts
+// from an empty backup directory and never touches the tracked data/ tree.
+const WORK_DIR = fs.mkdtempSync(path.join(os.tmpdir(), 'backup-restore-test-'));
+const TEST_DB_PATH = process.env.TEST_DB_PATH || path.join(WORK_DIR, 'test-backup.db');
+const BACKUP_DIR = process.env.BACKUP_DIR || path.join(WORK_DIR, 'backups');
+
+/**
+ * Create a small SQLite database containing the tables BackupService
+ * verifies (users, transactions, recurring_donations) with some rows.
+ */
+function createTestDatabase(dbPath) {
+  return new Promise((resolve, reject) => {
+    const db = new sqlite3.Database(dbPath, (openErr) => {
+      if (openErr) return reject(openErr);
+      db.serialize(() => {
+        db.run('CREATE TABLE IF NOT EXISTS users (id INTEGER PRIMARY KEY, publicKey TEXT)');
+        db.run('CREATE TABLE IF NOT EXISTS transactions (id INTEGER PRIMARY KEY, amount TEXT)');
+        db.run('CREATE TABLE IF NOT EXISTS recurring_donations (id INTEGER PRIMARY KEY, amount TEXT)');
+        db.run("INSERT INTO users (publicKey) VALUES ('GTESTDONOR'), ('GTESTRECIPIENT')");
+        db.run("INSERT INTO transactions (amount) VALUES ('10.0000000')");
+        db.run("INSERT INTO recurring_donations (amount) VALUES ('1.0000000')", (err) => {
+          db.close((closeErr) => (err || closeErr ? reject(err || closeErr) : resolve()));
+        });
+      });
+    });
+  });
+}
 
 class BackupRestoreTestSuite {
   constructor() {
@@ -33,6 +60,10 @@ class BackupRestoreTestSuite {
     // Ensure backup dir exists
     if (!fs.existsSync(BACKUP_DIR)) {
       fs.mkdirSync(BACKUP_DIR, { recursive: true });
+    }
+
+    if (!fs.existsSync(TEST_DB_PATH)) {
+      await createTestDatabase(TEST_DB_PATH);
     }
 
     // Initialize backup service
@@ -56,6 +87,8 @@ class BackupRestoreTestSuite {
         log.warn('BACKUP_TEST', 'Could not clean up test database', { error: error.message });
       }
     }
+
+    fs.rmSync(WORK_DIR, { recursive: true, force: true });
   }
 
   assert(condition, message) {

@@ -3,11 +3,95 @@
  *
  * RESPONSIBILITY: Schedule, execute, and manage automated backups
  * OWNER: Backend Team
- * DEPENDENCIES: node-cron, BackupService, logger
+ * DEPENDENCIES: timerRegistry, BackupService, logger
  */
 
-const cron = require('node-cron');
 const log = require('../utils/log');
+const timerRegistry = require('../utils/timerRegistry');
+
+/**
+ * Parse a 5-field cron expression (minute hour day-of-month month day-of-week)
+ * into its numeric fields. Supports '*', plain numbers, and comma-separated
+ * lists. Returns null when the expression cannot be parsed.
+ * @param {string} expression
+ * @returns {{minute:number[], hour:number[], dayOfMonth:number[], month:number[], dayOfWeek:number[]}|null}
+ */
+function parseCronExpression(expression) {
+  if (typeof expression !== 'string') return null;
+
+  const fields = expression.trim().split(/\s+/);
+  if (fields.length !== 5) return null;
+
+  const ranges = [
+    [0, 59], // minute
+    [0, 23], // hour
+    [1, 31], // day of month
+    [1, 12], // month
+    [0, 6],  // day of week
+  ];
+
+  const parsed = [];
+
+  for (let i = 0; i < fields.length; i++) {
+    const field = fields[i];
+    const [min, max] = ranges[i];
+
+    if (field === '*') {
+      parsed.push(null);
+      continue;
+    }
+
+    const values = [];
+    for (const part of field.split(',')) {
+      const value = Number(part);
+      if (!Number.isInteger(value) || value < min || value > max) {
+        return null;
+      }
+      values.push(value);
+    }
+    parsed.push(values);
+  }
+
+  return {
+    minute: parsed[0],
+    hour: parsed[1],
+    dayOfMonth: parsed[2],
+    month: parsed[3],
+    dayOfWeek: parsed[4],
+  };
+}
+
+/**
+ * Compute the next Date matching the parsed cron fields, starting from `from`.
+ * @param {object} parsed - Result of parseCronExpression
+ * @param {Date} from
+ * @returns {Date}
+ */
+function nextCronDate(parsed, from) {
+  const matches = (values, value) => values === null || values.includes(value);
+
+  const candidate = new Date(from.getTime());
+  candidate.setSeconds(0, 0);
+  candidate.setMinutes(candidate.getMinutes() + 1);
+
+  // Bound the search to avoid an infinite loop on impossible expressions.
+  const limit = new Date(from.getTime() + 366 * 24 * 60 * 60 * 1000);
+
+  while (candidate <= limit) {
+    if (
+      matches(parsed.month, candidate.getMonth() + 1) &&
+      matches(parsed.dayOfMonth, candidate.getDate()) &&
+      matches(parsed.dayOfWeek, candidate.getDay()) &&
+      matches(parsed.hour, candidate.getHours()) &&
+      matches(parsed.minute, candidate.getMinutes())
+    ) {
+      return candidate;
+    }
+    candidate.setMinutes(candidate.getMinutes() + 1);
+  }
+
+  return null;
+}
 
 class BackupScheduler {
   /**
@@ -27,6 +111,8 @@ class BackupScheduler {
     this.onBackupError = options.onBackupError || (() => {});
     this.onCleanupComplete = options.onCleanupComplete || (() => {});
     this.task = null;
+    this._parsedSchedule = null;
+    this._nextRun = null;
   }
 
   /**
@@ -38,16 +124,47 @@ class BackupScheduler {
       return;
     }
 
+    const parsed = parseCronExpression(this.schedule);
+    if (!parsed) {
+      throw new Error(`Invalid cron schedule: ${this.schedule}`);
+    }
+
+    this._parsedSchedule = parsed;
+
     log.info('BACKUP_SCHEDULER', 'Starting scheduler', { schedule: this.schedule });
 
-    this.task = cron.schedule(this.schedule, () => {
-      this.executeBackup().catch(error => {
-        log.error('BACKUP_SCHEDULER', 'Unhandled error in backup task', { error: error.message });
-      });
-    });
+    this._scheduleNext();
 
-    // Don't start immediately; next scheduled execution will trigger
     log.info('BACKUP_SCHEDULER', 'Scheduler started', { nextRun: this._getNextRun() });
+  }
+
+  /**
+   * Schedule the next backup run using the shared timer registry so the
+   * scheduler honours process lifecycle management.
+   * @private
+   */
+  _scheduleNext() {
+    const next = nextCronDate(this._parsedSchedule, new Date());
+    if (!next) {
+      log.error('BACKUP_SCHEDULER', 'Unable to compute next run time', { schedule: this.schedule });
+      return;
+    }
+
+    this._nextRun = next;
+    const delay = Math.max(0, next.getTime() - Date.now());
+
+    this.task = timerRegistry.setTimeout(() => {
+      this.task = null;
+      this.executeBackup()
+        .catch(error => {
+          log.error('BACKUP_SCHEDULER', 'Unhandled error in backup task', { error: error.message });
+        })
+        .finally(() => {
+          if (this._parsedSchedule) {
+            this._scheduleNext();
+          }
+        });
+    }, delay);
   }
 
   /**
@@ -55,9 +172,10 @@ class BackupScheduler {
    */
   stop() {
     if (this.task) {
-      this.task.stop();
-      this.task.destroy();
+      timerRegistry.clearTimeout(this.task);
       this.task = null;
+      this._parsedSchedule = null;
+      this._nextRun = null;
       log.info('BACKUP_SCHEDULER', 'Scheduler stopped');
     }
   }
@@ -167,8 +285,7 @@ class BackupScheduler {
    */
   _getNextRun() {
     if (!this.task) return null;
-    // Cron task provides nextDate() method
-    return this.task.nextDate ? this.task.nextDate() : null;
+    return this._nextRun;
   }
 
   /**

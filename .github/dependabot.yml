@@ -22,8 +22,13 @@ updates:
     groups:
       # Security patches (highest priority) — applies to ALL security updates
       # regardless of whether the package is prod or dev.
+      # Major security bumps are left out so they open as their own PR and get
+      # the "major-update" label (see .github/workflows/dependabot-labels.yml).
       security-patches:
         applies-to: security-updates
+        update-types:
+          - "minor"
+          - "patch"
         patterns:
           - "*"
 
@@ -43,6 +48,7 @@ updates:
           - "@types/*"
 
       # Dev / tooling dependencies — all minor and patch updates grouped.
+      # Major bumps (ESLint, TypeScript, Jest, ...) open as individual PRs.
       dev-deps:
         applies-to: version-updates
         dependency-type: "development"
@@ -70,6 +76,11 @@ updates:
       prefix: "chore(deps-actions)"
       include: "scope"
     groups:
+      # Minor/patch only; a major Action bump (e.g. actions/checkout v4 -> v5)
+      # opens as its own PR for manual review.
       actions-updates:
+        update-types:
+          - "minor"
+          - "patch"
         patterns:
           - "*"

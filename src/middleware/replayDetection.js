@@ -17,6 +17,7 @@
 const { computeFingerprint, TrackingStore } = require('../utils/replayDetector');
 const config = require('../config/replayDetection');
 const log = require('../utils/log');
+const timerRegistry = require('../utils/timerRegistry');
 
 // Singleton tracking store instance
 const trackingStore = new TrackingStore();
@@ -44,7 +45,7 @@ function replayDetectionMiddleware(req, res, next) {
   let done = false;
 
   // Fail-open timeout: if the check hasn't finished within TIMEOUT_MS, call next() immediately
-  const timer = setTimeout(() => {
+  const timer = timerRegistry.createTimeout(() => {
     if (!done) {
       done = true;
       log.warn('REPLAY_DETECTION', 'Replay detection timed out — failing open', {
@@ -70,7 +71,7 @@ function replayDetectionMiddleware(req, res, next) {
     .finally(() => {
       if (!done) {
         done = true;
-        clearTimeout(timer);
+        timer.clear();
         next();
       }
     });

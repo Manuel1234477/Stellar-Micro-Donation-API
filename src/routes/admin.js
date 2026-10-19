@@ -3,13 +3,12 @@ const router = express.Router();
 const { verifyAdmin } = require('../middleware/auth'); // assuming you have this
 
 const i18nController = require('../controllers/admin/i18nController');
-const xdrRouter = require('./admin/xdr');
 
 router.get('/i18n/messages', verifyAdmin, i18nController.getAllMessages);
 router.patch('/i18n/messages/:lang/:key', verifyAdmin, i18nController.updateTranslation);
 router.post('/i18n/languages', verifyAdmin, i18nController.addLanguage);
 
-// Mount XDR decode routes under /admin/transactions
-router.use('/transactions', xdrRouter);
+// XDR decoding lives in routes/admin/inspect.js (#1778); its deprecated
+// /admin/transactions/decode-xdr alias is mounted from src/bootstrap/routes.js.
 
 module.exports = router;

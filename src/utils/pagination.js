@@ -261,6 +261,8 @@ function createCursorFromItem(item, timestampField, idField = 'id') {
  * @param {string} idField - Identifier field name.
  * @returns {number} Sort comparator value.
  */
+const ID_COLLATOR = new Intl.Collator('en', { numeric: true });
+
 function compareItemsDescending(left, right, timestampField, idField = 'id') {
   const leftTimestamp = new Date(left[timestampField]).getTime();
   const rightTimestamp = new Date(right[timestampField]).getTime();
@@ -269,7 +271,7 @@ function compareItemsDescending(left, right, timestampField, idField = 'id') {
     return rightTimestamp - leftTimestamp;
   }
 
-  return String(right[idField]).localeCompare(String(left[idField]), 'en', { numeric: true });
+  return ID_COLLATOR.compare(String(right[idField]), String(left[idField]));
 }
 
 /**
@@ -305,7 +307,13 @@ function paginateCollection(items, {
     ? items.filter((item) => new Date(item[timestampField]).getTime() <= snapshotMs)
     : items;
 
-  const sortedItems = [...filteredItems].sort((left, right) => compareItemsDescending(left, right, timestampField, idField));
+  // Precompute sort keys once so the comparator avoids per-comparison Date parsing.
+  const sortedItems = filteredItems
+    .map((item) => ({ item, ts: new Date(item[timestampField]).getTime(), id: String(item[idField]) }))
+    .sort((left, right) => (left.ts !== right.ts
+      ? right.ts - left.ts
+      : ID_COLLATOR.compare(right.id, left.id)))
+    .map((entry) => entry.item);
   const totalCount = sortedItems.length;
 
   let startIndex = 0;
@@ -361,13 +369,19 @@ function paginateCollection(items, {
  * point-in-time view and avoid the concurrent-insert skip/duplicate problem
  * described in the module-level JSDoc.
  *
+ * The emitted predicate is written in row-value form
+ * (`(ts, id) < (?, ?)`) so SQLite can satisfy it with a single range scan on
+ * a composite `(timestampColumn, idColumn)` index instead of an OR-expanded
+ * scan (see issue #1796).  The OR form is kept as a fallback for callers that
+ * explicitly opt out via `useRowValueComparison: false`.
+ *
  * @param {Object} options - Clause options.
  * @param {{ timestamp: string, id: string }|null} options.cursor - Decoded cursor.
  * @param {string} options.direction - Pagination direction.
  * @param {string} options.timestampColumn - Timestamp column name.
  * @param {string} options.idColumn - Identifier column name.
  * @param {string|null} options.snapshotAt - Optional ISO-8601 timestamp for snapshot-based pagination.
- * @param {string|null} [options.snapshotAt] - Optional ISO 8601 upper-bound timestamp for consistent pagination.
+ * @param {boolean} [options.useRowValueComparison] - Emit row-value predicate (default true).
  * @returns {{ clause: string, params: Array<string> }} SQL clause fragment and parameters.
  */
 function buildCursorWhereClause({
@@ -376,18 +390,24 @@ function buildCursorWhereClause({
   timestampColumn,
   idColumn = 'id',
   snapshotAt = null,
+  useRowValueComparison = true,
 }) {
   const params = [];
   let clause = '';
 
   // Apply cursor filter first (snapshot appended after so snapshot param is last)
   if (cursor) {
-    if (direction === 'prev') {
+    const operator = direction === 'prev' ? '>' : '<';
+    if (useRowValueComparison) {
+      clause += ` AND ((${timestampColumn}, ${idColumn}) ${operator} (?, ?))`;
+      params.push(cursor.timestamp, cursor.id);
+    } else if (direction === 'prev') {
       clause += ` AND ((${timestampColumn} > ?) OR (${timestampColumn} = ? AND ${idColumn} > ?))`;
+      params.push(cursor.timestamp, cursor.timestamp, cursor.id);
     } else {
       clause += ` AND ((${timestampColumn} < ?) OR (${timestampColumn} = ? AND ${idColumn} < ?))`;
+      params.push(cursor.timestamp, cursor.timestamp, cursor.id);
     }
-    params.push(cursor.timestamp, cursor.timestamp, cursor.id);
   }
 
   // Append snapshot filter after cursor so snapshot param is always last
@@ -397,6 +417,75 @@ function buildCursorWhereClause({
   }
 
   return { clause, params };
+}
+
+/**
+ * Build the ORDER BY clause for keyset pagination on (timestamp, id).
+ *
+ * `next` pages sort descending (newest first); `prev` pages sort ascending so
+ * the caller can fetch the preceding window and reverse it before responding.
+ *
+ * @param {Object} options - Order options.
+ * @param {string} options.timestampColumn - Timestamp column name.
+ * @param {string} options.idColumn - Identifier column name.
+ * @param {string} [options.direction] - Pagination direction.
+ * @returns {string} SQL ORDER BY fragment (without the leading `ORDER BY`).
+ */
+function buildCursorOrderBy({
+  timestampColumn,
+  idColumn = 'id',
+  direction = 'next',
+}) {
+  const order = direction === 'prev' ? 'ASC' : 'DESC';
+  return `${timestampColumn} ${order}, ${idColumn} ${order}`;
+}
+
+/**
+ * Build a complete keyset pagination clause set (WHERE + ORDER BY + LIMIT)
+ * for a list query, avoiding OFFSET scans entirely.
+ *
+ * The caller is expected to fetch `limit + 1` rows to detect whether another
+ * page exists, then trim the extra row before building response metadata.
+ *
+ * @param {Object} options - Clause options.
+ * @param {{ timestamp: string, id: string }|null} options.cursor - Decoded cursor.
+ * @param {number} options.limit - Requested page size.
+ * @param {string} [options.direction] - Pagination direction.
+ * @param {string} options.timestampColumn - Timestamp column name.
+ * @param {string} [options.idColumn] - Identifier column name.
+ * @param {string|null} [options.snapshotAt] - Optional snapshot timestamp.
+ * @param {string} [options.baseWhere] - Optional pre-existing WHERE predicate (without `WHERE`).
+ * @param {boolean} [options.useRowValueComparison] - Emit row-value predicate (default true).
+ * @returns {{ where: string, orderBy: string, limit: number, params: Array<string> }}
+ */
+function buildKeysetQuery({
+  cursor,
+  limit = DEFAULT_LIMIT,
+  direction = 'next',
+  timestampColumn,
+  idColumn = 'id',
+  snapshotAt = null,
+  baseWhere = '',
+  useRowValueComparison = true,
+}) {
+  const { clause, params } = buildCursorWhereClause({
+    cursor,
+    direction,
+    timestampColumn,
+    idColumn,
+    snapshotAt,
+    useRowValueComparison,
+  });
+
+  const trimmedBase = typeof baseWhere === 'string' ? baseWhere.trim() : '';
+  const where = trimmedBase.length > 0 ? `${trimmedBase}${clause}` : clause.replace(/^\s*AND\s+/, '');
+
+  return {
+    where,
+    orderBy: buildCursorOrderBy({ timestampColumn, idColumn, direction }),
+    limit: limit + 1,
+    params,
+  };
 }
 
 /**
@@ -461,5 +550,7 @@ module.exports = {
   compareItemsDescending,
   paginateCollection,
   buildCursorWhereClause,
+  buildCursorOrderBy,
+  buildKeysetQuery,
   buildCursorMeta,
 };

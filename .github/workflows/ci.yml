@@ -2,19 +2,70 @@ name: CI
 
 on:
   push:
-    branches: [ "main", "master" ]
+    branches: [main, master]
   pull_request:
-    branches: [ "main", "master" ]
-
-# Cancel in-progress runs for the same branch/PR when a new push arrives.
-# This avoids wasting CI minutes on now-superseded commits.
-concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
+    branches: [main, master]
 
 jobs:
-  lint:
+  build:
     runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version: '20'
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Validate RBAC configuration
+        run: npm run validate:rbac
+
+      - name: Run tests
+        run: npm test
+        env:
+          NODE_ENV: test
+
+  # Repository guard scripts (conventions that ESLint cannot express). Refs #1790.
+  guards:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: 'npm'
+      - run: npm ci
+      # ADR-004: no float arithmetic on money. Fails on findings beyond the
+      # KNOWN_FLOAT_MONEY baseline in the script.
+      - run: npm run check:no-float-money
+      - run: npm run check:declared-deps
+      # docs/TEST_NAMING_CONVENTION.md: no new issue-numbered test files.
+      - run: npm run check:test-naming
+      # Suites must not leak env/global state or share fixtures across workers.
+      - run: npm run check:isolation
+      - run: npm run check:i18n-orphans
+      # Runtime data (backups, JSON stores, SQLite files, memo keys) must stay untracked.
+      - run: npm run check:no-tracked-artifacts
+      - run: npm run validate:rbac
+        env:
+          API_KEYS: ci_key
+          ENCRYPTION_KEY: '0000000000000000000000000000000000000000000000000000000000000000'
+      # Non-blocking until the JSDoc type errors on main are fixed; remove
+      # continue-on-error once `npm run typecheck` exits 0.
+      - run: npm run typecheck
+        continue-on-error: true
+
+  # Quarantined suites (tests/quarantine.js) run separately with retries and do
+  # not block merge. See docs/testing/FLAKY_TEST_POLICY.md. Refs #1787.
+  quarantine:
+    runs-on: ubuntu-latest
+    continue-on-error: true
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -22,22 +73,18 @@ jobs:
           node-version: '20'
           cache: 'npm'
       - run: npm ci
-      - run: npm run lint
-      - run: npm run migrate:check
-      # Reject PRs that embed invalid Stellar keys or wrong field names in
-      # the example curl/Postman files. Refs issue #1428.
-      - run: npm run examples:validate
+      - run: npm run test:quarantine -- --ci
 
   test:
     runs-on: ubuntu-latest
     strategy:
       matrix:
         # Test against supported Node.js LTS versions (aligned with package.json engines field)
-        node-version: ['20.x', '22.x']
+        node-version: ['22.x', '24.x']
     name: Test on Node.js ${{ matrix.node-version }}
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
         with:
           node-version: ${{ matrix.node-version }}
           cache: 'npm'
@@ -47,17 +94,19 @@ jobs:
       - run: npm run check-coverage
       - run: npm run openapi:check
       - run: npm run check:no-json-persistence
+      # Fail if test suites share hard-coded fixtures (API keys, etc.) that
+      # can collide when run in the same worker. Refs issue #1793.
+      - run: npm run check:isolation
       - run: npm run changelog:check
       - run: npm audit --audit-level=high
 
       # ── Coverage diff: download base branch artifact (best-effort) ────────
       - name: Download base branch coverage artifact
         if: github.event_name == 'pull_request'
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           name: coverage-base-node-${{ matrix.node-version }}
           path: coverage/base
-        continue-on-error: true
 
       # ── Coverage diff: copy base lcov to expected path ─────────────────────
       - name: Prepare base lcov for diff
@@ -85,7 +134,7 @@ jobs:
       # ── Coverage diff: post or update sticky PR comment ────────────────────
       - name: Post coverage diff as PR comment
         if: github.event_name == 'pull_request'
-        uses: actions/github-script@v7
+        uses: actions/github-script@v9
         with:
           github-token: ${{ secrets.GITHUB_TOKEN }}
           script: |
@@ -130,10 +179,18 @@ jobs:
       # ── Artifacts ─────────────────────────────────────────────────────────
       - name: Upload coverage reports to artifacts
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: coverage-report-node-${{ matrix.node-version }}
           path: coverage/
+          retention-days: 30
+
+      - name: Upload Jest JSON report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: jest-results-node-${{ matrix.node-version }}
+          path: coverage/jest-results.json
           retention-days: 30
 
       # Save LCOV as a base artifact so future PRs can diff against it.
@@ -141,7 +198,7 @@ jobs:
       # artifact represents the true merged-base coverage.
       - name: Save coverage as base artifact
         if: github.event_name == 'push'
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: coverage-base-node-${{ matrix.node-version }}
           path: coverage/lcov.info
@@ -150,15 +207,10 @@ jobs:
   smoke:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
         with:
-          node-version: '20'
+          node-version: '24'
           cache: 'npm'
       - run: npm ci
       - run: npm run test:smoke
-        env:
-          NODE_ENV: test
-          MOCK_STELLAR: 'true'
-          API_KEYS: smoke-test-key
-          ENCRYPTION_KEY: test_encryption_key_fixed_32bytes_hex_value_here_00

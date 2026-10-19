@@ -10,6 +10,7 @@
  */
 
 const express = require('express');
+const { clientErrorMessage } = require('../utils/clientErrorMessage');
 const router = express.Router();
 const requireApiKey = require('../middleware/apiKey');
 const asyncHandler = require('../utils/asyncHandler');
@@ -82,7 +83,7 @@ router.post('/', requireApiKey, checkPermission(PERMISSIONS.DONATIONS_CREATE), p
     return res.status(201).json({ success: true, data: result });
   } catch (err) {
     const status = err.statusCode || err.status || 400;
-    return res.status(status).json({ success: false, error: { code: err.errorCode || 'OFFER_CREATE_FAILED', message: err.message } });
+    return res.status(status).json({ success: false, error: { code: err.errorCode || 'OFFER_CREATE_FAILED', message: clientErrorMessage('OFFERS', err, status) } });
   }
 }));
 
@@ -123,7 +124,7 @@ router.delete('/:id', requireApiKey, checkPermission(PERMISSIONS.DONATIONS_CREAT
     return res.status(200).json({ success: true, data: result });
   } catch (err) {
     const status = err.statusCode || err.status || 400;
-    return res.status(status).json({ success: false, error: { code: err.errorCode || 'OFFER_CANCEL_FAILED', message: err.message } });
+    return res.status(status).json({ success: false, error: { code: err.errorCode || 'OFFER_CANCEL_FAILED', message: clientErrorMessage('OFFERS', err, status) } });
   }
 }));
 
@@ -156,7 +157,7 @@ router.get('/orderbook/:baseAsset/:counterAsset', requireApiKey, checkPermission
     return res.status(200).json({ success: true, data: result });
   } catch (err) {
     const status = err.statusCode || err.status || 400;
-    return res.status(status).json({ success: false, error: { code: err.errorCode || 'ORDERBOOK_FAILED', message: err.message } });
+    return res.status(status).json({ success: false, error: { code: err.errorCode || 'ORDERBOOK_FAILED', message: clientErrorMessage('OFFERS', err, status) } });
   }
 }));
 

@@ -393,6 +393,946 @@
         ]
       }
     },
+    "/admin/backups": {
+      "get": {
+        "responses": {
+          "200": {
+            "description": "Backup list"
+          },
+          "401": {
+            "description": "Missing or invalid API key"
+          },
+          "403": {
+            "description": "Admin role required"
+          }
+        },
+        "security": [
+          {
+            "ApiKeyAuth": []
+          }
+        ],
+        "summary": "List available backups (newest first)",
+        "tags": [
+          "AdminBackups"
+        ]
+      },
+      "post": {
+        "responses": {
+          "201": {
+            "description": "Backup created"
+          },
+          "401": {
+            "description": "Missing or invalid API key"
+          },
+          "403": {
+            "description": "Admin role required"
+          }
+        },
+        "security": [
+          {
+            "ApiKeyAuth": []
+          }
+        ],
+        "summary": "Trigger an immediate encrypted database backup",
+        "tags": [
+          "AdminBackups"
+        ]
+      }
+    },
+    "/admin/backups/restore/{backupId}": {
+      "post": {
+        "parameters": [
+          {
+            "in": "path",
+            "name": "backupId",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "properties": {
+                  "confirmationToken": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "confirmationToken"
+                ],
+                "type": "object"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Database restored"
+          },
+          "400": {
+            "description": "Missing, invalid or expired confirmation token"
+          },
+          "404": {
+            "description": "Backup not found"
+          },
+          "409": {
+            "description": "Restore blocked by in-flight requests"
+          }
+        },
+        "security": [
+          {
+            "ApiKeyAuth": []
+          }
+        ],
+        "summary": "Restore the database from a backup",
+        "tags": [
+          "AdminBackups"
+        ]
+      }
+    },
+    "/admin/backups/restore/{backupId}/confirm": {
+      "post": {
+        "parameters": [
+          {
+            "in": "path",
+            "name": "backupId",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Confirmation token issued (valid for 5 minutes)"
+          },
+          "400": {
+            "description": "Invalid backupId"
+          },
+          "404": {
+            "description": "Backup not found"
+          }
+        },
+        "security": [
+          {
+            "ApiKeyAuth": []
+          }
+        ],
+        "summary": "Issue a short-lived, single-use restore confirmation token",
+        "tags": [
+          "AdminBackups"
+        ]
+      }
+    },
+    "/admin/backups/status": {
+      "get": {
+        "responses": {
+          "200": {
+            "description": "Backup status"
+          }
+        },
+        "security": [
+          {
+            "ApiKeyAuth": []
+          }
+        ],
+        "summary": "Show the last backup time and verification result",
+        "tags": [
+          "AdminBackups"
+        ]
+      }
+    },
+    "/admin/backups/{backupId}/download": {
+      "get": {
+        "parameters": [
+          {
+            "in": "path",
+            "name": "backupId",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/octet-stream": {}
+            },
+            "description": "Encrypted backup stream"
+          },
+          "400": {
+            "description": "Invalid backupId"
+          },
+          "404": {
+            "description": "Backup not found"
+          }
+        },
+        "security": [
+          {
+            "ApiKeyAuth": []
+          }
+        ],
+        "summary": "Download an encrypted backup file",
+        "tags": [
+          "AdminBackups"
+        ]
+      }
+    },
+    "/admin/backups/{backupId}/verify": {
+      "post": {
+        "parameters": [
+          {
+            "in": "path",
+            "name": "backupId",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Verification result"
+          },
+          "400": {
+            "description": "Invalid backupId"
+          },
+          "404": {
+            "description": "Backup not found"
+          }
+        },
+        "security": [
+          {
+            "ApiKeyAuth": []
+          }
+        ],
+        "summary": "Run integrity and row-count verification against a backup",
+        "tags": [
+          "AdminBackups"
+        ]
+      }
+    },
+    "/admin/geo-blocking": {
+      "get": {
+        "deprecated": true,
+        "description": "Deprecated alias of GET /admin/geo-rules/config. Sunset 1 Jan 2027; responses carry Deprecation, Sunset and Link headers.",
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "401": {
+            "description": "Missing or invalid API key"
+          },
+          "403": {
+            "description": "Admin role required"
+          }
+        },
+        "security": [
+          {
+            "ApiKeyAuth": []
+          }
+        ],
+        "summary": "Get geo-blocking config",
+        "tags": [
+          "Admin Geo Rules"
+        ]
+      },
+      "put": {
+        "deprecated": true,
+        "description": "Deprecated alias of PUT /admin/geo-rules/config. Sunset 1 Jan 2027; responses carry Deprecation, Sunset and Link headers.",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "401": {
+            "description": "Missing or invalid API key"
+          },
+          "403": {
+            "description": "Admin role required"
+          }
+        },
+        "security": [
+          {
+            "ApiKeyAuth": []
+          }
+        ],
+        "summary": "Update geo-blocking config",
+        "tags": [
+          "Admin Geo Rules"
+        ]
+      }
+    },
+    "/admin/geo-blocking/allow": {
+      "post": {
+        "deprecated": true,
+        "description": "Deprecated alias of POST /admin/geo-rules. Sunset 1 Jan 2027; responses carry Deprecation, Sunset and Link headers.",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "401": {
+            "description": "Missing or invalid API key"
+          },
+          "403": {
+            "description": "Admin role required"
+          }
+        },
+        "security": [
+          {
+            "ApiKeyAuth": []
+          }
+        ],
+        "summary": "Allow a country",
+        "tags": [
+          "Admin Geo Rules"
+        ]
+      }
+    },
+    "/admin/geo-blocking/allow/{countryCode}": {
+      "delete": {
+        "deprecated": true,
+        "description": "Deprecated alias of DELETE /admin/geo-rules/allow/{countryCode}. Sunset 1 Jan 2027; responses carry Deprecation, Sunset and Link headers.",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "countryCode",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "401": {
+            "description": "Missing or invalid API key"
+          },
+          "403": {
+            "description": "Admin role required"
+          }
+        },
+        "security": [
+          {
+            "ApiKeyAuth": []
+          }
+        ],
+        "summary": "Remove an allowed country",
+        "tags": [
+          "Admin Geo Rules"
+        ]
+      }
+    },
+    "/admin/geo-blocking/block": {
+      "post": {
+        "deprecated": true,
+        "description": "Deprecated alias of POST /admin/geo-rules. Sunset 1 Jan 2027; responses carry Deprecation, Sunset and Link headers.",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "401": {
+            "description": "Missing or invalid API key"
+          },
+          "403": {
+            "description": "Admin role required"
+          }
+        },
+        "security": [
+          {
+            "ApiKeyAuth": []
+          }
+        ],
+        "summary": "Block a country",
+        "tags": [
+          "Admin Geo Rules"
+        ]
+      }
+    },
+    "/admin/geo-blocking/block/{countryCode}": {
+      "delete": {
+        "deprecated": true,
+        "description": "Deprecated alias of DELETE /admin/geo-rules/block/{countryCode}. Sunset 1 Jan 2027; responses carry Deprecation, Sunset and Link headers.",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "countryCode",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "401": {
+            "description": "Missing or invalid API key"
+          },
+          "403": {
+            "description": "Admin role required"
+          }
+        },
+        "security": [
+          {
+            "ApiKeyAuth": []
+          }
+        ],
+        "summary": "Unblock a country",
+        "tags": [
+          "Admin Geo Rules"
+        ]
+      }
+    },
+    "/admin/geo-blocking/reload-db": {
+      "post": {
+        "deprecated": true,
+        "description": "Deprecated alias of POST /admin/geo-rules/reload-db. Sunset 1 Jan 2027; responses carry Deprecation, Sunset and Link headers.",
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "401": {
+            "description": "Missing or invalid API key"
+          },
+          "403": {
+            "description": "Admin role required"
+          }
+        },
+        "security": [
+          {
+            "ApiKeyAuth": []
+          }
+        ],
+        "summary": "Reload the MaxMind GeoIP database",
+        "tags": [
+          "Admin Geo Rules"
+        ]
+      }
+    },
+    "/admin/geo-blocking/rules": {
+      "get": {
+        "deprecated": true,
+        "description": "Deprecated alias of GET /admin/geo-rules/active. Sunset 1 Jan 2027; responses carry Deprecation, Sunset and Link headers.",
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "401": {
+            "description": "Missing or invalid API key"
+          },
+          "403": {
+            "description": "Admin role required"
+          }
+        },
+        "security": [
+          {
+            "ApiKeyAuth": []
+          }
+        ],
+        "summary": "List effective geo rules",
+        "tags": [
+          "Admin Geo Rules"
+        ]
+      }
+    },
+    "/admin/geo-rules": {
+      "get": {
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "401": {
+            "description": "Missing or invalid API key"
+          },
+          "403": {
+            "description": "Admin role required"
+          }
+        },
+        "security": [
+          {
+            "ApiKeyAuth": []
+          }
+        ],
+        "summary": "List geo rules",
+        "tags": [
+          "Admin Geo Rules"
+        ]
+      },
+      "post": {
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "401": {
+            "description": "Missing or invalid API key"
+          },
+          "403": {
+            "description": "Admin role required"
+          }
+        },
+        "security": [
+          {
+            "ApiKeyAuth": []
+          }
+        ],
+        "summary": "Create a geo rule (action block|allow)",
+        "tags": [
+          "Admin Geo Rules"
+        ]
+      }
+    },
+    "/admin/geo-rules/active": {
+      "get": {
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "401": {
+            "description": "Missing or invalid API key"
+          },
+          "403": {
+            "description": "Admin role required"
+          }
+        },
+        "security": [
+          {
+            "ApiKeyAuth": []
+          }
+        ],
+        "summary": "List effective (config + database) geo rules",
+        "tags": [
+          "Admin Geo Rules"
+        ]
+      }
+    },
+    "/admin/geo-rules/allow/{countryCode}": {
+      "delete": {
+        "parameters": [
+          {
+            "in": "path",
+            "name": "countryCode",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "401": {
+            "description": "Missing or invalid API key"
+          },
+          "403": {
+            "description": "Admin role required"
+          }
+        },
+        "security": [
+          {
+            "ApiKeyAuth": []
+          }
+        ],
+        "summary": "Remove a country from the allowlist",
+        "tags": [
+          "Admin Geo Rules"
+        ]
+      }
+    },
+    "/admin/geo-rules/block/{countryCode}": {
+      "delete": {
+        "parameters": [
+          {
+            "in": "path",
+            "name": "countryCode",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "401": {
+            "description": "Missing or invalid API key"
+          },
+          "403": {
+            "description": "Admin role required"
+          }
+        },
+        "security": [
+          {
+            "ApiKeyAuth": []
+          }
+        ],
+        "summary": "Remove a country from the blocklist",
+        "tags": [
+          "Admin Geo Rules"
+        ]
+      }
+    },
+    "/admin/geo-rules/config": {
+      "get": {
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "401": {
+            "description": "Missing or invalid API key"
+          },
+          "403": {
+            "description": "Admin role required"
+          }
+        },
+        "security": [
+          {
+            "ApiKeyAuth": []
+          }
+        ],
+        "summary": "Get static geo-blocking config and MaxMind DB status",
+        "tags": [
+          "Admin Geo Rules"
+        ]
+      },
+      "put": {
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "401": {
+            "description": "Missing or invalid API key"
+          },
+          "403": {
+            "description": "Admin role required"
+          }
+        },
+        "security": [
+          {
+            "ApiKeyAuth": []
+          }
+        ],
+        "summary": "Update static geo-blocking config (in-memory)",
+        "tags": [
+          "Admin Geo Rules"
+        ]
+      }
+    },
+    "/admin/geo-rules/reload-db": {
+      "post": {
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "401": {
+            "description": "Missing or invalid API key"
+          },
+          "403": {
+            "description": "Admin role required"
+          }
+        },
+        "security": [
+          {
+            "ApiKeyAuth": []
+          }
+        ],
+        "summary": "Reload the MaxMind GeoIP database",
+        "tags": [
+          "Admin Geo Rules"
+        ]
+      }
+    },
+    "/admin/geo-rules/test": {
+      "post": {
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "401": {
+            "description": "Missing or invalid API key"
+          },
+          "403": {
+            "description": "Admin role required"
+          }
+        },
+        "security": [
+          {
+            "ApiKeyAuth": []
+          }
+        ],
+        "summary": "Test whether an IP would be blocked",
+        "tags": [
+          "Admin Geo Rules"
+        ]
+      }
+    },
+    "/admin/geo-rules/{id}": {
+      "delete": {
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "401": {
+            "description": "Missing or invalid API key"
+          },
+          "403": {
+            "description": "Admin role required"
+          }
+        },
+        "security": [
+          {
+            "ApiKeyAuth": []
+          }
+        ],
+        "summary": "Delete a geo rule by id",
+        "tags": [
+          "Admin Geo Rules"
+        ]
+      },
+      "patch": {
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "401": {
+            "description": "Missing or invalid API key"
+          },
+          "403": {
+            "description": "Admin role required"
+          }
+        },
+        "security": [
+          {
+            "ApiKeyAuth": []
+          }
+        ],
+        "summary": "Update a geo rule",
+        "tags": [
+          "Admin Geo Rules"
+        ]
+      }
+    },
+    "/admin/inspect/xdr/decode": {
+      "post": {
+        "description": "Decode base64-encoded XDR into human-readable JSON format",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "properties": {
+                  "network": {
+                    "default": "testnet",
+                    "description": "Network passphrase for transaction hash calculation",
+                    "enum": [
+                      "public",
+                      "testnet"
+                    ],
+                    "type": "string"
+                  },
+                  "xdr": {
+                    "description": "Base64-encoded XDR transaction envelope",
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "xdr"
+                ],
+                "type": "object"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "properties": {
+                    "data": {
+                      "properties": {
+                        "fee": {
+                          "description": "Fee in stroops",
+                          "type": "string"
+                        },
+                        "hash": {
+                          "description": "Transaction hash",
+                          "type": "string"
+                        },
+                        "memo": {
+                          "description": "Memo object",
+                          "type": "object"
+                        },
+                        "operations": {
+                          "description": "List of operations",
+                          "type": "array"
+                        },
+                        "sequence": {
+                          "description": "Sequence number",
+                          "type": "string"
+                        },
+                        "signatures": {
+                          "description": "List of signatures",
+                          "type": "array"
+                        },
+                        "source": {
+                          "description": "Source account",
+                          "type": "string"
+                        },
+                        "timeBounds": {
+                          "description": "Time bounds",
+                          "type": "object"
+                        },
+                        "type": {
+                          "enum": [
+                            "transaction",
+                            "feeBump"
+                          ],
+                          "type": "string"
+                        }
+                      },
+                      "type": "object"
+                    },
+                    "success": {
+                      "type": "boolean"
+                    }
+                  },
+                  "type": "object"
+                }
+              }
+            },
+            "description": "XDR decoded successfully"
+          },
+          "400": {
+            "description": "Invalid XDR format"
+          },
+          "401": {
+            "description": "Unauthorized"
+          }
+        },
+        "security": [
+          {
+            "ApiKeyAuth": []
+          }
+        ],
+        "summary": "Decode a Stellar XDR transaction envelope",
+        "tags": [
+          "Admin"
+        ]
+      }
+    },
+    "/admin/transactions/decode-xdr": {
+      "post": {
+        "deprecated": true,
+        "description": "Kept until the Sunset date (1 Jan 2027). Responses carry Deprecation, Sunset and Link headers.",
+        "responses": {
+          "200": {
+            "description": "Same response as POST /admin/inspect/xdr/decode"
+          }
+        },
+        "security": [
+          {
+            "ApiKeyAuth": []
+          }
+        ],
+        "summary": "Deprecated alias of POST /admin/inspect/xdr/decode",
+        "tags": [
+          "Admin"
+        ]
+      }
+    },
     "/api/v2/corporate-matching": {
       "get": {
         "parameters": [
@@ -696,6 +1636,151 @@
         ]
       }
     },
+    "/donations": {
+      "get": {
+        "parameters": [
+          {
+            "in": "query",
+            "name": "limit",
+            "schema": {
+              "default": 20,
+              "maximum": 100,
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "cursor",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "status",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "donor",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "recipient",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Paginated donation list"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          }
+        },
+        "security": [
+          {
+            "ApiKeyAuth": []
+          }
+        ],
+        "summary": "List donations",
+        "tags": [
+          "Donations"
+        ]
+      },
+      "post": {
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "properties": {
+                  "amount": {
+                    "type": "number"
+                  },
+                  "donor": {
+                    "type": "string"
+                  },
+                  "memo": {
+                    "type": "string"
+                  },
+                  "recipient": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "donor",
+                  "recipient",
+                  "amount"
+                ],
+                "type": "object"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "description": "Donation created"
+          },
+          "400": {
+            "$ref": "#/components/responses/ValidationError"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          }
+        },
+        "security": [
+          {
+            "ApiKeyAuth": []
+          }
+        ],
+        "summary": "Create a donation",
+        "tags": [
+          "Donations"
+        ]
+      }
+    },
+    "/donations/{id}": {
+      "get": {
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The donation"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          }
+        },
+        "security": [
+          {
+            "ApiKeyAuth": []
+          }
+        ],
+        "summary": "Get a donation by ID",
+        "tags": [
+          "Donations"
+        ]
+      }
+    },
     "/donations/{id}/approve": {
       "post": {
         "description": "Donations above the configured MULTISIG_THRESHOLD_XLM are created with status `awaiting_approval` instead of being submitted immediately. Each call records one signer's approval; once the required number of distinct signers have approved, the donation is submitted to Stellar automatically. Requires the `donations:approve` permission (granted to the `signer` and `admin` roles).\n",
@@ -942,6 +2027,122 @@
         "summary": "Get earnings for a liquidity pool",
         "tags": [
           "LiquidityPools"
+        ]
+      }
+    },
+    "/wallets": {
+      "get": {
+        "parameters": [
+          {
+            "in": "query",
+            "name": "limit",
+            "schema": {
+              "default": 20,
+              "maximum": 100,
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "cursor",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Paginated wallet list"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          }
+        },
+        "security": [
+          {
+            "ApiKeyAuth": []
+          }
+        ],
+        "summary": "List wallets",
+        "tags": [
+          "Wallets"
+        ]
+      },
+      "post": {
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "properties": {
+                  "label": {
+                    "type": "string"
+                  },
+                  "publicKey": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "publicKey"
+                ],
+                "type": "object"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "description": "Wallet created"
+          },
+          "400": {
+            "$ref": "#/components/responses/ValidationError"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          }
+        },
+        "security": [
+          {
+            "ApiKeyAuth": []
+          }
+        ],
+        "summary": "Create a wallet",
+        "tags": [
+          "Wallets"
+        ]
+      }
+    },
+    "/wallets/{id}": {
+      "get": {
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The wallet"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          }
+        },
+        "security": [
+          {
+            "ApiKeyAuth": []
+          }
+        ],
+        "summary": "Get a wallet by ID",
+        "tags": [
+          "Wallets"
         ]
       }
     },
@@ -1392,6 +2593,10 @@
       "name": "Stream"
     },
     {
+      "description": "Stellar wallet registration and lookup",
+      "name": "Wallets"
+    },
+    {
       "description": "Transaction history and synchronization",
       "name": "Transactions"
     },
@@ -1406,6 +2611,14 @@
     {
       "description": "Compliance audit log export with async jobs and signed URLs",
       "name": "AuditLogExport"
+    },
+    {
+      "description": "Runtime geo-blocking rules (#1778 canonical module)",
+      "name": "Admin Geo Rules"
+    },
+    {
+      "description": "Encrypted database backup and restore (admin only)",
+      "name": "AdminBackups"
     },
     {
       "description": "/api/v2 donation endpoints, using the standardized envelope (Issue",

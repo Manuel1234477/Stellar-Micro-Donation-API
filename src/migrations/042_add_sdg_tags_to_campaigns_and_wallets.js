@@ -47,6 +47,6 @@ module.exports = {
 
     try {
       await runQuery('DROP TABLE IF EXISTS sdg_mappings');
-    } catch (_) {}
+    } catch (_) { /* best-effort */ }
   },
 };

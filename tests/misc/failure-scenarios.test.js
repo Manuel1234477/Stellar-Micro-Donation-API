@@ -16,18 +16,25 @@ describe('Failure Scenarios - Comprehensive Error Tests', () => {
   });
 
   describe('Insufficient Balance Errors', () => {
+    // Helper: assert the rejection carries the specific INSUFFICIENT_BALANCE code
+    const expectInsufficientBalance = async (promise) => {
+      await expect(promise).rejects.toMatchObject({
+        code: 'INSUFFICIENT_BALANCE'
+      });
+    };
+
     test('should reject donation when wallet balance is zero', async () => {
       const donor = await stellarService.createWallet();
       const recipient = await stellarService.createWallet();
 
-      await expect(
+      await expectInsufficientBalance(
         stellarService.sendDonation({
           sourceSecret: donor.secretKey,
           destinationPublic: recipient.publicKey,
           amount: '100',
           memo: 'Should fail'
         })
-      ).rejects.toThrow('Insufficient balance');
+      );
     });
 
     test('should reject donation when balance is less than amount', async () => {
@@ -36,14 +43,14 @@ describe('Failure Scenarios - Comprehensive Error Tests', () => {
       
       await stellarService.fundTestnetWallet(donor.publicKey);
       
-      await expect(
+      await expectInsufficientBalance(
         stellarService.sendDonation({
           sourceSecret: donor.secretKey,
           destinationPublic: recipient.publicKey,
           amount: '15000',
           memo: 'Too much'
         })
-      ).rejects.toThrow('Insufficient balance');
+      );
     });
 
     test('should reject donation when balance equals amount (no fee reserve)', async () => {
@@ -53,14 +60,56 @@ describe('Failure Scenarios - Comprehensive Error Tests', () => {
       await stellarService.fundTestnetWallet(donor.publicKey);
       const balance = await stellarService.getBalance(donor.publicKey);
       
-      await expect(
+      // Spending the entire balance leaves nothing for the minimum reserve/fee
+      await expectInsufficientBalance(
         stellarService.sendDonation({
           sourceSecret: donor.secretKey,
           destinationPublic: recipient.publicKey,
           amount: balance.balance,
           memo: 'Exact balance'
         })
-      ).rejects.toThrow();
+      );
+    });
+
+    test('should reject donation just below the available balance threshold', async () => {
+      const donor = await stellarService.createWallet();
+      const recipient = await stellarService.createWallet();
+
+      await stellarService.fundTestnetWallet(donor.publicKey);
+      const balance = await stellarService.getBalance(donor.publicKey);
+
+      // Available = balance - minimum reserve - selling liabilities - fee.
+      // Requesting the full balance minus a single stroop still exceeds
+      // what is actually spendable once reserve and fee are accounted for.
+      const available = parseFloat(balance.balance) - 0.0000001;
+
+      await expectInsufficientBalance(
+        stellarService.sendDonation({
+          sourceSecret: donor.secretKey,
+          destinationPublic: recipient.publicKey,
+          amount: available.toFixed(7),
+          memo: 'Just below available'
+        })
+      );
+    });
+
+    test('should reject before submission (no network round-trip)', async () => {
+      const donor = await stellarService.createWallet();
+      const recipient = await stellarService.createWallet();
+
+      const submitSpy = jest.spyOn(stellarService, 'submitTransaction');
+
+      await expectInsufficientBalance(
+        stellarService.sendDonation({
+          sourceSecret: donor.secretKey,
+          destinationPublic: recipient.publicKey,
+          amount: '100',
+          memo: 'Pre-submit rejection'
+        })
+      );
+
+      expect(submitSpy).not.toHaveBeenCalled();
+      submitSpy.mockRestore();
     });
 
     test('should handle multiple failed transactions due to insufficient funds', async () => {

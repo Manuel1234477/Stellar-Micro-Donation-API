@@ -312,6 +312,10 @@ describe('Stellar Network Failure Simulations', () => {
       const donor = await stellarService.createWallet();
       const recipient = await stellarService.createWallet();
 
+      // Capture pre-operation state before enabling failures
+      const preDonorBalance = await stellarService.getBalance(donor.publicKey);
+      const preRecipientBalance = await stellarService.getBalance(recipient.publicKey);
+
       stellarService.enableFailureSimulation('network_error', 1.0); // Use 1.0 to ensure failures
 
       const operations = [
@@ -327,6 +331,14 @@ describe('Stellar Network Failure Simulations', () => {
 
       const failures = results.filter(r => r.status === 'rejected').length;
       expect(failures).toBeGreaterThan(0);
+
+      // Failed operations must not leave partial writes behind
+      stellarService.disableFailureSimulation();
+      const postDonorBalance = await stellarService.getBalance(donor.publicKey);
+      const postRecipientBalance = await stellarService.getBalance(recipient.publicKey);
+
+      expect(postDonorBalance.balance).toBe(preDonorBalance.balance);
+      expect(postRecipientBalance.balance).toBe(preRecipientBalance.balance);
     });
 
     test('should handle transaction failure without corrupting state', async () => {
@@ -336,7 +348,9 @@ describe('Stellar Network Failure Simulations', () => {
       await stellarService.fundTestnetWallet(recipient.publicKey);
 
       const initialBalance = await stellarService.getBalance(donor.publicKey);
+      const initialRecipientBalance = await stellarService.getBalance(recipient.publicKey);
 
+      // Enable failure simulation before any state mutation occurs
       stellarService.enableFailureSimulation('tx_failed', 1.0);
 
       try {
@@ -351,7 +365,9 @@ describe('Stellar Network Failure Simulations', () => {
         // Verify state is not corrupted
         stellarService.disableFailureSimulation();
         const finalBalance = await stellarService.getBalance(donor.publicKey);
+        const finalRecipientBalance = await stellarService.getBalance(recipient.publicKey);
         expect(finalBalance.balance).toBe(initialBalance.balance);
+        expect(finalRecipientBalance.balance).toBe(initialRecipientBalance.balance);
       }
     });
   });

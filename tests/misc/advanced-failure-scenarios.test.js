@@ -5,6 +5,16 @@
 
 const { getStellarService } = require('../../src/config/stellar');
 const DonationValidator = require('../../src/utils/donationValidator').Class || require('../../src/utils/donationValidator');
+const money = require('../../src/utils/money');
+
+// Resolve the money helpers regardless of how they are exported.
+const toStroops = money.toStroops || money.amountToStroops || money.parseAmount;
+const fromStroops = money.fromStroops || money.stroopsToAmount || money.formatAmount;
+const isValidAmount = money.isValidAmount || money.validateAmount || money.isValid;
+
+const MAX_INT64 = 9223372036854775807n;
+const ONE_STROOP = 1n;
+const STROOPS_PER_XLM = 10000000n;
 
 describe('Advanced Failure Scenarios', () => {
   let stellarService;
@@ -15,7 +25,7 @@ describe('Advanced Failure Scenarios', () => {
   });
 
   describe('Precision and Rounding Errors', () => {
-    test('should handle XLM precision (7 decimal places)', async () => {
+    test('should reject amounts with more than 7 decimal places', async () => {
       const donor = await stellarService.createWallet();
       const recipient = await stellarService.createWallet();
       await stellarService.fundTestnetWallet(donor.publicKey);
@@ -25,7 +35,7 @@ describe('Advanced Failure Scenarios', () => {
         stellarService.sendDonation({
           sourceSecret: donor.secretKey,
           destinationPublic: recipient.publicKey,
-          amount: '1.12345678', // 8 decimal places - should fail or round
+          amount: '1.12345678', // 8 decimal places - must be rejected, not rounded
           memo: 'Too precise'
         })
       ).rejects.toThrow();
@@ -46,20 +56,27 @@ describe('Advanced Failure Scenarios', () => {
       ).resolves.toBeDefined();
     });
 
-    test('should handle floating point arithmetic errors', async () => {
+    test('should handle floating point arithmetic errors via decimal-string parsing', async () => {
       const validator = new DonationValidator();
 
-      // Test case that might cause floating point issues
-      const amount = 0.1 + 0.2; // JavaScript: 0.30000000000000004
+      // JavaScript: 0.1 + 0.2 === 0.30000000000000004
+      const amount = 0.1 + 0.2;
 
       const result = validator.validateAmount(amount);
       expect(result.valid).toBe(true);
+
+      // The parser must normalise the float artefact to exactly 0.3 XLM (3000000 stroops)
+      expect(toStroops(amount)).toBe(3000000n);
+      expect(fromStroops(3000000n)).toBe('0.3');
     });
 
-    test('should handle scientific notation', async () => {
+    test('should reject scientific notation consistently', async () => {
       const donor = await stellarService.createWallet();
       const recipient = await stellarService.createWallet();
       await stellarService.fundTestnetWallet(donor.publicKey);
+
+      // Exponent notation must be rejected (or normalised) consistently by the parser
+      expect(() => toStroops('1e-7')).toThrow();
 
       await expect(
         stellarService.sendDonation({
@@ -68,7 +85,7 @@ describe('Advanced Failure Scenarios', () => {
           amount: '1e-7', // Scientific notation
           memo: 'Scientific'
         })
-      ).resolves.toBeDefined();
+      ).rejects.toThrow();
     });
 
     test('should reject overflow amounts', async () => {
@@ -85,6 +102,81 @@ describe('Advanced Failure Scenarios', () => {
       const result = validator.validateAmount(Number.MIN_VALUE / 2);
 
       expect(result.valid).toBe(false);
+    });
+
+    describe('decimal-string to BigInt stroops', () => {
+      test('should parse the smallest valid amount (1 stroop)', () => {
+        expect(toStroops('0.0000001')).toBe(ONE_STROOP);
+        expect(fromStroops(ONE_STROOP)).toBe('0.0000001');
+      });
+
+      test('should round-trip exact 7-decimal amounts', () => {
+        const samples = [
+          '0.0000001',
+          '0.0000002',
+          '0.1234567',
+          '1.0000001',
+          '1.1234567',
+          '12345.6789012',
+          '999999999.9999999'
+        ];
+
+        for (const amount of samples) {
+          const stroops = toStroops(amount);
+          expect(typeof stroops).toBe('bigint');
+          expect(fromStroops(stroops)).toBe(amount);
+        }
+      });
+
+      test('should preserve trailing zeros without loss', () => {
+        expect(toStroops('1.1000000')).toBe(11000000n);
+        expect(toStroops('1.1')).toBe(11000000n);
+        expect(toStroops('1.100')).toBe(11000000n);
+        expect(fromStroops(11000000n)).toBe('1.1');
+      });
+
+      test('should handle the maximum int64 stroop value', () => {
+        const stroops = toStroops(fromStroops(MAX_INT64));
+        expect(stroops).toBe(MAX_INT64);
+
+        // One stroop beyond int64 must be rejected
+        expect(() => toStroops(fromStroops(MAX_INT64 + 1n))).toThrow();
+      });
+
+      test('should never emit exponent notation', () => {
+        for (const stroops of [1n, 10n, 100n, 1000000n, 10000000n, 12345678n]) {
+          expect(fromStroops(stroops)).not.toMatch(/e/i);
+        }
+      });
+
+      test('should reject malformed and over-precise input', () => {
+        const invalid = ['', 'abc', '1.12345678', '1e-7', '1E7', '-1', '1.2.3', null, undefined];
+        for (const value of invalid) {
+          expect(() => toStroops(value)).toThrow();
+        }
+      });
+
+      test('property: stroop round-trips are exact for random values', () => {
+        // Deterministic pseudo-random generator for reproducibility
+        let seed = 42;
+        const next = () => {
+          seed = (seed * 1103515245 + 12345) % 2147483648;
+          return seed;
+        };
+
+        for (let i = 0; i < 200; i++) {
+          const stroops = BigInt(next()) * 1000n + BigInt(next() % 1000);
+          const amount = fromStroops(stroops);
+          expect(toStroops(amount)).toBe(stroops);
+        }
+      });
+
+      test('property: adding stroops is exact (no float drift)', () => {
+        const a = toStroops('0.1');
+        const b = toStroops('0.2');
+        expect(a + b).toBe(toStroops('0.3'));
+        expect(fromStroops(a + b)).toBe('0.3');
+      });
     });
   });
 

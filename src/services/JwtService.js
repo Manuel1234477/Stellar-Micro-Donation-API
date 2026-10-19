@@ -16,6 +16,7 @@ const crypto = require('crypto');
 const db = require('../utils/database');
 const { securityConfig } = require('../config/securityConfig');
 const log = require('../utils/log');
+const { getSigningSecret } = require('../utils/signingSecrets');
 
 const ACCESS_TOKEN_TTL_MS = 15 * 60 * 1000;       // 15 minutes
 const REFRESH_TOKEN_TTL_MS = 7 * 24 * 60 * 60 * 1000; // 7 days
@@ -79,13 +80,55 @@ async function initializeRefreshTokensTable() {
   await db.run(`CREATE INDEX IF NOT EXISTS idx_revocations_expires ON refresh_token_revocations(expires_at)`);
 }
 
+// Access tokens use their own key, never ENCRYPTION_KEY, so rotating the data
+// encryption key does not invalidate sessions and a leaked data key cannot forge tokens (#1873).
+const MIN_JWT_SECRET_LENGTH = 32;
+
 /**
- * Returns the HMAC secret used to sign access tokens.
- * Falls back to a deterministic dev secret when ENCRYPTION_KEY is absent.
+ * Derives a stable key identifier from a signing secret. Tokens carry it in the
+ * `kid` header so verification can pick the right key during rotation.
+ * The identifier is a one-way hash, so it reveals nothing about the secret.
+ * @param {string} secret
  * @returns {string}
  */
-function getTokenSecret() {
-  return securityConfig.ENCRYPTION_KEY || 'dev_jwt_secret_change_in_production';
+function keyIdFor(secret) {
+  return crypto.createHash('sha256').update(secret).digest('hex').slice(0, 16);
+}
+
+/**
+ * Reads a JWT signing secret and enforces a minimum length.
+ * @param {string} secret
+ * @returns {string}
+ */
+function assertStrongJwtSecret(secret) {
+  if (secret.length < MIN_JWT_SECRET_LENGTH) {
+    throw new Error(`JWT_SIGNING_SECRET must be at least ${MIN_JWT_SECRET_LENGTH} characters`);
+  }
+  return secret;
+}
+
+/**
+ * Keys accepted for verification. The current key signs new tokens. The previous
+ * key, when JWT_SIGNING_SECRET_PREVIOUS is set, lets tokens issued before a rotation stay valid.
+ * @returns {Array<{ kid: string, secret: string }>}
+ */
+function getVerificationKeys() {
+  const keys = [];
+  const current = getSigningSecret('JWT_SIGNING_SECRET', ['JWT_SIGNING_SECRET']);
+  keys.push({ kid: keyIdFor(assertStrongJwtSecret(current)), secret: current });
+  const previous = (process.env.JWT_SIGNING_SECRET_PREVIOUS || '').trim();
+  if (previous) {
+    keys.push({ kid: keyIdFor(assertStrongJwtSecret(previous)), secret: previous });
+  }
+  return keys;
+}
+
+/**
+ * Returns the key used to sign new access tokens.
+ * @returns {{ kid: string, secret: string }}
+ */
+function getSigningKey() {
+  return getVerificationKeys()[0];
 }
 
 /**
@@ -103,7 +146,8 @@ function b64url(obj) {
  * @returns {string} Signed JWT string
  */
 function issueAccessToken(payload) {
-  const header = b64url({ alg: 'HS256', typ: 'JWT' });
+  const signingKey = getSigningKey();
+  const header = b64url({ alg: 'HS256', typ: 'JWT', kid: signingKey.kid });
   const now = Math.floor(Date.now() / 1000);
   const claims = b64url({
     ...payload,
@@ -111,7 +155,7 @@ function issueAccessToken(payload) {
     exp: now + Math.floor(ACCESS_TOKEN_TTL_MS / 1000),
   });
   const sig = crypto
-    .createHmac('sha256', getTokenSecret())
+    .createHmac('sha256', signingKey.secret)
     .update(`${header}.${claims}`)
     .digest('base64url');
   return `${header}.${claims}.${sig}`;
@@ -127,8 +171,11 @@ function verifyAccessToken(token) {
     const parts = token.split('.');
     if (parts.length !== 3) return { valid: false, reason: 'malformed token' };
     const [header, claims, sig] = parts;
+    const { kid } = JSON.parse(Buffer.from(header, 'base64url').toString());
+    const key = getVerificationKeys().find(candidate => candidate.kid === kid);
+    if (!key) return { valid: false, reason: 'unknown signing key' };
     const expected = crypto
-      .createHmac('sha256', getTokenSecret())
+      .createHmac('sha256', key.secret)
       .update(`${header}.${claims}`)
       .digest('base64url');
     if (!crypto.timingSafeEqual(Buffer.from(sig), Buffer.from(expected))) {

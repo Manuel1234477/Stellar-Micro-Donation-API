@@ -16,6 +16,9 @@ to go from a fresh clone to an open PR.
 7. [Keeping Example Base URLs in Sync](#7-keeping-example-base-urls-in-sync)
 8. [Branch & Commit Conventions](#8-branch--commit-conventions)
 9. [Pre-PR Checklist](#9-pre-pr-checklist)
+10. [Implementation Notes & Work Tracking](#10-implementation-notes--work-tracking)
+11. [Security](#11-security)
+12. [Key Documentation](#12-key-documentation)
 
 ---
 
@@ -226,11 +229,31 @@ When the PR is ready:
 
 ---
 
-## 10. Security
+## 10. Implementation Notes & Work Tracking
+
+Branch-specific implementation notes, status files and progress tracking do not belong in the repository root.
+
+Instead:
+- **Quick notes** → PR description or commit messages (they're indexed and searchable)
+- **Design decisions** → `docs/adr/` as Architecture Decision Records
+- **Testing insights** → `docs/testing/` guides and knowledge articles
+- **Implementation guide** → CHANGELOG.md entry when the PR merges
+- **Temporary debugging** → use `tmp-*.js` or `.local/` (both are ignored)
+
+Do not commit:
+- TODO.md or status files at the root
+- *_IMPLEMENTATION_*.md files at the root
+- Tool-specific working directories (.kiro/, .memory/, etc.)
+
+This keeps documentation organized and prevents stale working notes from misleading readers.
+
+---
+
+## 11. Security
 
 **Do not open a public GitHub issue for security vulnerabilities.**
 
-See **[SECURITY.md](../SECURITY.md)** for:
+See **[SECURITY.md](SECURITY.md)** for:
 - The private reporting channel (email or GitHub private vulnerability reporting)
 - Supported versions and patching policy
 - Response SLAs
@@ -238,15 +261,15 @@ See **[SECURITY.md](../SECURITY.md)** for:
 
 ---
 
-## 11. Key Documentation
+## 12. Key Documentation
 
 When working on a feature, these docs will save you time:
 
 | Topic | Document |
 |-------|----------|
-| Quickstart (fresh clone → first request) | [docs/quickstart.md](../docs/quickstart.md) |
-| Database schema & ER diagram | [docs/DATABASE_SCHEMA.md](../docs/DATABASE_SCHEMA.md) |
-| SEP-10 web auth & federation | [docs/SEP_COMPLIANCE.md](../docs/SEP_COMPLIANCE.md) |
-| API endpoint examples | [docs/API_EXAMPLES.md](../docs/API_EXAMPLES.md) |
-| Architecture overview | [docs/ARCHITECTURE.md](../docs/ARCHITECTURE.md) |
-| Troubleshooting | [docs/DEVELOPER_TROUBLESHOOTING_GUIDE.md](../docs/DEVELOPER_TROUBLESHOOTING_GUIDE.md) |
+| Quickstart (fresh clone → first request) | [docs/quickstart.md](docs/quickstart.md) |
+| Database schema & ER diagram | [docs/DATABASE_SCHEMA.md](docs/DATABASE_SCHEMA.md) |
+| SEP-10 web auth & federation | [docs/SEP_COMPLIANCE.md](docs/SEP_COMPLIANCE.md) |
+| API endpoint examples | [docs/API_EXAMPLES.md](docs/API_EXAMPLES.md) |
+| Architecture overview | [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) |
+| Troubleshooting | [docs/DEVELOPER_TROUBLESHOOTING_GUIDE.md](docs/DEVELOPER_TROUBLESHOOTING_GUIDE.md) |

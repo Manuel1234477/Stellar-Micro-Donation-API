@@ -16,9 +16,11 @@
 'use strict';
 
 const express = require('express');
+const StellarSdk = require('stellar-sdk');
 const router = express.Router();
 const log = require('../utils/log');
 const config = require('../config');
+const { resolveSep10SigningSecret } = require('../utils/sep10SigningKey');
 
 /**
  * In-memory federation registry: name (lowercase) → { account_id, memo_type?, memo? }
@@ -42,22 +44,80 @@ try {
 } catch (_) { /* invalid JSON — ignore */ }
 
 /**
+ * Renders the stellar.toml body. Pure function of its inputs so it can be cached.
+ * @param {{ domain: string, scheme: string, host: string, signingPublicKey: string|null }} input
+ * @returns {string}
+ */
+function renderStellarToml({ domain, scheme, host, signingPublicKey }) {
+  const federationUrl = `${scheme}://${domain}/federation`;
+  // Prefer the configured public URL so a proxy's Host header cannot change the advertised endpoint
+  const publicBase = (process.env.API_BASE_URL || `${scheme}://${host}`).replace(/\/+$/, '');
+  const webAuthEndpoint = `${publicBase}/auth`;
+
+  const lines = [
+    `# Stellar TOML for ${domain}`,
+    'VERSION="1.0.0"',
+    `NETWORK_PASSPHRASE="${config.stellar.environment.networkPassphrase}"`,
+    `FEDERATION_SERVER="${federationUrl}"`,
+    `WEB_AUTH_ENDPOINT="${webAuthEndpoint}"`,
+    // AUTH_SERVER is the pre-SEP-10 name, kept for clients that have not migrated
+    `AUTH_SERVER="${webAuthEndpoint}"`,
+  ];
+
+  if (signingPublicKey) {
+    lines.push(`SIGNING_KEY="${signingPublicKey}"`);
+  }
+
+  return lines.join('\n');
+}
+
+let cachedToml = null;
+
+/**
+ * Returns the public key of the configured SEP-10 signing secret, or null when
+ * none is configured or the value is invalid. Invalid values are logged, never thrown,
+ * and startup checks reject them.
+ * @returns {string|null}
+ */
+function getSep10SigningPublicKey() {
+  const { secret, dedicated } = resolveSep10SigningSecret();
+  if (!secret) {
+    log.debug('FEDERATION', 'No SEP-10 signing key configured; omitting SIGNING_KEY from stellar.toml');
+    return null;
+  }
+  try {
+    return StellarSdk.Keypair.fromSecret(secret).publicKey();
+  } catch (err) {
+    log.warn('FEDERATION', 'Invalid SEP-10 signing key; omitting SIGNING_KEY from stellar.toml', {
+      source: dedicated ? 'SEP10_SIGNING_KEY' : 'STELLAR_SECRET/SERVICE_SECRET_KEY',
+      error: err.message,
+    });
+    return null;
+  }
+}
+
+/**
  * GET /.well-known/stellar.toml
- * Advertises this server as a federation server.
+ * Advertises this server as a federation server (SEP-0002) and its SEP-0010
+ * web auth endpoint. This is the only handler for this path (issue #1779).
  * CORS must be open (*) per the Stellar protocol spec.
+ *
+ * The body is rebuilt only when its inputs change (issue #1888).
  */
 router.get('/.well-known/stellar.toml', (req, res) => {
   const domain = process.env.FEDERATION_DOMAIN || req.hostname || 'localhost';
-  const protocol = process.env.NODE_ENV === 'production' ? 'https' : req.protocol;
-  const federationUrl = `${protocol}://${domain}/federation`;
+  const scheme = process.env.NODE_ENV === 'production' ? 'https' : req.protocol;
+  const host = req.get('host') || 'localhost';
+  const signingPublicKey = getSep10SigningPublicKey();
+
+  const cacheKey = [domain, scheme, host, process.env.API_BASE_URL || '', signingPublicKey || ''].join('|');
+  if (!cachedToml || cachedToml.key !== cacheKey) {
+    cachedToml = { key: cacheKey, body: renderStellarToml({ domain, scheme, host, signingPublicKey }) };
+  }
 
   res.set('Content-Type', 'text/plain; charset=utf-8');
   res.set('Access-Control-Allow-Origin', '*');
-  res.send([
-    `# Stellar TOML for ${domain}`,
-    `FEDERATION_SERVER="${federationUrl}"`,
-    `NETWORK_PASSPHRASE="${config.stellar.environment.networkPassphrase}"`,
-  ].join('\n'));
+  res.send(cachedToml.body);
 });
 
 /**
@@ -113,4 +173,4 @@ router.get('/federation', (req, res) => {
   return res.json(response);
 });
 
-module.exports = { router, federationRegistry };
+module.exports = { router, federationRegistry, renderStellarToml };

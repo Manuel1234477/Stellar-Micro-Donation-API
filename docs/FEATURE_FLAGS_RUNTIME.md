@@ -14,6 +14,24 @@ The Feature Flags Runtime System provides dynamic feature control without requir
 
 ## Architecture
 
+### Single Source of Truth (#1775)
+
+| Concern | Module |
+|---------|--------|
+| Flag store, cache and evaluation | `src/utils/featureFlags.js` (only implementation) |
+| Route gating / `req.flags` | `src/middleware/featureFlags.js` (thin wrapper, no state) |
+| Flag management API | `src/routes/admin/featureFlags.js` mounted at `/admin/feature-flags` |
+| Client read-only API | `src/routes/feature-flags.js` mounted at `/api/v1/feature-flags` (`/feature-flags` redirects) |
+
+**Env defaults vs runtime toggles:** `FEATURE_FLAGS=name=on,other=off` only seeds
+global flags that do not exist yet. Once a flag is in the database (created by the
+env loader or toggled via the admin API) the database value wins and a restart
+does not revert it. Accepted "on" values: `on`, `true`, `1`, `yes`.
+
+**Propagation:** every reader evaluates through the same cache. A toggle through the
+admin API invalidates the local cache immediately; other processes pick it up
+within the 10-second TTL (`CACHE_TTL_MS`).
+
 ### Three-Level Scope Hierarchy
 
 Feature flags are evaluated in precedence order:
@@ -146,7 +164,7 @@ Response (200):
 #### List All Flags for API Key
 
 ```http
-GET /feature-flags
+GET /api/v1/feature-flags
 Authorization: Bearer <API_KEY>
 
 Response (200):
@@ -190,7 +208,7 @@ Response (200):
 #### Check Single Flag
 
 ```http
-GET /feature-flags/new-payment-flow
+GET /api/v1/feature-flags/new-payment-flow
 Authorization: Bearer <API_KEY>
 
 Response (200):
@@ -215,7 +233,7 @@ Response (200):
 
 ```bash
 # Check flag in staging environment
-curl http://localhost:3000/feature-flags/new-dashboard?environment=staging \
+curl http://localhost:3000/api/v1/feature-flags/new-dashboard?environment=staging \
   -H "Authorization: Bearer <API_KEY>"
 ```
 
@@ -227,7 +245,7 @@ curl http://localhost:3000/feature-flags/new-dashboard?environment=staging \
 
 ```javascript
 // Option 1: Single flag check
-const response = await fetch('https://api.donation.app/feature-flags/new-checkout', {
+const response = await fetch('https://api.donation.app/api/v1/feature-flags/new-checkout', {
   headers: { 'Authorization': `Bearer ${apiKey}` }
 });
 const { success, data } = await response.json();
@@ -238,7 +256,7 @@ if (data.enabled) {
 }
 
 // Option 2: Get all flags at once
-const allFlagsResponse = await fetch('https://api.donation.app/feature-flags', {
+const allFlagsResponse = await fetch('https://api.donation.app/api/v1/feature-flags', {
   headers: { 'Authorization': `Bearer ${apiKey}` }
 });
 const allFlags = await allFlagsResponse.json();
@@ -252,7 +270,7 @@ if (allFlags.data.enabled.includes('new-checkout')) {
 ```javascript
 async function processdonation(amount) {
   // Check if new payment processor is enabled
-  const flagResponse = await fetch('https://api.donation.app/feature-flags/new-processor', {
+  const flagResponse = await fetch('https://api.donation.app/api/v1/feature-flags/new-processor', {
     headers: { 'Authorization': `Bearer ${apiKey}` }
   });
   const { data } = await flagResponse.json();
@@ -277,7 +295,7 @@ async function getFlag(flagName) {
     return cached.value;
   }
   
-  const response = await fetch(`https://api.donation.app/feature-flags/${flagName}`, {
+  const response = await fetch(`https://api.donation.app/api/v1/feature-flags/${flagName}`, {
     headers: { 'Authorization': `Bearer ${apiKey}` }
   });
   const { data } = await response.json();
@@ -419,7 +437,7 @@ curl -X POST http://localhost:3000/admin/feature-flags/problematic-feature/disab
 
 ```bash
 # Public API (requires API key)
-curl http://localhost:3000/feature-flags/my-feature \
+curl http://localhost:3000/api/v1/feature-flags/my-feature \
   -H "Authorization: Bearer $API_KEY"
 
 # Shows:

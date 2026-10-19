@@ -7,9 +7,9 @@
  * - Guardian designation
  * - Recovery initiation creates pending request
  * - Guardian approval accumulates correctly
- * - Recovery executes at threshold
- * - 48-hour time-lock enforced
- * - Funds transferred to new account on success
+ * - Recovery executes as soon as the M-th approval is registered
+ * - 72-hour expiration window enforced
+ * - Signer swap (add new signer, remove old) on success
  */
 
 const SocialRecoveryService = require('../../src/services/SocialRecoveryService');
@@ -22,10 +22,10 @@ const GUARDIAN_B = 'GAguardian2BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB';
 const GUARDIAN_C = 'GAguardian3CCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCC';
 const NEW_KEY    = 'GANEWPUBLICKEYNEWPUBLICKEYNEWPUBLICKEYNEWPUBLICKEYNEWPUB';
 
-async function createWallet(publicKey = 'GATEST' + Math.random().toString(36).slice(2)) {
+async function createWallet(publicKey = 'GATEST' + Math.random().toString(36).slice(2), encryptedSecret = null) {
   const result = await Database.run(
-    'INSERT INTO users (publicKey) VALUES (?)',
-    [publicKey]
+    'INSERT INTO users (publicKey, encryptedSecret) VALUES (?, ?)',
+    [publicKey, encryptedSecret]
   );
   return result.id;
 }
@@ -43,12 +43,6 @@ afterEach(async () => {
   await Database.run("DELETE FROM users WHERE publicKey LIKE 'GATEST%' OR publicKey LIKE 'GANEW%'");
 });
 
-afterAll(async () => {
-  await Database.run('DROP TABLE IF EXISTS recovery_approvals');
-  await Database.run('DROP TABLE IF EXISTS recovery_requests');
-  await Database.run('DROP TABLE IF EXISTS recovery_guardians');
-});
-
 // ─── Tests ───────────────────────────────────────────────────────────────────
 
 describe('SocialRecoveryService', () => {
@@ -56,7 +50,10 @@ describe('SocialRecoveryService', () => {
   let mockStellarService;
 
   beforeEach(() => {
-    mockStellarService = { mergeAccount: jest.fn().mockResolvedValue({ success: true }) };
+    mockStellarService = {
+      addSigner: jest.fn().mockResolvedValue({ success: true }),
+      removeSigner: jest.fn().mockResolvedValue({ success: true }),
+    };
     service = new SocialRecoveryService(mockStellarService);
   });
 
@@ -76,6 +73,56 @@ describe('SocialRecoveryService', () => {
       await service.setGuardians(walletId, [GUARDIAN_B, GUARDIAN_C], 2);
       const guardians = await service.getGuardians(walletId);
       expect(guardians).toEqual([GUARDIAN_B, GUARDIAN_C]);
+    });
+
+    it('stores guardian notification emails', async () => {
+      const walletId = await createWallet();
+      await service.setGuardians(walletId, [{ publicKey: GUARDIAN_A, email: 'a@example.com' }, GUARDIAN_B], 1);
+      const rows = await Database.query(
+        'SELECT guardianPublicKey, guardianEmail FROM recovery_guardians WHERE walletId = ? ORDER BY id',
+        [walletId]
+      );
+      expect(rows).toEqual([
+        { guardianPublicKey: GUARDIAN_A, guardianEmail: 'a@example.com' },
+        { guardianPublicKey: GUARDIAN_B, guardianEmail: null },
+      ]);
+    });
+
+    it('rejects duplicate guardian keys without touching the existing set', async () => {
+      const walletId = await createWallet();
+      await service.setGuardians(walletId, [GUARDIAN_A], 1);
+      await expect(service.setGuardians(walletId, [GUARDIAN_B, GUARDIAN_B], 1)).rejects.toThrow('unique');
+      expect(await service.getGuardians(walletId)).toEqual([GUARDIAN_A]);
+    });
+
+    it('rolls back the replacement when an insert fails', async () => {
+      const walletId = await createWallet();
+      await service.setGuardians(walletId, [GUARDIAN_A], 1);
+
+      const realRunTransaction = Database.runTransaction.bind(Database);
+      const spy = jest.spyOn(Database, 'runTransaction').mockImplementation((callback) =>
+        realRunTransaction(async (tx) => {
+          let inserts = 0;
+          const failingTx = {
+            ...tx,
+            run: (sql, params) => {
+              if (sql.startsWith('INSERT') && ++inserts === 2) {
+                return Promise.reject(new Error('simulated insert failure'));
+              }
+              return tx.run(sql, params);
+            },
+          };
+          return callback(failingTx);
+        })
+      );
+
+      try {
+        await expect(service.setGuardians(walletId, [GUARDIAN_B, GUARDIAN_C], 2)).rejects.toThrow('simulated');
+      } finally {
+        spy.mockRestore();
+      }
+
+      expect(await service.getGuardians(walletId)).toEqual([GUARDIAN_A]);
     });
 
     it('throws ValidationError for empty guardians array', async () => {
@@ -129,7 +176,7 @@ describe('SocialRecoveryService', () => {
       expect(request.id).toBeDefined();
     });
 
-    it('sets executeAfter ~48 hours in the future', async () => {
+    it('sets expiresAt 72 hours in the future', async () => {
       const walletId = await createWallet();
       await service.setGuardians(walletId, [GUARDIAN_A], 1);
 
@@ -137,12 +184,9 @@ describe('SocialRecoveryService', () => {
       const request = await service.initiateRecovery(walletId, NEW_KEY);
       const after = Date.now();
 
-      const executeAfter = new Date(request.executeAfter).getTime();
-      const expectedMin = before + 47 * 60 * 60 * 1000;
-      const expectedMax = after + 49 * 60 * 60 * 1000;
-
-      expect(executeAfter).toBeGreaterThanOrEqual(expectedMin);
-      expect(executeAfter).toBeLessThanOrEqual(expectedMax);
+      const expiresAt = new Date(request.expiresAt).getTime();
+      expect(expiresAt).toBeGreaterThanOrEqual(before + 72 * 60 * 60 * 1000);
+      expect(expiresAt).toBeLessThanOrEqual(after + 72 * 60 * 60 * 1000);
     });
 
     it('cancels existing pending request when new one is initiated', async () => {
@@ -221,84 +265,68 @@ describe('SocialRecoveryService', () => {
     });
   });
 
-  // ── Time-Lock Enforcement ────────────────────────────────────────────────
+  // ── Threshold & Expiration ───────────────────────────────────────────────
 
-  describe('48-hour time-lock', () => {
-    it('does NOT execute recovery before time-lock expires even at threshold', async () => {
+  describe('threshold and 72-hour expiration', () => {
+    it('executes recovery as soon as the threshold is met', async () => {
       const walletId = await createWallet();
       await service.setGuardians(walletId, [GUARDIAN_A], 1);
       const request = await service.initiateRecovery(walletId, NEW_KEY);
-
-      // executeAfter is ~48h in the future — time-lock not yet passed
-      const result = await service.approveRecovery(walletId, request.id, GUARDIAN_A);
-
-      expect(result.status).toBe('pending');
-      expect(mockStellarService.mergeAccount).not.toHaveBeenCalled();
-    });
-
-    it('executes recovery when threshold met AND time-lock has passed', async () => {
-      const walletId = await createWallet();
-      await service.setGuardians(walletId, [GUARDIAN_A], 1);
-      const request = await service.initiateRecovery(walletId, NEW_KEY);
-
-      // Backdate executeAfter to simulate time-lock expiry
-      await Database.run(
-        "UPDATE recovery_requests SET executeAfter = ? WHERE id = ?",
-        [new Date(Date.now() - 1000).toISOString(), request.id]
-      );
 
       const result = await service.approveRecovery(walletId, request.id, GUARDIAN_A);
 
       expect(result.status).toBe('executed');
-      expect(mockStellarService.mergeAccount).toHaveBeenCalledWith(walletId, NEW_KEY);
     });
 
-    it('does not execute when threshold not yet met even if time-lock passed', async () => {
-      const walletId = await createWallet();
+    it('does not execute when threshold not yet met', async () => {
+      const walletId = await createWallet(undefined, 'encrypted-secret');
       await service.setGuardians(walletId, [GUARDIAN_A, GUARDIAN_B], 2);
       const request = await service.initiateRecovery(walletId, NEW_KEY);
 
-      await Database.run(
-        "UPDATE recovery_requests SET executeAfter = ? WHERE id = ?",
-        [new Date(Date.now() - 1000).toISOString(), request.id]
-      );
-
-      // Only one approval — threshold is 2
       const result = await service.approveRecovery(walletId, request.id, GUARDIAN_A);
 
       expect(result.status).toBe('pending');
-      expect(mockStellarService.mergeAccount).not.toHaveBeenCalled();
+      expect(mockStellarService.addSigner).not.toHaveBeenCalled();
     });
-  });
 
-  // ── Execution & Fund Transfer ────────────────────────────────────────────
-
-  describe('recovery execution', () => {
-    it('updates wallet publicKey to newPublicKey on execution', async () => {
+    it('rejects approvals once the request has expired', async () => {
       const walletId = await createWallet();
       await service.setGuardians(walletId, [GUARDIAN_A], 1);
       const request = await service.initiateRecovery(walletId, NEW_KEY);
 
       await Database.run(
-        "UPDATE recovery_requests SET executeAfter = ? WHERE id = ?",
+        'UPDATE recovery_requests SET expiresAt = ? WHERE id = ?',
         [new Date(Date.now() - 1000).toISOString(), request.id]
       );
+
+      await expect(
+        service.approveRecovery(walletId, request.id, GUARDIAN_A)
+      ).rejects.toThrow('expired');
+
+      const updated = await Database.get('SELECT status FROM recovery_requests WHERE id = ?', [request.id]);
+      expect(updated.status).toBe('expired');
+    });
+  });
+
+  // ── Execution & Signer Swap ──────────────────────────────────────────────
+
+  describe('recovery execution', () => {
+    it('leaves the wallet address unchanged (only the signer is swapped)', async () => {
+      const walletId = await createWallet();
+      const { publicKey } = await Database.get('SELECT publicKey FROM users WHERE id = ?', [walletId]);
+      await service.setGuardians(walletId, [GUARDIAN_A], 1);
+      const request = await service.initiateRecovery(walletId, NEW_KEY);
 
       await service.approveRecovery(walletId, request.id, GUARDIAN_A);
 
       const wallet = await Database.get('SELECT publicKey FROM users WHERE id = ?', [walletId]);
-      expect(wallet.publicKey).toBe(NEW_KEY);
+      expect(wallet.publicKey).toBe(publicKey);
     });
 
     it('marks request as executed with executedAt timestamp', async () => {
       const walletId = await createWallet();
       await service.setGuardians(walletId, [GUARDIAN_A], 1);
       const request = await service.initiateRecovery(walletId, NEW_KEY);
-
-      await Database.run(
-        "UPDATE recovery_requests SET executeAfter = ? WHERE id = ?",
-        [new Date(Date.now() - 1000).toISOString(), request.id]
-      );
 
       await service.approveRecovery(walletId, request.id, GUARDIAN_A);
 
@@ -307,20 +335,16 @@ describe('SocialRecoveryService', () => {
       expect(updated.executedAt).not.toBeNull();
     });
 
-    it('calls stellarService.mergeAccount with correct arguments', async () => {
-      const walletId = await createWallet();
+    it('adds the new key as signer and removes the old one', async () => {
+      const walletId = await createWallet(undefined, 'encrypted-secret');
+      const { publicKey } = await Database.get('SELECT publicKey FROM users WHERE id = ?', [walletId]);
       await service.setGuardians(walletId, [GUARDIAN_A], 1);
       const request = await service.initiateRecovery(walletId, NEW_KEY);
 
-      await Database.run(
-        "UPDATE recovery_requests SET executeAfter = ? WHERE id = ?",
-        [new Date(Date.now() - 1000).toISOString(), request.id]
-      );
-
       await service.approveRecovery(walletId, request.id, GUARDIAN_A);
 
-      expect(mockStellarService.mergeAccount).toHaveBeenCalledTimes(1);
-      expect(mockStellarService.mergeAccount).toHaveBeenCalledWith(walletId, NEW_KEY);
+      expect(mockStellarService.addSigner).toHaveBeenCalledWith('encrypted-secret', NEW_KEY, 1);
+      expect(mockStellarService.removeSigner).toHaveBeenCalledWith('encrypted-secret', publicKey);
     });
 
     it('works without stellarService (graceful degradation)', async () => {
@@ -328,11 +352,6 @@ describe('SocialRecoveryService', () => {
       const walletId = await createWallet();
       await serviceNoStellar.setGuardians(walletId, [GUARDIAN_A], 1);
       const request = await serviceNoStellar.initiateRecovery(walletId, NEW_KEY);
-
-      await Database.run(
-        "UPDATE recovery_requests SET executeAfter = ? WHERE id = ?",
-        [new Date(Date.now() - 1000).toISOString(), request.id]
-      );
 
       const result = await serviceNoStellar.approveRecovery(walletId, request.id, GUARDIAN_A);
       expect(result.status).toBe('executed');

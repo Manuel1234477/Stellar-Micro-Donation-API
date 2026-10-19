@@ -8,7 +8,7 @@
  * Keys are stored in memory (from environment or parameters).
  */
 
-const StellarSdk = require('stellar-sdk');
+const StellarSdk = require('../stellar/sdk.js');
 const SigningProvider = require('./SigningProvider');
 
 /**

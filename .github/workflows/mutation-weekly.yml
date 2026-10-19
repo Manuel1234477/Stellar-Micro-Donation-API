@@ -1,0 +1,44 @@
+name: Mutation Testing (weekly)
+
+# Weekly Stryker run on the critical money / validation / state-machine modules
+# listed in stryker.conf.json. Non-blocking: results are published as an
+# artifact for review. See docs/testing/MUTATION_TESTING_GUIDE.md. Refs #1790.
+
+on:
+  schedule:
+    - cron: '0 3 * * 1' # Mondays 03:00 UTC
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}
+  cancel-in-progress: false
+
+jobs:
+  mutation:
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+      - run: npm ci
+      # Stryker is installed for this job only so it does not become a project
+      # dependency. Keep the two packages on the same version.
+      - run: npm install --no-save @stryker-mutator/core@9.6.1 @stryker-mutator/jest-runner@9.6.1
+      - run: npm run mutation:test
+        env:
+          NODE_ENV: test
+          MOCK_STELLAR: 'true'
+      - name: Upload mutation report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: mutation-report
+          path: reports/mutation/
+          retention-days: 30
+          if-no-files-found: warn

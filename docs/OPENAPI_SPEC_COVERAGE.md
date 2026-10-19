@@ -191,7 +191,7 @@ apis: [
   'src/routes/stats.js',
   'src/routes/liquidity-pools.js',
   'src/app.js',
-  'src/routes/admin/auditLogExport.js',
+  'src/routes/auditLogExport.js',
 ]
 ```
 

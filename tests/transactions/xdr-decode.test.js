@@ -1,7 +1,7 @@
 const request = require('supertest');
 const app = require('../../src/app');
 const Transaction = require('../../src/models/transaction');
-const StellarSdk = require('stellar-sdk');
+const StellarSdk = require('@stellar/stellar-sdk');
 
 describe('Stellar XDR Inspection (Task #423)', () => {
     let testTransaction;

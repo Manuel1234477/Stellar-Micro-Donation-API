@@ -43,61 +43,17 @@ const LEGACY_PATTERNS = [
 // They are excluded from the "new violation" check so the build stays green
 // until each file is migrated (Phase 1–3 of the migration plan).
 // To migrate a file: rename it (git mv), remove it from this list.
-const KNOWN_LEGACY = new Set([
-  // Root-level issue-slug files
-  'tests/issues-65-66-67-68.test.js',
-  'tests/issues-764-765-766-767.test.js',
-  'tests/issues-796-797-798.test.js',
-  'tests/issues-802-803.test.js',
-  'tests/issue-806.test.js',
-  'tests/security-issues-1122-1123-1124-1125.test.js',
-  // Root-level feature-slug files
-  'tests/add-pagination-to-all-list-endpoints.test.js',
-  'tests/add-support-for-donation-notes-and-tags.test.js',
-  'tests/add-openapiswagger-documentation-generation.test.js',
-  // tests/issues/ sub-directory (all files there are issue-scoped by design —
-  // they will be moved in Phase 2 of the migration)
-  'tests/issues/issue-908-db-tracing.test.js',
-  'tests/issues/issues-1144-1145-1146-1147.test.js',
-  'tests/issues/issue-63-mock-latency.test.js',
-  'tests/issues/issue-61-extend-api-key.test.js',
-  'tests/issues/issues-18-19-20-21.test.js',
-  'tests/issues/issues-1116-1117-1118-1119.test.js',
-  'tests/issues/808-next-execution-date.test.js',
-  'tests/issues/issue-1157-idempotency.test.js',
-  'tests/issues/issue-916-exponential-backoff.test.js',
-  'tests/issues/issues-1160-1161-1162-1163.test.js',
-  'tests/issues/issue-64-system-info.test.js',
-  'tests/issues/issue-39-patch-stream-schedule.test.js',
-  'tests/issues/issue-909-receipt-get.test.js',
-  'tests/issues/issue-910-cors-config.test.js',
-  'tests/issues/debug-patch.test.js',
-  'tests/issues/issues-918-919-920-921.test.js',
-  'tests/issues/issue-917-transaction-sync-pagination.test.js',
-  'tests/issues/issue-123-async-donation-export.test.js',
-  'tests/issues/issue-62-wallet-tx-pagination.test.js',
-  'tests/issues/issue-911-soft-delete-schedule.test.js',
-  'tests/issues/issues-69-70-71.test.js',
-  'tests/issues/issue-915-wallet-balance-endpoint.test.js',
-  'tests/issues/issues-1144-1145-1146-1147.test.js',
-  // tests/admin/ issue-prefixed files (pre-existing)
-  'tests/admin/issue-104-keys-import.test.js',
-  'tests/admin/issue-105-pending-transactions.test.js',
-  'tests/admin/issue-106-db-reindex.test.js',
-  'tests/admin/issue-107-matching-status.test.js',
-  'tests/admin/issue-108-quota-usage.test.js',
-  'tests/admin/issue-110-anomalies.test.js',
-  'tests/admin/issue-111-cost-breakdown.test.js',
-  // tests/config/ issue-prefixed files (pre-existing)
-  'tests/config/issue-1101-encryption-key-validation.test.js',
-  // tests/donations/ issue-prefixed files (pre-existing)
-  'tests/donations/issue-109-donation-notes.test.js',
-  // tests/misc/ issue-prefixed files (pre-existing)
-  'tests/misc/issue-793-tiers-public.test.js',
-  'tests/misc/issue-794-fees.test.js',
-  'tests/misc/issue-795-donations-pending.test.js',
-  // tests/routes/ issue-prefixed files (pre-existing)
-  'tests/routes/issue-1113-csv-formula-injection.test.js',
+// The whitelist is intentionally empty: every legacy-named file must be
+// migrated (see issues #1791 / #1792).  Add entries here only as a temporary
+// escape hatch while a migration PR is in flight.
+const KNOWN_LEGACY = new Set([]);
+
+// ─── Root-level test files ────────────────────────────────────────────────────
+// Test files must live in a feature folder (tests/admin, tests/donations, …),
+// never directly under tests/.  Only setup/helper files are allowed there.
+const ALLOWED_ROOT_TEST_FILES = new Set([
+  'tests/setup.js',
+  'tests/globalSetup.js',
 ]);
 
 // ─── Scan ─────────────────────────────────────────────────────────────────────
@@ -120,11 +76,18 @@ function walk(dir, results = []) {
 const allTestFiles = walk(TESTS_DIR);
 const legacyFiles = [];
 const newViolations = [];
+const rootViolations = [];
 
 for (const absPath of allTestFiles) {
   const relPath = path.relative(path.join(__dirname, '..'), absPath).replace(/\\/g, '/');
   const base = path.basename(absPath);
 
+  // (b) No test files directly under tests/ (except setup files).
+  if (path.dirname(relPath) === 'tests' && !ALLOWED_ROOT_TEST_FILES.has(relPath)) {
+    rootViolations.push(relPath);
+  }
+
+  // (a) Legacy issue-slug naming is never allowed.
   const isLegacy = LEGACY_PATTERNS.some((re) => re.test(base));
   if (!isLegacy) continue;
 
@@ -136,15 +99,28 @@ for (const absPath of allTestFiles) {
 
 // ─── Output ───────────────────────────────────────────────────────────────────
 
-if (legacyFiles.length === 0) {
+if (rootViolations.length > 0) {
+  console.error(`\n❌  ${rootViolations.length} test file(s) found directly under tests/:\n`);
+  for (const f of rootViolations) {
+    console.error(`  ❌ ${f}`);
+  }
+  console.error(
+    '\n   Move each suite into the matching feature folder (e.g. tests/services/,\n' +
+    '   tests/donations/, tests/routes/).  Only setup files may live in tests/.\n'
+  );
+}
+
+if (legacyFiles.length === 0 && rootViolations.length === 0) {
   console.log('✅  No legacy-named test files found.');
   process.exit(0);
 }
 
-console.log(`\nLegacy-named test files (${legacyFiles.length} total):`);
-for (const f of legacyFiles) {
-  const isNew = newViolations.includes(f);
-  console.log(`  ${isNew ? '❌' : '⚠️ '} ${f}`);
+if (legacyFiles.length > 0) {
+  console.log(`\nLegacy-named test files (${legacyFiles.length} total):`);
+  for (const f of legacyFiles) {
+    const isNew = newViolations.includes(f);
+    console.log(`  ${isNew ? '❌' : '⚠️ '} ${f}`);
+  }
 }
 
 if (newViolations.length > 0) {
@@ -153,6 +129,9 @@ if (newViolations.length > 0) {
     '   Please follow the naming convention in docs/TEST_NAMING_CONVENTION.md:\n' +
     '   name your test file after the module it covers, not the issue it fixes.\n'
   );
+}
+
+if (newViolations.length > 0 || rootViolations.length > 0) {
   process.exit(1);
 }
 

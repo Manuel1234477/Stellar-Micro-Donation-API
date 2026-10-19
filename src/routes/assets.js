@@ -205,7 +205,7 @@ router.post('/:code/distribute', requireAdmin(), payloadSizeLimiter(ENDPOINT_LIM
     );
 
     // Update local holdings: deduct from distributor, credit recipient
-    const StellarSdk = require('stellar-sdk');
+    const StellarSdk = require('../services/stellar/sdk.js');
     const distributorPublic = StellarSdk.Keypair.fromSecret(distributorSecret).publicKey();
     await upsertHolding(code, issuerPublicKey, distributorPublic, -amountResult.value);
     await upsertHolding(code, issuerPublicKey, recipientPublicKey, amountResult.value);

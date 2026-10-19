@@ -10,12 +10,6 @@
  *   POST /impact/report/export        — downloadable CSV or PDF report
  */
 
-const STROOPS_PER_XLM = 10_000_000n;
-
-function toStroops(xlmAmount) {
-  return BigInt(Math.round(Number(xlmAmount) * Number(STROOPS_PER_XLM)));
-}
-
 const express = require('express');
 const router = express.Router();
 const requireApiKey = require('../middleware/apiKey');
@@ -23,7 +17,6 @@ const { checkPermission } = require('../middleware/rbac');
 const { PERMISSIONS } = require('../utils/permissions');
 const Transaction = require('../models/transaction');
 const { SDG_CATEGORIES} = require('../services/ImpactMetricService');
-const { serialize: csvSerialize } = require('../utils/csvSerializer');
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 

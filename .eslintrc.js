@@ -28,7 +28,7 @@ const GRANDFATHERED_LARGE_FILES = [
   'src/services/LeaderboardStatsService.js',
   'src/services/ApiKeyUsageService.js',
   'src/routes/stream.js',
-  'src/routes/transaction.js',
+  'src/routes/transactions/core.js',
   'src/routes/campaigns.js',
   'src/routes/apiKeys.js',
   'src/routes/assets.js',
@@ -48,6 +48,55 @@ const GRANDFATHERED_LARGE_FILES = [
   'tests/security/rbac-authorization-matrix.test.js',
   'tests/transactions/stellar-transaction-sequence-number-management.test.js',
   'tests/tracing/distributed-tracing-opentelemetry.test.js',
+];
+
+/**
+ * Files grandfathered from local/consistent-exports. Each one predates the rule
+ * and changing its export shape means updating every consumer, so they are being
+ * migrated one PR at a time (see docs/EXPORT_CONVENTIONS.md). The rule stays an
+ * error for every other file. Remove entries as files are migrated; never add.
+ * Issue tracking: #1789.
+ */
+const GRANDFATHERED_EXPORT_SHAPES = [
+  'src/migrations/005_donation_exports.js',
+  'src/migrations/024_corporate_matching_and_sep10_challenges.js',
+  'src/migrations/041_queued_donations.js',
+  'src/migrations/042_add_sdg_tags_to_campaigns_and_wallets.js',
+  'src/routes/donations/helpers.js',
+  'src/routes/federation.js',
+  'src/routes/federationLookup.js',
+  'src/routes/network.js',
+  'src/routes/wallets/helpers.js',
+  'src/services/CrowdfundingService.js',
+  'src/services/DonationVelocityService.js',
+  'src/services/GeoRuleService.js',
+  'src/services/HealthCheckService.js',
+  'src/services/JwtService.js',
+  'src/services/LeaderboardSSE.js',
+  'src/services/LimitService.js',
+  'src/services/MemoEncryptionService.js',
+  'src/services/NetworkFeeService.js',
+  'src/services/PaymentChannelService.js',
+  'src/services/PledgeFulfillmentService.js',
+  'src/services/PriceOracleService.js',
+  'src/services/PubSubAdapter.js',
+  'src/services/SequenceManager.js',
+  'src/services/TOTPService.js',
+  'src/services/interfaces/IStellarService.js',
+  'src/services/rateLimitStores/index.js',
+  'src/services/signing/index.js',
+  'src/services/websocketService.js',
+  'src/utils/abuseDetector.js',
+  'src/utils/asyncHandler.js',
+  'src/utils/cache.js',
+  'src/utils/database.js',
+  'src/utils/donationValidator.js',
+  'src/utils/leaderElection.js',
+  'src/utils/memoCollisionDetector.js',
+  'src/utils/memoValidator.js',
+  'src/utils/stellarErrorHandler.js',
+  'src/utils/suspiciousPatternDetector.js',
+  'src/utils/timerRegistry.js',
 ];
 
 module.exports = {
@@ -98,10 +147,16 @@ module.exports = {
         'ACCESS_LOG_INCLUDE_HEALTH',             // env-var doc string
         'snapshotAt=',                           // example query string
         'stellar_public_key',                    // example placeholder
-        'ABCDEFGHIJKLMNOPQRSTUVWXYZ234567',      // RFC 4648 base32 alphabet
+        'ABCDEFGHIJKLMNOPQRSTUVWXYZ',            // RFC 4648 base32 alphabet / placeholder keys
         '^eyJ',                                  // example JWT (OpenAPI docs)
-        '014_webhook_tls_skip_verify',           // migration name
+        '\\b\\d{3}_[a-z0-9_]+\\b',                 // migration names (e.g. 020_webhook_tls_skip_verify)
+        '\\bidx_[a-z0-9_]+\\b',                    // SQL index names
+        '\\b[A-Z][A-Z0-9_]*=(true|false|mainnet|testnet|software)\\b', // env-var doc strings
+        '\\[[A-Za-z]+=[A-Z0-9_]+\\]',              // JSDoc optional-param defaults
+        'req_01HZ7GXKJ8QCVW9ABCDEF',             // example request id (error-code docs)
+        'buildManifest\\(\\)',                   // JSDoc method reference
         'obj<<',                                 // embedded PDF template
+        'SHARED_STATE_BACKEND',                  // env-var doc string
       ],
     }],
     ...(hasSecurityPlugin ? {
@@ -130,6 +185,13 @@ module.exports = {
   },
   overrides: [
     {
+      // Grandfathered export shapes: see GRANDFATHERED_EXPORT_SHAPES above.
+      files: GRANDFATHERED_EXPORT_SHAPES,
+      rules: {
+        'local/consistent-exports': 'off',
+      },
+    },
+    {
       // Grandfathered large files: exempt from max-lines while being decomposed.
       // See the GRANDFATHERED_LARGE_FILES declaration at the top of this file.
       files: GRANDFATHERED_LARGE_FILES,
@@ -138,22 +200,47 @@ module.exports = {
       },
     },
     {
-      // Enforce structured logging in all service source files. Operational/CLI
-      // scripts (migrations, the env-validation boot check) print to the console
-      // by design and are exempt.
+      // Enforce structured logging in all service source files (#1783). CLI
+      // scripts (src/scripts, migrations) print to the console by design and are
+      // exempt; startupChecks.js only uses the console when run as a CLI.
       files: ['src/**/*.js'],
       excludedFiles: [
         'src/scripts/**/*.js',
         'src/migrations/**/*.js',
         // Config loads at boot before the logger and the logger itself depends on
-        // config (src/utils/log.js requires ../config), so config must use console.
-        'src/config/**/*.js',
+        // config (src/utils/log.js requires ../config), so these two files must use
+        // console. The rest of src/config uses the logger like everything else (#1783).
+        'src/config/index.js',
+        'src/config/stellarEnvironments.js',
         'src/utils/log.js',
-        'src/utils/migrationRunner.js',
-        'src/utils/startupChecks.js',
       ],
       rules: {
         'no-console': 'error',
+      },
+    },
+    {
+      // Centralised configuration (#1784): read environment variables through
+      // src/config/env.js (typed, validated, documented in envSchema.js) rather
+      // than process.env. CLI scripts and migrations run outside the app and are exempt.
+      files: ['src/**/*.js'],
+      excludedFiles: [
+        'src/config/**/*.js',
+        'src/scripts/**/*.js',
+        'src/migrations/**/*.js',
+      ],
+      rules: {
+        'no-restricted-properties': ['error', {
+          object: 'process',
+          property: 'env',
+          message: 'Read configuration via src/config/env.js (declare the variable in src/config/envSchema.js).',
+        }],
+      },
+    },
+    {
+      // Pre-existing direct reads, migrated incrementally.
+      files: PROCESS_ENV_GRANDFATHERED,
+      rules: {
+        'no-restricted-properties': 'off',
       },
     },
     {

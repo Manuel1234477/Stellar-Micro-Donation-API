@@ -2,7 +2,7 @@
  * Donation Receipt Routes
  *
  * GET  /donations/annual-summary             - Generate annual summary PDF for a donor wallet
- * GET  /donations/:id/receipt        - Download a PDF receipt (or JSON with ?format=json)
+ * (GET /donations/:id/receipt is served by routes/donations/notes.js)
  * POST /donations/:id/receipt        - Generate and return a PDF receipt (optionally email it)
  * GET  /donations/:id/receipt/status - Check if a receipt has been generated
  */
@@ -20,11 +20,13 @@ const TaxReceiptService = require('../services/TaxReceiptService');
 const Transaction = require('../models/transaction');
 const asyncHandler = require('../utils/asyncHandler');
 const { payloadSizeLimiter, ENDPOINT_LIMITS } = require('../middleware/payloadSizeLimiter');
-const rateLimit = require('express-rate-limit');
+// Counts through the shared rate limit store (#1777)
+const { sharedRateLimit } = require('../middleware/rateLimiter');
 
 // ── Annual summary rate limiter ───────────────────────────────────────────────
 // PDF generation is CPU-intensive; restrict to 10 requests per 15 minutes per IP
-const annualSummaryRateLimiter = rateLimit({
+const annualSummaryRateLimiter = sharedRateLimit({
+  storePrefix: 'annualSummary',
   windowMs: 15 * 60 * 1000,
   max: 10,
   standardHeaders: true,
@@ -143,88 +145,6 @@ router.get('/annual-summary',
 
 // Add log import used in the route above
 const log = require('../utils/log');
-
-/**
- * GET /donations/:id/receipt
- * Download a PDF receipt for a donation.
- *
- * Query parameters:
- *   format=json  - Return receipt data as JSON instead of a PDF file
- *   fullKey=true - Include unmasked public keys (default: masked)
- *
- * Behaviour for unconfirmed donations:
- *   The receipt is generated but watermarked "PENDING CONFIRMATION".
- *
- * Requires: donations:read permission.
- */
-router.get('/:id/receipt', requireApiKey, checkPermission(PERMISSIONS.DONATIONS_READ), asyncHandler(async (req, res, next) => {
-  try {
-    const { id } = req.params;
-    const format = (req.query.format || '').toLowerCase();
-    const maskKeys = req.query.fullKey !== 'true';
-
-    const donation = Transaction.getById(id);
-    if (!donation) {
-      throw new NotFoundError('Donation not found', ERROR_CODES.DONATION_NOT_FOUND);
-    }
-
-    const isPending = donation.status !== TRANSACTION_STATES.CONFIRMED;
-    const receiptNumber = _nextReceiptNumber(id);
-    const usdRate = await _getUsdRate();
-    const usdAmount = (usdRate != null && donation.amount != null)
-      ? Number((Number(donation.amount) * usdRate).toFixed(2))
-      : null;
-
-    const explorerUrl = donation.stellarTxId
-      ? `${process.env.STELLAR_EXPLORER_URL || 'https://stellar.expert/explorer/testnet/tx'}/${donation.stellarTxId}`
-      : null;
-
-    const maskedDonor = maskKeys
-      ? ReceiptService.maskPublicKey(donation.donor)
-      : (donation.donor || 'Anonymous');
-    const maskedRecipient = maskKeys
-      ? ReceiptService.maskPublicKey(donation.recipient)
-      : (donation.recipient || 'N/A');
-
-    // ── JSON format ────────────────────────────────────────────────────────
-    if (format === 'json') {
-      return res.json({
-        success: true,
-        data: {
-          receiptNumber,
-          donationDate: donation.timestamp,
-          amountXLM: donation.amount,
-          amountUSD: usdAmount,
-          donorPublicKey: maskedDonor,
-          recipientPublicKey: maskedRecipient,
-          transactionHash: donation.stellarTxId || null,
-          confirmationStatus: isPending ? 'PENDING CONFIRMATION' : 'CONFIRMED',
-          explorerUrl,
-        },
-      });
-    }
-
-    // ── PDF format ─────────────────────────────────────────────────────────
-    const pdfBuffer = await ReceiptService.generatePDF(donation, {
-      maskKeys,
-      isPending,
-      receiptNumber,
-      usdAmount,
-    });
-
-    receiptLog.set(id, { generatedAt: new Date().toISOString(), emailedTo: null });
-
-    res.set({
-      'Content-Type': 'application/pdf',
-      'Content-Disposition': `attachment; filename="receipt-${id}.pdf"`,
-      'Content-Length': pdfBuffer.length,
-    });
-
-    return res.send(pdfBuffer);
-  } catch (err) {
-    next(err);
-  }
-}));
 
 /**
  * POST /donations/:id/receipt

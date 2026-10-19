@@ -23,6 +23,7 @@ const {
   DEFAULT_RETENTION_SCHEDULE,
 } = require('../constants');
 const { getActiveEnvironment } = require('./stellarEnvironments');
+const { validateEnv } = require('./env');
 
 /**
  * Configuration error class for clear error messages
@@ -243,6 +244,13 @@ const loadConfig = () => {
     if (invalidIPs.length > 0) {
       errors.push(`GEO_ALLOWED_IPS contains invalid IP addresses/CIDR ranges: ${invalidIPs.join(', ')}`);
     }
+  }
+
+  // Type/range/enum checks for every variable declared in envSchema.js (#1784).
+  // Skip names already reported by the specific checks above.
+  for (const schemaError of validateEnv(process.env)) {
+    const name = schemaError.split(' ')[0];
+    if (!errors.some((e) => e.startsWith(name + ' '))) errors.push(schemaError);
   }
 
   if (errors.length > 0) {

@@ -60,7 +60,11 @@ class GeoBlockMiddleware {
           return;
         }
 
-        log.warn('GEO_BLOCK', `${errorMsg} Geo-blocking will be disabled.`);
+        log.warn('GEO_BLOCK', `MaxMind database not found at ${dbPath}. Geo-blocking will be disabled.`, {
+          dbPath,
+          strictMode,
+          hasConfiguredRules,
+        });
         return;
       }
 
@@ -88,6 +92,18 @@ class GeoBlockMiddleware {
         log.error('GEO_BLOCK', 'Failed to initialize MaxMind database', { error: error.message });
       }
     }
+  }
+
+  /**
+   * Get the current geo-blocking status for startup and health reporting.
+   * @returns {{initialized: boolean, error: string|null, strictMode: boolean}} Status snapshot.
+   */
+  getStatus() {
+    return {
+      initialized: this.initialized,
+      error: this.initializationError ? this.initializationError.message : null,
+      strictMode: config.geoBlocking.strictMode !== false,
+    };
   }
 
   /**
@@ -391,4 +407,5 @@ module.exports = (req, res, next) => geoBlockMiddleware.middleware(req, res, nex
 // Export class for testing
 module.exports.GeoBlockMiddleware = GeoBlockMiddleware;
 module.exports.reloadGeoIpDatabase = () => geoBlockMiddleware.initialize(true);
+module.exports.getGeoBlockStatus = () => geoBlockMiddleware.getStatus();
 module.exports.geoBlockMiddleware = geoBlockMiddleware;

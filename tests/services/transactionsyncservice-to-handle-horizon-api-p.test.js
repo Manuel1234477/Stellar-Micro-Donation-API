@@ -1,4 +1,4 @@
-const StellarSdk = require('stellar-sdk');
+const StellarSdk = require('@stellar/stellar-sdk');
 const TransactionSyncService = require('../../src/services/TransactionSyncService');
 const Wallet = require('../../src/models/wallet');
 const Transaction = require('../../src/models/transaction');
@@ -17,7 +17,7 @@ const mockServer = {
   call: jest.fn()
 };
 
-jest.mock('stellar-sdk', () => {
+jest.mock('@stellar/stellar-sdk', () => {
   return {
     Horizon: {
       Server: jest.fn().mockImplementation(() => mockServer)

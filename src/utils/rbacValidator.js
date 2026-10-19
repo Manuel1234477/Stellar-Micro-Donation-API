@@ -4,6 +4,93 @@ const { PERMISSIONS, permissionsMatch } = require('../utils/permissions');
 const log = require('../utils/log');
 
 /**
+ * Pure RBAC validation helper that operates on plain inputs.
+ * Does not load app config or run startup checks, so it can be used
+ * by scripts (e.g. validate:rbac) without any environment variables.
+ *
+ * @param {Object} options
+ * @param {Object} options.rolesConfig - Parsed roles.json ({ roles: [...] })
+ * @param {Object} options.permissionMatrix - PERMISSION_MATRIX mapping role -> { permissions }
+ * @param {Array} options.routePermissions - ROUTE_PERMISSIONS array of { method, path, permission }
+ * @param {Object} options.permissions - Known permission constants (defaults to PERMISSIONS)
+ * @returns {{ valid: boolean, errors: string[], warnings: string[], unusedPermissions: string[] }}
+ */
+function validateRbacConfig({
+  rolesConfig,
+  permissionMatrix,
+  routePermissions,
+  permissions = PERMISSIONS
+} = {}) {
+  const errors = [];
+  const warnings = [];
+
+  const matrix = permissionMatrix || {};
+  const routes = Array.isArray(routePermissions) ? routePermissions : [];
+  const knownPermissions = new Set(Object.values(permissions || {}));
+
+  const configuredRoles = Array.isArray(rolesConfig && rolesConfig.roles)
+    ? rolesConfig.roles
+    : [];
+
+  const rolePermissionsByName = new Map();
+  configuredRoles.forEach(role => {
+    if (!role || typeof role.name !== 'string') return;
+    const perms = Array.isArray(role.permissions) ? role.permissions : [];
+    rolePermissionsByName.set(role.name, perms);
+  });
+
+  // 1. Every role in the matrix must exist in roles config
+  Object.keys(matrix).forEach(roleName => {
+    if (!rolePermissionsByName.has(roleName)) {
+      errors.push(`Role "${roleName}" defined in permission matrix but not found in roles config`);
+    }
+  });
+
+  // 2. Every role's permissions must be known
+  rolePermissionsByName.forEach((perms, roleName) => {
+    perms.forEach(perm => {
+      if (perm === '*') return;
+      if (!knownPermissions.has(perm)) {
+        errors.push(`Role "${roleName}" has unknown permission: ${perm}`);
+      }
+    });
+  });
+
+  // 3. Every route permission must exist and be granted to at least one role
+  routes.forEach(route => {
+    const perm = route && route.permission;
+    if (!perm) {
+      errors.push(`Route ${route && route.method} ${route && route.path} has no permission defined`);
+      return;
+    }
+
+    if (!knownPermissions.has(perm)) {
+      errors.push(`Route ${route.method} ${route.path} uses unknown permission: ${perm}`);
+    }
+
+    const granted = Object.keys(matrix).some(roleName => {
+      const rolePerms = (matrix[roleName] && matrix[roleName].permissions) || [];
+      return rolePerms.includes('*') || rolePerms.includes(perm);
+    });
+
+    if (!granted) {
+      warnings.push(`Route ${route.method} ${route.path} requires ${perm} but no role has it`);
+    }
+  });
+
+  // 4. Detect unreachable permissions (known but never used by any route)
+  const usedPermissions = new Set(routes.map(r => r && r.permission).filter(Boolean));
+  const unusedPermissions = Array.from(knownPermissions).filter(p => !usedPermissions.has(p));
+
+  return {
+    valid: errors.length === 0,
+    errors,
+    warnings,
+    unusedPermissions
+  };
+}
+
+/**
  * Validate that role definitions match the permission matrix
  * @returns {Object} Validation result with warnings and errors
  */
@@ -210,5 +297,6 @@ module.exports = {
   validateRolePermissions,
   validateRoutePermissions,
   validateRBAC,
-  getPermissionCoverage
+  getPermissionCoverage,
+  validateRbacConfig
 };

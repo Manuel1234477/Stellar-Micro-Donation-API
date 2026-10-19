@@ -16,12 +16,24 @@
  *
  * Configuration:
  *   options.ttlMs  — deduplication window in ms.
+ *   options.store  — SharedStateStore to use instead of the process-wide one.
  *   env BODY_DEDUP_WINDOW_SECONDS — fallback env-var (seconds). Default: 60 s.
+ *
+ * Multi-instance (#1786): when SHARED_STATE_BACKEND=redis (or `options.store`
+ * is given) cached responses live in the shared store, so a client retrying
+ * against a different replica is still deduplicated. Otherwise the cache is
+ * per-process.
  */
 
 'use strict';
 
 const crypto = require('crypto');
+const log = require('../utils/log');
+const { readEnv } = require('../config/env');
+const { getSharedStateStore } = require('../utils/sharedStateStore');
+
+/** Key prefix inside the shared store. */
+const SHARED_KEY_PREFIX = 'dedup:';
 
 /** @type {Map<string, {status: number, body: *, expiresAt: number}>} */
 const _cache = new Map();
@@ -95,7 +107,14 @@ function clearCache() {
 function createDeduplicationMiddleware(options = {}) {
   const ttlMs =
     options.ttlMs ??
-    (parseInt(process.env.BODY_DEDUP_WINDOW_SECONDS, 10) || 60) * 1000;
+    (readEnv('BODY_DEDUP_WINDOW_SECONDS') || 60) * 1000;
+
+  // Resolved per request so a store configured after app creation is honoured.
+  const resolveSharedStore = () => {
+    if (options.store) return options.store;
+    const store = getSharedStateStore();
+    return store.isDistributed ? store : null;
+  };
 
   return function deduplicationMiddleware(req, res, next) {
     // Only deduplicate mutating requests.
@@ -116,6 +135,12 @@ function createDeduplicationMiddleware(options = {}) {
       'anonymous';
 
     const hash = computeHash(apiKey, req.method, req.path, req.body);
+
+    const sharedStore = resolveSharedStore();
+    if (sharedStore) {
+      return handleShared(sharedStore, hash, ttlMs, req, res, next);
+    }
+
     const now = Date.now();
     const cached = _cache.get(hash);
 
@@ -144,6 +169,43 @@ function createDeduplicationMiddleware(options = {}) {
 
     return next();
   };
+}
+
+/**
+ * Shared-store variant of the cache lookup/capture. Errors from the store never
+ * block the request: the request proceeds without deduplication.
+ */
+function handleShared(store, hash, ttlMs, req, res, next) {
+  const key = SHARED_KEY_PREFIX + hash;
+
+  store.get(key)
+    .catch((err) => {
+      log.warn('DEDUPLICATION', 'Shared store lookup failed; skipping deduplication', { error: err.message });
+      return undefined; // undefined = lookup failed, do not cache this response either
+    })
+    .then((cached) => {
+      if (cached) {
+        res.setHeader('X-Deduplication-Source', 'body-hash');
+        res.setHeader('X-Deduplicated', 'true');
+        return res.status(cached.status).json(cached.body);
+      }
+
+      if (cached === null) {
+        const originalJson = res.json.bind(res);
+        res.json = function interceptJson(data) {
+          const statusCode = res.statusCode;
+          if (statusCode >= 200 && statusCode < 300) {
+            store.set(key, { status: statusCode, body: data }, ttlMs).catch((err) => {
+              log.warn('DEDUPLICATION', 'Failed to store response in shared store', { error: err.message });
+            });
+          }
+          res.json = originalJson;
+          return originalJson(data);
+        };
+      }
+      return next();
+    })
+    .catch(next);
 }
 
 module.exports = { createDeduplicationMiddleware, clearCache, computeHash, normaliseBody };

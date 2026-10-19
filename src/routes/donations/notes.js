@@ -47,8 +47,32 @@ const donationService = new DonationService(getStellarService());
 // ─── GET /donations/:id/receipt ───────────────────────────────────────────────
 
 /**
- * GET /donations/:id/receipt
- * Generate and return a PDF receipt for a confirmed donation.
+ * @openapi
+ * /donations/{id}/receipt:
+ *   get:
+ *     tags: [Donations]
+ *     summary: Download a PDF receipt for a donation
+ *     description: Generates and returns a PDF receipt for a confirmed donation.
+ *     security:
+ *       - ApiKeyAuth: []
+ *     parameters:
+ *       - in: path
+ *         name: id
+ *         required: true
+ *         schema:
+ *           type: string
+ *     responses:
+ *       200:
+ *         description: PDF receipt
+ *         content:
+ *           application/pdf:
+ *             schema:
+ *               type: string
+ *               format: binary
+ *       403:
+ *         description: Caller lacks the donations:read permission
+ *       404:
+ *         description: Donation not found
  */
 router.get('/:id/receipt', checkPermission(PERMISSIONS.DONATIONS_READ), donationIdParamSchema, asyncHandler(async (req, res, next) => {
   try {
@@ -71,9 +95,45 @@ router.get('/:id/receipt', checkPermission(PERMISSIONS.DONATIONS_READ), donation
 // ─── POST /donations/:id/receipt/email ───────────────────────────────────────
 
 /**
- * POST /donations/:id/receipt/email
- * Send a PDF receipt to the provided email address.
- * Body: { email: string }
+ * @openapi
+ * /donations/{id}/receipt/email:
+ *   post:
+ *     tags: [Donations]
+ *     summary: Email a PDF receipt for a donation
+ *     description: Sends a PDF receipt to the provided email address.
+ *     security:
+ *       - ApiKeyAuth: []
+ *     parameters:
+ *       - in: path
+ *         name: id
+ *         required: true
+ *         schema:
+ *           type: string
+ *       - in: header
+ *         name: X-Idempotency-Key
+ *         required: true
+ *         schema:
+ *           type: string
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             required: [email]
+ *             properties:
+ *               email:
+ *                 type: string
+ *                 format: email
+ *     responses:
+ *       200:
+ *         description: Receipt sent
+ *       400:
+ *         description: Missing email or idempotency key
+ *       403:
+ *         description: Caller lacks the donations:read permission
+ *       404:
+ *         description: Donation not found
  */
 router.post('/:id/receipt/email', requireApiKey, checkPermission(PERMISSIONS.DONATIONS_READ), donationIdParamSchema, payloadSizeLimiter(ENDPOINT_LIMITS.singleDonation), asyncHandler(async (req, res, next) => {
   try {
@@ -106,15 +166,56 @@ router.post('/:id/receipt/email', requireApiKey, checkPermission(PERMISSIONS.DON
 // ─── POST /donations/:id/memo/decrypt ────────────────────────────────────────
 
 /**
- * POST /donations/:id/memo/decrypt
- * Decrypt an encrypted memo for a specific donation.
- *
- * Security note: In production, memo decryption should be performed
- * client-side so that private keys never leave the user's device.
- * This endpoint is provided for server-side integrations and testing only.
- *
- * Body:
- *   - recipientSecret {string} Stellar S... secret key of the recipient
+ * @openapi
+ * /donations/{id}/memo/decrypt:
+ *   post:
+ *     tags: [Donations]
+ *     summary: Decrypt an encrypted memo for a donation
+ *     description: >
+ *       Decrypts the encrypted memo attached to a donation. Security note: in
+ *       production, memo decryption should be performed client-side so that
+ *       private keys never leave the user's device. This endpoint is provided
+ *       for server-side integrations and testing only.
+ *     security:
+ *       - ApiKeyAuth: []
+ *     parameters:
+ *       - in: path
+ *         name: id
+ *         required: true
+ *         schema:
+ *           type: string
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             required: [recipientSecret]
+ *             properties:
+ *               recipientSecret:
+ *                 type: string
+ *                 description: Stellar S... secret key of the recipient
+ *     responses:
+ *       200:
+ *         description: Decrypted memo
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 success:
+ *                   type: boolean
+ *                 data:
+ *                   type: object
+ *                   properties:
+ *                     memo:
+ *                       type: string
+ *       400:
+ *         description: Missing recipientSecret
+ *       403:
+ *         description: Caller lacks the donations:read permission
+ *       404:
+ *         description: Donation not found
  */
 router.post('/:id/memo/decrypt', requireApiKey, checkPermission(PERMISSIONS.DONATIONS_READ), donationIdParamSchema, payloadSizeLimiter(ENDPOINT_LIMITS.singleDonation), asyncHandler(async (req, res, next) => {
   try {
@@ -144,8 +245,26 @@ router.post('/:id/memo/decrypt', requireApiKey, checkPermission(PERMISSIONS.DONA
 // ─── GET /donations/:id/certificate ──────────────────────────────────────────
 
 /**
- * GET /donations/:id/certificate
- * Return the NFT donation certificate details for a specific donation.
+ * @openapi
+ * /donations/{id}/certificate:
+ *   get:
+ *     tags: [Donations]
+ *     summary: Get the NFT certificate details for a donation
+ *     security:
+ *       - ApiKeyAuth: []
+ *     parameters:
+ *       - in: path
+ *         name: id
+ *         required: true
+ *         schema:
+ *           type: string
+ *     responses:
+ *       200:
+ *         description: NFT certificate details
+ *       403:
+ *         description: Caller lacks the donations:read permission
+ *       404:
+ *         description: Donation or certificate not found
  */
 router.get('/:id/certificate', checkPermission(PERMISSIONS.DONATIONS_READ), donationIdParamSchema, (req, res, next) => {
   try {
@@ -185,9 +304,45 @@ router.get('/:id/certificate', checkPermission(PERMISSIONS.DONATIONS_READ), dona
 // ─── GET /donations/:id/certificate/ipfs ─────────────────────────────────────
 
 /**
- * GET /donations/:id/certificate/ipfs
- * Returns the IPFS gateway URL for a donation's impact certificate.
- * Pins on demand if no CID is stored yet.
+ * @openapi
+ * /donations/{id}/certificate/ipfs:
+ *   get:
+ *     tags: [Donations]
+ *     summary: Get the IPFS gateway URL for a donation's impact certificate
+ *     description: Returns the IPFS gateway URL for a donation's impact certificate. Pins on demand if no CID is stored yet.
+ *     security:
+ *       - ApiKeyAuth: []
+ *     parameters:
+ *       - in: path
+ *         name: id
+ *         required: true
+ *         schema:
+ *           type: string
+ *     responses:
+ *       200:
+ *         description: IPFS certificate location
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 success:
+ *                   type: boolean
+ *                 data:
+ *                   type: object
+ *                   properties:
+ *                     donationId:
+ *                       type: integer
+ *                     cid:
+ *                       type: string
+ *                     gateway:
+ *                       type: string
+ *                     pinned:
+ *                       type: boolean
+ *       403:
+ *         description: Caller lacks the donations:read permission
+ *       404:
+ *         description: Donation not found
  */
 router.get('/:id/certificate/ipfs', checkPermission(PERMISSIONS.DONATIONS_READ), donationIdParamSchema, asyncHandler(async (req, res, next) => {
   try {
@@ -227,8 +382,27 @@ router.get('/:id/certificate/ipfs', checkPermission(PERMISSIONS.DONATIONS_READ),
 // ─── GET /donations/:id/impact ────────────────────────────────────────────────
 
 /**
- * GET /donations/:id/impact
- * Calculate the real-world impact of a donation based on its campaign's metrics.
+ * @openapi
+ * /donations/{id}/impact:
+ *   get:
+ *     tags: [Donations]
+ *     summary: Calculate the real-world impact of a donation
+ *     description: Calculates the real-world impact of a donation based on its campaign's metrics.
+ *     security:
+ *       - ApiKeyAuth: []
+ *     parameters:
+ *       - in: path
+ *         name: id
+ *         required: true
+ *         schema:
+ *           type: string
+ *     responses:
+ *       200:
+ *         description: Impact metrics for the donation
+ *       403:
+ *         description: Caller lacks the donations:read permission
+ *       404:
+ *         description: Donation not found
  */
 router.get('/:id/impact', checkPermission(PERMISSIONS.DONATIONS_READ), donationIdParamSchema, asyncHandler(async (req, res, next) => {
   try {
@@ -270,8 +444,48 @@ router.get('/:id/impact', checkPermission(PERMISSIONS.DONATIONS_READ), donationI
 // ─── PATCH /donations/:id/status ──────────────────────────────────────────────
 
 /**
- * PATCH /donations/:id/status
- * Update donation transaction status.
+ * @openapi
+ * /donations/{id}/status:
+ *   patch:
+ *     tags: [Donations]
+ *     summary: Update a donation's status
+ *     security:
+ *       - ApiKeyAuth: []
+ *     parameters:
+ *       - in: path
+ *         name: id
+ *         required: true
+ *         schema:
+ *           type: string
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             required: [status]
+ *             properties:
+ *               status:
+ *                 type: string
+ *               stellarTxId:
+ *                 type: string
+ *               ledger:
+ *                 type: integer
+ *               notes:
+ *                 type: string
+ *               tags:
+ *                 type: array
+ *                 items:
+ *                   type: string
+ *     responses:
+ *       200:
+ *         description: Updated donation
+ *       400:
+ *         description: Missing required field status
+ *       403:
+ *         description: Caller lacks the donations:update permission
+ *       404:
+ *         description: Donation not found
  */
 router.patch('/:id/status', checkPermission(PERMISSIONS.DONATIONS_UPDATE), updateDonationStatusSchema, payloadSizeLimiter(ENDPOINT_LIMITS.singleDonation), asyncHandler(async (req, res, next) => {
   try {
@@ -383,9 +597,45 @@ router.post('/:id/approve', checkPermission(PERMISSIONS.DONATIONS_APPROVE), dona
 // ─── POST /donations/:id/refund ───────────────────────────────────────────────
 
 /**
- * POST /donations/:id/refund (#797)
- * Initiate a refund for a completed donation.
- * Body: { reason, notes, idempotencyKey, recipientSecret }
+ * @openapi
+ * /donations/{id}/refund:
+ *   post:
+ *     tags: [Donations]
+ *     summary: Initiate a refund for a completed donation (#797)
+ *     security:
+ *       - ApiKeyAuth: []
+ *     parameters:
+ *       - in: path
+ *         name: id
+ *         required: true
+ *         schema:
+ *           type: string
+ *     requestBody:
+ *       required: false
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             properties:
+ *               reason:
+ *                 type: string
+ *               notes:
+ *                 type: string
+ *               idempotencyKey:
+ *                 type: string
+ *               recipientSecret:
+ *                 type: string
+ *     responses:
+ *       200:
+ *         description: Refund already processed (idempotent replay)
+ *       201:
+ *         description: Refund initiated
+ *       400:
+ *         description: Invalid donation ID
+ *       403:
+ *         description: Caller lacks the donations:update permission
+ *       404:
+ *         description: Donation not found
  */
 router.post('/:id/refund', requireApiKey, checkPermission(PERMISSIONS.DONATIONS_UPDATE), donationIdParamSchema, payloadSizeLimiter(ENDPOINT_LIMITS.singleDonation), asyncHandler(async (req, res, next) => {
   try {
@@ -439,8 +689,40 @@ router.post('/:id/refund', requireApiKey, checkPermission(PERMISSIONS.DONATIONS_
 // ─── GET /donations/:id/tags ──────────────────────────────────────────────────
 
 /**
- * GET /donations/:id/tags
- * Returns the current list of tags for a donation.
+ * @openapi
+ * /donations/{id}/tags:
+ *   get:
+ *     tags: [Donations]
+ *     summary: List tags for a donation
+ *     security:
+ *       - ApiKeyAuth: []
+ *     parameters:
+ *       - in: path
+ *         name: id
+ *         required: true
+ *         schema:
+ *           type: string
+ *     responses:
+ *       200:
+ *         description: Current tags
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 success:
+ *                   type: boolean
+ *                 data:
+ *                   type: object
+ *                   properties:
+ *                     tags:
+ *                       type: array
+ *                       items:
+ *                         type: string
+ *       403:
+ *         description: Caller lacks the donations:read permission
+ *       404:
+ *         description: Donation not found
  */
 router.get('/:id/tags', requireApiKey, checkPermission(PERMISSIONS.DONATIONS_READ), donationIdParamSchema, asyncHandler(async (req, res) => {
   const tx = Transaction.getById(req.params.id);
@@ -451,9 +733,42 @@ router.get('/:id/tags', requireApiKey, checkPermission(PERMISSIONS.DONATIONS_REA
 // ─── POST /donations/:id/tags ─────────────────────────────────────────────────
 
 /**
- * POST /donations/:id/tags
- * Add tags to a donation (idempotent — duplicates are ignored).
- * Body: { tags: string[] }
+ * @openapi
+ * /donations/{id}/tags:
+ *   post:
+ *     tags: [Donations]
+ *     summary: Add tags to a donation
+ *     description: Adds tags to a donation. Idempotent — duplicates are ignored.
+ *     security:
+ *       - ApiKeyAuth: []
+ *     parameters:
+ *       - in: path
+ *         name: id
+ *         required: true
+ *         schema:
+ *           type: string
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             required: [tags]
+ *             properties:
+ *               tags:
+ *                 type: array
+ *                 minItems: 1
+ *                 items:
+ *                   type: string
+ *     responses:
+ *       200:
+ *         description: Updated tag list
+ *       400:
+ *         description: Invalid or empty tags
+ *       403:
+ *         description: Caller lacks the donations:update permission
+ *       404:
+ *         description: Donation not found
  */
 router.post('/:id/tags', requireApiKey, checkPermission(PERMISSIONS.DONATIONS_UPDATE), donationIdParamSchema, asyncHandler(async (req, res) => {
   const tx = Transaction.getById(req.params.id);
@@ -486,7 +801,7 @@ router.post('/:id/tags', requireApiKey, checkPermission(PERMISSIONS.DONATIONS_UP
   try {
     const TagService = require('../../services/TagService');
     await TagService.associateTags(tx.id, tags);
-  } catch (_) {}
+  } catch (_) { /* best-effort */ }
 
   return res.json({ success: true, data: { tags: updated } });
 }));
@@ -494,8 +809,31 @@ router.post('/:id/tags', requireApiKey, checkPermission(PERMISSIONS.DONATIONS_UP
 // ─── DELETE /donations/:id/tags/:tag ──────────────────────────────────────────
 
 /**
- * DELETE /donations/:id/tags/:tag
- * Remove a specific tag from a donation.
+ * @openapi
+ * /donations/{id}/tags/{tag}:
+ *   delete:
+ *     tags: [Donations]
+ *     summary: Remove a tag from a donation
+ *     security:
+ *       - ApiKeyAuth: []
+ *     parameters:
+ *       - in: path
+ *         name: id
+ *         required: true
+ *         schema:
+ *           type: string
+ *       - in: path
+ *         name: tag
+ *         required: true
+ *         schema:
+ *           type: string
+ *     responses:
+ *       200:
+ *         description: Updated tag list
+ *       403:
+ *         description: Caller lacks the donations:update permission
+ *       404:
+ *         description: Donation not found
  */
 router.delete('/:id/tags/:tag', requireApiKey, checkPermission(PERMISSIONS.DONATIONS_UPDATE), asyncHandler(async (req, res) => {
   const tx = Transaction.getById(req.params.id);
@@ -515,7 +853,7 @@ router.delete('/:id/tags/:tag', requireApiKey, checkPermission(PERMISSIONS.DONAT
   try {
     const TagService = require('../../services/TagService');
     await TagService.removeTagFromDonation(tx.id, tag);
-  } catch (_) {}
+  } catch (_) { /* best-effort */ }
 
   return res.json({ success: true, data: { tags: updated } });
 }));

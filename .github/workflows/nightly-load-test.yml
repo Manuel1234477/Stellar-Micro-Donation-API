@@ -1,19 +1,25 @@
-name: Nightly Load Test Regression Check
+name: Load Tests
 
-# Issue #1546 — runs the load test suite nightly against the strict production
-# SLA targets in tests/load/PerformanceBaselines.js (NIGHTLY_TARGET_BASELINES:
-# POST /donations 200 req/s p95<150ms, GET /donations 500 req/s p95<50ms,
-# GET /stats/summary 100 req/s p95<200ms) and files a GitHub issue when any
-# scenario's p95 latency exceeds its target by more than 20%.
+# Issue #1799 — single canonical load-test workflow, merging the former
+# load-tests.yml (PR/push merge gate) and nightly-load-test.yml (nightly
+# regression check). Both jobs run the same harness (npm run test:load) and
+# compare against tests/load/PerformanceBaselines.js:
 #
-# This is intentionally separate from .github/workflows/load-tests.yml, which
-# gates every PR/push merge against the more CI-runner-realistic BASELINES —
-# a regression here opens an issue for follow-up rather than blocking a merge,
-# so it can safely apply the stricter, unrelaxed targets (no margin env vars).
+#   * merge-gate  — PRs/pushes, relaxed BASELINES (CI-runner realistic).
+#   * nightly-regression-check — nightly at 03:00 UTC, strict
+#     NIGHTLY_TARGET_BASELINES (POST /donations 200 req/s p95<150ms,
+#     GET /donations 500 req/s p95<50ms, GET /stats/summary 100 req/s
+#     p95<200ms) and files a single tracking issue when any scenario's p95
+#     latency exceeds its target by more than 20%.
+#
+# See docs/LOAD_TESTING.md for the harness and how to reproduce locally.
 on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
   schedule:
-    # Nightly at 03:00 UTC (offset from load-tests.yml's 02:00 UTC nightly run
-    # so the two jobs don't contend for the same runner window).
+    # Nightly at 03:00 UTC.
     - cron: '0 3 * * *'
   workflow_dispatch:
 
@@ -22,7 +28,8 @@ permissions:
   issues: write
 
 jobs:
-  nightly-regression-check:
+  merge-gate:
+    if: github.event_name == 'push' || github.event_name == 'pull_request'
     runs-on: ubuntu-latest
     timeout-minutes: 20
 
@@ -31,6 +38,39 @@ jobs:
 
       - name: Set up Node.js
         uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run load tests against a local server instance
+        env:
+          MOCK_STELLAR: 'true'
+          NODE_ENV: test
+          API_KEYS: 'test-load-key,test-key-1,test-key-2'
+          ENCRYPTION_KEY: test_encryption_key_fixed_32bytes_hex_value_here_00
+        run: npm run test:load -- --output ./reports/load --concurrency 20 --iterations 100 --warmup 15
+
+      - name: Upload load test report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: load-test-report
+          path: reports/load/
+          retention-days: 14
+
+  nightly-regression-check:
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v7
         with:
           node-version: '20'
           cache: 'npm'
@@ -53,22 +93,15 @@ jobs:
         id: regression_check
         run: node scripts/check-load-test-regression.js reports/load/load-test-report.json
 
-      - name: File a GitHub issue for detected regressions
+      - name: File or update the tracking issue for detected regressions
         if: steps.regression_check.outputs.has_regressions == 'true'
-        uses: actions/github-script@v7
+        uses: actions/github-script@v9
         with:
           script: |
             const fs = require('fs');
-            const data = JSON.parse(fs.readFileSync('reports/load/regressions.json', 'utf8'));
 
-            const metricsTable = [
-              '| Scenario | Metric | Baseline | Actual | Over threshold |',
-              '|---|---|---|---|---|',
-              ...data.regressions.map(r =>
-                `| ${r.scenario} | ${r.metric} | ${r.baseline}ms | ${r.actual}ms | +${r.pctOver}% |`
-              ),
-            ].join('\n');
-
+            const LABEL = 'perf-regression';
+            const TITLE_PREFIX = 'Performance regression: ';
             const runUrl = `${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`;
             const body = [
               `Nightly load test detected ${data.regressions.length} scenario(s) exceeding their SLA target's p95 latency by more than ${data.thresholdPct}% (issue #1546).`,
@@ -82,17 +115,65 @@ jobs:
               'Targets are defined in `tests/load/PerformanceBaselines.js` (`NIGHTLY_TARGET_BASELINES`). See `docs/LOAD_TESTING.md` for how to reproduce locally with `npm run test:load`.',
             ].join('\n');
 
-            await github.rest.issues.create({
+            // Single tracking issue: update the existing open one if present,
+            // otherwise open a new one.
+            const title = 'Performance regression detected — nightly load test';
+            const existing = await github.rest.issues.listForRepo({
               owner: context.repo.owner,
               repo: context.repo.repo,
-              title: `Performance regression detected — nightly load test (${new Date().toISOString().slice(0, 10)})`,
-              body,
-              labels: ['performance', 'regression', 'automated'],
+              state: 'open',
+              labels: 'performance,regression,automated',
+              per_page: 100,
             });
+            const tracking = existing.data.find(i => i.title === title);
+
+            if (tracking) {
+              await github.rest.issues.createComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: tracking.number,
+                body,
+              });
+            } else {
+              await github.rest.issues.create({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                title,
+                body,
+                labels: ['performance', 'regression', 'automated'],
+              });
+            }
+
+            for (const issue of openIssues) {
+              if (issue.pull_request) continue;
+              if (!issue.title.startsWith(TITLE_PREFIX)) continue;
+              const scenario = issue.title.slice(TITLE_PREFIX.length).trim();
+              if (regressedScenarios.has(scenario)) continue;
+
+              await github.rest.issues.createComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: issue.number,
+                body: [
+                  `\`${scenario}\` is back within its SLA p95 latency target — closing this tracking issue.`,
+                  '',
+                  `Checked at: ${data.checkedAt}`,
+                  `Workflow run: ${runUrl}`,
+                ].join('\n'),
+              });
+              await github.rest.issues.update({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: issue.number,
+                state: 'closed',
+                state_reason: 'completed',
+              });
+              core.info(`Closed recovered tracking issue #${issue.number} for ${scenario}`);
+            }
 
       - name: Upload load test report
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: nightly-load-test-report
           path: reports/load/

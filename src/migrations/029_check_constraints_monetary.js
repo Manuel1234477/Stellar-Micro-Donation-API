@@ -24,6 +24,24 @@ exports.name = '029_check_constraints_monetary';
 
 exports.up = async (db) => {
   // ── pledges ────────────────────────────────────────────────────────────────
+  // No numbered migration creates pledges, so a fresh database has no table to
+  // rebuild here. Create it with the shape this rebuild expects; deployed
+  // databases already have the table and skip this.
+  await db.run(`
+    CREATE TABLE IF NOT EXISTS pledges (
+      id              TEXT PRIMARY KEY,
+      campaign_id     INTEGER NOT NULL,
+      donor_wallet_id TEXT NOT NULL,
+      amount          REAL NOT NULL,
+      status          TEXT NOT NULL DEFAULT 'pending',
+      expires_at      DATETIME NOT NULL,
+      cancel_reason   TEXT,
+      cancelled_at    DATETIME,
+      created_at      DATETIME DEFAULT CURRENT_TIMESTAMP,
+      FOREIGN KEY (campaign_id) REFERENCES campaigns(id)
+    )
+  `);
+
   // Recreate with CHECK (amount > 0)
   await db.run('BEGIN');
   try {

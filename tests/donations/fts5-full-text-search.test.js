@@ -12,6 +12,7 @@
  */
 
 process.env.MOCK_STELLAR = 'true';
+const ORIGINAL_API_KEYS = process.env.API_KEYS;
 process.env.API_KEYS = 'test-fts5-key';
 process.env.NODE_ENV = 'test';
 
@@ -290,4 +291,11 @@ describe('FTS5 migration 044', () => {
     // down on a DB where these tables may not exist should be a no-op
     await expect(migration.down(Database)).resolves.not.toThrow();
   });
+});
+
+// Restore the module-scope env override so later suites in this worker see
+// the value tests/setup.js established.
+afterAll(() => {
+  if (ORIGINAL_API_KEYS === undefined) delete process.env.API_KEYS;
+  else process.env.API_KEYS = ORIGINAL_API_KEYS;
 });

@@ -13,6 +13,7 @@ const Database = require('../utils/database');
 const Transaction = require('../models/transaction');
 const encryption = require('../utils/encryption');
 const { STROOPS_PER_XLM } = require('../constants');
+const { toStroops, fromStroops } = require('../utils/money');
 const donationValidator = require('../utils/donationValidator');
 const memoValidator = require('../utils/memoValidator');
 const { calculateAnalyticsFee } = require('../utils/feeCalculator');
@@ -42,6 +43,18 @@ const {
 } = require('../utils/stellarAsset');
 const donationEvents = require('../events/donationEvents');
 const Cache = require('../utils/cache');
+const crypto = require('crypto');
+
+/**
+ * Build the 32-byte hex hash memo used on refund transactions.
+ * Hex-encoded sha256 of the refund reference, so it always fits Stellar's memo limit.
+ *
+ * @param {string} donationId
+ * @returns {string} 64-character hex digest
+ */
+function refundMemoHash(donationId) {
+  return crypto.createHash('sha256').update(`REFUND:${donationId}`).digest('hex');
+}
 
 const DEFAULT_DESTINATION_ASSET = {
   type: 'native',
@@ -310,11 +323,30 @@ class DonationService {
         2000,
         'reserveCheck'
       );
-      
-      if (!reserveCheck.sufficient) {
+
+      // Recompute availability in stroops (balance − minimum reserve − selling
+      // liabilities − fee) so float rounding can never let an unaffordable
+      // donation slip through to Horizon.
+      const amountStroops = toStroops(amount);
+      const balanceStroops = toStroops(reserveCheck.currentBalance || 0);
+      const reserveStroops = toStroops(reserveCheck.minimumReserve || 0);
+      const liabilitiesStroops = toStroops(reserveCheck.sellingLiabilities || 0);
+      const feeStroops = toStroops(reserveCheck.fee || 0);
+      const availableStroops = balanceStroops - reserveStroops - liabilitiesStroops - feeStroops;
+
+      if (!reserveCheck.sufficient || amountStroops > availableStroops) {
+        const available = fromStroops(availableStroops > 0 ? availableStroops : 0);
         throw new BusinessLogicError(
-          ERROR_CODES.INSUFFICIENT_BALANCE_AFTER_RESERVE,
-          `Insufficient balance after reserve. Your account must maintain a minimum reserve of ${reserveCheck.minimumReserve.toFixed(7)} XLM (base reserve + ${reserveCheck.subentryCount} subentries). Current balance: ${reserveCheck.currentBalance.toFixed(7)} XLM. Maximum safe donation: ${reserveCheck.maxSafeDonation.toFixed(7)} XLM.`
+          ERROR_CODES.INSUFFICIENT_BALANCE,
+          `Insufficient balance: donation of ${fromStroops(amountStroops)} XLM exceeds the available balance of ${available} XLM after the minimum reserve of ${fromStroops(reserveStroops)} XLM, selling liabilities of ${fromStroops(liabilitiesStroops)} XLM and network fee of ${fromStroops(feeStroops)} XLM.`,
+          {
+            code: ERROR_CODES.INSUFFICIENT_BALANCE,
+            availableBalance: available,
+            requestedAmount: fromStroops(amountStroops),
+            minimumReserve: fromStroops(reserveStroops),
+            sellingLiabilities: fromStroops(liabilitiesStroops),
+            fee: fromStroops(feeStroops),
+          }
         );
       }
     } catch (err) {
@@ -348,17 +380,29 @@ class DonationService {
     // rollback can never leave totals incremented without a corresponding row.
     // Issue #1591: All local database writes for a single Stellar transaction are
     // wrapped in a transaction. If any write fails, the entire transaction rolls back.
-    const amountStroops = Math.round(parseFloat(amount) * STROOPS_PER_XLM);
+    // Issue #1807: state is only written after the Stellar submission succeeded, so
+    // a failed operation leaves no partial writes behind.
+    const amountStroops = toStroops(amount);
     const DonationTotalsRepository = require('./DonationTotalsRepository');
     const totalsRepo = new DonationTotalsRepository();
-    const dbResult = await Database.runTransaction(async (tx) => {
-      const r = await tx.run(
-        'INSERT INTO transactions (senderId, receiverId, amount, memo, notes, tags, timestamp, idempotencyKey, stellar_tx_id) VALUES (?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, ?, ?)',
-        [senderId, receiverId, amountStroops, sanitizedMemo, notes || null, JSON.stringify(tags || []), idempotencyKey, stellarResult.transactionId]
-      );
-      await totalsRepo.incrementTotal(String(receiverId), amountStroops, tx);
-      return r;
-    });
+    let dbResult;
+    try {
+      dbResult = await Database.runTransaction(async (tx) => {
+        const r = await tx.run(
+          'INSERT INTO transactions (senderId, receiverId, amount, memo, notes, tags, timestamp, idempotencyKey, stellar_tx_id) VALUES (?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, ?, ?)',
+          [senderId, receiverId, amountStroops, sanitizedMemo, notes || null, JSON.stringify(tags || []), idempotencyKey, stellarResult.transactionId]
+        );
+        await totalsRepo.incrementTotal(String(receiverId), amountStroops, tx);
+        return r;
+      });
+    } catch (err) {
+      log.error('DONATION_SERVICE', 'Failed to persist donation after Stellar success; local state unchanged', {
+        requestId,
+        transactionId: stellarResult.transactionId,
+        error: err.message,
+      });
+      throw err;
+    }
 
     // Emit donation.created to trigger cache invalidation and other listeners (non-blocking).
     // emitLifecycleEvent() wraps each listener in its own try/catch so a single
@@ -393,24 +437,33 @@ class DonationService {
       log.error('DONATION_SERVICE', 'Failed to process donation matching', { error: err.message });
     }
 
-    // Record in JSON with state transitions
+    // Detect overpayment from the on-chain amount; never let enrichment block persistence
+    let overpayment = null;
+    try {
+      if (stellarResult.amount !== undefined && stellarResult.amount !== null) {
+        overpayment = buildOverpaymentRecord(Number(stellarResult.amount), Number(amount), 0);
+      }
+    } catch (err) {
+      log.error('DONATION_SERVICE', 'Failed to compute overpayment', { error: err.message });
+    }
+
+    // Record in JSON with state transitions. The record is created directly in
+    // SUBMITTED state (the Stellar submission already succeeded) so a failure
+    // here cannot leave a PENDING row that never advances.
     const transaction = Transaction.create({
       id: dbResult.id.toString(),
       amount: amount,
       donor: sender.publicKey,
       recipient: receiver.publicKey,
-      status: TRANSACTION_STATES.PENDING,
+      status: TRANSACTION_STATES.SUBMITTED,
       notes: notes || null,
       tags: tags || [],
       apiKeyId: apiKeyId || null,
+      stellarTxId: stellarResult.transactionId,
+      stellarLedger: stellarResult.ledger,
       overpaymentFlagged: Boolean(overpayment),
       overpaymentDetails: overpayment || null,
       overpaymentReturnStatus: overpayment ? 'pending' : null
-    });
-
-    Transaction.updateStatus(transaction.id, TRANSACTION_STATES.SUBMITTED, {
-      transactionId: stellarResult.transactionId,
-      ledger: stellarResult.ledger,
     });
 
     // Determine required confirmation threshold based on global config or donation amount.
@@ -798,7 +851,10 @@ class DonationService {
       throw new ValidationError('Sender and recipient cannot be the same wallet', null, ERROR_CODES.INVALID_REQUEST);
     }
 
-    // When anonymous=true, replace the real wallet address with a pseudonymous ID
+    // When anonymous=true, replace the real wallet address with a pseudonymous ID.
+    // The pseudonym is HMAC-SHA256(ANONYMIZATION_SECRET, publicKey) truncated, so it
+    // is stable per wallet yet cannot be reversed by hashing known addresses. The
+    // raw public key is never persisted on anonymous rows.
     let sanitizedDonor;
     let pseudonymousId = null;
     if (anonymous && rawDonor && rawDonor !== 'Anonymous') {
@@ -1091,12 +1147,14 @@ class DonationService {
     }
     // ─────────────────────────────────────────────────────────────────────────
 
-    // Create transaction record
+    // Create transaction record. For anonymous donations only the pseudonymous ID
+    // is persisted as the donor — the raw wallet address is never stored.
+    const persistedDonor = anonymous && pseudonymousId ? pseudonymousId : sanitizedDonor;
     const transaction = Transaction.create({
       amount: xlmAmount,
       originalAmount: normalizedCurrency !== 'XLM' ? amount : undefined,
       originalCurrency: normalizedCurrency !== 'XLM' ? normalizedCurrency : undefined,
-      donor: sanitizedDonor,
+      donor: persistedDonor,
       recipient: sanitizedRecipient,
       memo: finalMemo,
       memoType: memoType || 'text',
@@ -1133,9 +1191,10 @@ class DonationService {
       overpaymentFlagged: overpayment ? true : false,
       overpaymentDetails: overpayment || null,
       campaign_id: campaign_id || null,
-      // Anonymous donation fields
+      // Anonymous donation fields — only the pseudonymous ID is retained
       anonymous: anonymous === true,
       pseudonymousId: pseudonymousId || null,
+      ...(anonymous && pseudonymousId ? { donorPublicKey: null } : {}),
       // Time-bound transaction fields
       validAfter: validAfter || 0,
       validBefore: validBefore || 0,
@@ -1291,7 +1350,11 @@ class DonationService {
       }
     }
 
-    const sanitizedDonor = donor ? sanitizeIdentifier(donor) : 'Anonymous';
+    const rawDonor = donor ? sanitizeIdentifier(donor) : 'Anonymous';
+    const pseudonymousId = anonymous && rawDonor !== 'Anonymous'
+      ? generatePseudonymousId(rawDonor)
+      : null;
+    const sanitizedDonor = pseudonymousId || rawDonor;
     const claimantDestinations = claimants.map(c => c.destination);
     const predicate = claimants.length > 0 && claimants[0].predicate ? claimants[0].predicate : null;
 
@@ -1323,6 +1386,7 @@ class DonationService {
         balanceId: stellarResult.balanceId,
         expiryTimestamp: expiryTimestamp || null,
         anonymous: anonymous === true,
+        pseudonymousId: pseudonymousId || null,
       });
 
       const pubsub = require('../graphql/pubsub');
@@ -1919,6 +1983,15 @@ class DonationService {
   }
 
   /**
+   * Get one bounded page of donations without loading the full set.
+   * @param {{ limit: number, offset: number }} page - Already-clamped page bounds.
+   * @returns {Array} Array of transactions
+   */
+  getDonationsPage(page) {
+    return Transaction.getPage(page);
+  }
+
+  /**
    * Apply search/filter criteria to a list of transactions.
    * All parameters are optional and combinable.
    *
@@ -2017,23 +2090,20 @@ class DonationService {
       return true;
     });
 
-    result.sort((a, b) => {
-      let aVal = a[sortBy];
-      let bVal = b[sortBy];
-      if (sortBy === 'timestamp') {
-        aVal = new Date(aVal).getTime();
-        bVal = new Date(bVal).getTime();
-      } else if (sortBy === 'amount') {
-        aVal = Number(aVal);
-        bVal = Number(bVal);
-      } else {
-        aVal = String(aVal || '');
-        bVal = String(bVal || '');
-      }
-      if (aVal < bVal) return order === 'asc' ? -1 : 1;
-      if (aVal > bVal) return order === 'asc' ? 1 : -1;
-      return 0;
-    });
+    // Precompute sort keys once so the comparator avoids per-comparison Date parsing.
+    const sortKey = (tx) => {
+      if (sortBy === 'timestamp') return new Date(tx.timestamp).getTime();
+      if (sortBy === 'amount') return Number(tx.amount);
+      return String(tx[sortBy] || '');
+    };
+    result = result
+      .map(tx => ({ tx, key: sortKey(tx) }))
+      .sort((a, b) => {
+        if (a.key < b.key) return order === 'asc' ? -1 : 1;
+        if (a.key > b.key) return order === 'asc' ? 1 : -1;
+        return 0;
+      })
+      .map(entry => entry.tx);
 
     return result;
   }
@@ -2314,7 +2384,7 @@ class DonationService {
   }
 
   async refundDonation(donationId, { reason, notes, idempotencyKey, recipientSecret, requestId }) {
-    const StellarSdk = require('stellar-sdk');
+    const StellarSdk = require('./stellar/sdk.js');
     const { BusinessLogicError, DuplicateError, ValidationError } = require('../utils/errors');
     const AuditLogService = require('./AuditLogService');
     const WebhookService = require('./WebhookService');
@@ -2448,11 +2518,15 @@ class DonationService {
 
     let reverseResult;
     try {
+      // Stellar text memos are capped at 28 bytes, so a "REFUND:<uuid>" text
+      // memo always overflows. Use a 32-byte hash memo instead: reconciliation
+      // can recompute sha256('REFUND:' + donationId) to match the refund.
       reverseResult = await this.stellarService.sendDonation({
         sourceSecret: secret,
         destinationPublic: donation.donor,
         amount: donation.amount,
-        memo: `REFUND:${donationId}`
+        memo: refundMemoHash(donationId),
+        memoType: 'hash'
       });
     } catch (stellarErr) {
       await Database.run(`UPDATE refunds SET status = 'failed' WHERE id = ?`, [pendingRecord.id]);

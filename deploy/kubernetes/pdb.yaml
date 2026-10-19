@@ -1,0 +1,11 @@
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: stellar-micro-donation-api
+  labels:
+    app.kubernetes.io/name: stellar-micro-donation-api
+spec:
+  minAvailable: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: stellar-micro-donation-api

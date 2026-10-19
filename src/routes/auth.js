@@ -15,6 +15,7 @@ const {
   rotateRefreshToken,
 } = require('../services/JwtService');
 const SEP10Service = require('../services/SEP10Service');
+const { resolveSep10SigningSecret } = require('../utils/sep10SigningKey');
 const config = require('../config');
 const { getStellarService } = require('../config/stellar');
 const log = require('../utils/log');
@@ -25,11 +26,8 @@ const bruteForce = require('../utils/bruteForceProtection');
 
 const stellarService = getStellarService();
 const sep10Config = config.sep10 || {};
-const serverSigningKey =
-  config.stellar?.serviceSecretKey ||
-  process.env.SERVICE_SECRET_KEY ||
-  process.env.STELLAR_SECRET ||
-  null;
+// Same resolution as the SIGNING_KEY in stellar.toml (issue #1888)
+const serverSigningKey = resolveSep10SigningSecret().secret || null;
 
 const sep10Service = serverSigningKey
   ? new SEP10Service(stellarService, {

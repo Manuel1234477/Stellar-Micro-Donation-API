@@ -124,7 +124,8 @@ describe('POST /donations/:id/refund', () => {
           expect.objectContaining({
             destinationPublic: 'GDONOR123',
             amount: 100,
-            memo: expect.stringContaining('REFUND:')
+            memo: expect.stringMatching(/^[0-9a-f]{64}$/),
+            memoType: 'hash'
           })
         );
 
@@ -667,7 +668,8 @@ describe('POST /donations/:id/refund', () => {
         // Verify reverse transaction was called with REFUND memo
         expect(stellarService.sendDonation).toHaveBeenCalledWith(
           expect.objectContaining({
-            memo: expect.stringMatching(/^REFUND:/)
+            memo: expect.stringMatching(/^[0-9a-f]{64}$/),
+            memoType: 'hash'
           })
         );
       } finally {

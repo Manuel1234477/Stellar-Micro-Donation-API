@@ -11,6 +11,8 @@
  * - Auth enforcement
  */
 
+const { REPO_ROOT } = require('../helpers/paths');
+
 // ─── Mocks ────────────────────────────────────────────────────────────────────
 
 jest.mock('../../src/utils/database', () => ({
@@ -483,19 +485,19 @@ describe('GET /tiers/analytics', () => {
 describe('Auth enforcement', () => {
   test('POST /tiers uses ADMIN_ALL permission', () => {
     const fs = require('fs');
-    const src = fs.readFileSync(require('path').join(__dirname, '../src/routes/tiers.js'), 'utf8');
+    const src = fs.readFileSync(require('path').join(REPO_ROOT, 'src/routes/tiers.js'), 'utf8');
     expect(src).toMatch(/PERMISSIONS\.ADMIN_ALL/);
   });
 
   test('POST /tiers/:id/subscribe uses STREAM_CREATE permission', () => {
     const fs = require('fs');
-    const src = fs.readFileSync(require('path').join(__dirname, '../src/routes/tiers.js'), 'utf8');
+    const src = fs.readFileSync(require('path').join(REPO_ROOT, 'src/routes/tiers.js'), 'utf8');
     expect(src).toMatch(/PERMISSIONS\.STREAM_CREATE/);
   });
 
   test('GET /tiers/analytics uses STATS_ADMIN permission', () => {
     const fs = require('fs');
-    const src = fs.readFileSync(require('path').join(__dirname, '../src/routes/tiers.js'), 'utf8');
+    const src = fs.readFileSync(require('path').join(REPO_ROOT, 'src/routes/tiers.js'), 'utf8');
     expect(src).toMatch(/PERMISSIONS\.STATS_ADMIN/);
   });
 });

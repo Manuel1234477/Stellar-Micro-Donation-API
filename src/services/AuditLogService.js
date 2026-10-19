@@ -21,6 +21,12 @@ const {
   buildCursorMeta,
 } = require('../utils/pagination');
 
+// Buffer state for flush()/startAutoFlush(). _log() writes synchronously, so the
+// buffer normally stays empty and flush() is effectively a no-op.
+let _pendingBuffer = [];
+let _autoFlushTimer = null;
+const BUFFER_FLUSH_INTERVAL_MS = parseInt(process.env.AUDIT_LOG_FLUSH_INTERVAL_MS || '1000', 10);
+
 /**
  * Audit event severity levels
  */

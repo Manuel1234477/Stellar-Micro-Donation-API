@@ -88,14 +88,16 @@
  */
 
 const express = require('express');
+const { clientErrorMessage } = require('../utils/clientErrorMessage');
 const router = express.Router();
 const crypto = require('crypto');
 const Database = require('../utils/database');
 const { checkPermission } = require('../middleware/rbac');
 const { PERMISSIONS } = require('../utils/permissions');
 const { VALID_FREQUENCIES, SCHEDULE_STATUS } = require('../constants');
-const { validateRequiredFields, validateFloat, validateXLMAmount, validateEnum } = require('../utils/validationHelpers');
+const { validateRequiredFields, validateXLMAmount, validateEnum } = require('../utils/validationHelpers');
 const log = require('../utils/log');
+const timerRegistry = require('../utils/timerRegistry');
 const { validateSchema } = require('../middleware/schemaValidation');
 const { isValidStellarPublicKey } = require('../utils/validators');
 const SseManager = require('../services/SseManager');
@@ -582,7 +584,7 @@ router.get('/schedules/:id', checkPermission(PERMISSIONS.STREAM_READ), streamSch
     res.status(500).json({
       success: false,
       error: 'Failed to fetch schedule',
-      message: error.message
+      message: clientErrorMessage('STREAM_ROUTE', error, 500, 'Failed to fetch schedule')
     });
   }
 }));
@@ -931,7 +933,7 @@ router.delete('/schedules/:id', checkPermission(PERMISSIONS.STREAM_DELETE), stre
     res.status(500).json({
       success: false,
       error: 'Failed to cancel schedule',
-      message: error.message
+      message: clientErrorMessage('STREAM_ROUTE', error, 500, 'Failed to cancel schedule')
     });
   }
 }));
@@ -1009,12 +1011,12 @@ router.get('/feed', checkPermission(PERMISSIONS.STREAM_READ), (req, res) => {
   SseManager.writeSseEvent(res, '0', 'connected', { clientId, message: 'Stream connected' });
 
   // Heartbeat
-  const heartbeat = setInterval(() => {
+  const heartbeat = timerRegistry.createInterval(() => {
     res.write(': ping\n\n');
   }, SseManager.HEARTBEAT_INTERVAL_MS);
 
   req.on('close', () => {
-    clearInterval(heartbeat);
+    heartbeat.clear();
     SseManager.removeClient(clientId);
     log.info('SSE', 'Client disconnected', { clientId, keyId });
   });

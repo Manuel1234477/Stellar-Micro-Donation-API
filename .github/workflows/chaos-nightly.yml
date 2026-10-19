@@ -22,12 +22,12 @@ jobs:
 
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Set up Node.js 20
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v7
         with:
-          node-version: '20'
+          node-version: '24'
           cache: 'npm'
 
       - name: Install dependencies
@@ -39,28 +39,60 @@ jobs:
           NODE_ENV: test
           MOCK_STELLAR: 'true'
 
-      # ─── Failure Notification: Automatically create annotated GitHub issue ───
-      - name: Create Issue on Chaos Failure
+      # ─── Failure Notification: Comment on the tracking issue (#1649) ──────────
+      # We intentionally do NOT open a new issue per nightly failure; all recurring
+      # failures are reported as comments on the single tracking issue #1649.
+      - name: Comment on Tracking Issue on Chaos Failure
         if: failure()
-        uses: actions/github-script@v7
+        uses: actions/github-script@v9
         with:
           github-token: ${{ secrets.GITHUB_TOKEN }}
           script: |
+            const TRACKING_ISSUE = 1649;
             const sha = context.sha;
             const runUrl = `${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`;
-            const title = `🚨 Chaos Engineering Nightly Run Failed (${new Date().toISOString().split('T')[0]})`;
+            const date = new Date().toISOString().split('T')[0];
+
+            // Best-effort extraction of failing tests from the job logs.
+            let failingTests = [];
+            try {
+              const jobs = await github.rest.actions.listJobsForWorkflowRun({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                run_id: context.runId,
+              });
+              const chaosJob = jobs.data.jobs.find((j) => j.name === 'Chaos Engineering Scenarios') || jobs.data.jobs[0];
+              if (chaosJob) {
+                const logs = await github.rest.actions.downloadJobLogsForWorkflowRun({
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  job_id: chaosJob.id,
+                });
+                const text = typeof logs.data === 'string' ? logs.data : String(logs.data);
+                const matches = text.match(/^\s*(?:●|✕|×)\s+(.+)$/gm) || [];
+                failingTests = [...new Set(matches.map((m) => m.replace(/^\s*(?:●|✕|×)\s+/, '').trim()))].slice(0, 20);
+              }
+            } catch (err) {
+              core.warning(`Could not extract failing tests from logs: ${err.message}`);
+            }
+
             const body = [
-              '## 🌪️ Chaos Engineering Suite Failure Report',
+              `## 🌪️ Nightly Chaos Suite Failure — ${date}`,
               '',
               `The automated nightly chaos test suite failed on commit \`${sha.slice(0, 7)}\`.`,
               '',
               `**Workflow Run:** [View Logs](${runUrl})`,
               '',
-              '### Potential Root Causes:',
-              '- Database connection drop or lock handling regression',
-              '- Horizon timeout / malformed response handling failure',
-              '- Race condition or state inconsistency under concurrency',
-              '- Process signal or teardown exception during in-flight transactions',
+              '### Failing Tests:',
+              failingTests.length > 0
+                ? failingTests.map((t) => `- \`${t}\``).join('\n')
+                : '- _Could not parse failing tests from logs — see run logs above._',
+              '',
+              '### Likely Root Cause:',
+              '- Database chaos scenario (`Database Chaos › should handle intermittent database failures`) —',
+              '  suspected `DatabaseError` mapping and the Transaction model\'s silent fallback.',
+              '- Other candidates: Horizon timeout handling, race conditions under concurrency,',
+              '  and teardown exceptions during in-flight transactions.',
               '',
               '### Action Items:',
               '1. Review the workflow failure logs to pinpoint the failing chaos scenario.',
@@ -68,28 +100,9 @@ jobs:
               '3. Implement necessary fault-tolerance fixes.',
             ].join('\n');
 
-            // Search for an existing open issue with the same title prefix
-            const issues = await github.rest.issues.listForRepo({
+            await github.rest.issues.createComment({
               owner: context.repo.owner,
               repo: context.repo.repo,
-              state: 'open',
-              labels: ['chaos-engineering'],
+              issue_number: TRACKING_ISSUE,
+              body,
             });
-
-            if (issues.data.length === 0) {
-              await github.rest.issues.create({
-                owner: context.repo.owner,
-                repo: context.repo.repo,
-                title,
-                body,
-                labels: ['chaos-engineering', 'bug', 'automated-report'],
-              });
-            } else {
-              // Add a comment to the existing open issue
-              await github.rest.issues.createComment({
-                owner: context.repo.owner,
-                repo: context.repo.repo,
-                issue_number: issues.data[0].number,
-                body: `**Recurring Failure:** Nightly chaos test failed again on commit \`${sha.slice(0, 7)}\`.\n[View Run Details](${runUrl})`,
-              });
-            }

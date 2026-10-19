@@ -7,12 +7,367 @@
  * OWNER: Security Team
  * DEPENDENCIES: GeoRuleService, geoBlock middleware, RBAC, AuditLogService
  *
+ * The single route module for geo-blocking (#1778). Replaces the former
+ * src/routes/admin/geoBlocking.js.
+ *
  * Endpoints:
  *   GET    /admin/geo-rules
- *   POST   /admin/geo-rules
+ *   POST   /admin/geo-rules                       { countryCode, action, description? }
  *   PATCH  /admin/geo-rules/:id
  *   DELETE /admin/geo-rules/:id
  *   POST   /admin/geo-rules/test
+ *   GET    /admin/geo-rules/active                 effective config + DB rules
+ *   DELETE /admin/geo-rules/block/:countryCode
+ *   DELETE /admin/geo-rules/allow/:countryCode
+ *   GET    /admin/geo-rules/config                 static config + MaxMind DB status
+ *   PUT    /admin/geo-rules/config
+ *   POST   /admin/geo-rules/reload-db
+ *
+ * Deprecated (deprecatedRouter, mounted at /admin/geo-blocking, sunset 1 Jan 2027):
+ *   GET    /admin/geo-blocking/rules               → GET  /admin/geo-rules/active
+ *   POST   /admin/geo-blocking/block|allow         → POST /admin/geo-rules
+ *   DELETE /admin/geo-blocking/block|allow/:cc     → DELETE /admin/geo-rules/block|allow/:cc
+ *   GET    /admin/geo-blocking                     → GET  /admin/geo-rules/config
+ *   PUT    /admin/geo-blocking                     → PUT  /admin/geo-rules/config
+ *   POST   /admin/geo-blocking/reload-db           → POST /admin/geo-rules/reload-db
+ */
+
+/**
+ * @openapi
+ * tags:
+ *   - name: Admin Geo Rules
+ *     description: Runtime geo-blocking rules (#1778 canonical module)
+ *
+ * /admin/geo-rules:
+ *   get:
+ *     tags: [Admin Geo Rules]
+ *     summary: List geo rules
+ *     security:
+ *       - ApiKeyAuth: []
+ *     responses:
+ *       200:
+ *         description: Success
+ *       401:
+ *         description: Missing or invalid API key
+ *       403:
+ *         description: Admin role required
+ *   post:
+ *     tags: [Admin Geo Rules]
+ *     summary: Create a geo rule (action block|allow)
+ *     security:
+ *       - ApiKeyAuth: []
+ *     requestBody:
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *     responses:
+ *       200:
+ *         description: Success
+ *       401:
+ *         description: Missing or invalid API key
+ *       403:
+ *         description: Admin role required
+ * /admin/geo-rules/{id}:
+ *   patch:
+ *     tags: [Admin Geo Rules]
+ *     summary: Update a geo rule
+ *     security:
+ *       - ApiKeyAuth: []
+ *     parameters:
+ *       - in: path
+ *         name: id
+ *         required: true
+ *         schema:
+ *           type: string
+ *     requestBody:
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *     responses:
+ *       200:
+ *         description: Success
+ *       401:
+ *         description: Missing or invalid API key
+ *       403:
+ *         description: Admin role required
+ *   delete:
+ *     tags: [Admin Geo Rules]
+ *     summary: Delete a geo rule by id
+ *     security:
+ *       - ApiKeyAuth: []
+ *     parameters:
+ *       - in: path
+ *         name: id
+ *         required: true
+ *         schema:
+ *           type: string
+ *     responses:
+ *       200:
+ *         description: Success
+ *       401:
+ *         description: Missing or invalid API key
+ *       403:
+ *         description: Admin role required
+ * /admin/geo-rules/test:
+ *   post:
+ *     tags: [Admin Geo Rules]
+ *     summary: Test whether an IP would be blocked
+ *     security:
+ *       - ApiKeyAuth: []
+ *     requestBody:
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *     responses:
+ *       200:
+ *         description: Success
+ *       401:
+ *         description: Missing or invalid API key
+ *       403:
+ *         description: Admin role required
+ * /admin/geo-rules/active:
+ *   get:
+ *     tags: [Admin Geo Rules]
+ *     summary: List effective (config + database) geo rules
+ *     security:
+ *       - ApiKeyAuth: []
+ *     responses:
+ *       200:
+ *         description: Success
+ *       401:
+ *         description: Missing or invalid API key
+ *       403:
+ *         description: Admin role required
+ * /admin/geo-rules/block/{countryCode}:
+ *   delete:
+ *     tags: [Admin Geo Rules]
+ *     summary: Remove a country from the blocklist
+ *     security:
+ *       - ApiKeyAuth: []
+ *     parameters:
+ *       - in: path
+ *         name: countryCode
+ *         required: true
+ *         schema:
+ *           type: string
+ *     responses:
+ *       200:
+ *         description: Success
+ *       401:
+ *         description: Missing or invalid API key
+ *       403:
+ *         description: Admin role required
+ * /admin/geo-rules/allow/{countryCode}:
+ *   delete:
+ *     tags: [Admin Geo Rules]
+ *     summary: Remove a country from the allowlist
+ *     security:
+ *       - ApiKeyAuth: []
+ *     parameters:
+ *       - in: path
+ *         name: countryCode
+ *         required: true
+ *         schema:
+ *           type: string
+ *     responses:
+ *       200:
+ *         description: Success
+ *       401:
+ *         description: Missing or invalid API key
+ *       403:
+ *         description: Admin role required
+ * /admin/geo-rules/config:
+ *   get:
+ *     tags: [Admin Geo Rules]
+ *     summary: Get static geo-blocking config and MaxMind DB status
+ *     security:
+ *       - ApiKeyAuth: []
+ *     responses:
+ *       200:
+ *         description: Success
+ *       401:
+ *         description: Missing or invalid API key
+ *       403:
+ *         description: Admin role required
+ *   put:
+ *     tags: [Admin Geo Rules]
+ *     summary: Update static geo-blocking config (in-memory)
+ *     security:
+ *       - ApiKeyAuth: []
+ *     requestBody:
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *     responses:
+ *       200:
+ *         description: Success
+ *       401:
+ *         description: Missing or invalid API key
+ *       403:
+ *         description: Admin role required
+ * /admin/geo-rules/reload-db:
+ *   post:
+ *     tags: [Admin Geo Rules]
+ *     summary: Reload the MaxMind GeoIP database
+ *     security:
+ *       - ApiKeyAuth: []
+ *     responses:
+ *       200:
+ *         description: Success
+ *       401:
+ *         description: Missing or invalid API key
+ *       403:
+ *         description: Admin role required
+ * /admin/geo-blocking:
+ *   get:
+ *     tags: [Admin Geo Rules]
+ *     summary: Get geo-blocking config
+ *     deprecated: true
+ *     description: Deprecated alias of GET /admin/geo-rules/config. Sunset 1 Jan 2027; responses carry Deprecation, Sunset and Link headers.
+ *     security:
+ *       - ApiKeyAuth: []
+ *     responses:
+ *       200:
+ *         description: Success
+ *       401:
+ *         description: Missing or invalid API key
+ *       403:
+ *         description: Admin role required
+ *   put:
+ *     tags: [Admin Geo Rules]
+ *     summary: Update geo-blocking config
+ *     deprecated: true
+ *     description: Deprecated alias of PUT /admin/geo-rules/config. Sunset 1 Jan 2027; responses carry Deprecation, Sunset and Link headers.
+ *     security:
+ *       - ApiKeyAuth: []
+ *     requestBody:
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *     responses:
+ *       200:
+ *         description: Success
+ *       401:
+ *         description: Missing or invalid API key
+ *       403:
+ *         description: Admin role required
+ * /admin/geo-blocking/rules:
+ *   get:
+ *     tags: [Admin Geo Rules]
+ *     summary: List effective geo rules
+ *     deprecated: true
+ *     description: Deprecated alias of GET /admin/geo-rules/active. Sunset 1 Jan 2027; responses carry Deprecation, Sunset and Link headers.
+ *     security:
+ *       - ApiKeyAuth: []
+ *     responses:
+ *       200:
+ *         description: Success
+ *       401:
+ *         description: Missing or invalid API key
+ *       403:
+ *         description: Admin role required
+ * /admin/geo-blocking/block:
+ *   post:
+ *     tags: [Admin Geo Rules]
+ *     summary: Block a country
+ *     deprecated: true
+ *     description: Deprecated alias of POST /admin/geo-rules. Sunset 1 Jan 2027; responses carry Deprecation, Sunset and Link headers.
+ *     security:
+ *       - ApiKeyAuth: []
+ *     requestBody:
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *     responses:
+ *       200:
+ *         description: Success
+ *       401:
+ *         description: Missing or invalid API key
+ *       403:
+ *         description: Admin role required
+ * /admin/geo-blocking/block/{countryCode}:
+ *   delete:
+ *     tags: [Admin Geo Rules]
+ *     summary: Unblock a country
+ *     deprecated: true
+ *     description: Deprecated alias of DELETE /admin/geo-rules/block/{countryCode}. Sunset 1 Jan 2027; responses carry Deprecation, Sunset and Link headers.
+ *     security:
+ *       - ApiKeyAuth: []
+ *     parameters:
+ *       - in: path
+ *         name: countryCode
+ *         required: true
+ *         schema:
+ *           type: string
+ *     responses:
+ *       200:
+ *         description: Success
+ *       401:
+ *         description: Missing or invalid API key
+ *       403:
+ *         description: Admin role required
+ * /admin/geo-blocking/allow:
+ *   post:
+ *     tags: [Admin Geo Rules]
+ *     summary: Allow a country
+ *     deprecated: true
+ *     description: Deprecated alias of POST /admin/geo-rules. Sunset 1 Jan 2027; responses carry Deprecation, Sunset and Link headers.
+ *     security:
+ *       - ApiKeyAuth: []
+ *     requestBody:
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *     responses:
+ *       200:
+ *         description: Success
+ *       401:
+ *         description: Missing or invalid API key
+ *       403:
+ *         description: Admin role required
+ * /admin/geo-blocking/allow/{countryCode}:
+ *   delete:
+ *     tags: [Admin Geo Rules]
+ *     summary: Remove an allowed country
+ *     deprecated: true
+ *     description: Deprecated alias of DELETE /admin/geo-rules/allow/{countryCode}. Sunset 1 Jan 2027; responses carry Deprecation, Sunset and Link headers.
+ *     security:
+ *       - ApiKeyAuth: []
+ *     parameters:
+ *       - in: path
+ *         name: countryCode
+ *         required: true
+ *         schema:
+ *           type: string
+ *     responses:
+ *       200:
+ *         description: Success
+ *       401:
+ *         description: Missing or invalid API key
+ *       403:
+ *         description: Admin role required
+ * /admin/geo-blocking/reload-db:
+ *   post:
+ *     tags: [Admin Geo Rules]
+ *     summary: Reload the MaxMind GeoIP database
+ *     deprecated: true
+ *     description: Deprecated alias of POST /admin/geo-rules/reload-db. Sunset 1 Jan 2027; responses carry Deprecation, Sunset and Link headers.
+ *     security:
+ *       - ApiKeyAuth: []
+ *     responses:
+ *       200:
+ *         description: Success
+ *       401:
+ *         description: Missing or invalid API key
+ *       403:
+ *         description: Admin role required
  */
 
 const express = require('express');
@@ -24,6 +379,11 @@ const log = require('../../utils/log');
 const { geoBlockMiddleware } = require('../../middleware/geoBlock');
 const { validateSchema } = require('../../middleware/schemaValidation');
 const asyncHandler = require('../../utils/asyncHandler');
+const fs = require('fs');
+const config = require('../../config');
+const { payloadSizeLimiter, ENDPOINT_LIMITS } = require('../../middleware/payloadSizeLimiter');
+const { reloadGeoIpDatabase } = require('../../middleware/geoBlock');
+const { deprecated } = require('../../middleware/deprecation');
 
 const updateGeoRuleSchema = validateSchema({
   body: {
@@ -48,7 +408,8 @@ function respondError(res, status, code, message) {
   return res.status(status).json({ success: false, error: { code, message } });
 }
 
-const auth = [requireApiKey, requireAdmin()];
+// One auth chain for every geo endpoint, canonical and deprecated alike.
+const auth = [requireApiKey, hydrateUserFromApiKey, requireAdmin()];
 
 /**
  * GET /admin/geo-rules
@@ -282,6 +643,388 @@ router.post('/test', ...auth, asyncHandler(async (req, res, next) => {
   }
 }));
 
+
+// ─── Country rules, static config and GeoIP DB (moved from admin/geoBlocking.js, #1778) ──
+
+/**
+ * Send a successful JSON response with or without the response formatter helper.
+ *
+ * @param {import('express').Response} res - Express response object.
+ * @param {Object} payload - Response payload.
+ * @param {number} [status=200] - HTTP status code.
+ * @returns {import('express').Response} Response object.
+ */
+function respondLegacySuccess(res, payload, status = 200) {
+  if (typeof res.success === 'function') {
+    return res.status(status).success(payload);
+  }
+
+  return res.status(status).json({ success: true, data: payload });
+}
+
+/**
+ * Build a normalized validation error response.
+ *
+ * @param {import('express').Response} res - Express response object.
+ * @param {string} message - Validation message.
+ * @returns {import('express').Response} Response object.
+ */
+function respondValidationError(res, message) {
+  return res.status(400).json({
+    success: false,
+    error: {
+      code: 'VALIDATION_ERROR',
+      message,
+    },
+  });
+}
+
+/**
+ * Validate and normalize a country code.
+ *
+ * @param {string} countryCode - Raw country code.
+ * @returns {string|null} Normalized code or null when invalid.
+ */
+function getCountryCodeOrNull(countryCode) {
+  const normalizedCountryCode = GeoRuleService.normalizeCountryCode(countryCode);
+  return GeoRuleService.isValidCountryCode(normalizedCountryCode)
+    ? normalizedCountryCode
+    : null;
+}
+
+/**
+ * Validate an IPv4 address or CIDR block.
+ *
+ * @param {string} value - Raw IP or CIDR string.
+ * @returns {boolean} True when valid.
+ */
+function isValidIPOrCIDR(value) {
+  const input = String(value || '').trim();
+  const parts = input.split('/');
+  const ip = parts[0];
+  const mask = parts[1];
+  const octets = ip.split('.').map(Number);
+
+  if (octets.length !== 4 || octets.some((part) => !Number.isInteger(part) || part < 0 || part > 255)) {
+    return false;
+  }
+
+  if (mask === undefined) {
+    return true;
+  }
+
+  const numericMask = Number.parseInt(mask, 10);
+  return Number.isInteger(numericMask) && numericMask >= 0 && numericMask <= 32;
+}
+
+/**
+ * Backfill req.user from a validated API key when tests mount the router in isolation.
+ *
+ * @param {import('express').Request} req - Express request object.
+ * @param {import('express').Response} res - Express response object.
+ * @param {import('express').NextFunction} next - Express next callback.
+ * @returns {void}
+ */
+function hydrateUserFromApiKey(req, res, next) {
+  void res;
+
+  if (!req.user && req.apiKey) {
+    req.user = {
+      id: req.apiKey.id?.toString() || 'geo-admin',
+      role: req.apiKey.role || 'admin',
+    };
+  }
+
+  next();
+}
+
+/**
+ * Write an audit entry for a geo rule change.
+ *
+ * @param {import('express').Request} req - Express request object.
+ * @param {string} action - Audit action string.
+ * @param {string} ruleType - Geo rule type.
+ * @param {string} countryCode - Country code affected.
+ * @returns {Promise<void>}
+ */
+async function logGeoRuleChange(req, action, ruleType, countryCode) {
+  await AuditLogService.log({
+    category: AuditLogService.CATEGORY.CONFIGURATION,
+    action,
+    severity: AuditLogService.SEVERITY.MEDIUM,
+    result: 'SUCCESS',
+    userId: getActorId(req),
+    requestId: req.id || null,
+    ipAddress: req.ip || null,
+    resource: req.originalUrl || req.path,
+    details: {
+      ruleType,
+      countryCode,
+      adminId: getActorId(req),
+    },
+  });
+}
+
+/**
+ * POST helper for creating a geo rule.
+ *
+ * @param {'allow'|'block'} ruleType - Geo rule type.
+ * @returns {Function} Express route handler.
+ */
+function createRuleHandler(ruleType) {
+  return async (req, res, next) => {
+    try {
+      const countryCode = getCountryCodeOrNull(req.body?.countryCode);
+      if (!countryCode) {
+        return respondValidationError(res, 'countryCode must be a valid ISO 3166-1 alpha-2 code');
+      }
+
+      try {
+        const rule = await GeoRuleService.addRule(ruleType, countryCode, getActorId(req));
+
+        await logGeoRuleChange(
+          req,
+          ruleType === GeoRuleService.GEO_RULE_TYPES.BLOCK ? 'GEO_RULE_BLOCK_CREATED' : 'GEO_RULE_ALLOW_CREATED',
+          ruleType,
+          countryCode
+        );
+
+        log.info('GEO_RULES', `Geo ${ruleType} rule created`, {
+          countryCode,
+          adminId: getActorId(req),
+        });
+
+        return respondLegacySuccess(res, rule, 201);
+      } catch (error) {
+        if (error.message && (error.message.includes('UNIQUE') || error.message.includes('Duplicate'))) {
+          return res.status(409).json({
+            success: false,
+            error: {
+              code: 'DUPLICATE_GEO_RULE',
+              message: `${countryCode} is already present in the ${ruleType}list`,
+            },
+          });
+        }
+
+        throw error;
+      }
+    } catch (error) {
+      next(error);
+    }
+  };
+}
+
+/**
+ * DELETE helper for removing a geo rule.
+ *
+ * @param {'allow'|'block'} ruleType - Geo rule type.
+ * @returns {Function} Express route handler.
+ */
+function deleteRuleHandler(ruleType) {
+  return async (req, res, next) => {
+    try {
+      const countryCode = getCountryCodeOrNull(req.params.countryCode);
+      if (!countryCode) {
+        return respondValidationError(res, 'countryCode must be a valid ISO 3166-1 alpha-2 code');
+      }
+
+      const changes = await GeoRuleService.removeRule(ruleType, countryCode);
+      if (!changes) {
+        return res.status(404).json({
+          success: false,
+          error: {
+            code: 'NOT_FOUND',
+            message: `No ${ruleType} rule exists for ${countryCode}`,
+          },
+        });
+      }
+
+      await logGeoRuleChange(
+        req,
+        ruleType === GeoRuleService.GEO_RULE_TYPES.BLOCK ? 'GEO_RULE_BLOCK_DELETED' : 'GEO_RULE_ALLOW_DELETED',
+        ruleType,
+        countryCode
+      );
+
+      log.info('GEO_RULES', `Geo ${ruleType} rule deleted`, {
+        countryCode,
+        adminId: getActorId(req),
+      });
+
+      return respondLegacySuccess(res, {
+        countryCode,
+        ruleType,
+        removed: true,
+      });
+    } catch (error) {
+      next(error);
+    }
+  };
+}
+
+/** GET /admin/geo-rules/active — config-backed + database-backed rules in effect. */
+const listActiveRulesHandler = asyncHandler(async (req, res, next) => {
+  try {
+    const rules = await GeoRuleService.listActiveRules();
+    return respondLegacySuccess(res, rules);
+  } catch (error) {
+    next(error);
+  }
+});
+
+/** GET /admin/geo-rules/config — static geo-blocking configuration and DB status. */
+const getConfigHandler = asyncHandler(async (req, res, next) => {
+  try {
+    const rules = await GeoRuleService.listActiveRules();
+    return respondLegacySuccess(res, {
+      blockedCountries: rules.effective.blockCountries,
+      allowedCountries: rules.effective.allowCountries,
+      allowedIPs: [...config.geoBlocking.allowedIPs],
+      maxmindDbPath: config.geoBlocking.maxmindDbPath,
+      dbExists: fs.existsSync(config.geoBlocking.maxmindDbPath),
+      databaseRules: rules.database.rules,
+      cache: rules.cache,
+    });
+  } catch (error) {
+    next(error);
+  }
+});
+
+/** PUT /admin/geo-rules/config — update in-memory static configuration. */
+const putConfigHandler = asyncHandler(async (req, res, next) => {
+  try {
+    const blockedCountries = Array.isArray(req.body?.blockedCountries)
+      ? req.body.blockedCountries.map(GeoRuleService.normalizeCountryCode)
+      : [];
+    const allowedCountries = Array.isArray(req.body?.allowedCountries)
+      ? req.body.allowedCountries.map(GeoRuleService.normalizeCountryCode)
+      : [];
+    const allowedIPs = Array.isArray(req.body?.allowedIPs)
+      ? req.body.allowedIPs.map((value) => String(value || '').trim()).filter(Boolean)
+      : [];
+
+    const invalidCountryCode = [...blockedCountries, ...allowedCountries].find(
+      (countryCode) => !GeoRuleService.isValidCountryCode(countryCode)
+    );
+    const invalidIP = allowedIPs.find((value) => !isValidIPOrCIDR(value));
+
+    if (invalidCountryCode) {
+      return respondValidationError(res, `Invalid country code: ${invalidCountryCode}`);
+    }
+
+    if (invalidIP) {
+      return respondValidationError(res, `Invalid IP addresses/CIDR ranges: ${invalidIP}`);
+    }
+
+    process.env.GEO_BLOCKED_COUNTRIES = blockedCountries.join(',');
+    process.env.GEO_ALLOWED_COUNTRIES = allowedCountries.join(',');
+    process.env.GEO_ALLOWED_IPS = allowedIPs.join(',');
+
+    config.geoBlocking.blockedCountries = blockedCountries;
+    config.geoBlocking.allowedCountries = allowedCountries;
+    config.geoBlocking.allowedIPs = allowedIPs;
+
+    await AuditLogService.log({
+      category: AuditLogService.CATEGORY.CONFIGURATION,
+      action: 'GEO_CONFIG_UPDATED',
+      severity: AuditLogService.SEVERITY.MEDIUM,
+      result: 'SUCCESS',
+      userId: getActorId(req),
+      requestId: req.id || null,
+      ipAddress: req.ip || null,
+      resource: req.originalUrl || req.path,
+      details: {
+        blockedCountries,
+        allowedCountries,
+        allowedIPs,
+      },
+    });
+
+    return respondLegacySuccess(res, {
+      message: 'Geo-blocking configuration updated successfully',
+      blockedCountries,
+      allowedCountries,
+      allowedIPs,
+      note: 'Static config changes are in-memory only. Runtime database rules remain unchanged.',
+    });
+  } catch (error) {
+    next(error);
+  }
+});
+
+/** POST /admin/geo-rules/reload-db — reload the MaxMind database. */
+const reloadDbHandler = asyncHandler(async (req, res, next) => {
+  try {
+    await reloadGeoIpDatabase();
+
+    await AuditLogService.log({
+      category: AuditLogService.CATEGORY.CONFIGURATION,
+      action: 'GEO_DB_RELOAD',
+      severity: AuditLogService.SEVERITY.MEDIUM,
+      result: 'SUCCESS',
+      userId: getActorId(req),
+      requestId: req.id || null,
+      ipAddress: req.ip || null,
+      resource: req.originalUrl || req.path,
+      details: {
+        dbPath: config.geoBlocking.maxmindDbPath,
+      },
+    });
+
+    return respondLegacySuccess(res, {
+      message: 'MaxMind database reloaded successfully',
+      dbPath: config.geoBlocking.maxmindDbPath,
+    });
+  } catch (error) {
+    next(error);
+  }
+});
+
+const blockByCountryHandler = deleteRuleHandler(GeoRuleService.GEO_RULE_TYPES.BLOCK);
+const allowByCountryHandler = deleteRuleHandler(GeoRuleService.GEO_RULE_TYPES.ALLOW);
+
+const adminAuth = auth;
+
+/**
+ * GET /admin/geo-rules/active
+ */
+router.get('/active', ...adminAuth, listActiveRulesHandler);
+
+/**
+ * GET /admin/geo-rules/config
+ * PUT /admin/geo-rules/config
+ */
+router.get('/config', ...adminAuth, getConfigHandler);
+router.put('/config', ...adminAuth, payloadSizeLimiter(ENDPOINT_LIMITS.admin), putConfigHandler);
+
+/**
+ * POST /admin/geo-rules/reload-db
+ */
+router.post('/reload-db', ...adminAuth, payloadSizeLimiter(ENDPOINT_LIMITS.admin), reloadDbHandler);
+
+/**
+ * DELETE /admin/geo-rules/block/:countryCode
+ * DELETE /admin/geo-rules/allow/:countryCode
+ * Remove a rule by country instead of by id.
+ */
+router.delete('/block/:countryCode', ...adminAuth, blockByCountryHandler);
+router.delete('/allow/:countryCode', ...adminAuth, allowByCountryHandler);
+
+// ─── Deprecated /admin/geo-blocking paths (sunset 1 Jan 2027) ───────────────
+// Same handlers and response shapes as before; each response carries
+// Deprecation / Sunset / Link headers pointing at the canonical route.
+const deprecatedRouter = express.Router();
+const cc = (req) => encodeURIComponent(req.params.countryCode);
+
+deprecatedRouter.get('/rules', ...adminAuth, deprecated('/admin/geo-rules/active'), listActiveRulesHandler);
+deprecatedRouter.post('/block', ...adminAuth, deprecated('/admin/geo-rules'), createRuleHandler(GeoRuleService.GEO_RULE_TYPES.BLOCK));
+deprecatedRouter.delete('/block/:countryCode', ...adminAuth, deprecated((req) => `/admin/geo-rules/block/${cc(req)}`), blockByCountryHandler);
+deprecatedRouter.post('/allow', ...adminAuth, deprecated('/admin/geo-rules'), createRuleHandler(GeoRuleService.GEO_RULE_TYPES.ALLOW));
+deprecatedRouter.delete('/allow/:countryCode', ...adminAuth, deprecated((req) => `/admin/geo-rules/allow/${cc(req)}`), allowByCountryHandler);
+deprecatedRouter.get('/', ...adminAuth, deprecated('/admin/geo-rules/config'), getConfigHandler);
+deprecatedRouter.put('/', ...adminAuth, deprecated('/admin/geo-rules/config'), payloadSizeLimiter(ENDPOINT_LIMITS.admin), putConfigHandler);
+deprecatedRouter.post('/reload-db', ...adminAuth, deprecated('/admin/geo-rules/reload-db'), payloadSizeLimiter(ENDPOINT_LIMITS.admin), reloadDbHandler);
+
 /**
  * Check if IP is private/reserved (RFC 1918)
  * @param {string} ip - IP address
@@ -466,3 +1209,4 @@ function getCountryName(countryCode) {
 }
 
 module.exports = router;
+module.exports.deprecatedRouter = deprecatedRouter;

@@ -3,7 +3,7 @@
 /**
  * Tests: src/services/RestoreTestRunner.js
  *
- * All external dependencies (node-cron, BackupService, logger) are mocked so
+ * All external dependencies (timerRegistry, BackupService, logger) are mocked so
  * these tests run without any real filesystem, SQLite, or scheduler activity.
  *
  * Scenarios covered:
@@ -24,17 +24,17 @@ jest.mock('../src/utils/log', () => ({
   debug: jest.fn(),
 }));
 
-// node-cron: give us full control over the scheduled task object.
+// Scheduling goes through timerRegistry.scheduleCron: give us full control over the task object.
 const mockCronTask = {
   stop:     jest.fn(),
   destroy:  jest.fn(),
   nextDate: jest.fn(() => new Date('2025-01-01T03:00:00Z')),
 };
-jest.mock('node-cron', () => ({
-  schedule: jest.fn(() => mockCronTask),
+jest.mock('../src/utils/timerRegistry', () => ({
+  scheduleCron: jest.fn(() => mockCronTask),
 }));
 
-const nodeCron = require('node-cron');
+const timerRegistry = require('../src/utils/timerRegistry');
 const RestoreTestRunner = require('../src/services/RestoreTestRunner');
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
@@ -356,7 +356,7 @@ describe('RestoreTestRunner start/stop', () => {
     const { runner } = makeRunner({}, { schedule: '0 2 * * *' });
     runner.start();
 
-    expect(nodeCron.schedule).toHaveBeenCalledWith('0 2 * * *', expect.any(Function));
+    expect(timerRegistry.scheduleCron).toHaveBeenCalledWith('0 2 * * *', expect.any(Function));
     runner.stop();
   });
 
@@ -365,7 +365,7 @@ describe('RestoreTestRunner start/stop', () => {
     const runner = new RestoreTestRunner({ backupService });
     runner.start();
 
-    const usedSchedule = nodeCron.schedule.mock.calls[0][0];
+    const usedSchedule = timerRegistry.scheduleCron.mock.calls[0][0];
     expect(usedSchedule).toBe('0 3 * * *');
     runner.stop();
   });
@@ -375,8 +375,8 @@ describe('RestoreTestRunner start/stop', () => {
     runner.start();
     runner.start(); // second call should be a no-op
 
-    // nodeCron.schedule was called only once
-    expect(nodeCron.schedule).toHaveBeenCalledTimes(1);
+    // timerRegistry.scheduleCron was called only once
+    expect(timerRegistry.scheduleCron).toHaveBeenCalledTimes(1);
     runner.stop();
   });
 

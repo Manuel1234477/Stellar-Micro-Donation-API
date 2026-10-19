@@ -4,6 +4,8 @@ process.env.API_KEYS = 'test-key-1,test-key-2,test-key,admin-test-key';
 process.env.NODE_ENV = 'test';
 // Fixed test key — must be set before any module that imports securityConfig is loaded
 process.env.ENCRYPTION_KEY = process.env.ENCRYPTION_KEY || 'test_encryption_key_fixed_32bytes_hex_value_here_00';
+process.env.EXPORT_SIGNING_SECRET = process.env.EXPORT_SIGNING_SECRET || 'test_export_signing_secret_fixed_value_0123456789';
+process.env.JWT_SIGNING_SECRET = process.env.JWT_SIGNING_SECRET || 'test_jwt_signing_secret_fixed_value_0123456789abcdef';
 
 // ─── Guard: block accidental access to the shared data/ directory ─────────────
 // Any test that reads or writes a path under <repo>/data/ without going through

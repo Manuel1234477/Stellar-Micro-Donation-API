@@ -27,7 +27,7 @@ const router = express.Router();
 const requireApiKey = require('../../middleware/apiKey');
 const { checkPermission } = require('../../middleware/rbac');
 const { PERMISSIONS } = require('../../utils/permissions');
-const log = require('../../utils/log');
+const timerRegistry = require('../../utils/timerRegistry');
 const { verificationRateLimiter } = require('../../middleware/rateLimiter');
 const { validateXLMAmount } = require('../../utils/validationHelpers');
 const { validateDateRange } = require('../../middleware/validation');
@@ -58,18 +58,105 @@ const RECENT_MAX_LIMIT = parseInt(process.env.RECENT_DONATIONS_MAX_LIMIT || '100
 const RECENT_CACHE_TTL_MS = parseInt(process.env.RECENT_DONATIONS_CACHE_TTL_SECONDS || '5', 10) * 1000;
 const STUCK_THRESHOLD_SECONDS = 600; // 10 minutes
 
-// Invalidate recent donations cache when a new donation is created
+// Invalidate recent donations and list donations cache when a new donation is created
 donationEvents.on(donationEvents.EVENTS.CREATED, () => {
   Cache.clearPrefix('donations:recent:');
+  Cache.clearPrefix('donations:list:');
 });
 
 // ─── GET /donations/ ──────────────────────────────────────────────────────────
 
 /**
- * GET /donations
- * List all donations with cursor-based pagination and multi-field compound filtering.
- * Query params: limit, cursor, sort, sortBy, order, status, from, to, startDate, endDate,
- *               minAmount, maxAmount, donor, recipient, memo, tag, tags
+ * @openapi
+ * /donations:
+ *   get:
+ *     summary: List donations
+ *     description: >
+ *       List donations with keyset (cursor) pagination and multi-field compound
+ *       filtering. Uses composite indexes for the default sort/filter. Optional
+ *       fields (tags, notes, SDG tags) are only assembled when requested via
+ *       `include`.
+ *     tags: [Donations]
+ *     security:
+ *       - bearerAuth: []
+ *     parameters:
+ *       - in: query
+ *         name: limit
+ *         schema: { type: integer, minimum: 1, maximum: 100, default: 20 }
+ *       - in: query
+ *         name: cursor
+ *         description: Opaque keyset cursor returned as `pagination.nextCursor`.
+ *         schema: { type: string }
+ *       - in: query
+ *         name: sort
+ *         description: Legacy combined sort, e.g. `timestamp:desc`.
+ *         schema: { type: string, enum: ['id:asc','id:desc','timestamp:asc','timestamp:desc','amount:asc','amount:desc'] }
+ *       - in: query
+ *         name: sortBy
+ *         schema: { type: string, enum: [timestamp, amount, status, id] }
+ *       - in: query
+ *         name: order
+ *         schema: { type: string, enum: [asc, desc] }
+ *       - in: query
+ *         name: status
+ *         description: Comma-separated status filter.
+ *         schema: { type: string }
+ *       - in: query
+ *         name: from
+ *         schema: { type: string, format: date-time }
+ *       - in: query
+ *         name: to
+ *         schema: { type: string, format: date-time }
+ *       - in: query
+ *         name: minAmount
+ *         schema: { type: number }
+ *       - in: query
+ *         name: maxAmount
+ *         schema: { type: number }
+ *       - in: query
+ *         name: donor
+ *         schema: { type: string }
+ *       - in: query
+ *         name: recipient
+ *         schema: { type: string }
+ *       - in: query
+ *         name: memo
+ *         schema: { type: string }
+ *       - in: query
+ *         name: tag
+ *         schema: { type: string }
+ *       - in: query
+ *         name: tags
+ *         description: Comma-separated tag filter.
+ *         schema: { type: string }
+ *       - in: query
+ *         name: include
+ *         description: Comma-separated optional fields to assemble (tags, notes, sdgTags).
+ *         schema: { type: string }
+ *     responses:
+ *       200:
+ *         description: Paginated donation list.
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 success: { type: boolean }
+ *                 data:
+ *                   type: array
+ *                   items: { type: object }
+ *                 count: { type: integer }
+ *                 resultCount: { type: integer }
+ *                 filters: { type: object }
+ *                 meta: { type: object }
+ *                 pagination:
+ *                   type: object
+ *                   properties:
+ *                     nextCursor: { type: string, nullable: true }
+ *                     hasMore: { type: boolean }
+ *                     total: { type: integer }
+ *       400:
+ *         description: Invalid query parameters.
  */
 router.get('/', checkPermission(PERMISSIONS.DONATIONS_READ), asyncHandler(async (req, res, next) => {
   try {
@@ -175,9 +262,17 @@ router.get('/', checkPermission(PERMISSIONS.DONATIONS_READ), asyncHandler(async 
       tagsFilter = [tag.trim().toLowerCase()];
     }
 
+    // Optional heavy fields are only assembled when explicitly requested.
+    const includeParam = typeof req.query.include === 'string' ? req.query.include : '';
+    const include = new Set(
+      includeParam.split(',').map(s => s.trim()).filter(Boolean)
+    );
+    const includeOptionalFields = include.size > 0;
+
     const filters = {
       sortBy,
       order,
+      includeOptionalFields,
       ...(statusFilter !== undefined && { status: statusFilter }),
       ...(tagsFilter !== undefined && { tags: tagsFilter }),
       ...(from && { startDate: from }),
@@ -190,6 +285,14 @@ router.get('/', checkPermission(PERMISSIONS.DONATIONS_READ), asyncHandler(async 
       ...(recipient && { recipient }),
       ...(memo && { memo }),
     };
+
+    const cacheKey = `donations:list:${JSON.stringify(req.query)}`;
+    const cached = Cache.get(cacheKey);
+    if (cached) {
+      res.setHeader('X-Cache', 'HIT');
+      res.setHeader('X-Total-Count', String(cached.totalCount));
+      return res.json(cached.body);
+    }
 
     const result = donationService.getPaginatedDonations(pagination, filters);
     res.setHeader('X-Total-Count', String(result.totalCount));
@@ -208,7 +311,7 @@ router.get('/', checkPermission(PERMISSIONS.DONATIONS_READ), asyncHandler(async 
 
     const meta = result.meta || {};
 
-    res.json({
+    const responsePayload = {
       success: true,
       data: result.data,
       count: result.data.length,
@@ -220,7 +323,11 @@ router.get('/', checkPermission(PERMISSIONS.DONATIONS_READ), asyncHandler(async 
         hasMore: meta.next_cursor != null,
         total: result.totalCount,
       },
-    });
+    };
+
+    Cache.set(cacheKey, { totalCount: result.totalCount, body: responsePayload }, RECENT_CACHE_TTL_MS);
+    res.setHeader('X-Cache', 'MISS');
+    res.json(responsePayload);
   } catch (error) {
     next(error);
   }
@@ -229,9 +336,37 @@ router.get('/', checkPermission(PERMISSIONS.DONATIONS_READ), asyncHandler(async 
 // ─── GET /donations/pending ───────────────────────────────────────────────────
 
 /**
- * GET /donations/pending
- * List pending donations with stuck-transaction detection.
- * Admins see all + summary; regular users see only their own.
+ * @openapi
+ * /donations/pending:
+ *   get:
+ *     summary: List pending donations
+ *     description: >
+ *       List pending donations with stuck-transaction detection. Admins see all
+ *       pending donations plus a summary; regular users see only their own.
+ *     tags: [Donations]
+ *     security:
+ *       - bearerAuth: []
+ *     parameters:
+ *       - in: query
+ *         name: stuckThresholdSeconds
+ *         schema: { type: integer, default: 600 }
+ *     responses:
+ *       200:
+ *         description: Pending donations (and summary for admins).
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 data:
+ *                   type: array
+ *                   items: { type: object }
+ *                 summary:
+ *                   type: object
+ *                   properties:
+ *                     total: { type: integer }
+ *                     stuckCount: { type: integer }
+ *                     oldestPendingSeconds: { type: integer }
  */
 router.get('/pending', checkPermission(PERMISSIONS.DONATIONS_READ), asyncHandler(async (req, res, next) => {
   try {
@@ -302,8 +437,34 @@ router.get('/pending', checkPermission(PERMISSIONS.DONATIONS_READ), asyncHandler
 // ─── GET /donations/recent ────────────────────────────────────────────────────
 
 /**
- * GET /donations/recent
- * Recent donations ordered by creation date descending, with short-lived cache.
+ * @openapi
+ * /donations/recent:
+ *   get:
+ *     summary: Recent donations
+ *     description: Recent donations ordered by creation date descending, with a short-lived cache.
+ *     tags: [Donations]
+ *     security:
+ *       - bearerAuth: []
+ *     parameters:
+ *       - in: query
+ *         name: limit
+ *         schema: { type: integer, minimum: 1, default: 10 }
+ *     responses:
+ *       200:
+ *         description: Recent donations.
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 success: { type: boolean }
+ *                 data:
+ *                   type: array
+ *                   items: { type: object }
+ *                 count: { type: integer }
+ *                 limit: { type: integer }
+ *       400:
+ *         description: Invalid limit.
  */
 router.get('/recent', checkPermission(PERMISSIONS.DONATIONS_READ), asyncHandler(async (req, res, next) => {
   try {
@@ -342,8 +503,49 @@ router.get('/recent', checkPermission(PERMISSIONS.DONATIONS_READ), asyncHandler(
 // ─── GET /donations/by-campaign/:campaignId ───────────────────────────────────
 
 /**
- * GET /donations/by-campaign/:campaignId
- * Paginated donations for a specific campaign.
+ * @openapi
+ * /donations/by-campaign/{campaignId}:
+ *   get:
+ *     summary: Donations for a campaign
+ *     description: Paginated donations for a specific campaign.
+ *     tags: [Donations]
+ *     security:
+ *       - bearerAuth: []
+ *     parameters:
+ *       - in: path
+ *         name: campaignId
+ *         required: true
+ *         schema: { type: string }
+ *       - in: query
+ *         name: status
+ *         schema: { type: string }
+ *       - in: query
+ *         name: cursor
+ *         schema: { type: string }
+ *       - in: query
+ *         name: limit
+ *         schema: { type: integer, minimum: 1, maximum: 100, default: 20 }
+ *     responses:
+ *       200:
+ *         description: Paginated donations for the campaign.
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 success: { type: boolean }
+ *                 data:
+ *                   type: array
+ *                   items: { type: object }
+ *                 count: { type: integer }
+ *                 total: { type: integer }
+ *                 pagination:
+ *                   type: object
+ *                   properties:
+ *                     limit: { type: integer }
+ *                     nextCursor: { type: integer, nullable: true }
+ *       404:
+ *         description: Campaign not found.
  */
 router.get('/by-campaign/:campaignId', checkPermission(PERMISSIONS.DONATIONS_READ), asyncHandler(async (req, res, next) => {
   try {
@@ -429,24 +631,73 @@ router.get('/by-campaign/:campaignId', checkPermission(PERMISSIONS.DONATIONS_REA
 // ─── GET /donations/search ────────────────────────────────────────────────────
 
 /**
- * GET /donations/search
- * Full-text memo/notes/tags search (FTS5 with BM25 ranking) + field filtering.
- *
- * When ?q= is provided, uses the donations_fts virtual table for ranked
- * full-text search across memo, notes, and tags fields.
- * Without ?q= falls back to efficient field-only filtering on donations_store.
- *
- * Query params:
- *   q              - full-text search query (FTS5 match expression)
- *   minAmount      - minimum amount filter
- *   maxAmount      - maximum amount filter
- *   startDate      - ISO date lower bound on timestamp
- *   endDate        - ISO date upper bound on timestamp
- *   status         - exact status filter
- *   senderPublicKey    - filter by donor address
- *   recipientPublicKey - filter by recipient address
- *   limit          - page size (default 50, max 100)
- *   cursor         - opaque offset cursor for pagination
+ * @openapi
+ * /donations/search:
+ *   get:
+ *     summary: Search donations
+ *     description: >
+ *       Full-text memo/notes/tags search (FTS5 with BM25 ranking) plus field
+ *       filtering. When `q` is provided the donations_fts virtual table is used
+ *       for ranked full-text search; otherwise efficient field-only filtering
+ *       on donations_store is applied.
+ *     tags: [Donations]
+ *     security:
+ *       - bearerAuth: []
+ *     parameters:
+ *       - in: query
+ *         name: q
+ *         description: Full-text search query (FTS5 match expression).
+ *         schema: { type: string }
+ *       - in: query
+ *         name: minAmount
+ *         schema: { type: number }
+ *       - in: query
+ *         name: maxAmount
+ *         schema: { type: number }
+ *       - in: query
+ *         name: startDate
+ *         schema: { type: string, format: date-time }
+ *       - in: query
+ *         name: endDate
+ *         schema: { type: string, format: date-time }
+ *       - in: query
+ *         name: status
+ *         schema: { type: string }
+ *       - in: query
+ *         name: senderPublicKey
+ *         schema: { type: string }
+ *       - in: query
+ *         name: recipientPublicKey
+ *         schema: { type: string }
+ *       - in: query
+ *         name: limit
+ *         schema: { type: integer, minimum: 1, maximum: 100, default: 50 }
+ *       - in: query
+ *         name: cursor
+ *         description: Opaque offset cursor for pagination.
+ *         schema: { type: string }
+ *     responses:
+ *       200:
+ *         description: Search results.
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 success: { type: boolean }
+ *                 data:
+ *                   type: array
+ *                   items: { type: object }
+ *                 pagination:
+ *                   type: object
+ *                   properties:
+ *                     cursor: { type: integer }
+ *                     nextCursor: { type: integer, nullable: true }
+ *                     hasMore: { type: boolean }
+ *                     limit: { type: integer }
+ *                     total: { type: integer }
+ *       400:
+ *         description: Invalid query parameters.
  */
 router.get('/search', checkPermission(PERMISSIONS.DONATIONS_READ), asyncHandler(async (req, res, next) => {
   try {
@@ -599,9 +850,34 @@ router.get('/search', checkPermission(PERMISSIONS.DONATIONS_READ), asyncHandler(
 // ─── GET /donations/limits ────────────────────────────────────────────────────
 
 /**
- * GET /donations/limits
- * Return the configured minimum and maximum donation amounts.
- * Must be registered before /:id to avoid the param route shadowing it.
+ * @openapi
+ * /donations/limits:
+ *   get:
+ *     summary: Donation amount limits
+ *     description: >
+ *       Return the configured minimum and maximum donation amounts. Supports
+ *       ETag / conditional GET (304).
+ *     tags: [Donations]
+ *     security:
+ *       - bearerAuth: []
+ *     responses:
+ *       200:
+ *         description: Configured donation limits.
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 success: { type: boolean }
+ *                 data:
+ *                   type: object
+ *                   properties:
+ *                     minAmount: { type: number }
+ *                     maxAmount: { type: number }
+ *                     maxDailyPerDonor: { type: number }
+ *                     currency: { type: string }
+ *       304:
+ *         description: Not modified.
  */
 router.get('/limits', checkPermission(PERMISSIONS.DONATIONS_READ), (req, res) => {
   const config = require('../../config');
@@ -625,8 +901,39 @@ router.get('/limits', checkPermission(PERMISSIONS.DONATIONS_READ), (req, res) =>
 // ─── GET /donations/cost-breakdown ───────────────────────────────────────────
 
 /**
- * GET /donations/cost-breakdown
- * Itemized cost breakdown for a prospective donation amount.
+ * @openapi
+ * /donations/cost-breakdown:
+ *   get:
+ *     summary: Donation cost breakdown
+ *     description: Itemized cost breakdown for a prospective donation amount.
+ *     tags: [Donations]
+ *     security:
+ *       - bearerAuth: []
+ *     parameters:
+ *       - in: query
+ *         name: amount
+ *         required: true
+ *         schema: { type: string }
+ *       - in: query
+ *         name: surgeFeeMultiplier
+ *         schema: { type: number }
+ *       - in: query
+ *         name: xlmUsdRate
+ *         schema: { type: number }
+ *     responses:
+ *       200:
+ *         description: Itemized cost breakdown.
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 success: { type: boolean }
+ *                 data: { type: object }
+ *       400:
+ *         description: Missing amount.
+ *       422:
+ *         description: Invalid amount.
  */
 router.get('/cost-breakdown', checkPermission(PERMISSIONS.DONATIONS_READ), (req, res, next) => {
   try {
@@ -671,10 +978,37 @@ router.get('/cost-breakdown', checkPermission(PERMISSIONS.DONATIONS_READ), (req,
 // ─── GET /donations/verify-anonymous ─────────────────────────────────────────
 
 /**
- * GET /donations/verify-anonymous
- * Allow a donor to prove their anonymous donation using their wallet address.
+ * @openapi
+ * /donations/verify-anonymous:
+ *   get:
+ *     summary: Verify an anonymous donation
+ *     description: Allow a donor to prove their anonymous donation using their wallet address.
+ *     tags: [Donations]
+ *     security:
+ *       - bearerAuth: []
+ *     parameters:
+ *       - in: query
+ *         name: donationId
+ *         required: true
+ *         schema: { type: string }
+ *       - in: query
+ *         name: walletAddress
+ *         required: true
+ *         schema: { type: string }
+ *     responses:
+ *       200:
+ *         description: Verification result.
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 success: { type: boolean }
+ *                 data: { type: object }
+ *       400:
+ *         description: Missing required fields.
  */
-router.get('/verify-anonymous', checkPermission(PERMISSIONS.DONATIONS_READ), async (req, res, next) => {
+router.get('/verify-anonymous', checkPermission(PERMISSIONS.DONATIONS_READ), asyncHandler(async (req, res, next) => {
   try {
     const { donationId, walletAddress } = req.query;
 
@@ -698,13 +1032,46 @@ router.get('/verify-anonymous', checkPermission(PERMISSIONS.DONATIONS_READ), asy
   } catch (error) {
     next(error);
   }
-});
+}));
 
 // ─── POST /donations/verify ───────────────────────────────────────────────────
 
 /**
- * POST /donations/verify
- * Verify a transaction on the Stellar blockchain.
+ * @openapi
+ * /donations/verify:
+ *   post:
+ *     summary: Verify a donation transaction
+ *     description: Verify a transaction on the Stellar blockchain.
+ *     tags: [Donations]
+ *     security:
+ *       - bearerAuth: []
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             required: [transactionHash]
+ *             properties:
+ *               transactionHash: { type: string }
+ *               donationId: { type: string }
+ *               walletAddress: { type: string }
+ *     responses:
+ *       200:
+ *         description: Verification result.
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 success: { type: boolean }
+ *                 data: { type: object }
+ *       400:
+ *         description: Missing required field.
+ *       403:
+ *         description: Not authorized to verify this transaction.
+ *       422:
+ *         description: Verification failed.
  */
 router.post('/verify', verificationRateLimiter, checkPermission(PERMISSIONS.DONATIONS_READ), asyncHandler(async (req, res, next) => {
   try {
@@ -759,8 +1126,48 @@ router.post('/verify', verificationRateLimiter, checkPermission(PERMISSIONS.DONA
 // ─── GET /donations/cross-asset/paths ────────────────────────────────────────
 
 /**
- * GET /donations/cross-asset/paths
- * Preview available DEX conversion paths before committing to a cross-asset donation.
+ * @openapi
+ * /donations/cross-asset/paths:
+ *   get:
+ *     summary: Cross-asset payment paths
+ *     description: Preview available DEX conversion paths before committing to a cross-asset donation.
+ *     tags: [Donations]
+ *     security:
+ *       - apiKeyAuth: []
+ *     parameters:
+ *       - in: query
+ *         name: sourcePublicKey
+ *         required: true
+ *         schema: { type: string }
+ *       - in: query
+ *         name: destPublicKey
+ *         required: true
+ *         schema: { type: string }
+ *       - in: query
+ *         name: destAsset
+ *         required: true
+ *         schema: { type: string }
+ *       - in: query
+ *         name: destAmount
+ *         required: true
+ *         schema: { type: string }
+ *     responses:
+ *       200:
+ *         description: Available conversion paths.
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 success: { type: boolean }
+ *                 data:
+ *                   type: object
+ *                   properties:
+ *                     paths:
+ *                       type: array
+ *                       items: { type: object }
+ *       400:
+ *         description: No path found or invalid parameters.
  */
 router.get('/cross-asset/paths', requireApiKey, crossAssetPathsSchema, asyncHandler(async (req, res, next) => {
   try {
@@ -785,8 +1192,51 @@ router.get('/cross-asset/paths', requireApiKey, crossAssetPathsSchema, asyncHand
 // ─── GET /donations/stats/by-campaign ────────────────────────────────────────
 
 /**
- * GET /donations/stats/by-campaign
- * Aggregate donation statistics per campaign with date filtering and pagination.
+ * @openapi
+ * /donations/stats/by-campaign:
+ *   get:
+ *     summary: Donation stats by campaign
+ *     description: Aggregate donation statistics per campaign with date filtering and pagination.
+ *     tags: [Donations]
+ *     security:
+ *       - bearerAuth: []
+ *     parameters:
+ *       - in: query
+ *         name: from
+ *         schema: { type: string, format: date-time }
+ *       - in: query
+ *         name: to
+ *         schema: { type: string, format: date-time }
+ *       - in: query
+ *         name: sort
+ *         schema: { type: string, enum: [totalRaised, donorCount, donationCount], default: totalRaised }
+ *       - in: query
+ *         name: order
+ *         schema: { type: string, enum: [asc, desc], default: desc }
+ *       - in: query
+ *         name: limit
+ *         schema: { type: integer, minimum: 1, maximum: 100, default: 20 }
+ *       - in: query
+ *         name: offset
+ *         schema: { type: integer, minimum: 0, default: 0 }
+ *     responses:
+ *       200:
+ *         description: Per-campaign aggregated stats.
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 success: { type: boolean }
+ *                 data:
+ *                   type: array
+ *                   items: { type: object }
+ *                 total: { type: integer }
+ *                 limit: { type: integer }
+ *                 offset: { type: integer }
+ *                 generatedAt: { type: string, format: date-time }
+ *       400:
+ *         description: Invalid sort or order.
  */
 router.get('/stats/by-campaign', checkPermission(PERMISSIONS.STATS_READ), asyncHandler(async (req, res, next) => {
   try {
@@ -985,12 +1435,12 @@ router.get('/:id/status', requireApiKey, donationIdParamSchema, asyncHandler(asy
       return;
     }
 
-    const keepaliveInterval = setInterval(() => {
+    const keepaliveInterval = timerRegistry.createInterval(() => {
       res.write(': keepalive\n\n');
     }, 15000);
 
     const timeoutMs = 5 * 60 * 1000;
-    const timeoutTimer = setTimeout(() => {
+    const timeoutTimer = timerRegistry.createTimeout(() => {
       res.write(`event: stream_closed\ndata: ${JSON.stringify({ reason: 'timeout', finalStatus: donation.status })}\n\n`);
       res.end();
     }, timeoutMs);
@@ -1010,8 +1460,8 @@ router.get('/:id/status', requireApiKey, donationIdParamSchema, asyncHandler(asy
     donationEvents.on('donation.failed', statusUpdateHandler);
 
     req.on('close', () => {
-      clearInterval(keepaliveInterval);
-      clearTimeout(timeoutTimer);
+      keepaliveInterval.clear();
+      timeoutTimer.clear();
       donationEvents.off('donation.submitted', statusUpdateHandler);
       donationEvents.off('donation.confirmed', statusUpdateHandler);
       donationEvents.off('donation.failed', statusUpdateHandler);

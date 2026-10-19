@@ -12,7 +12,7 @@ const StellarService = require('../../src/services/StellarService');
 const { ValidationError } = require('../../src/utils/errors');
 
 // Mock Stellar SDK
-jest.mock('stellar-sdk', () => ({
+jest.mock('@stellar/stellar-sdk', () => ({
   Keypair: {
     fromSecret: jest.fn().mockReturnValue({
       publicKey: () => 'GXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX'

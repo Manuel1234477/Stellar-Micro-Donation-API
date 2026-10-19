@@ -286,7 +286,7 @@ describe('DonationService — memo collision fields', () => {
 
 // ─── Integration: GET /stats/memo-collisions ─────────────────────────────────
 
-describe('GET /stats/memo-collisions', () => {
+describe('GET /api/v1/stats/memo-collisions', () => {
   const request = require('supertest');
   const path = require('path');
   const os = require('os');
@@ -309,7 +309,7 @@ describe('GET /stats/memo-collisions', () => {
 
   it('returns 200 with empty data when no collisions exist', async () => {
     const res = await request(app)
-      .get('/stats/memo-collisions')
+      .get('/api/v1/stats/memo-collisions')
       .set('x-api-key', 'test-key');
 
     expect(res.status).toBe(200);
@@ -328,7 +328,7 @@ describe('GET /stats/memo-collisions', () => {
     fs.writeFileSync(tmpDb, JSON.stringify([tx], null, 2));
 
     const res = await request(app)
-      .get('/stats/memo-collisions')
+      .get('/api/v1/stats/memo-collisions')
       .set('x-api-key', 'test-key');
 
     expect(res.body.data.totalCollisions).toBe(1);
@@ -345,7 +345,7 @@ describe('GET /stats/memo-collisions', () => {
     fs.writeFileSync(tmpDb, JSON.stringify(txs, null, 2));
 
     const res = await request(app)
-      .get('/stats/memo-collisions')
+      .get('/api/v1/stats/memo-collisions')
       .set('x-api-key', 'test-key');
 
     expect(res.body.data.totalCollisions).toBe(1);
@@ -362,7 +362,7 @@ describe('GET /stats/memo-collisions', () => {
     fs.writeFileSync(tmpDb, JSON.stringify(txs, null, 2));
 
     const res = await request(app)
-      .get('/stats/memo-collisions?startDate=2025-01-01')
+      .get('/api/v1/stats/memo-collisions?startDate=2025-01-01')
       .set('x-api-key', 'test-key');
 
     expect(res.body.data.totalCollisions).toBe(1);
@@ -371,7 +371,7 @@ describe('GET /stats/memo-collisions', () => {
 
   it('returns 400 for invalid startDate', async () => {
     const res = await request(app)
-      .get('/stats/memo-collisions?startDate=bad-date')
+      .get('/api/v1/stats/memo-collisions?startDate=bad-date')
       .set('x-api-key', 'test-key');
     expect(res.status).toBe(400);
     expect(res.body.error.code).toBe('INVALID_DATE');
@@ -379,7 +379,7 @@ describe('GET /stats/memo-collisions', () => {
 
   it('returns 400 when startDate is after endDate', async () => {
     const res = await request(app)
-      .get('/stats/memo-collisions?startDate=2026-12-01&endDate=2026-01-01')
+      .get('/api/v1/stats/memo-collisions?startDate=2026-12-01&endDate=2026-01-01')
       .set('x-api-key', 'test-key');
     expect(res.status).toBe(400);
     expect(res.body.error.code).toBe('INVALID_DATE_RANGE');
@@ -387,7 +387,7 @@ describe('GET /stats/memo-collisions', () => {
 
   it('includes metadata note in response', async () => {
     const res = await request(app)
-      .get('/stats/memo-collisions')
+      .get('/api/v1/stats/memo-collisions')
       .set('x-api-key', 'test-key');
     expect(res.body.metadata.note).toBeDefined();
   });

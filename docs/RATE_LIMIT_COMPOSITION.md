@@ -5,7 +5,7 @@ responsibilities, and the order in which they execute on each request.
 
 ---
 
-## Layer 1 — Per-Key Sliding-Window (`perKeyRateLimit.js`)
+## Layer 1 — Per-Key Fixed-Window (`perKeyRateLimit.js`)
 
 **File:** `src/middleware/perKeyRateLimit.js`  
 **Runs:** First, on authenticated routes that supply an API key.
@@ -19,14 +19,14 @@ responsibilities, and the order in which they execute on each request.
 | On exceed | HTTP 429 with `{ code: "RATE_LIMIT_EXCEEDED", retryAfter }` |
 | Bypass for legacy keys | Skips limiting when `apiKey.isLegacy === true` |
 
-`buildRateLimitHeaders` — the helper that formats the header values — is
-defined in this file and re-exported by `rateLimitHeaders.js`.
+Counters come from the shared store in `src/services/rateLimitStores/`
+(see [RATE_LIMITING.md §7](./RATE_LIMITING.md#7-rate-limit-store-single-abstraction-1777)).
 
 ```
 src/middleware/perKeyRateLimit.js
-  └─ buildRateLimitHeaders()   ← canonical implementation
   └─ checkRateLimit()          ← sync helper used by rbac.js (legacy key path)
   └─ perKeyRateLimit           ← async Express middleware (default export)
+  └─ buildRateLimitHeaders     ← re-exported from rateLimitHeaders.js
 ```
 
 ---
@@ -36,8 +36,9 @@ src/middleware/perKeyRateLimit.js
 **File:** `src/middleware/rateLimiter.js`  
 **Runs:** Applied per-route as a named middleware (e.g. `donationRateLimiter`).
 
-These limiters use `express-rate-limit` with a global IP/key guard for
-specific API surfaces:
+These limiters use `express-rate-limit`, built through the local
+`rateLimit()` wrapper (exported as `sharedRateLimit`) so each one counts
+through the shared store via `ExpressRateLimitStore`:
 
 | Export | Scope | Window | Max |
 |---|---|---|---|
@@ -58,20 +59,14 @@ standardised `{ code: "RATE_LIMIT_EXCEEDED", retryAfter }` body.
 
 ---
 
-## Layer 3 — Header Re-export Shim (`rateLimitHeaders.js`)
+## Layer 3 — Header Helpers (`rateLimitHeaders.js`)
 
-**File:** `src/middleware/rateLimitHeaders.js`  
-**Purpose:** Backward-compatibility shim only — contains **no independent logic**.
+**File:** `src/middleware/rateLimitHeaders.js`
+**Purpose:** Canonical home of `buildRateLimitHeaders()` and `calculateRetryAfter()`.
 
-Re-exports `buildRateLimitHeaders` from Layer 1 so that any future
-consumer may import from either module without duplicating the
-implementation:
-
-```js
-const { buildRateLimitHeaders } = require('./rateLimitHeaders');
-// is exactly equivalent to:
-const { buildRateLimitHeaders } = require('./perKeyRateLimit');
-```
+It imports no other rate-limit module. `perKeyRateLimit.js` and
+`rateLimiter.js` import from it, so there is no circular dependency between
+the rate-limit modules (#1777).
 
 ---
 
@@ -81,11 +76,11 @@ const { buildRateLimitHeaders } = require('./perKeyRateLimit');
 Request
   │
   ├─ Layer 2 limiter (e.g. donationRateLimiter)
-  │    Keys by API key ID or IP; uses express-rate-limit in-memory store
+  │    Keys by API key ID or IP; express-rate-limit on the shared store
   │    Rejects with 429 if global quota exceeded
   │
   ├─ Layer 1 perKeyRateLimit
-  │    Keys by authenticated API key ID only; uses pluggable RateLimitStore
+  │    Keys by authenticated API key ID only; uses the shared store
   │    Emits RateLimit-* headers on every passing response
   │    Rejects with 429 if per-key quota exceeded
   │
@@ -96,7 +91,8 @@ Request
 
 ## Adding a New Limiter
 
-1. Add a named `rateLimit({...})` instance to `rateLimiter.js`.
+1. Add a named `rateLimit({ storePrefix: '<name>', ... })` instance to `rateLimiter.js`
+   (or use `sharedRateLimit` from another module). Do not call `express-rate-limit` directly.
 2. Apply it as middleware on the relevant route.
 3. If the new limiter emits headers, import `buildRateLimitHeaders` from
    `perKeyRateLimit.js` (the canonical source) — do **not** create a new

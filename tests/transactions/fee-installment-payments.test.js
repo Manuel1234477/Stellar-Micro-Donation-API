@@ -17,13 +17,24 @@ const request = require('supertest');
 const app = require('../../src/app');
 const FeeService = require('../../src/services/FeeService');
 const Database = require('../../src/utils/database');
+const { uniqueKeyName } = require('../builders/uniqueId');
 
-const ADMIN_KEY = 'admin-test-key';
-const USER_KEY = 'test-key-1';
+const ADMIN_KEY = uniqueKeyName('admin-test-key');
+const USER_KEY = uniqueKeyName('test-key-1');
+
+// Scope cleanup to rows created by this suite so we never delete another
+// suite's fixtures when running in the same worker.
+const SUITE_STUDENT_PREFIXES = ['student-', 'stu-'];
 
 afterEach(async () => {
-  await Database.run('DELETE FROM fee_payments');
-  await Database.run('DELETE FROM student_fees');
+  const likeClauses = SUITE_STUDENT_PREFIXES.map(() => 'student_id LIKE ?').join(' OR ');
+  const likeParams = SUITE_STUDENT_PREFIXES.map((p) => `${p}%`);
+
+  await Database.run(
+    `DELETE FROM fee_payments WHERE fee_id IN (SELECT id FROM student_fees WHERE ${likeClauses})`,
+    likeParams
+  );
+  await Database.run(`DELETE FROM student_fees WHERE ${likeClauses}`, likeParams);
 });
 
 // ─── FeeService unit tests ────────────────────────────────────────────────────

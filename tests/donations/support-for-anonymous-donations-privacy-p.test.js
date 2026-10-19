@@ -20,15 +20,18 @@ process.env.NODE_ENV = 'test';
 
 const path = require('path');
 const fs = require('fs');
+const os = require('os');
 
-// ─── Isolated JSON store for this test suite ─────────────────────────────────
-const TEST_DB_PATH = path.join(__dirname, '../data/test-anonymous-donations.json');
-process.env.DB_JSON_PATH = TEST_DB_PATH;
+// ─── Isolated SQLite store for this test suite ───────────────────────────────
+const TEST_DB_DIR = fs.mkdtempSync(path.join(os.tmpdir(), 'anon-donations-'));
+const TEST_DB_PATH = path.join(TEST_DB_DIR, 'test-anonymous-donations.sqlite');
+process.env.DB_PATH = TEST_DB_PATH;
 
+const db = require('../../src/config/database');
 const Transaction = require('../../src/models/transaction');
 
-function clearDb() {
-  if (fs.existsSync(TEST_DB_PATH)) fs.unlinkSync(TEST_DB_PATH);
+async function clearDb() {
+  await db.run('DELETE FROM transactions');
 }
 
 // ─── Imports ──────────────────────────────────────────────────────────────────
@@ -159,8 +162,24 @@ describe('anonymization utility', () => {
 describe('DonationService.createDonationRecord — anonymous donations', () => {
   let service;
 
-  beforeEach(() => {
-    clearDb();
+  beforeAll(async () => {
+    await db.run(`
+      CREATE TABLE IF NOT EXISTS transactions (
+        id TEXT PRIMARY KEY,
+        amount REAL NOT NULL,
+        donor TEXT,
+        recipient TEXT,
+        anonymous INTEGER DEFAULT 0,
+        pseudonymous_id TEXT,
+        idempotency_key TEXT UNIQUE,
+        timestamp TEXT,
+        created_at TEXT
+      )
+    `);
+  });
+
+  beforeEach(async () => {
+    await clearDb();
     service = makeDonationService();
   });
 
@@ -257,8 +276,8 @@ describe('DonationService.createDonationRecord — anonymous donations', () => {
 describe('DonationService.verifyAnonymousDonation', () => {
   let service;
 
-  beforeEach(() => {
-    clearDb();
+  beforeEach(async () => {
+    await clearDb();
     service = makeDonationService();
   });
 
@@ -336,8 +355,8 @@ describe('DonationService.verifyAnonymousDonation', () => {
 describe('DonationService.getLeaderboard — anonymous exclusion', () => {
   let service;
 
-  beforeEach(() => {
-    clearDb();
+  beforeEach(async () => {
+    await clearDb();
     service = makeDonationService();
   });
 
@@ -383,8 +402,8 @@ describe('DonationService.getLeaderboard — anonymous exclusion', () => {
 describe('DonationService.getRecentDonations — excludeAnonymous', () => {
   let service;
 
-  beforeEach(() => {
-    clearDb();
+  beforeEach(async () => {
+    await clearDb();
     service = makeDonationService();
   });
 
@@ -495,7 +514,7 @@ describe('GET /donations/verify-anonymous', () => {
   let pseudonymousId;
 
   beforeAll(async () => {
-    clearDb();
+    await clearDb();
     testApp = buildTestApp();
 
     // Create an anonymous donation directly via the service
@@ -510,7 +529,11 @@ describe('GET /donations/verify-anonymous', () => {
     pseudonymousId = tx.pseudonymousId;
   });
 
-  afterAll(clearDb);
+  afterAll(async () => {
+    await clearDb();
+    await db.close();
+    fs.rmSync(TEST_DB_DIR, { recursive: true, force: true });
+  });
 
   test('returns 400 when donationId is missing', async () => {
     const res = await request(testApp)

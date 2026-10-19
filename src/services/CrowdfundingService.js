@@ -79,7 +79,7 @@ async function pledge(campaignId, donorId, amount, options = {}) {
 
   let escrowPublicKey = escrowOverride;
   if (!escrowPublicKey) {
-    const StellarSdk = require('stellar-sdk');
+    const StellarSdk = require('./stellar/sdk.js');
     const serviceSecret = process.env.SERVICE_SECRET_KEY;
     if (serviceSecret) {
       escrowPublicKey = StellarSdk.Keypair.fromSecret(serviceSecret).publicKey();
@@ -231,7 +231,7 @@ async function settle(campaignId, options = {}) {
   const escrowSecret = escrowSecretOverride || process.env.SERVICE_SECRET_KEY || null;
   let escrowPublicKey = null;
   if (escrowSecret) {
-    const StellarSdk = require('stellar-sdk');
+    const StellarSdk = require('./stellar/sdk.js');
     escrowPublicKey = StellarSdk.Keypair.fromSecret(escrowSecret).publicKey();
   }
 
@@ -444,8 +444,9 @@ async function checkAndReleaseMilestones(campaignId, currentAmount, options = {}
     return { releasedMilestones: [] };
   }
 
-  const StellarSdk = require('stellar-sdk');
-  const escrowPublicKey = StellarSdk.Keypair.fromSecret(escrowSecret).publicKey();
+  const StellarSdk = require('./stellar/sdk.js');
+  // Fail fast on a malformed escrow secret before any milestone is processed.
+  StellarSdk.Keypair.fromSecret(escrowSecret);
   const releasedMilestones = [];
 
   // Release funds for each milestone

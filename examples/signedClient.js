@@ -15,8 +15,14 @@
  *     apiKey:    process.env.API_KEY,
  *     apiSecret: process.env.API_KEY_SECRET,
  *   });
- *   const res       = await client.get('/donations/recent?limit=10');
- *   const created   = await client.post('/wallets', { address: 'G…', name: 'My wallet' });
+ *   const res       = await client.get('/api/v1/donations/recent?limit=10');
+ *   const created   = await client.post('/api/v1/wallets', { address: 'G…', name: 'My wallet' });
+ *
+ * Note:
+ *   All example paths are versioned (`/api/v1/...`). Unversioned legacy
+ *   paths are deprecated and only return 308 redirects to `/api/v1/*`;
+ *   they will be removed on the sunset date announced in
+ *   docs/VERSIONING_STRATEGY.md.
  *
  * Behavior:
  *   - Generates a fresh Unix-seconds timestamp per request
@@ -197,9 +203,11 @@ class SignedApiClient {
    * Send a signed HTTP request and return the parsed response.
    *
    * @param {string} method   'GET' | 'POST' | …
-   * @param {string} path     relative path (e.g. '/donations') — may include
-   *                          a query string. If `opts.query` is provided it
-   *                          is merged on top.
+   * @param {string} path     relative path (e.g. '/api/v1/donations') — may
+   *                          include a query string. If `opts.query` is
+   *                          provided it is merged on top. Always use the
+   *                          versioned `/api/v1/...` form; unversioned paths
+   *                          are deprecated and will be removed.
    * @param {object} [opts]
    * @param {object} [opts.body]      Plain-object body to JSON-encode
    * @param {string} [opts.bodyRaw]   Pre-serialized raw body string
@@ -276,6 +284,8 @@ class SignedApiClient {
     };
   }
 
+  // Convenience helpers. Paths should always be versioned, e.g.
+  // client.get('/api/v1/donations/recent') or client.post('/api/v1/wallets', {...}).
   get(path, opts)              { return this.request('GET',    path, opts); }
   delete(path, opts)           { return this.request('DELETE', path, opts); }
   post(path, body, opts)       { return this.request('POST',   path, { ...(opts || {}), body }); }

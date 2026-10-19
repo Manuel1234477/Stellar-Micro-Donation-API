@@ -17,6 +17,7 @@ const log = require('../utils/log');
 const { ValidationError, NotFoundError, ERROR_CODES } = require('../utils/errors');
 const crypto = require('crypto');
 const { serialize: csvSerialize } = require('../utils/csvSerializer');
+const { getSigningSecret } = require('../utils/signingSecrets');
 
 /**
  * Export status constants
@@ -748,7 +749,7 @@ class AuditLogExportService {
         // Generate signed URL token (HMAC-based, expires in configured duration)
         const expiryMs = parseInt(process.env.SIGNED_URL_EXPIRY_MS || String(60 * 60 * 1000));
         const expiresAt = new Date(Date.now() + expiryMs).toISOString();
-        const token = crypto.createHmac('sha256', process.env.ENCRYPTION_KEY || 'dev-secret')
+        const token = crypto.createHmac('sha256', getSigningSecret('ENCRYPTION_KEY', ['ENCRYPTION_KEY']))
           .update(`${jobId}:${expiresAt}`)
           .digest('hex');
         const signedUrl = `/admin/audit-logs/export/${jobId}/download?token=${token}&expires=${encodeURIComponent(expiresAt)}&format=${format}`;
@@ -823,7 +824,7 @@ class AuditLogExportService {
       const expiryMs = parseInt(process.env.SIGNED_URL_EXPIRY_MS || String(60 * 60 * 1000));
       const expiresAt = new Date(Date.now() + expiryMs).toISOString();
       const fmt = options.format || row.format;
-      const token = crypto.createHmac('sha256', process.env.ENCRYPTION_KEY || 'dev-secret')
+      const token = crypto.createHmac('sha256', getSigningSecret('ENCRYPTION_KEY', ['ENCRYPTION_KEY']))
         .update(`${jobId}:${expiresAt}`)
         .digest('hex');
       const signedUrl = `/admin/audit-logs/export/${jobId}/download?token=${token}&expires=${encodeURIComponent(expiresAt)}&format=${fmt}`;

@@ -21,6 +21,9 @@ process.env.MOCK_STELLAR = 'true';
 const Database = require('../../src/utils/database');
 const log = require('../../src/utils/log');
 const MockStellarService = require('../../src/services/MockStellarService');
+const { DatabaseError } = require('../../src/utils/errors');
+
+const createTestTables = require('../helpers/dbBootstrap');
 
 // Chaos configuration
 const CHAOS_CONFIG = {
@@ -43,7 +46,9 @@ describe('Chaos Testing Suite', () => {
     recoveries: 0,
   };
 
-  beforeAll(() => {
+  beforeAll(async () => {
+    await createTestTables(Database);
+
     // Use MockStellarService directly
     stellarService = new MockStellarService({
       networkDelay: 0,
@@ -58,16 +63,37 @@ describe('Chaos Testing Suite', () => {
     }
   });
 
-  afterAll(() => {
-    Database.query = originalDbQuery;
-    
+  afterAll(async () => {
+    // Teardown must be resilient: a chaos-injected query must never leak into
+    // other suites, and cleanup errors must not fail the run.
+    try {
+      removeChaos();
+    } catch (error) {
+      log.warn('Chaos teardown: failed to remove chaos injections', { error: error.message });
+    }
+
+    try {
+      Database.query = originalDbQuery;
+    } catch (error) {
+      log.warn('Chaos teardown: failed to restore Database.query', { error: error.message });
+    }
+
+    try {
+      if (stellarService && stellarService.config) {
+        stellarService.config.failureRate = 0;
+      }
+    } catch (error) {
+      log.warn('Chaos teardown: failed to reset stellar failure rate', { error: error.message });
+    }
+
+    const total = chaosResults.totalTests || 1;
     console.log('\n📊 Chaos Testing Results:');
     console.log(`   Total Tests: ${chaosResults.totalTests}`);
     console.log(`   Failures: ${chaosResults.failures}`);
     console.log(`   Crashes: ${chaosResults.crashes}`);
     console.log(`   Data Corruption: ${chaosResults.dataCorruption}`);
     console.log(`   Successful Recoveries: ${chaosResults.recoveries}`);
-    console.log(`   Success Rate: ${((1 - chaosResults.crashes / chaosResults.totalTests) * 100).toFixed(2)}%\n`);
+    console.log(`   Success Rate: ${((1 - chaosResults.crashes / total) * 100).toFixed(2)}%\n`);
   });
 
   /**
@@ -77,14 +103,14 @@ describe('Chaos Testing Suite', () => {
     Database.query = jest.fn().mockImplementation((...args) => {
       if (Math.random() < CHAOS_CONFIG.failureProbability) {
         const errors = [
-          new Error('SQLITE_BUSY: database is locked'),
-          new Error('SQLITE_IOERR: disk I/O error'),
-          new Error('Connection timeout'),
-          new Error('SQLITE_CORRUPT: database disk image is malformed'),
+          new DatabaseError('SQLITE_BUSY: database is locked'),
+          new DatabaseError('SQLITE_IOERR: disk I/O error'),
+          new DatabaseError('Connection timeout'),
+          new DatabaseError('SQLITE_CORRUPT: database disk image is malformed'),
         ];
         return Promise.reject(errors[Math.floor(Math.random() * errors.length)]);
       }
-      return originalDbQuery(...args);
+      return originalDbQuery.apply(Database, args);
     });
   }
 
@@ -100,7 +126,9 @@ describe('Chaos Testing Suite', () => {
    */
   function removeChaos() {
     Database.query = originalDbQuery;
-    stellarService.config.failureRate = 0;
+    if (stellarService && stellarService.config) {
+      stellarService.config.failureRate = 0;
+    }
   }
 
   describe('Random Transaction Failures', () => {
@@ -180,11 +208,17 @@ describe('Chaos Testing Suite', () => {
         } catch (error) {
           failureCount++;
           chaosResults.failures++;
-          
-          // Verify database is still accessible after failure
+
+          // Injected failures must surface as DatabaseError, never be silently
+          // swallowed by a fallback path.
+          expect(error).toBeInstanceOf(DatabaseError);
+
+          // Verify database is still accessible after failure. The probe bypasses
+          // the injector so only a genuinely broken database counts as a crash.
           try {
-            await Database.query('SELECT 1');
+            await originalDbQuery.apply(Database, ['SELECT 1']);
           } catch (crashError) {
+            expect(crashError).toBeInstanceOf(DatabaseError);
             chaosResults.crashes++;
           }
         }
@@ -205,7 +239,12 @@ describe('Chaos Testing Suite', () => {
 
       const operations = Array(10).fill(null).map((_, i) => 
         Database.query('SELECT * FROM users WHERE id = ?', [i])
-          .catch(err => ({ error: err.message }))
+          .catch(err => {
+            // Failures must be surfaced as DatabaseError, not silently mapped
+            // to a fallback result.
+            expect(err).toBeInstanceOf(DatabaseError);
+            return { error: err.message };
+          })
       );
 
       const results = await Promise.allSettled(operations);
@@ -438,6 +477,12 @@ describe('Chaos Testing Suite', () => {
           recoveryCount++;
           chaosResults.recoveries++;
         } catch (error) {
+          // Database failures must be DatabaseError; stellar failures are
+          // expected to be plain Errors from the mock service.
+          if (error instanceof DatabaseError) {
+            expect(error).toBeInstanceOf(DatabaseError);
+          }
+
           // Try to recover
           try {
             await stellarService.createWallet();

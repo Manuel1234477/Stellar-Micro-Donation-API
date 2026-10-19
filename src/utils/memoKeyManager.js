@@ -14,9 +14,10 @@
  * Key versioning model:
  * {
  *   version: 1,
- *   keyMaterial: "...hex-encoded 32-byte key...",
+ *   key: "...hex-encoded 32-byte key...",
  *   createdAt: "2024-01-01T00:00:00Z",
- *   status: "active|retired", // active = used for new encryptions
+ *   retiredAt: null | "2024-06-01T00:00:00Z",
+ *   status: "active|retired|inactive", // active = used for new encryptions
  * }
  */
 
@@ -26,19 +27,63 @@ const crypto = require('crypto');
 const fs = require('fs');
 const path = require('path');
 const log = require('./log');
+const { env } = require('../config/env');
 
 // ─── Configuration ───────────────────────────────────────────────────────────
 
-const KEYS_STORAGE_PATH = process.env.MEMO_KEYS_DIR || path.join(__dirname, '../../data/memo-keys');
+// Relative paths resolve against the project root; absolute paths are kept as-is.
+const PROJECT_ROOT = path.resolve(__dirname, '../..');
+const KEYS_STORAGE_PATH = path.resolve(PROJECT_ROOT, env.MEMO_KEYS_DIR);
 const KEYS_INDEX_FILE = path.join(KEYS_STORAGE_PATH, 'keys.json');
 
+const KEY_STATUS = Object.freeze({
+  ACTIVE: 'active',
+  RETIRED: 'retired',
+  INACTIVE: 'inactive',
+});
+
+/**
+ * Derive the lifecycle status of a key version.
+ * The active version is always 'active'; otherwise a key with retiredAt set is
+ * 'retired', and anything else is 'inactive'.
+ * @param {{version: number, retiredAt?: string|null}} keyEntry
+ * @param {number} activeVersion
+ * @returns {'active'|'retired'|'inactive'}
+ */
+function deriveKeyStatus(keyEntry, activeVersion) {
+  if (keyEntry.version === activeVersion) return KEY_STATUS.ACTIVE;
+  if (keyEntry.retiredAt) return KEY_STATUS.RETIRED;
+  return KEY_STATUS.INACTIVE;
+}
+
 // ─── Initialization ──────────────────────────────────────────────────────────
+
+/**
+ * Refuse to use a key directory inside the repository working tree when running
+ * in production. Key material stored there ships with the code, can be committed
+ * by mistake and is readable by anyone with access to the checkout.
+ * @throws {Error} When NODE_ENV=production and MEMO_KEYS_DIR resolves inside the project
+ * @returns {void}
+ */
+function assertKeysDirOutsideRepo() {
+  if (process.env.NODE_ENV !== 'production') return;
+
+  const relative = path.relative(PROJECT_ROOT, KEYS_STORAGE_PATH);
+  const insideRepo = relative === '' || (relative.split(path.sep)[0] !== '..' && !path.isAbsolute(relative));
+  if (insideRepo) {
+    throw new Error(
+      `MEMO_KEYS_DIR (${KEYS_STORAGE_PATH}) must be outside the repository in production. ` +
+      'Point MEMO_KEYS_DIR at a path on a secret volume.'
+    );
+  }
+}
 
 /**
  * Ensure the keys storage directory exists.
  * @returns {void}
  */
 function ensureKeysDir() {
+  assertKeysDirOutsideRepo();
   if (!fs.existsSync(KEYS_STORAGE_PATH)) {
     fs.mkdirSync(KEYS_STORAGE_PATH, { recursive: true });
   }
@@ -97,13 +142,16 @@ function initializeKeyStorage() {
           key,
           createdAt: new Date().toISOString(),
           retiredAt: null,
+          status: KEY_STATUS.ACTIVE,
         },
       ],
     };
     saveKeysIndex(index);
   } else {
-    // Migrate legacy format: rename keyMaterial → key, status → retiredAt
+    // Migrate legacy formats: rename keyMaterial → key, derive retiredAt from
+    // a legacy status, and backfill status on records that lack it.
     let migrated = false;
+    const activeVersion = index.activeVersion || 1;
     index.keys = index.keys.map(k => {
       const updated = { ...k };
       if ('keyMaterial' in updated && !('key' in updated)) {
@@ -111,16 +159,20 @@ function initializeKeyStorage() {
         delete updated.keyMaterial;
         migrated = true;
       }
-      if ('status' in updated && !('retiredAt' in updated)) {
-        updated.retiredAt = updated.status === 'retired' ? (updated.retiredAt || new Date().toISOString()) : null;
-        delete updated.status;
+      if (!('retiredAt' in updated)) {
+        updated.retiredAt = updated.status === KEY_STATUS.RETIRED ? new Date().toISOString() : null;
+        migrated = true;
+      }
+      const status = deriveKeyStatus(updated, activeVersion);
+      if (updated.status !== status) {
+        updated.status = status;
         migrated = true;
       }
       return updated;
     });
     if (migrated) {
       saveKeysIndex(index);
-      log.info('MEMO_KEY_MANAGER', 'Migrated key store to new schema (key/retiredAt format)');
+      log.info('MEMO_KEY_MANAGER', 'Migrated key store to new schema (key/retiredAt/status format)');
     }
   }
 
@@ -167,17 +219,22 @@ function getActiveKeyMaterial() {
 }
 
 /**
- * Retrieve all key versions (including retired ones).
- * Useful for rotation status and diagnostics.
- * @returns {Array} Array of { version, createdAt, retiredAt }
+ * Retrieve non-secret metadata for all key versions (including retired ones).
+ * Useful for rotation status and diagnostics. Raw key material is never included.
+ * @returns {Array<{version: number, createdAt: string, retiredAt: string|null, status: 'active'|'retired'|'inactive'}>}
  */
 function getAllKeyVersions() {
   const index = loadKeysIndex() || initializeKeyStorage();
-  return index.keys.map(k => ({
-    version: k.version,
-    createdAt: k.createdAt,
-    retiredAt: k.retiredAt !== undefined ? k.retiredAt : null,
-  }));
+  const activeVersion = index.activeVersion || 1;
+  return index.keys.map(k => {
+    const retiredAt = k.retiredAt !== undefined ? k.retiredAt : null;
+    return {
+      version: k.version,
+      createdAt: k.createdAt,
+      retiredAt,
+      status: deriveKeyStatus({ version: k.version, retiredAt }, activeVersion),
+    };
+  });
 }
 
 // ─── Key Rotation ────────────────────────────────────────────────────────────
@@ -200,6 +257,7 @@ function rotateKey() {
     if (!k.retiredAt) {
       k.retiredAt = retiredAt;
     }
+    k.status = KEY_STATUS.RETIRED;
   });
 
   // Create new active key
@@ -209,6 +267,7 @@ function rotateKey() {
     key,
     createdAt: new Date().toISOString(),
     retiredAt: null,
+    status: KEY_STATUS.ACTIVE,
   });
 
   // Update active version pointer
@@ -333,6 +392,9 @@ function clearAllKeys() {
 }
 
 module.exports = {
+  KEY_STATUS,
+  deriveKeyStatus,
+
   // Initialization
   initializeKeyStorage,
   ensureKeysDir,

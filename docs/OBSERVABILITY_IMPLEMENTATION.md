@@ -80,7 +80,7 @@ This document summarizes the implementation of observability features across fou
 - `src/services/DonationService.js` (1878 lines) → Issue #1212
 - `src/services/RecurringDonationScheduler.js` (1010 lines) → Issue #1211
 - `src/routes/admin/featureFlags.js` (696 lines)
-- `src/routes/admin/geoBlocking.js` (438 lines)
+- `src/routes/admin/geoRules.js` (874 lines, absorbed geoBlocking.js in #1778)
 
 **Acceptance Criteria Met:**
 - ✅ Lint rule warns/fails beyond 1000 lines

@@ -5,6 +5,7 @@
  */
 
 const express = require('express');
+const timerRegistry = require('../utils/timerRegistry');
 const router = express.Router();
 const Database = require('../utils/database');
 const requireApiKey = require('../middleware/apiKey');
@@ -373,12 +374,12 @@ router.get('/:id/progress/stream', requireApiKey, asyncHandler(async (req, res, 
   }
 
   // Heartbeat to keep connection alive
-  const heartbeatInterval = setInterval(() => {
+  const heartbeatInterval = timerRegistry.createInterval(() => {
     try {
       res.write(': heartbeat\n\n');
     } catch (error) {
       log.warn('SSE', 'Failed to send heartbeat', { clientId, error: error.message });
-      clearInterval(heartbeatInterval);
+      heartbeatInterval.clear();
     }
   }, SseManager.HEARTBEAT_INTERVAL_MS);
 
@@ -408,13 +409,13 @@ router.get('/:id/progress/stream', requireApiKey, asyncHandler(async (req, res, 
 
   // Handle client disconnect
   req.on('close', () => {
-    clearInterval(heartbeatInterval);
+    heartbeatInterval.clear();
     SseManager.removeClient(clientId);
     log.info('SSE', `Campaign progress stream disconnected: ${clientId}`, { campaignId });
   });
 
   req.on('error', (error) => {
-    clearInterval(heartbeatInterval);
+    heartbeatInterval.clear();
     SseManager.removeClient(clientId);
     log.error('SSE', 'Client connection error', { clientId, error: error.message });
   });

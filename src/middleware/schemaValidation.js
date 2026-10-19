@@ -7,7 +7,6 @@ const {
   sanitizeIdentifier,
   sanitizeDescription,
   sanitizeMarkup,
-  sanitizeText,
   stripHtmlTags,
 } = require('../utils/sanitizer');
 

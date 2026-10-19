@@ -750,3 +750,109 @@ For questions or issues with the lifecycle hooks system:
 2. Review example implementations in `src/hooks/examples/`
 3. Check application logs for hook errors
 4. Review the source code in `src/events/donationEvents.js`
+
+---
+
+# Request Lifecycle Hooks Documentation (#1600)
+
+## Overview
+
+The request lifecycle middleware (`src/middleware/requestLifecycle.js`) provides an extensible hook system for attaching cross-cutting logic before, during, and after HTTP request processing without modifying core middleware files.
+
+This decouples concerns such as:
+- Custom request timing & latency tracking
+- Security header injection
+- Custom metrics and Prometheus gauges
+- Audit logging & telemetry
+- Context propagation (e.g. Correlation IDs, trace IDs)
+- Centralized error notification
+
+## Hook Slots
+
+The middleware exposes three distinct hook slots:
+
+### 1. `onRequestStart`
+- **When Called**: At the beginning of the request lifecycle when the request enters the middleware pipeline.
+- **Signature**: `async (req, res) => void`
+- **Use Cases**: Attaching correlation IDs, initializing request-scoped timers, validating custom pre-conditions, injecting headers.
+
+### 2. `onRequestEnd`
+- **When Called**: When the HTTP response completes (`res.on('finish')` and `res.on('close')`).
+- **Signature**: `async (req, res) => void`
+- **Use Cases**: Timeline logging, recording latency metrics, emitting audit logs, cleaning up resources.
+
+### 3. `onRequestError`
+- **When Called**: When an unhandled error occurs during the request lifecycle or within lifecycle hooks.
+- **Signature**: `async (err, req, res) => void`
+- **Use Cases**: Error telemetry, reporting to external monitoring systems (e.g. Sentry), diagnostic logging.
+
+## Execution Model
+
+- Each hook slot contains an array of async functions.
+- Functions within a slot are executed sequentially in registration order.
+- Built-in concerns (timing, correlation ID, logging) are implemented as standard hooks registered into these slots.
+
+## Hook API Reference
+
+```javascript
+const {
+  onRequestStart,
+  onRequestEnd,
+  onRequestError,
+  registerHook,
+  attachLifecycleTracking,
+} = require('./src/middleware/requestLifecycle');
+
+// Option A: Using registerHook helper
+registerHook('onRequestStart', async (req, res) => {
+  // custom logic
+});
+
+// Option B: Pushing directly to hook arrays
+onRequestEnd.push(async (req, res) => {
+  // custom logic
+});
+```
+
+## Common Use Cases & Examples
+
+### Example 1: Custom Metrics Collection
+```javascript
+const { registerHook } = require('../middleware/requestLifecycle');
+const { httpRequestDuration } = require('../utils/metrics');
+
+registerHook('onRequestStart', (req) => {
+  req._metricsTimer = httpRequestDuration.startTimer();
+});
+
+registerHook('onRequestEnd', (req, res) => {
+  if (req._metricsTimer) {
+    req._metricsTimer({ method: req.method, status_code: res.statusCode });
+  }
+});
+```
+
+### Example 2: Security Header Injection
+```javascript
+const { registerHook } = require('../middleware/requestLifecycle');
+
+registerHook('onRequestStart', (req, res) => {
+  res.setHeader('X-Request-Id', req.id);
+  res.setHeader('X-Content-Type-Options', 'nosniff');
+});
+```
+
+### Example 3: External Error Reporting
+```javascript
+const { registerHook } = require('../middleware/requestLifecycle');
+const log = require('../utils/log');
+
+registerHook('onRequestError', async (err, req) => {
+  log.error('TELEMETRY', 'Request failed', {
+    requestId: req.id,
+    error: err.message,
+    path: req.path,
+  });
+});
+```
+

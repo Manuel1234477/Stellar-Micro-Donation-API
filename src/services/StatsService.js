@@ -360,9 +360,6 @@ class StatsService {
     const transactions = Transaction.getByDateRange(startDate, endDate);
     const byAsset = {};
 
-    let totalFeeStroops = 0n;
-    let totalVolumeStroops = 0n;
-
     transactions.forEach(tx => {
       const asset = tx.asset || tx.assetCode || 'XLM';
       const amountStroops = toStroops(tx.amount || 0);
@@ -386,8 +383,6 @@ class StatsService {
       const feeInXLMStroops = asset === 'XLM' ? feeStroops : BigInt(Math.floor(Number(feeStroops) * xlmRate));
       byAsset[asset]._totalFeesInXLMStroops += feeInXLMStroops;
 
-      totalFeeStroops += feeInXLMStroops;
-      totalVolumeStroops += asset === 'XLM' ? amountStroops : 0n;
     });
 
     const feesByAsset = Object.values(byAsset).map(a => {

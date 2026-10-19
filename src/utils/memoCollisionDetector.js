@@ -187,13 +187,15 @@ class MemoCollisionDetector {
   /** @private */
   _startCleanup() {
     if (process.env.NODE_ENV !== 'test') {
-      this._cleanupTimer = setInterval(() => this.cleanup(), this.cleanupIntervalMs);
+      const timerRegistry = require('./timerRegistry');
+      this._cleanupTimer = timerRegistry.createInterval(() => this.cleanup(), this.cleanupIntervalMs, 'memo-collision-cleanup');
     }
   }
 
   stop() {
     if (this._cleanupTimer) {
-      clearInterval(this._cleanupTimer);
+      this._cleanupTimer.clear();
+      this._cleanupTimer = null;
     }
   }
 }

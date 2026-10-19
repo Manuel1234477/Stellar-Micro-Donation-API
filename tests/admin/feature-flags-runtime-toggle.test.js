@@ -13,6 +13,7 @@
  */
 
 process.env.MOCK_STELLAR = 'true';
+const ORIGINAL_API_KEYS = process.env.API_KEYS;
 process.env.API_KEYS = 'test-ff-runtime-key';
 process.env.NODE_ENV = 'test';
 
@@ -225,4 +226,11 @@ describe('getAllFlags and getEffectiveFlagsForKey', () => {
     expect(Object.keys(effective)).toContain('test-runtime-effective');
     expect(typeof effective['test-runtime-effective']).toBe('boolean');
   });
+});
+
+// Restore the module-scope env override so later suites in this worker see
+// the value tests/setup.js established.
+afterAll(() => {
+  if (ORIGINAL_API_KEYS === undefined) delete process.env.API_KEYS;
+  else process.env.API_KEYS = ORIGINAL_API_KEYS;
 });

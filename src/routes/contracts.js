@@ -4,6 +4,7 @@
  */
 
 const express = require('express');
+const { clientErrorMessage } = require('../utils/clientErrorMessage');
 const { getStellarService } = require('../config/stellar');
 const requireApiKey = require('../middleware/apiKey');
 const { requireAdmin } = require('../middleware/rbac');
@@ -62,7 +63,7 @@ router.post('/:contractId/invoke', requireApiKey, requireAdmin(), payloadSizeLim
   } catch (err) {
     return res.status(500).json({
       success: false,
-      error: { code: 'INVOKE_FAILED', message: err.message },
+      error: { code: 'INVOKE_FAILED', message: clientErrorMessage('CONTRACTS', err, 500) },
     });
   }
 }));
@@ -102,7 +103,7 @@ router.post('/:contractId/simulate', requireApiKey, requireAdmin(), payloadSizeL
   } catch (err) {
     return res.status(500).json({
       success: false,
-      error: { code: 'SIMULATE_FAILED', message: err.message },
+      error: { code: 'SIMULATE_FAILED', message: clientErrorMessage('CONTRACTS', err, 500) },
     });
   }
 }));
@@ -124,7 +125,7 @@ router.get('/:contractId/state', requireApiKey, requireAdmin(), asyncHandler(asy
   } catch (err) {
     return res.status(500).json({
       success: false,
-      error: { code: 'FETCH_STATE_FAILED', message: err.message },
+      error: { code: 'FETCH_STATE_FAILED', message: clientErrorMessage('CONTRACTS', err, 500) },
     });
   }
 }));
@@ -167,7 +168,7 @@ router.get('/:id/events', asyncHandler(async (req, res) => {
       success: false,
       error: {
         code: 'FETCH_EVENTS_FAILED',
-        message: err.message,
+        message: clientErrorMessage('CONTRACTS', err, 500),
       },
     });
   }

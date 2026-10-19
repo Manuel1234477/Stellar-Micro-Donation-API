@@ -29,9 +29,9 @@ one of them:
 
 | Layer | Scope | Algorithm |
 |---|---|---|
-| Global IP | All endpoints, per IP address | Fixed window (via `express-rate-limit`) |
-| Per-API-key | All endpoints, per authenticated API key | Sliding window (in-memory or Redis) |
-| Endpoint-specific | Individual high-value endpoints | Fixed window (via `express-rate-limit`) |
+| Global IP | All endpoints, per IP address | Fixed window (`express-rate-limit` on the shared store) |
+| Per-API-key | All endpoints, per authenticated API key | Fixed window (shared store: in-memory or Redis) |
+| Endpoint-specific | Individual high-value endpoints | Fixed window (`express-rate-limit` on the shared store) |
 
 In addition, an **abuse detection** system tracks anomalous request patterns and emits
 observability signals (no blocking at this layer — see [§2.4](#24-abuse-detection-signals)).
@@ -66,7 +66,7 @@ requests per minute if not explicitly configured on the key record.
 | **Limit** | `rateLimitPerMinute` field on the API key record (default **100 requests**) |
 | **Window** | `rateLimitWindowSeconds` field on the API key record (default **60 seconds**) |
 | **Key** | API key ID |
-| **Algorithm** | Sliding window |
+| **Algorithm** | Fixed window |
 | **Response on breach** | HTTP `429` with `Retry-After` header |
 | **Backing store** | In-memory (default) or Redis — see [§7](#7-redis-backed-store) |
 
@@ -280,7 +280,6 @@ async function postWithRetry(url, body, maxAttempts = 5) {
 | `RATE_LIMIT_WINDOW_MS` | `60000` | Global rate-limit window in milliseconds |
 | `RATE_LIMIT_STORE` | `memory` | Backing store: `memory` or `redis` |
 | `RATE_LIMIT_FAIL_OPEN` | `true` | On Redis failure: `true` = allow, `false` = deny |
-| `RATE_LIMIT_CLEANUP_INTERVAL_MS` | `60000` | In-memory store cleanup interval |
 | `REDIS_URL` | — | Redis connection URL (required when `RATE_LIMIT_STORE=redis`) |
 | `AUTH_TOKEN_RATE_LIMIT` | `10` | Requests/minute on `POST /auth/token` |
 | `AUTH_REFRESH_RATE_LIMIT` | `20` | Requests/minute on `POST /auth/refresh` |
@@ -290,24 +289,49 @@ Full documentation in [docs/CONFIGURATION.md § Rate Limiting](./CONFIGURATION.m
 
 ---
 
-## 7. Redis-Backed Store
+## 7. Rate Limit Store (single abstraction, #1777)
 
-By default, rate-limit counters are stored in an in-process sliding-window map
-(`MemoryRateLimitStore`). This is suitable for single-instance deployments.
+Every limiter counts through **one** store abstraction in
+`src/services/rateLimitStores/`:
 
-For **multi-instance deployments** (multiple Node processes behind a load balancer), set:
+| Limiter | How it uses the store |
+|---|---|
+| `perKeyRateLimit` / `checkRateLimit` (`src/middleware/perKeyRateLimit.js`) | `getRateLimitStore().incrementAndCheck()` |
+| Named limiters in `src/middleware/rateLimiter.js`, `routes/tiers.js`, `routes/receipt.js` | `express-rate-limit` with `ExpressRateLimitStore` adapter (one adapter + key prefix per limiter) |
+| Abuse detection detectors (`src/services/AbuseDetectionService.js`) | `getRateLimitStore().increment()` |
+| Monthly quotas (`src/middleware/quotaTracker.js`) | Persisted in the `api_keys` table (already shared across instances) |
+
+There is no other rate-limit store; the former `src/middleware/RateLimitStore.js` was removed.
+
+### Backends
+
+By default counters live in an in-process fixed-window map (`MemoryRateLimitStore`).
+That is fine for a single instance; with N instances a client can make up to N times
+each limit.
+
+For **multi-instance deployments** set:
 
 ```env
 RATE_LIMIT_STORE=redis
 REDIS_URL=redis://your-redis-host:6379
 ```
 
-The Redis store uses an atomic Lua script (INCR + EXPIRE) so counts are consistent
-across all instances sharing the same Redis server.
+The Redis store runs one Lua script per hit (INCR, PEXPIRE on first hit, PTTL), so
+counts are atomic and consistent across every instance sharing the Redis server. It
+works with `ioredis` or `redis` (v4); install one of them when enabling Redis.
 
-**Failure behaviour:** When Redis is unavailable, the store falls back to allowing all
-requests by default (`RATE_LIMIT_FAIL_OPEN=true`). To instead deny requests on Redis
-failure (safer for high-security deployments), set `RATE_LIMIT_FAIL_OPEN=false`.
+### Store failure behaviour
+
+| Situation | Behaviour | Logged as |
+|---|---|---|
+| `RATE_LIMIT_STORE=redis` but no `REDIS_URL` or no client package | Uses in-memory store | `warn RATE_LIMIT` |
+| Redis does not answer `PING` at startup | Switches to in-memory store | `warn RATE_LIMIT` |
+| Store error on a request, `RATE_LIMIT_FAIL_OPEN` unset/`true` | **Fail-open**: request allowed | `error RATE_LIMIT_STORE` with `policy: "fail-open"` |
+| Store error on a request, `RATE_LIMIT_FAIL_OPEN=false` | **Fail-closed**: request rejected with 429 | `error RATE_LIMIT_STORE` with `policy: "fail-closed"` |
+| Store error in abuse detection | Counter skipped (detection is observe-only) | `error ABUSE_DETECTION` |
+| Legacy env API key path (`checkRateLimit`) with Redis configured | Allowed (synchronous path cannot wait on Redis); DB-backed keys are still limited | — |
+
+Store errors are never swallowed silently.
 
 ---
 

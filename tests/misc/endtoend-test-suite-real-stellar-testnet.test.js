@@ -13,7 +13,8 @@
 const fs = require('fs');
 const path = require('path');
 
-const ROOT = path.join(__dirname, '..');
+const { REPO_ROOT } = require('../helpers/paths');
+const ROOT = REPO_ROOT;
 
 // ─── File Existence ───────────────────────────────────────────────────────────
 
@@ -28,7 +29,6 @@ describe('E2E infrastructure — required files exist', () => {
     'tests/e2e/donation.e2e.test.js',
     'tests/e2e/transaction.e2e.test.js',
     '.github/workflows/e2e-nightly.yml',
-    'docs/features/ADD_ENDTOEND_TEST_SUITE_WITH_REAL_STELLAR_TESTNET.md',
   ];
 
   test.each(requiredFiles)('%s exists', (relPath) => {
@@ -272,36 +272,6 @@ describe('.github/workflows/e2e-nightly.yml — CI configuration', () => {
 
   it('has a failure notification step', () => {
     expect(content).toMatch(/if.*failure/);
-  });
-});
-
-// ─── Documentation ────────────────────────────────────────────────────────────
-
-describe('docs/features/ADD_ENDTOEND_TEST_SUITE_WITH_REAL_STELLAR_TESTNET.md', () => {
-  let content;
-
-  beforeAll(() => {
-    content = fs.readFileSync(
-      path.join(ROOT, 'docs/features/ADD_ENDTOEND_TEST_SUITE_WITH_REAL_STELLAR_TESTNET.md'),
-      'utf8'
-    );
-  });
-
-  it('documents how to run the e2e suite locally', () => {
-    expect(content).toMatch(/npm run test:e2e/);
-  });
-
-  it('documents required environment variables', () => {
-    expect(content).toMatch(/MOCK_STELLAR/);
-    expect(content).toMatch(/ENCRYPTION_KEY/);
-  });
-
-  it('mentions Friendbot', () => {
-    expect(content).toMatch(/[Ff]riendbot/);
-  });
-
-  it('describes retry logic', () => {
-    expect(content).toMatch(/[Rr]etry/);
   });
 });
 

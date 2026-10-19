@@ -1,21 +1,17 @@
 
 // External modules
-const StellarSdk = require('stellar-sdk');
+const StellarSdk = require('./stellar/sdk.js');
 
 // Internal modules
 const StellarServiceInterface = require('./interfaces/StellarServiceInterface');
 const { STELLAR_NETWORKS, HORIZON_URLS } = require('../constants');
-const StellarErrorHandler = require('../utils/stellarErrorHandler');
 const log = require('../utils/log');
 const { withTimeout, TIMEOUT_DEFAULTS, TimeoutError } = require('../utils/timeoutHandler');
 const { runWithAbortController, getCurrentAbortSignal } = require('../utils/abortContext');
 const { CircuitBreaker } = require('../utils/circuitBreaker');
 const HorizonPool = require('./HorizonPool');
 const {
-  toStellarSdkAsset,
-  normalizeHorizonAsset,
   isSameAsset,
-  serializeAsset,
 } = require('../utils/stellarAsset');
 
 // Import decomposed modules
@@ -236,7 +232,7 @@ class StellarService extends StellarServiceInterface {
           delay,
           error: error.message
         });
-        await new Promise(resolve => setTimeout(resolve, delay));
+        await new Promise(resolve => setTimeout(resolve, delay)); // eslint-disable-line local/no-bare-timers -- awaited delay; must not be cancelled by clearAll()
       }
     }
 

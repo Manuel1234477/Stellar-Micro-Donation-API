@@ -8,6 +8,21 @@
  * by explicitly whitelisting allowed properties for outbound API payloads.
  */
 
+const ALLOWED_WALLET_FIELDS = Object.freeze([
+  'id',
+  'publicKey',
+  'address',
+  'label',
+  'ownerName',
+  'createdAt',
+  'updatedAt',
+  'funded',
+  'sponsored',
+  'sponsorshipRevokedAt',
+  'sponsoredAt',
+  'homeDomain',
+]);
+
 /**
  * Sanitizes a wallet object for public API response.
  * explicitly whitelists safe fields and excludes everything else.
@@ -36,10 +51,12 @@ function toWalletResponse(wallet) {
 
   // Remove undefined properties to keep response clean
   return Object.fromEntries(
-    Object.entries(allowed).filter(([_, v]) => v !== undefined)
+    Object.entries(allowed).filter(([k, v]) => ALLOWED_WALLET_FIELDS.includes(k) && v !== undefined)
   );
 }
 
 module.exports = {
+  ALLOWED_WALLET_FIELDS,
   toWalletResponse,
 };
+

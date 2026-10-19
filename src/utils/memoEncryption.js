@@ -22,11 +22,15 @@
  * The Ed25519→X25519 conversion is the standard technique used by Signal,
  * age encryption, and libsodium's crypto_sign_ed25519_pk_to_curve25519.
  *
+ * Only the X25519/HKDF key agreement lives here; the AES-256-GCM step uses
+ * the shared core in src/utils/crypto.js (#1776).
+ *
  * @module memoEncryption
  */
 'use strict';
 
 const crypto = require('crypto');
+const cryptoCore = require('./crypto');
 
 const ALGORITHM = 'ECDH-X25519-AES256GCM';
 const ENVELOPE_VERSION = 1;
@@ -187,7 +191,7 @@ function decodeStellarPublicKey(address) {
     throw new Error('Invalid Stellar public key: must be a G... address');
   }
   try {
-    const { StrKey } = require('stellar-sdk');
+    const { StrKey } = require('../services/stellar/sdk.js');
     return Buffer.from(StrKey.decodeEd25519PublicKey(address));
   } catch (err) {
     throw new Error(`Invalid Stellar public key: ${err.message}`);
@@ -206,7 +210,7 @@ function decodeStellarSecretKey(secret) {
     throw new Error('Invalid Stellar secret key: must be an S... key');
   }
   try {
-    const { StrKey } = require('stellar-sdk');
+    const { StrKey } = require('../services/stellar/sdk.js');
     return Buffer.from(StrKey.decodeEd25519SecretSeed(secret));
   } catch (err) {
     throw new Error(`Invalid Stellar secret key: ${err.message}`);
@@ -287,21 +291,17 @@ function encryptMemo(plaintext, recipientStellarAddress) {
   const salt = crypto.randomBytes(32);
   const derivedKey = hkdf(sharedSecret, salt, HKDF_INFO, 32);
 
-  // Encrypt with AES-256-GCM
-  const iv = crypto.randomBytes(12);
-  const cipher = crypto.createCipheriv('aes-256-gcm', derivedKey, iv);
-  let ciphertext = cipher.update(plaintext, 'utf8', 'base64');
-  ciphertext += cipher.final('base64');
-  const authTag = cipher.getAuthTag();
+  // Encrypt with AES-256-GCM (core generates the IV)
+  const sealed = cryptoCore.seal(derivedKey, plaintext);
 
   return {
     v: ENVELOPE_VERSION,
     alg: ALGORITHM,
     ephemeralPublicKey: exportX25519PublicKeyRaw(ephPubKey).toString('base64'),
     salt: salt.toString('base64'),
-    iv: iv.toString('base64'),
-    ciphertext,
-    authTag: authTag.toString('base64'),
+    iv: sealed.iv.toString('base64'),
+    ciphertext: sealed.ciphertext.toString('base64'),
+    authTag: sealed.tag.toString('base64'),
   };
 }
 
@@ -350,15 +350,11 @@ function decryptMemo(envelope, recipientStellarSecret) {
 
   // AES-256-GCM decrypt (auth tag validates integrity + authenticity)
   try {
-    const decipher = crypto.createDecipheriv(
-      'aes-256-gcm',
-      derivedKey,
-      Buffer.from(env.iv, 'base64')
-    );
-    decipher.setAuthTag(Buffer.from(env.authTag, 'base64'));
-    let plaintext = decipher.update(env.ciphertext, 'base64', 'utf8');
-    plaintext += decipher.final('utf8');
-    return plaintext;
+    return cryptoCore.open(derivedKey, {
+      iv: Buffer.from(env.iv, 'base64'),
+      ciphertext: Buffer.from(env.ciphertext, 'base64'),
+      tag: Buffer.from(env.authTag, 'base64'),
+    }).toString('utf8');
   } catch {
     throw new Error('Decryption failed: invalid key or tampered ciphertext');
   }

@@ -139,3 +139,41 @@ The server handles `SIGTERM` and `SIGINT` by:
 3. Closing the database connection
 
 Kubernetes/ECS sends `SIGTERM` before killing the container. Configure the orchestrator grace period to exceed the application shutdown budget and include time for lifecycle hooks.
+
+## Kubernetes (SQLite StatefulSet)
+
+The reference manifests in [`deploy/kubernetes`](../deploy/kubernetes) are a Kustomize
+base. Apply them with:
+
+```bash
+kubectl apply -k deploy/kubernetes
+```
+
+The workload is a **single-replica StatefulSet** because SQLite requires one writer and
+must retain its database on persistent storage. The `data` volume claim is mounted at
+`/data`, and `DB_PATH=/data/stellar_donations.db` is supplied by the checked-in
+ConfigMap. The image is pinned to `stellar-micro-donation-api:1.0.0`; publish that exact
+version before applying the base (or use an environment-specific Kustomize image
+override).
+
+`deploy/kubernetes/config.yaml` intentionally contains an empty Secret. Populate it
+through the cluster's secret-management workflow before starting the pod; at minimum,
+production startup requires `ENCRYPTION_KEY` and `API_KEYS`, and live Stellar operation
+requires the appropriate network/Horizon configuration. No credentials or unsafe
+fallback values are committed. The ConfigMap and Secret are injected with `envFrom`.
+
+The pod runs as a non-root UID/GID, uses the RuntimeDefault seccomp profile, drops all
+Linux capabilities, disallows privilege escalation, and has a read-only root
+filesystem. `/data` is the writable SQLite PVC and `/tmp` is an ephemeral writable
+`emptyDir`. The Service exposes port 3000, and the PodDisruptionBudget requires the
+single replica to remain available during voluntary disruptions.
+
+Before rollout, verify the image and required Secret values, then inspect readiness:
+
+```bash
+kubectl -n <namespace> get statefulset,pods,pvc,svc,pdb -l app.kubernetes.io/name=stellar-micro-donation-api
+kubectl -n <namespace> rollout status statefulset/stellar-micro-donation-api
+```
+
+See [Kubernetes probes](KUBERNETES_PROBES.md) for liveness/readiness behavior and
+failure handling.

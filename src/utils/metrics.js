@@ -262,6 +262,151 @@ const memoCollisionsTotal = new client.Counter({
   registers: [registry],
 });
 
+// ─── Leaderboard Cache Metrics ───────────────────────────────────────────────
+
+/**
+ * Counter: total leaderboard cache lookup attempts.
+ * Labels: result (hit|miss)
+ * @type {client.Counter}
+ */
+const leaderboardCacheLookupsTotal = new client.Counter({
+  name: 'leaderboard_cache_lookups_total',
+  help: 'Total number of leaderboard cache lookup attempts',
+  labelNames: ['result'],
+  registers: [registry],
+});
+
+/**
+ * Histogram: duration of leaderboard compute operations in seconds.
+ * @type {client.Histogram}
+ */
+const leaderboardComputeDuration = new client.Histogram({
+  name: 'leaderboard_compute_duration_seconds',
+  help: 'Duration of leaderboard compute operations in seconds',
+  buckets: [0.01, 0.05, 0.1, 0.5, 1, 2, 5],
+  registers: [registry],
+});
+
+function recordLeaderboardCacheHit() {
+  try { leaderboardCacheLookupsTotal.inc({ result: 'hit' }); } catch (_) { /* best-effort */ }
+}
+
+function recordLeaderboardCacheMiss() {
+  try { leaderboardCacheLookupsTotal.inc({ result: 'miss' }); } catch (_) { /* best-effort */ }
+}
+
+// ─── Legacy Unversioned Path Metrics (#1802) ─────────────────────────────────
+
+/**
+ * Counter: total requests made to legacy (unversioned) API paths that are
+ * served via a 308 redirect to /api/v1/*.
+ * Labels:
+ *   path    — normalised legacy path (e.g. /stats/overpayments)
+ *   api_key — API key id making the request, or 'anonymous'
+ * @type {client.Counter}
+ */
+const legacyPathRequestsTotal = new client.Counter({
+  name: 'legacy_path_requests_total',
+  help: 'Total number of requests to legacy unversioned API paths (redirected to /api/v1)',
+  labelNames: ['path', 'api_key'],
+  registers: [registry],
+});
+
+/**
+ * Records a request to a legacy unversioned path.
+ * @param {string} path Normalised legacy path
+ * @param {string} [apiKeyId] API key id, or 'anonymous' when unauthenticated
+ */
+function recordLegacyPathRequest(path, apiKeyId) {
+  try {
+    legacyPathRequestsTotal.inc({
+      path: normaliseRoute(path || 'unknown'),
+      api_key: apiKeyId || 'anonymous',
+    });
+  } catch (_) {}
+}
+
+/**
+ * Counter: requests authenticated with a legacy environment-based API key.
+ * Labels: key_id_hash — non-reversible hash of the legacy key (never the raw key)
+ * @type {client.Counter}
+ */
+const legacyApiKeyUsageTotal = new client.Counter({
+  name: 'legacy_api_key_usage_total',
+  help: 'Total requests authenticated with a legacy environment-based API key',
+  labelNames: ['key_id_hash'],
+  registers: [registry],
+});
+
+/**
+ * Records one authenticated request made with a legacy key.
+ * @param {string} keyIdHash Hashed legacy key identifier
+ */
+function recordLegacyKeyUsage(keyIdHash) {
+  try {
+    legacyApiKeyUsageTotal.inc({ key_id_hash: keyIdHash || 'unknown' });
+  } catch (_) { /* best-effort */ }
+}
+
+/**
+ * Counter: rejected authentication attempts, by reason.
+ * Labels: reason (missing_key|invalid_key)
+ * @type {client.Counter}
+ */
+const authFailuresTotal = new client.Counter({
+  name: 'auth_failures_total',
+  help: 'Total rejected API key authentication attempts',
+  labelNames: ['reason'],
+  registers: [registry],
+});
+
+/**
+ * Records one rejected authentication attempt. Metrics are not audited, so this
+ * captures every failure even when the audit row is throttled.
+ * @param {'missing_key'|'invalid_key'} reason
+ */
+function recordAuthFailure(reason) {
+  try {
+    authFailuresTotal.inc({ reason });
+  } catch (_) { /* best-effort */ }
+}
+
+// ─── Scheduler Leader Election Metrics (#1604) ───────────────────────────────
+
+/**
+ * Counter: total scheduler leader election lock acquisition attempts.
+ * Labels: status (acquired|contested|failed)
+ * @type {client.Counter}
+ */
+const schedulerLockAcquisitionsTotal = new client.Counter({
+  name: 'scheduler_lock_acquisitions_total',
+  help: 'Total number of scheduler leader election lock acquisitions',
+  labelNames: ['status'],
+  registers: [registry],
+});
+
+/**
+ * Counter: total scheduler leader election lock releases.
+ * @type {client.Counter}
+ */
+const schedulerLockReleasesTotal = new client.Counter({
+  name: 'scheduler_lock_releases_total',
+  help: 'Total number of scheduler leader election lock releases',
+  registers: [registry],
+});
+
+function recordSchedulerLockAcquisition(status = 'acquired') {
+  try {
+    schedulerLockAcquisitionsTotal.inc({ status });
+  } catch (_) { /* best-effort */ }
+}
+
+function recordSchedulerLockRelease() {
+  try {
+    schedulerLockReleasesTotal.inc();
+  } catch (_) { /* best-effort */ }
+}
+
 module.exports = {
   registry,
   httpRequestDuration,
@@ -271,6 +416,11 @@ module.exports = {
   recordDonation,
   // Memo collision metrics
   memoCollisionsTotal,
+  // Leaderboard cache metrics
+  leaderboardCacheLookupsTotal,
+  leaderboardComputeDuration,
+  recordLeaderboardCacheHit,
+  recordLeaderboardCacheMiss,
   // Recurring scheduler metrics
   recurringDonationsDueTotal,
   recurringDonationsExecutedTotal,
@@ -278,6 +428,20 @@ module.exports = {
   recurringDonationsSuspendedTotal,
   recurringDonationsActiveCount,
   recurringDonationsSkippedTotal,
+  // Legacy unversioned path metrics (#1802)
+  legacyPathRequestsTotal,
+  recordLegacyPathRequest,
+  // Legacy API key usage (#1886)
+  legacyApiKeyUsageTotal,
+  recordLegacyKeyUsage,
+  // Authentication failure metrics (#1887)
+  authFailuresTotal,
+  recordAuthFailure,
+  // Scheduler leader election metrics (#1604)
+  schedulerLockAcquisitionsTotal,
+  schedulerLockReleasesTotal,
+  recordSchedulerLockAcquisition,
+  recordSchedulerLockRelease,
   // Horizon connection pool metrics
   horizonPoolSize,
   horizonPoolHealthyCount,
@@ -289,3 +453,4 @@ module.exports = {
   recordHorizonPoolCooldownEvent,
   recordHorizonPoolRecoveryEvent,
 };
+

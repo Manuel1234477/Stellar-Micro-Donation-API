@@ -9,6 +9,7 @@
  */
 
 process.env.MOCK_STELLAR = 'true';
+const ORIGINAL_API_KEYS = process.env.API_KEYS;
 process.env.API_KEYS = 'test-openapi-key';
 
 const request = require('supertest');
@@ -211,4 +212,11 @@ describe('OpenAPI Response Schema Validation Suite (#1539)', () => {
       expect(res.body.paths).toBeDefined();
     });
   });
+});
+
+// Restore the module-scope env override so later suites in this worker see
+// the value tests/setup.js established.
+afterAll(() => {
+  if (ORIGINAL_API_KEYS === undefined) delete process.env.API_KEYS;
+  else process.env.API_KEYS = ORIGINAL_API_KEYS;
 });

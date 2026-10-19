@@ -138,6 +138,9 @@ async function startServer(app, overrideServices = {}) {
       try {
         const { runMigrations } = require('../utils/migrationRunner');
         await runMigrations();
+        // Load the donation store only after migration 033 has created
+        // donations_store; a failure here aborts startup (never "starts empty").
+        await require('../models/transaction').initialize();
         await initializeApiKeysTable();
         initializeDefaultStore(Database);
 
@@ -152,6 +155,9 @@ async function startServer(app, overrideServices = {}) {
         if (process.env.FEATURE_FLAGS) {
           await loadFlagsFromEnv(process.env.FEATURE_FLAGS);
         }
+
+        // Verify the shared rate limit store; falls back to memory if Redis is down (#1777)
+        await require('../services/rateLimitStores').initializeRateLimitStore();
 
         await WebhookService.WebhookService.initTable();
         await validateRBAC();
@@ -373,6 +379,9 @@ async function startServer(app, overrideServices = {}) {
           stellarService.circuitBreaker.stopSync();
         }
 
+        // Close the shared rate limit store (Redis connection, if any)
+        await require('../services/rateLimitStores').shutdownRateLimitStore();
+
         // 8. Checkpoint SQLite WAL (must happen before DB close, after all writes)
         try {
           await Database.run('PRAGMA wal_checkpoint(TRUNCATE)');
@@ -388,6 +397,13 @@ async function startServer(app, overrideServices = {}) {
           log.info('SHUTDOWN', 'Audit log buffer flushed');
         } catch (err) {
           log.error('SHUTDOWN', 'Error flushing audit log buffer', { error: err.message });
+        }
+
+        // Close the shared-state backend connection (no-op for the memory backend)
+        try {
+          await require('../utils/sharedStateStore').getSharedStateStore().close();
+        } catch (err) {
+          log.error('SHUTDOWN', 'Error closing shared-state store', { error: err.message });
         }
 
         // 10. Close DB pool (last — nothing else writes after this)

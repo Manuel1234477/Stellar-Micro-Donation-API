@@ -7,6 +7,7 @@
  * - Active feature flags, configured Stellar network, MOCK_STELLAR state
  * - Rate limit configuration, CORS allowed origins count
  * - Database file path and size, uptime since process start
+ * - Geo-blocking status (MaxMind DB presence, strict mode, rule counts)
  *
  * Also exposes buildStartupReport() for on-demand use by GET /admin/startup-report.
  * Sensitive values (keys, passwords) are masked via dataMasker.
@@ -127,6 +128,87 @@ function sanitizeUrl(url) {
   }
 }
 
+/**
+ * Parse a boolean-ish env var value.
+ * @param {*} value
+ * @param {boolean} [fallback=false]
+ * @returns {boolean}
+ */
+function parseBool(value, fallback = false) {
+  if (value === undefined || value === null || value === '') return fallback;
+  if (typeof value === 'boolean') return value;
+  const normalized = String(value).trim().toLowerCase();
+  if (['1', 'true', 'yes', 'on'].includes(normalized)) return true;
+  if (['0', 'false', 'no', 'off'].includes(normalized)) return false;
+  return fallback;
+}
+
+/**
+ * Resolve the configured MaxMind GeoIP database path.
+ * @returns {string|null}
+ */
+function getGeoDbPath() {
+  const geoConfig = config.geoBlocking || config.geoBlock || {};
+  return (
+    geoConfig.dbPath ||
+    process.env.GEOIP_DB_PATH ||
+    process.env.MAXMIND_DB_PATH ||
+    null
+  );
+}
+
+/**
+ * Collect geo-blocking status for the startup report (best-effort).
+ * Never throws — falls back to conservative defaults on error.
+ * @returns {Promise<Object>}
+ */
+async function getGeoBlockingStatus() {
+  const geoConfig = config.geoBlocking || config.geoBlock || {};
+  const dbPath = getGeoDbPath();
+  const strictMode = parseBool(
+    geoConfig.strictMode !== undefined ? geoConfig.strictMode : process.env.GEO_STRICT_MODE,
+    false
+  );
+
+  const dbPresent = !!(dbPath && typeof dbPath === 'string' && fs.existsSync(dbPath));
+  const dbSize = dbPresent ? getDbFileSize(dbPath) : null;
+
+  let ruleCounts = { total: 0, block: 0, allow: 0 };
+  try {
+    const rows = await Database.all(
+      `SELECT action, COUNT(*) AS count FROM geo_rules GROUP BY action`
+    );
+    for (const row of rows) {
+      const count = Number(row.count) || 0;
+      ruleCounts.total += count;
+      const action = String(row.action || '').toLowerCase();
+      if (action === 'block') ruleCounts.block += count;
+      else if (action === 'allow') ruleCounts.allow += count;
+    }
+  } catch {
+    // Table may not exist yet — leave counts at zero.
+  }
+
+  // Effective behaviour when the DB is missing:
+  //   strict mode  -> fail closed (deny requests)
+  //   non-strict   -> fail open (allow requests)
+  const effectiveBehaviour = dbPresent
+    ? 'enforcing'
+    : (strictMode ? 'fail-closed' : 'fail-open');
+
+  return {
+    enabled: geoConfig.enabled !== undefined ? !!geoConfig.enabled : true,
+    initialized: dbPresent,
+    dbPath: dbPath || 'not configured',
+    dbPresent,
+    dbSizeBytes: dbSize,
+    dbSizeHuman: dbSize !== null ? formatBytes(dbSize) : 'unavailable',
+    strictMode,
+    effectiveBehaviour,
+    rules: ruleCounts,
+  };
+}
+
 // ── Core report builder ───────────────────────────────────────────────────────
 
 /**
@@ -147,6 +229,7 @@ async function buildStartupReport() {
     : (process.env.DB_PATH || './donations.db');
   const dbSize = getDbFileSize(dbPath);
   const activeFlags = await getActiveFeatureFlags();
+  const geoBlocking = await getGeoBlockingStatus();
 
   const report = {
     generatedAt: new Date().toISOString(),
@@ -199,6 +282,8 @@ async function buildStartupReport() {
       sizeBytes: dbSize,
       sizeHuman: dbSize !== null ? formatBytes(dbSize) : 'unavailable',
     },
+
+    geoBlocking,
 
     services: {
       apiKeys: {
@@ -262,6 +347,7 @@ async function logStartupDiagnostics() {
     network: report.stellar.mode,
     featureFlagsActive: report.featureFlags.count,
     dbSize: report.database.sizeHuman,
+    geoBlocking: report.geoBlocking.effectiveBehaviour,
     uptime: report.uptimeSinceStart,
   });
 

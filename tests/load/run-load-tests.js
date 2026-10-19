@@ -5,6 +5,11 @@
  * Runs all load test scenarios against the Express app in mock mode,
  * validates results against performance baselines, and generates reports.
  *
+ * This is the single canonical load-test harness for the repository (issue
+ * #1799). It replaces the former Artillery scenarios and the duplicate nightly
+ * workflow. The JSON report it writes (load-test-report.json) is the artifact
+ * consumed by scripts/check-load-test-regression.js.
+ *
  * Usage:
  *   node tests/load/run-load-tests.js [--output ./reports] [--concurrency 10] [--iterations 50]
  *
@@ -116,7 +121,7 @@ async function main() {
   // Donor/recipient are valid Stellar public keys so the write path passes
   // validation; each create uses a unique Idempotency-Key so the requests are
   // genuinely processed rather than served from the idempotency cache.
-  const StellarSdk = require('stellar-sdk');
+  const StellarSdk = require('@stellar/stellar-sdk');
   const donor = StellarSdk.Keypair.random().publicKey();
   const recipient = StellarSdk.Keypair.random().publicKey();
 
@@ -167,10 +172,13 @@ async function main() {
     console.log(`  ${icon} ${r.scenario}: ${r.passed ? 'PASSED' : r.violations.join(', ')}`);
   }
 
-  // Generate reports
-  generateJsonReport(report, path.join(outputDir, 'load-test-report.json'));
+  // Generate reports. The JSON report is the canonical artifact consumed by
+  // scripts/check-load-test-regression.js and uploaded by the load-test workflow.
+  const jsonReportPath = path.join(outputDir, 'load-test-report.json');
+  generateJsonReport(report, jsonReportPath);
   generateHtmlReport(report, path.join(outputDir, 'load-test-report.html'));
   console.log(`\nReports written to: ${outputDir}`);
+  console.log(`Regression-check input: ${jsonReportPath}`);
 
   // Publish metrics to the PR/job summary (visible even on a pass).
   writeStepSummary(report, validation);

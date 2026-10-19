@@ -19,8 +19,6 @@ const { requestTimeout, TIMEOUTS } = require('../../middleware/requestTimeout');
 const { STROOPS_PER_XLM } = require('../../constants');
 const WalletService = require('../../services/WalletService');
 const AuditLogService = require('../../services/AuditLogService');
-const log = require('../../utils/log');
-const { parseCursorPaginationQuery } = require('../../utils/pagination');
 const { toISOStringUTC } = require('../../utils/timestampUtils');
 const Cache = require('../../utils/cache');
 

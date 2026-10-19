@@ -10,15 +10,15 @@
  *   - Each wallet has its own Data Encryption Key (DEK).
  *   - The DEK is encrypted by the KEK managed here (the "envelope").
  *   - Only the encrypted DEK is stored; the plaintext DEK lives only in memory.
+ *
+ * Local wrapping and env key lookup go through src/utils/crypto.js (#1776);
+ * this module only adds the provider switch and the AWS backend.
  */
 
 'use strict';
 
-const crypto = require('crypto');
 const log = require('./log');
-
-const ALGORITHM = 'aes-256-gcm';
-const IV_LENGTH = 12;
+const cryptoCore = require('./crypto');
 
 function requireAwsKms() {
   try {
@@ -28,22 +28,12 @@ function requireAwsKms() {
   }
 }
 
+/**
+ * Raw master secret from env. Delegates to the shared key provider (#1776).
+ * @returns {string}
+ */
 function resolveEncryptionKeyFromEnv() {
-  if (process.env.KMS_KEY_ID || process.env.KMS_PROVIDER) {
-    const encrypted = process.env.ENCRYPTED_ENCRYPTION_KEY || process.env.ENCRYPTION_KEY;
-    if (!encrypted || !encrypted.trim()) {
-      throw new Error('KMS is configured but ENCRYPTED_ENCRYPTION_KEY is not set. Supply the wrapped DEK before startup.');
-    }
-    if (process.env.ENCRYPTION_KEY && process.env.ENCRYPTED_ENCRYPTION_KEY) {
-      throw new Error('Do not set both ENCRYPTION_KEY and ENCRYPTED_ENCRYPTION_KEY. Use ENCRYPTED_ENCRYPTION_KEY when KMS is enabled.');
-    }
-    return encrypted.trim();
-  }
-
-  if (!process.env.ENCRYPTION_KEY || !process.env.ENCRYPTION_KEY.trim()) {
-    throw new Error('ENCRYPTION_KEY env var is required for local KMS provider');
-  }
-  return process.env.ENCRYPTION_KEY.trim();
+  return cryptoCore.keyProvider.resolveMasterSecret();
 }
 
 async function unwrapEncryptionKey() {
@@ -74,26 +64,12 @@ async function unwrapEncryptionKey() {
 // ─── Local backend ────────────────────────────────────────────────────────────
 
 /**
- * Derive a 32-byte KEK from the ENCRYPTION_KEY env var.
- * @returns {Buffer}
- */
-function _localKEK() {
-  const raw = resolveEncryptionKeyFromEnv();
-  return crypto.createHash('sha256').update(raw).digest();
-}
-
-/**
- * Encrypt a plaintext DEK with the local KEK (AES-256-GCM).
+ * Encrypt a plaintext DEK with the local KEK (AES-256-GCM via src/utils/crypto.js).
  * @param {Buffer} dek - 32-byte plaintext DEK
  * @returns {string} hex-encoded "iv:ciphertext:authTag"
  */
 function _localEncryptDEK(dek) {
-  const kek = _localKEK();
-  const iv = crypto.randomBytes(IV_LENGTH);
-  const cipher = crypto.createCipheriv(ALGORITHM, kek, iv);
-  const encrypted = Buffer.concat([cipher.update(dek), cipher.final()]);
-  const authTag = cipher.getAuthTag();
-  return `${iv.toString('hex')}:${encrypted.toString('hex')}:${authTag.toString('hex')}`;
+  return cryptoCore.formatLegacy(cryptoCore.seal(cryptoCore.keyProvider.getLocalKEK(), dek));
 }
 
 /**
@@ -102,13 +78,8 @@ function _localEncryptDEK(dek) {
  * @returns {Buffer} plaintext DEK
  */
 function _localDecryptDEK(encryptedDEK) {
-  const parts = encryptedDEK.split(':');
-  if (parts.length !== 3) throw new Error('Invalid encrypted DEK format');
-  const [ivHex, ctHex, tagHex] = parts;
-  const kek = _localKEK();
-  const decipher = crypto.createDecipheriv(ALGORITHM, kek, Buffer.from(ivHex, 'hex'));
-  decipher.setAuthTag(Buffer.from(tagHex, 'hex'));
-  return Buffer.concat([decipher.update(Buffer.from(ctHex, 'hex')), decipher.final()]);
+  const sealed = cryptoCore.parseLegacy(encryptedDEK, 'Invalid encrypted DEK format');
+  return cryptoCore.open(cryptoCore.keyProvider.getLocalKEK(), sealed);
 }
 
 // ─── AWS KMS backend ──────────────────────────────────────────────────────────
@@ -166,7 +137,7 @@ function getProvider() {
  * @returns {Buffer}
  */
 function generateDEK() {
-  return crypto.randomBytes(32);
+  return cryptoCore.generateKey();
 }
 
 /**

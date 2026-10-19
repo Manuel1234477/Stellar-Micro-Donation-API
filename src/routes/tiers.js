@@ -71,11 +71,12 @@ router.post('/', checkPermission(PERMISSIONS.ADMIN_ALL), payloadSizeLimiter(ENDP
 // GET /tiers  — public, rate-limited, CDN-cacheable (#793)
 // ─────────────────────────────────────────────────────────────────────────────
 
-let rateLimit;
-try { rateLimit = require('express-rate-limit'); } catch (_) { rateLimit = () => (_req, _res, next) => next(); }
+// Counts through the shared rate limit store (#1777)
+const { sharedRateLimit } = require('../middleware/rateLimiter');
 
 /** 30 req/min per IP — prevents scraping while allowing normal browsing */
-const tiersPublicRateLimit = rateLimit({
+const tiersPublicRateLimit = sharedRateLimit({
+  storePrefix: 'tiersPublic',
   windowMs: 60 * 1000,
   max: 30,
   standardHeaders: true,

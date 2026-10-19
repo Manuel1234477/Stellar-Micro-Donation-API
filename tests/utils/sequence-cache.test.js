@@ -18,7 +18,7 @@
  */
 
 const assert = require('assert');
-const SequenceCacheService = require('../../../src/services/SequenceCacheService');
+const SequenceCacheService = require('../../src/services/SequenceCacheService');
 
 // Mock StellarService
 class MockStellarService {

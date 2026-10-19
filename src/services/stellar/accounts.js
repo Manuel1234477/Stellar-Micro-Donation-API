@@ -9,9 +9,10 @@
  * - Inflation destination management
  */
 
-const StellarSdk = require('stellar-sdk');
+const StellarSdk = require('./sdk.js');
 const log = require('../../utils/log');
-const { NotFoundError, ValidationError, BusinessLogicError, ERROR_CODES } = require('../../utils/errors');
+const { ValidationError } = require('../../utils/errors');
+const { validateHomeDomain } = require('../../utils/homeDomain');
 
 class StellarAccounts {
   constructor(stellarService) {
@@ -390,6 +391,72 @@ class StellarAccounts {
     const BASE_RESERVE = 1; // XLM
     const SUBENTRY_RESERVE = 0.5; // XLM per subentry
     return BASE_RESERVE + (subentryCount * SUBENTRY_RESERVE);
+  }
+
+  /**
+   * Compute the spendable native balance of an account in stroops.
+   *
+   * available = balance - minimumReserve - sellingLiabilities - fee
+   *
+   * All arithmetic is performed on integer stroops (BigInt) to avoid the
+   * floating-point rounding errors that previously caused insufficient-balance
+   * donations to slip past the early check and fail later at Horizon.
+   *
+   * @param {Object} account - Horizon account record (from loadAccount)
+   * @param {Object} [options]
+   * @param {number|string|bigint} [options.feeStroops=100] - Transaction fee in stroops
+   * @param {number} [options.baseReserveStroops] - Base reserve in stroops (defaults to 5000000)
+   * @returns {{availableStroops: bigint, balanceStroops: bigint, minimumReserveStroops: bigint, sellingLiabilitiesStroops: bigint, feeStroops: bigint, subentryCount: number}}
+   */
+  computeAvailableBalanceStroops(account, options = {}) {
+    const STROOPS_PER_XLM = 10000000n;
+    const DEFAULT_BASE_RESERVE_STROOPS = 5000000n; // 0.5 XLM
+
+    const toStroops = (value) => {
+      if (value === null || value === undefined || value === '') return 0n;
+      if (typeof value === 'bigint') return value;
+      if (typeof value === 'number') {
+        if (!Number.isFinite(value)) return 0n;
+        return BigInt(Math.round(value * Number(STROOPS_PER_XLM)));
+      }
+      const str = String(value).trim();
+      if (!str) return 0n;
+      const negative = str.startsWith('-');
+      const unsigned = negative ? str.slice(1) : str;
+      const [wholePart, fracPartRaw = ''] = unsigned.split('.');
+      const fracPart = (fracPartRaw + '0000000').slice(0, 7);
+      const stroops = BigInt(wholePart || '0') * STROOPS_PER_XLM + BigInt(fracPart || '0');
+      return negative ? -stroops : stroops;
+    };
+
+    const nativeBalance = (account.balances || []).find(b => b.asset_type === 'native');
+    const balanceStroops = toStroops(nativeBalance ? nativeBalance.balance : '0');
+    const sellingLiabilitiesStroops = toStroops(
+      nativeBalance ? nativeBalance.selling_liabilities : '0'
+    );
+
+    const subentryCount = Number(account.subentry_count || 0);
+    const baseReserveStroops = options.baseReserveStroops !== undefined
+      ? toStroops(options.baseReserveStroops)
+      : DEFAULT_BASE_RESERVE_STROOPS;
+    // Minimum reserve = base reserve * (2 + subentries)
+    const minimumReserveStroops = baseReserveStroops * BigInt(2 + subentryCount);
+
+    const feeStroops = options.feeStroops !== undefined
+      ? toStroops(options.feeStroops)
+      : 100n;
+
+    const availableStroops =
+      balanceStroops - minimumReserveStroops - sellingLiabilitiesStroops - feeStroops;
+
+    return {
+      availableStroops,
+      balanceStroops,
+      minimumReserveStroops,
+      sellingLiabilitiesStroops,
+      feeStroops,
+      subentryCount,
+    };
   }
 
   /**

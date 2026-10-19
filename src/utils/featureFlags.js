@@ -8,6 +8,14 @@
  * Provides efficient flag evaluation with support for global, per-environment,
  * and per-API-key scopes. Implements caching for performance and audit logging
  * for compliance.
+ *
+ * SOURCE OF TRUTH (#1775): this module is the only feature flag store.
+ * - Runtime state lives in the `feature_flags` table.
+ * - `FEATURE_FLAGS` env var only seeds *defaults*: it creates missing global
+ *   flags at startup and never overwrites a value toggled at runtime.
+ * - Every reader (src/middleware/featureFlags.js, routes, services) goes
+ *   through isFeatureEnabled()/getEffectiveFlagsForKey(), so a toggle made via
+ *   /admin/feature-flags is visible to all readers within CACHE_TTL_MS.
  */
 
 const Database = require('./database');
@@ -30,6 +38,46 @@ const FLAG_SCOPES = {
 const flagCache = new Map();
 const CACHE_TTL_MS = 10000; // 10 second cache TTL for runtime responsiveness
 let lastCacheRefresh = 0;
+
+/**
+ * Environment used for flag evaluation when the caller does not pass one.
+ * Shared by the middleware and routes so they all evaluate the same scope.
+ *
+ * @returns {string}
+ */
+function getDefaultEnvironment() {
+  return process.env.NODE_ENV || 'development';
+}
+
+/**
+ * Resolve a flag's value from its cached scopes.
+ * Precedence: api_key > environment > global.
+ *
+ * @param {Object} flagScopes - Cached scope map for one flag
+ * @param {Object} context
+ * @param {string} [context.apiKeyId]
+ * @param {string} [context.environment]
+ * @returns {{ found: boolean, enabled?: boolean, scope?: string }}
+ */
+function resolveFromScopes(flagScopes, { apiKeyId, environment } = {}) {
+  if (!flagScopes) return { found: false };
+
+  if (apiKeyId) {
+    const key = `${FLAG_SCOPES.API_KEY}:${apiKeyId}`;
+    if (key in flagScopes) return { found: true, enabled: Boolean(flagScopes[key]), scope: FLAG_SCOPES.API_KEY };
+  }
+
+  if (environment) {
+    const key = `${FLAG_SCOPES.ENVIRONMENT}:${environment}`;
+    if (key in flagScopes) return { found: true, enabled: Boolean(flagScopes[key]), scope: FLAG_SCOPES.ENVIRONMENT };
+  }
+
+  if (FLAG_SCOPES.GLOBAL in flagScopes) {
+    return { found: true, enabled: Boolean(flagScopes[FLAG_SCOPES.GLOBAL]), scope: FLAG_SCOPES.GLOBAL };
+  }
+
+  return { found: false };
+}
 
 /**
  * Initialize feature flags table
@@ -126,48 +174,15 @@ async function isFeatureEnabled(flagName, options = {}) {
   try {
     await refreshCacheIfNeeded();
 
-    const flagScopes = flagCache.get(flagName);
-    if (!flagScopes) {
-      log.debug('FEATURE_FLAGS', 'Flag not found in cache', { flagName });
-      return defaultValue;
-    }
-
-    // Check API key-specific flag (highest priority)
-    if (apiKeyId) {
-      const apiKeyScopeKey = `${FLAG_SCOPES.API_KEY}:${apiKeyId}`;
-      if (apiKeyScopeKey in flagScopes) {
-        const enabled = flagScopes[apiKeyScopeKey];
-        log.debug('FEATURE_FLAGS', 'Flag evaluated at API key scope', {
-          flagName,
-          apiKeyId,
-          enabled
-        });
-        return enabled;
-      }
-    }
-
-    // Check environment-specific flag (medium priority)
-    if (environment) {
-      const envScopeKey = `${FLAG_SCOPES.ENVIRONMENT}:${environment}`;
-      if (envScopeKey in flagScopes) {
-        const enabled = flagScopes[envScopeKey];
-        log.debug('FEATURE_FLAGS', 'Flag evaluated at environment scope', {
-          flagName,
-          environment,
-          enabled
-        });
-        return enabled;
-      }
-    }
-
-    // Check global flag (lowest priority)
-    if (FLAG_SCOPES.GLOBAL in flagScopes) {
-      const enabled = flagScopes[FLAG_SCOPES.GLOBAL];
-      log.debug('FEATURE_FLAGS', 'Flag evaluated at global scope', {
+    const result = resolveFromScopes(flagCache.get(flagName), { apiKeyId, environment });
+    if (result.found) {
+      log.debug('FEATURE_FLAGS', `Flag evaluated at ${result.scope} scope`, {
         flagName,
-        enabled
+        apiKeyId,
+        environment,
+        enabled: result.enabled
       });
-      return enabled;
+      return result.enabled;
     }
 
     log.debug('FEATURE_FLAGS', 'No matching flag scope found', { flagName });
@@ -374,32 +389,48 @@ async function deleteFlag(flagName, scope, scopeValue = null, deletedBy = 'syste
 }
 
 /**
- * Bulk set flags from environment variables
- * Format: FEATURE_ONE=on|off,FEATURE_TWO=on
- * 
+ * Seed global flag defaults from an environment variable.
+ * Format: FEATURE_ONE=on|off,FEATURE_TWO=true
+ *
+ * Env values are defaults only: a flag that already exists at global scope
+ * (for example because an admin toggled it at runtime) is left untouched, so
+ * a restart never silently reverts a runtime toggle.
+ *
  * @param {string} envVarValue - Comma-separated flag definitions
- * @returns {Promise<void>}
+ * @returns {Promise<{ created: string[], skipped: string[] }>}
  */
 async function loadFlagsFromEnv(envVarValue) {
+  const summary = { created: [], skipped: [] };
   if (!envVarValue) {
-    return;
+    return summary;
   }
 
   try {
     const flagDefs = envVarValue.split(',').map(f => f.trim()).filter(f => f);
 
     for (const flagDef of flagDefs) {
-      const [flagName, enabledStr] = flagDef.split('=').map(s => s.trim());
+      const [flagName, enabledStr = ''] = flagDef.split('=').map(s => s.trim());
       if (!flagName) continue;
 
-      const enabled = enabledStr === 'true';
+      const existing = await getFlag(flagName, FLAG_SCOPES.GLOBAL, null);
+      if (existing) {
+        summary.skipped.push(flagName);
+        continue;
+      }
+
+      const enabled = ['true', 'on', '1', 'yes'].includes(enabledStr.toLowerCase());
       await setFlag(flagName, enabled, FLAG_SCOPES.GLOBAL, null, {
-        description: 'Loaded from environment variable',
+        description: 'Default loaded from FEATURE_FLAGS environment variable',
         updatedBy: 'env-loader'
       });
+      summary.created.push(flagName);
     }
 
-    log.info('FEATURE_FLAGS', 'Flags loaded from environment', { count: flagDefs.length });
+    log.info('FEATURE_FLAGS', 'Flag defaults loaded from environment', {
+      created: summary.created.length,
+      skippedExisting: summary.skipped.length
+    });
+    return summary;
   } catch (error) {
     log.error('FEATURE_FLAGS', 'Error loading flags from environment', {
       error: error.message
@@ -440,30 +471,9 @@ async function getEffectiveFlagsForKey(apiKeyId, environment = null) {
 
     const effectiveFlags = {};
     
-    // Iterate through all flags and evaluate for this key
     for (const [flagName, flagScopes] of flagCache) {
-      // Check API key-specific flag (highest priority)
-      if (apiKeyId) {
-        const apiKeyScopeKey = `${FLAG_SCOPES.API_KEY}:${apiKeyId}`;
-        if (apiKeyScopeKey in flagScopes) {
-          effectiveFlags[flagName] = flagScopes[apiKeyScopeKey];
-          continue;
-        }
-      }
-
-      // Check environment-specific flag (medium priority)
-      if (environment) {
-        const envScopeKey = `${FLAG_SCOPES.ENVIRONMENT}:${environment}`;
-        if (envScopeKey in flagScopes) {
-          effectiveFlags[flagName] = flagScopes[envScopeKey];
-          continue;
-        }
-      }
-
-      // Check global flag (lowest priority)
-      if (FLAG_SCOPES.GLOBAL in flagScopes) {
-        effectiveFlags[flagName] = flagScopes[FLAG_SCOPES.GLOBAL];
-      }
+      const result = resolveFromScopes(flagScopes, { apiKeyId, environment });
+      if (result.found) effectiveFlags[flagName] = result.enabled;
     }
 
     return effectiveFlags;
@@ -564,6 +574,9 @@ async function initializeFeatureFlagOverridesTable() {
 module.exports = {
   // Constants
   FLAG_SCOPES,
+  CACHE_TTL_MS,
+  getDefaultEnvironment,
+  resolveFromScopes,
 
   // Initialization
   initializeFeatureFlagsTable,
@@ -591,6 +604,7 @@ module.exports = {
   // Testing & Monitoring
   clearAllFlags,
   clearCache,
+  resetCache: clearCache,
   refreshCache,
   getCacheStats
 };

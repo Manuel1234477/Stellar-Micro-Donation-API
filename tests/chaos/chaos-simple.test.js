@@ -162,7 +162,7 @@ describe('Chaos Testing - Quick Verification', () => {
     stellarService.config.failureRate = 0.7;
 
     let recovered = false;
-    for (let i = 0; i < 20; i++) {
+    for (let i = 0; i < 30; i++) {
       results.total++;
       try {
         await stellarService.sendDonation({

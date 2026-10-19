@@ -1,109 +1,98 @@
 'use strict';
 
 /**
- * In-Memory Rate Limit Store (#1482)
+ * In-Memory Rate Limit Store (#1482, #1777)
  *
- * RESPONSIBILITY: Provide in-process rate limit counters (suitable for single-instance deployments)
+ * RESPONSIBILITY: Provide in-process rate limit counters (single-instance deployments)
  * OWNER: Backend Team
  * DEPENDENCIES: RateLimitStore base class
  *
- * Stores rate limit counters in a JavaScript Map with automatic expiration.
- * Not suitable for multi-instance deployments without a shared backing store.
+ * Fixed-window counters held in a Map. Operations are synchronous so callers
+ * that cannot await (the legacy-key path in rbac.js) still get a real answer.
+ * Expired windows are dropped lazily on access and by a periodic sweep, so no
+ * per-key timers are kept alive.
+ *
+ * Counters are per process: with N instances a client can make up to N times
+ * the limit. Use RATE_LIMIT_STORE=redis for shared limits.
  */
 
 const RateLimitStore = require('./RateLimitStore');
 
+const SWEEP_EVERY_N_HITS = 1000;
+
 class MemoryRateLimitStore extends RateLimitStore {
-  constructor() {
-    super();
-    this.counters = new Map();
-    this.timers = new Map();
+  constructor(options = {}) {
+    super(options);
+    /** @type {Map<string, {count: number, resetAt: number}>} */
+    this.windows = new Map();
+    this._hitsSinceSweep = 0;
   }
 
-  /**
-   * Increment a rate limit counter by 1.
-   * Automatically removes the key when the window expires.
-   *
-   * @param {string} key - Rate limit key
-   * @param {number} windowMs - Expiration window in milliseconds
-   * @returns {Promise<number>} The new counter value after increment
-   */
-  async increment(key, windowMs) {
-    // Clear any existing timer for this key
-    if (this.timers.has(key)) {
-      clearTimeout(this.timers.get(key));
+  _current(key, now) {
+    const entry = this.windows.get(key);
+    if (entry && entry.resetAt <= now) {
+      this.windows.delete(key);
+      return undefined;
+    }
+    return entry;
+  }
+
+  _sweep(now) {
+    for (const [key, entry] of this.windows) {
+      if (entry.resetAt <= now) this.windows.delete(key);
+    }
+  }
+
+  /** @inheritdoc */
+  hit(key, windowMs) {
+    const now = Date.now();
+    if (++this._hitsSinceSweep >= SWEEP_EVERY_N_HITS) {
+      this._hitsSinceSweep = 0;
+      this._sweep(now);
     }
 
-    // Increment the counter
-    const current = (this.counters.get(key) || 0) + 1;
-    this.counters.set(key, current);
-
-    // Set expiration
-    const timer = setTimeout(() => {
-      this.counters.delete(key);
-      this.timers.delete(key);
-    }, windowMs);
-
-    this.timers.set(key, timer);
-
-    return current;
+    let entry = this._current(key, now);
+    if (!entry) {
+      entry = { count: 0, resetAt: now + windowMs };
+      this.windows.set(key, entry);
+    }
+    entry.count += 1;
+    return { count: entry.count, resetAt: entry.resetAt };
   }
 
-  /**
-   * Get the current counter value for a key.
-   *
-   * @param {string} key - Rate limit key
-   * @returns {Promise<number>} Current counter value, or 0 if key does not exist
-   */
+  /** @inheritdoc */
+  decrement(key) {
+    const entry = this._current(key, Date.now());
+    if (entry && entry.count > 0) entry.count -= 1;
+  }
+
+  /** @inheritdoc */
   async get(key) {
-    return this.counters.get(key) || 0;
+    const entry = this._current(key, Date.now());
+    return entry ? entry.count : 0;
   }
 
-  /**
-   * Reset a rate limit counter to 0.
-   *
-   * @param {string} key - Rate limit key
-   * @returns {Promise<void>}
-   */
+  /** @inheritdoc */
   async reset(key) {
-    if (this.timers.has(key)) {
-      clearTimeout(this.timers.get(key));
-      this.timers.delete(key);
-    }
-    this.counters.delete(key);
+    this.windows.delete(key);
   }
 
-  /**
-   * Check if the store is healthy.
-   * Always returns true for in-memory store.
-   *
-   * @returns {Promise<boolean>} Always true
-   */
+  /** @inheritdoc */
   async isHealthy() {
     return true;
   }
 
-  /**
-   * Gracefully shutdown the store.
-   * Clears all counters and timers.
-   *
-   * @returns {Promise<void>}
-   */
+  /** @inheritdoc */
   async shutdown() {
-    for (const timer of this.timers.values()) {
-      clearTimeout(timer);
-    }
-    this.counters.clear();
-    this.timers.clear();
+    this.windows.clear();
   }
 
   /**
-   * Clear all rate limit counters (for testing).
-   *
-   * @returns {Promise<void>}
+   * Clear all counters (tests). Synchronous on purpose.
    */
-  async clear() {
-    await this.shutdown();
+  clear() {
+    this.windows.clear();
+    this._hitsSinceSweep = 0;
   }
 }
 

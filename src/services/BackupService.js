@@ -15,9 +15,14 @@ const crypto = require('crypto');
 const os = require('os');
 const sqlite3 = require('sqlite3').verbose();
 const log = require('../utils/log');
+const { env } = require('../config/env');
+const cryptoCore = require('../utils/crypto');
 
 const DB_PATH = path.join(__dirname, '../../data/stellar_donations.db');
-const BACKUP_DIR = process.env.BACKUP_DIR || path.join(__dirname, '../../data/backups');
+// Relative paths resolve against the project root; absolute paths are kept as-is.
+const BACKUP_DIR = env.BACKUP_DIR
+  ? path.resolve(__dirname, '../..', env.BACKUP_DIR)
+  : (process.env.BACKUP_DIR || path.join(__dirname, '../../data/backups'));
 const ALGORITHM = 'aes-256-gcm';
 const IV_LENGTH = 12;
 
@@ -28,21 +33,17 @@ const IV_LENGTH = 12;
 function getKey() {
   const raw = process.env.ENCRYPTION_KEY;
   if (!raw) throw new Error('ENCRYPTION_KEY is required for backup encryption');
-  return crypto.createHash('sha256').update(raw).digest();
+  return cryptoCore.deriveKey(raw);
 }
 
 /**
- * Encrypt a Buffer using AES-256-GCM.
+ * Encrypt a Buffer using AES-256-GCM (shared core, #1776).
  * @param {Buffer} data
  * @returns {Buffer} iv (12) + authTag (16) + ciphertext
  */
 function encryptBuffer(data) {
-  const iv = crypto.randomBytes(IV_LENGTH);
-  const key = getKey();
-  const cipher = crypto.createCipheriv(ALGORITHM, key, iv);
-  const ct = Buffer.concat([cipher.update(data), cipher.final()]);
-  const tag = cipher.getAuthTag();
-  return Buffer.concat([iv, tag, ct]);
+  const { iv, tag, ciphertext } = cryptoCore.seal(getKey(), data);
+  return Buffer.concat([iv, tag, ciphertext]);
 }
 
 /**
@@ -51,13 +52,12 @@ function encryptBuffer(data) {
  * @returns {Buffer}
  */
 function decryptBuffer(data) {
-  const iv = data.slice(0, IV_LENGTH);
-  const tag = data.slice(IV_LENGTH, IV_LENGTH + 16);
-  const ct = data.slice(IV_LENGTH + 16);
-  const key = getKey();
-  const decipher = crypto.createDecipheriv(ALGORITHM, key, iv);
-  decipher.setAuthTag(tag);
-  return Buffer.concat([decipher.update(ct), decipher.final()]);
+  const { IV_BYTES, TAG_BYTES } = cryptoCore;
+  return cryptoCore.open(getKey(), {
+    iv: data.slice(0, IV_BYTES),
+    tag: data.slice(IV_BYTES, IV_BYTES + TAG_BYTES),
+    ciphertext: data.slice(IV_BYTES + TAG_BYTES),
+  });
 }
 
 class BackupService {
@@ -280,6 +280,32 @@ class BackupService {
     const result = { backupId, restoredAt: new Date().toISOString() };
     log.info('BACKUP', 'Database restore completed', result);
     return result;
+  }
+
+  /**
+   * Resolve a backupId to its encrypted file path inside the backup directory.
+   * Returns null for IDs containing path separators or traversal sequences.
+   *
+   * @param {string} backupId
+   * @returns {string|null}
+   */
+  resolveBackupPath(backupId) {
+    if (typeof backupId !== 'string' || !/^[\w.-]+$/.test(backupId)) return null;
+    const resolvedDir = path.resolve(this.backupDir);
+    const filePath = path.resolve(resolvedDir, `${backupId}.enc`);
+    if (!filePath.startsWith(resolvedDir + path.sep)) return null;
+    return filePath;
+  }
+
+  /**
+   * Check whether a local backup with the given ID exists.
+   *
+   * @param {string} backupId
+   * @returns {Promise<boolean>}
+   */
+  async hasBackup(backupId) {
+    const filePath = this.resolveBackupPath(backupId);
+    return Boolean(filePath && fs.existsSync(filePath));
   }
 
   /**

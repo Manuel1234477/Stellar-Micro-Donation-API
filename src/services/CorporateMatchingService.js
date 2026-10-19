@@ -7,7 +7,7 @@
  * OWNER: Backend Team
  * DEPENDENCIES: Database, models/transaction (donation ledger), StellarService
  *
- * Table layout (see migrations/044_corporate_matching_programs.js):
+ * Table layout (see migrations/052_corporate_matching_programs.js):
  *   corporate_matching          - one row per matching program
  *   matching_employees          - which employees are enrolled in which program
  *   employee_matching_history   - matched-amount-per-employee-per-year (annual cap tracking)

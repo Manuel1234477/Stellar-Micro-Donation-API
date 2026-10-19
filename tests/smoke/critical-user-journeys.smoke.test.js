@@ -17,8 +17,8 @@
  * Time budget: entire suite must complete within 60 seconds (well inside the
  * jest.config.smoke.js 30 s per-test limit with four serial tests).
  *
- * Wire-in: this file matches the `**/tests/smoke/**/*.smoke.test.js` glob in
- * jest.config.smoke.js and is executed by `npm run test:smoke`.
+ * Wire-in: this file matches the smoke-test glob in jest.config.smoke.js and
+ * is executed by `npm run test:smoke`.
  */
 
 const { spawn } = require('child_process');

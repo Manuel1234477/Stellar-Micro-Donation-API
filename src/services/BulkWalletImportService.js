@@ -10,7 +10,7 @@
 'use strict';
 
 const { parse } = require('csv-parse/sync');
-const StellarSdk = require('stellar-sdk');
+const StellarSdk = require('./stellar/sdk.js');
 const crypto = require('crypto');
 const Wallet = require('../models/wallet');
 const log = require('../utils/log');

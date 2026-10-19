@@ -1,245 +1,89 @@
-# Abuse Detection System
+# Abuse Detection
 
-**Status:** Observability Only (No Blocking)  
-**Issue:** #181
-
-## Overview
-
-Lightweight abuse detection system that tracks suspicious patterns and logs signals without blocking legitimate traffic. Designed for observability and future integration with blocking mechanisms.
-
-## Features
-
-### 1. Request Burst Detection
-Tracks request volume per IP address within a time window.
-
-**Threshold:** 100 requests per minute  
-**Action:** Flag IP and log warning  
-**No blocking:** Traffic continues normally
-
-### 2. Repeated Failure Detection
-Tracks failed requests (4xx/5xx responses) per IP address.
-
-**Threshold:** 20 failures per 5 minutes  
-**Action:** Flag IP and log warning  
-**No blocking:** Traffic continues normally
-
-### 3. Automatic Unflagging
-Flagged IPs are automatically unflagged after 1 hour cooldown period.
+Abuse detection is implemented as a single service with pluggable detectors and a
+single middleware entry point. This document describes the consolidated model.
 
 ## Architecture
 
+- **`src/services/AbuseDetectionService.js`** — the one abuse-detection service.
+  It owns the detector registry and runs every registered detector against an
+  incoming request. Detectors are pluggable: each one implements a common
+  interface and can be enabled, disabled, or tuned independently.
+- **`src/middleware/abuseDetection.js`** — the one middleware entry point. It
+  adapts an Express request into the shape the service expects, calls the
+  service, and translates the service result into an HTTP response (or passes
+  the request through).
+
+There is no longer a separate `src/utils/abuseDetector.js` implementation, nor
+separate `suspiciousPatternDetection.js` / `suspiciousPatternDetector.js`
+modules. Their logic lives in the detectors below.
+
+## Detectors
+
+The service ships with four pluggable detectors:
+
+| Detector   | Responsibility                                                        |
+| ---------- | --------------------------------------------------------------------- |
+| `rate`     | Request-rate limits per identity (IP, user, API key).                 |
+| `pattern`  | Suspicious request patterns (paths, payload shapes, header anomalies).|
+| `velocity` | Short-window bursts and acceleration of requests.                     |
+| `anomaly`  | Statistical deviation from a baseline (via `AnomalyDetectionService`).|
+
+Each detector returns a normalized result:
+
+```js
+{
+  detector: 'rate',
+  triggered: true,
+  score: 0.8,
+  reason: 'rate limit exceeded',
+  metadata: { /* detector-specific */ }
+}
 ```
-Request → Middleware → Track Request → Check Thresholds → Flag if Exceeded
-                                                         ↓
-                                                    Log Warning
-                                                         ↓
-                                                  Add Header (X-Abuse-Signal)
-                                                         ↓
-                                                  Continue Processing
+
+The service aggregates detector results into a single decision. Thresholds are
+configured in one place (the service configuration) so tuning a limit applies
+to every detector that uses it.
+
+## Shared state
+
+Detector state (counters, windows, velocity buckets, pattern history) is stored
+in the shared rate-limit store:
+
+- When Redis is configured, the store is Redis-backed, so state is shared across
+  all application instances. Abuse detection cannot be evaded by hitting a
+  different pod.
+- When Redis is not configured, the store falls back to an in-process store.
+  This is suitable for local development and single-instance deployments only.
+
+No detector keeps its own private in-memory `Map` for cross-request state.
+
+## Middleware usage
+
+```js
+const abuseDetection = require('../middleware/abuseDetection');
+
+app.use(abuseDetection());
 ```
+
+The middleware is the only entry point. It delegates to
+`AbuseDetectionService`, which runs the registered detectors and returns the
+aggregated decision.
 
 ## Configuration
 
-Located in `src/utils/abuseDetector.js`:
+All thresholds and detector toggles are read from the service configuration
+(environment variables / config module). Because there is one service and one
+store, a threshold changed in configuration takes effect everywhere.
 
-```javascript
-{
-  burstThreshold: 100,      // requests per window
-  burstWindow: 60000,       // 1 minute
-  failureThreshold: 20,     // failures per window
-  failureWindow: 300000,    // 5 minutes
-  cleanupInterval: 600000   // 10 minutes
-}
-```
+## Adding a detector
 
-## Usage
+1. Implement the detector interface (`name`, `detect(context)`).
+2. Register it with `AbuseDetectionService`.
+3. Read any state through the shared store, never a module-local `Map`.
 
-### Automatic Tracking
+## References
 
-The middleware automatically tracks all requests:
-
-```javascript
-// In src/app.js
-app.use(abuseDetectionMiddleware);
-```
-
-### Observability Endpoint
-
-Admin-only endpoint to view current statistics:
-
-```bash
-GET /abuse-signals
-Authorization: x-api-key: <admin-key>
-
-Response:
-{
-  "success": true,
-  "data": {
-    "suspiciousIPs": 3,
-    "trackedIPs": 150,
-    "failureTracking": 45
-  },
-  "timestamp": "2026-02-25T01:00:00.000Z"
-}
-```
-
-### Response Headers
-
-Flagged IPs receive a header for observability:
-
-```
-X-Abuse-Signal: flagged
-```
-
-## Signals Logged
-
-### Request Burst Signal
-```json
-{
-  "level": "WARN",
-  "scope": "ABUSE_DETECTION",
-  "message": "Suspicious activity detected: request_burst",
-  "ip": "192.168.1.100",
-  "signal": "request_burst",
-  "count": 105,
-  "threshold": 100,
-  "window": 60000,
-  "timestamp": "2026-02-25T01:00:00.000Z"
-}
-```
-
-### Repeated Failures Signal
-```json
-{
-  "level": "WARN",
-  "scope": "ABUSE_DETECTION",
-  "message": "Suspicious activity detected: repeated_failures",
-  "ip": "192.168.1.101",
-  "signal": "repeated_failures",
-  "count": 25,
-  "threshold": 20,
-  "window": 300000,
-  "reason": "client_error",
-  "timestamp": "2026-02-25T01:00:00.000Z"
-}
-```
-
-## Monitoring
-
-### Log Analysis
-
-Search logs for abuse signals:
-
-```bash
-# Find all abuse signals
-grep "ABUSE_DETECTION" logs/app.log
-
-# Find specific signal types
-grep "request_burst" logs/app.log
-grep "repeated_failures" logs/app.log
-
-# Find flagged IPs
-grep "Suspicious activity detected" logs/app.log | jq '.ip'
-```
-
-### Metrics
-
-Track these metrics in your monitoring system:
-- `abuse.suspicious_ips` - Number of flagged IPs
-- `abuse.tracked_ips` - Total IPs being tracked
-- `abuse.burst_signals` - Count of burst signals
-- `abuse.failure_signals` - Count of failure signals
-
-## False Positives
-
-### Prevention Strategies
-
-1. **High Thresholds:** Conservative limits reduce false positives
-2. **No Blocking:** Legitimate traffic never interrupted
-3. **Auto-Unflagging:** 1-hour cooldown prevents permanent flags
-4. **Observability First:** Review logs before implementing blocks
-
-### Tuning
-
-Adjust thresholds based on your traffic patterns:
-
-```javascript
-// For high-traffic APIs
-burstThreshold: 200
-failureThreshold: 50
-
-// For low-traffic APIs
-burstThreshold: 50
-failureThreshold: 10
-```
-
-## Production Considerations
-
-### 1. Persistent Storage
-
-Current implementation uses in-memory storage. For production:
-
-```javascript
-// Use Redis for distributed tracking
-const redis = require('redis');
-const client = redis.createClient();
-
-// Store counts in Redis with TTL
-await client.setex(`abuse:req:${ip}`, 60, count);
-```
-
-### 2. Distributed Systems
-
-For multi-instance deployments:
-- Use shared Redis/Memcached
-- Aggregate signals across instances
-- Centralized monitoring dashboard
-
-### 3. Integration with WAF
-
-Export signals to Web Application Firewall:
-
-```javascript
-// Send to WAF
-if (abuseDetector.isSuspicious(ip)) {
-  await waf.addToWatchlist(ip, { reason: signal, ttl: 3600 });
-}
-```
-
-## Testing
-
-Run abuse detection tests:
-
-```bash
-npm test tests/abuse-detection.test.js
-```
-
-Test coverage:
-- Request burst detection
-- Failure tracking
-- Threshold enforcement
-- Cleanup mechanisms
-- Edge cases (null IPs, etc.)
-
-## Future Enhancements
-
-1. **Rate Limiting Integration:** Auto-apply stricter limits to flagged IPs
-2. **Machine Learning:** Pattern recognition for sophisticated attacks
-3. **Geo-blocking:** Track suspicious regions
-4. **API Key Correlation:** Link abuse to specific API keys
-5. **Automated Blocking:** Optional blocking mode with safeguards
-
-## Compliance
-
-✅ No false blocking - traffic never interrupted  
-✅ Signals are observable - logs and endpoint available  
-✅ Privacy-friendly - only tracks IPs, no PII  
-✅ Configurable - thresholds adjustable per environment  
-✅ Automatic cleanup - no indefinite tracking  
-
-## Support
-
-For issues or questions:
-- Check logs: `grep ABUSE_DETECTION logs/app.log`
-- View stats: `GET /abuse-signals`
-- Adjust config: `src/utils/abuseDetector.js`
+- `src/services/AbuseDetectionService.js`
+- `src/middleware/abuseDetection.js`
+- `src/services/AnomalyDetectionService.js`

@@ -1,0 +1,38 @@
+{
+  "stellarPublicKeys": [
+    "GBZVMB3SEPB2ENHQVEQ5MJQXB2QZUQPQQ6QQZQPQQ6QQZQPQQ6QQZQPQ",
+    "GABC1234567890ABCDEFGHIJKLMNOPQRSTUVWXYZ234567890ABCDEF",
+    "GDJXNQOCUURBQCWD2U4G5NGS4EZ7A5ODKSQHVTOH7J6P2DNGSZG2HGLV"
+  ],
+  "xlmAmounts": [
+    10,
+    100.5,
+    "100",
+    "100.50",
+    "0.0000001",
+    "10 XLM",
+    "5.25 xlm"
+  ],
+  "legitimateKeys": [
+    "receiverId",
+    "receiver_id",
+    "authorName",
+    "author_name",
+    "arrivalTime",
+    "active",
+    "sessionData",
+    "archived",
+    "seeder",
+    "memorable",
+    "ciphertext",
+    "donorId",
+    "recipientId",
+    "amount",
+    "status"
+  ],
+  "base64Payloads": [
+    "SGVsbG8gV29ybGQ=",
+    "dGVzdCBkYXRh",
+    "eyJmb28iOiJiYXIifQ=="
+  ]
+}

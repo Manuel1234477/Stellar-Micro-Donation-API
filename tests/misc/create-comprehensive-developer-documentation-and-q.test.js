@@ -13,7 +13,8 @@ const path = require('path');
 
 // ─── helpers ────────────────────────────────────────────────────────────────
 
-const ROOT = path.resolve(__dirname, '..');
+const { REPO_ROOT } = require('../helpers/paths');
+const ROOT = REPO_ROOT;
 
 /**
  * Reads a documentation file relative to the project root.
@@ -33,18 +34,51 @@ function docExists(relPath) {
   return fs.existsSync(path.join(ROOT, relPath));
 }
 
+function markdownFiles() {
+  return [path.join(ROOT, 'README.md'), ...walkMarkdown(path.join(ROOT, 'docs'))];
+}
+
+function walkMarkdown(dir) {
+  if (!fs.existsSync(dir)) return [];
+  return fs.readdirSync(dir, { withFileTypes: true }).flatMap((entry) => {
+    const fullPath = path.join(dir, entry.name);
+    return entry.isDirectory() ? walkMarkdown(fullPath) : entry.name.endsWith('.md') ? [fullPath] : [];
+  });
+}
+
+function relativeMarkdownLinks(filePath) {
+  const content = fs.readFileSync(filePath, 'utf8');
+  return [...content.matchAll(/!?\[[^\]]*\]\(([^)]+)\)/g)]
+    .map((match) => match[1].trim().split(/\s+/)[0].replace(/^<|>$/g, ''))
+    .filter((link) => link && !/^(?:[a-z][a-z0-9+.-]*:|\/\/|#)/i.test(link));
+}
+
+describe('Markdown documentation links', () => {
+  it('resolves every repository-relative link', () => {
+    const broken = [];
+    for (const filePath of markdownFiles()) {
+      for (const link of relativeMarkdownLinks(filePath)) {
+        const target = link.split(/[?#]/, 1)[0];
+        if (!target || /(?:^|\/)issues$|(?:^|\/)pulls$|(?:^|\/)discussions$/.test(target)) continue;
+        if (!fs.existsSync(path.resolve(path.dirname(filePath), decodeURIComponent(target)))) {
+          broken.push(`${path.relative(ROOT, filePath)} -> ${link}`);
+        }
+      }
+    }
+    expect(broken).toEqual([]);
+  });
+});
+
 // ─── File existence ──────────────────────────────────────────────────────────
 
 describe('Documentation files exist', () => {
   const requiredDocs = [
     'docs/quickstart.md',
-    'docs/architecture.md',
     'docs/api-reference.md',
     'docs/authentication.md',
     'docs/stellar-concepts.md',
     'docs/deployment.md',
     'CONTRIBUTING.md',
-    'docs/features/CREATE_COMPREHENSIVE_DEVELOPER_DOCUMENTATION_AND_Q.md',
   ];
 
   test.each(requiredDocs)('%s exists', (docPath) => {
@@ -93,41 +127,6 @@ describe('docs/quickstart.md', () => {
 
   it('includes troubleshooting section', () => {
     expect(content).toMatch(/troubleshoot/i);
-  });
-});
-
-// ─── architecture.md ─────────────────────────────────────────────────────────
-
-describe('docs/architecture.md', () => {
-  let content;
-  beforeAll(() => { content = readDoc('docs/architecture.md'); });
-
-  it('describes the API layer', () => {
-    expect(content).toMatch(/API Layer|Express/i);
-  });
-
-  it('describes the service layer', () => {
-    expect(content).toMatch(/Service Layer|DonationService/i);
-  });
-
-  it('describes the data layer', () => {
-    expect(content).toMatch(/SQLite|Data Layer/i);
-  });
-
-  it('mentions MockStellarService', () => {
-    expect(content).toMatch(/MockStellarService/);
-  });
-
-  it('describes the scheduler', () => {
-    expect(content).toMatch(/Scheduler|recurring/i);
-  });
-
-  it('describes the security model', () => {
-    expect(content).toMatch(/Security|API key/i);
-  });
-
-  it('describes the request lifecycle', () => {
-    expect(content).toMatch(/lifecycle|middleware/i);
   });
 });
 
@@ -388,8 +387,8 @@ describe('Documented route files contain expected endpoint handlers', () => {
     expect(content).toMatch(/router\.get/);
   });
 
-  it('transaction.js handles transaction routes', () => {
-    const content = readDoc('src/routes/transaction.js');
+  it('transactions/core.js handles transaction routes', () => {
+    const content = readDoc('src/routes/transactions/core.js');
     expect(content).toMatch(/router\.(get|post)/);
   });
 });

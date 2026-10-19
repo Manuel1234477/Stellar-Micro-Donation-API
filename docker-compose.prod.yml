@@ -1,4 +1,3 @@
-version: '3.9'
 
 services:
   api:
@@ -25,13 +24,16 @@ services:
       - STELLAR_PUBLIC_KEY_FILE=/run/secrets/stellar_public_key
       - JWT_SECRET_FILE=/run/secrets/jwt_secret
       - NODE_ENV=production
-      - DB_PATH=/app/data/donations.db
+      - DB_PATH=/data/stellar_donations.db
       - LOG_LEVEL=info
       - SECURE_SECRETS=true
       - SHUTDOWN_TIMEOUT_MS=30000
+    read_only: true
+    tmpfs:
+      - /tmp
     volumes:
       # Persist SQLite database across container restarts
-      - db_data:/app/data
+      - db_data:/data
       # Mount logs directory for external log aggregation
       - logs:/app/logs
     restart: always
@@ -70,8 +72,10 @@ services:
           cpus: '1.0'
           memory: 512M
     # Health check configuration
+    # Uses /health/live (process-only liveness) so a dependency outage does
+    # not cause healthy containers to be restarted. Readiness is /health/ready.
     healthcheck:
-      test: ['CMD', 'wget', '-qO-', 'http://localhost:3000/health']
+      test: ['CMD', 'wget', '-qO-', 'http://localhost:3000/health/live']
       interval: 30s
       timeout: 5s
       retries: 3

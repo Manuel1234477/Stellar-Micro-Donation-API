@@ -121,12 +121,12 @@ describe('issueAccessToken / verifyAccessToken', () => {
   });
 
   it('rejects an expired token', () => {
-    // Manually craft a token with exp in the past
-    const header = Buffer.from(JSON.stringify({ alg: 'HS256', typ: 'JWT' })).toString('base64url');
-    const claims = Buffer.from(JSON.stringify({ sub: 1, iat: 1000, exp: 1001 })).toString('base64url');
-    const secret = require('../../src/config/securityConfig').securityConfig.ENCRYPTION_KEY || 'dev_jwt_secret_change_in_production';
-    const sig = crypto.createHmac('sha256', secret).update(`${header}.${claims}`).digest('base64url');
-    const result = verifyAccessToken(`${header}.${claims}.${sig}`);
+    // Issue a token whose clock is 1 hour in the past, so it is already expired
+    const issuedAt = Date.now() - 60 * 60 * 1000;
+    const spy = jest.spyOn(Date, 'now').mockReturnValue(issuedAt);
+    const expiredToken = JwtService.issueAccessToken({ sub: 1 });
+    spy.mockRestore();
+    const result = verifyAccessToken(expiredToken);
     expect(result.valid).toBe(false);
     expect(result.reason).toBe('token expired');
   });

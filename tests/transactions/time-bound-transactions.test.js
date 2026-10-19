@@ -31,7 +31,7 @@ describe('Stellar Time-Bound Transactions', () => {
     stellarService = getStellarService();
     
     // Generate test keypairs
-    const StellarSdk = require('stellar-sdk');
+    const StellarSdk = require('@stellar/stellar-sdk');
     testSenderKeyPair = StellarSdk.Keypair.random();
     testReceiverKeyPair = StellarSdk.Keypair.random();
 

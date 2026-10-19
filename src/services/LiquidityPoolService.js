@@ -10,7 +10,7 @@
  * custom donation tokens without manual order placement.
  */
 
-const StellarSdk = require('stellar-sdk');
+const StellarSdk = require('./stellar/sdk.js');
 const { ValidationError, BusinessLogicError } = require('../utils/errors');
 const log = require('../utils/log');
 const Cache = require('../utils/cache');

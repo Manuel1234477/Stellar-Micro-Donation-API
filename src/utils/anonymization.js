@@ -39,18 +39,28 @@ function getHmacSecret() {
 }
 
 /**
+ * Number of hex characters retained from the HMAC digest.
+ * Truncation keeps the ID compact while retaining ample collision resistance
+ * (128 bits) for donor-level aggregation.
+ */
+const PSEUDONYM_HEX_LENGTH = 32;
+
+/**
  * Generate a pseudonymous donor ID from a wallet address using HMAC-SHA256.
  *
- * The resulting ID is a 64-character lowercase hex string prefixed with "anon_"
+ * The resulting ID is a truncated lowercase hex string prefixed with "anon_"
  * to make anonymous donations visually distinguishable in logs and records.
  *
  * Properties:
  * - Deterministic: same wallet address always produces the same pseudonymous ID.
- * - One-way: the wallet address cannot be recovered from the pseudonymous ID alone.
+ * - One-way: the wallet address cannot be recovered from the pseudonymous ID alone
+ *   (the server secret is required to recompute it).
  * - Consistent: the prefix "anon_" makes anonymous records easy to identify.
  *
+ * Only the pseudonym is returned — the raw wallet address is never included.
+ *
  * @param {string} walletAddress - The donor's Stellar wallet address (public key).
- * @returns {string} Pseudonymous ID in the format "anon_<64-hex-chars>".
+ * @returns {string} Pseudonymous ID in the format "anon_<32-hex-chars>".
  * @throws {TypeError} If walletAddress is not a non-empty string.
  */
 function generatePseudonymousId(walletAddress) {
@@ -61,7 +71,7 @@ function generatePseudonymousId(walletAddress) {
   const secret = getHmacSecret();
   const hmac = crypto.createHmac('sha256', secret);
   hmac.update(walletAddress.trim());
-  const digest = hmac.digest('hex');
+  const digest = hmac.digest('hex').slice(0, PSEUDONYM_HEX_LENGTH);
   return `anon_${digest}`;
 }
 
@@ -106,7 +116,7 @@ function verifyPseudonymousId(walletAddress, pseudonymousId) {
  * @returns {boolean} True if the value matches the expected format.
  */
 function isPseudonymousId(value) {
-  return typeof value === 'string' && /^anon_[0-9a-f]{64}$/.test(value);
+  return typeof value === 'string' && /^anon_[0-9a-f]{32}$/.test(value);
 }
 
 module.exports = {

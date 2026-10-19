@@ -3,15 +3,28 @@
  * Manages SSE connections. Events are published through the PubSubAdapter so
  * they reach clients connected to any instance (cross-instance fan-out).
  * Single-instance behaviour is preserved when no shared backend is configured.
+ *
+ * Per-key connection limit (#1786): the local limit is checked synchronously
+ * on connect. When a distributed SharedStateStore is configured
+ * (SHARED_STATE_BACKEND=redis), every connection is also registered in a
+ * cluster-wide expiring set; if that registration pushes the key over
+ * SSE_MAX_CONNECTIONS_PER_KEY the new stream receives a
+ * `connection_limit_exceeded` event and is closed. Registrations are refreshed
+ * on every heartbeat and expire if a replica dies without cleaning up.
  */
 
 const { getPubSubAdapter } = require('./PubSubAdapter');
 const timerRegistry = require('../utils/timerRegistry');
+const log = require('../utils/log');
+const { env } = require('../config/env');
 
-const MAX_CONNECTIONS_PER_KEY = parseInt(process.env.SSE_MAX_CONNECTIONS_PER_KEY || '5');
+const MAX_CONNECTIONS_PER_KEY = env.SSE_MAX_CONNECTIONS_PER_KEY;
 const HEARTBEAT_INTERVAL_MS = 30_000;
-const EVENT_BUFFER_SIZE = parseInt(process.env.SSE_EVENT_BUFFER_SIZE || '100');
+const EVENT_BUFFER_SIZE = env.SSE_EVENT_BUFFER_SIZE;
 const SSE_CHANNEL = 'sse:broadcast';
+/** Shared registrations survive a few missed heartbeats before expiring. */
+const SHARED_REGISTRATION_TTL_MS = HEARTBEAT_INTERVAL_MS * 3;
+const sharedKeyFor = (apiKey) => `sse:conn:${apiKey}`;
 
 class SseManager {
   constructor() {
@@ -56,13 +69,36 @@ class SseManager {
 
   /**
    * Add a new SSE client.
-   * @param {string} clientId - Unique identifier for this connection
-   * @param {string} apiKey - API key id, used for per-key connection limits
-   * @param {object} filters
-   * @param {object} res - Express response object
+   * Supports both (apiKey, res, filters) and (clientId, apiKey, filters, res).
+   * @param {string} clientIdOrApiKey
+   * @param {string|object} apiKeyOrRes
+   * @param {object} [filtersOrRes]
+   * @param {object} [maybeRes]
    * @returns {{ added: boolean, limitExceeded: boolean, client?: object }}
    */
-  addClient(clientId, apiKey, filters = {}, res) {
+  addClient(clientIdOrApiKey, apiKeyOrRes, filtersOrRes = {}, maybeRes) {
+    let clientId, apiKey, filters, res;
+
+    if (maybeRes !== undefined) {
+      // 4 args: (clientId, apiKey, filters, res)
+      clientId = clientIdOrApiKey;
+      apiKey = apiKeyOrRes;
+      filters = filtersOrRes || {};
+      res = maybeRes;
+    } else if (apiKeyOrRes && (typeof apiKeyOrRes.write === 'function' || typeof apiKeyOrRes.on === 'function')) {
+      // 3 args: (apiKey, res, filters)
+      apiKey = clientIdOrApiKey;
+      res = apiKeyOrRes;
+      filters = filtersOrRes || {};
+      clientId = `${apiKey}_${Date.now()}_${Math.random().toString(36).slice(2, 9)}`;
+    } else {
+      // 3 args: (clientId, apiKey, filters)
+      clientId = clientIdOrApiKey;
+      apiKey = apiKeyOrRes;
+      filters = filtersOrRes || {};
+      res = null;
+    }
+
     if (this.connectionCountForKey(apiKey) >= MAX_CONNECTIONS_PER_KEY) {
       return { added: false, limitExceeded: true };
     }
@@ -71,18 +107,88 @@ class SseManager {
     this._clients.set(clientId, client);
 
     if (res && typeof res.on === 'function') {
-      res.on('close', () => this.removeClient(clientId));
+      res.on('close', () => this.removeClient(clientId, client));
     }
+
+    // Ensure periodic heartbeat is running
+    this.start();
+
+    const shared = this._sharedStore();
+    if (shared) this._registerShared(shared, client);
 
     return { added: true, limitExceeded: false, client };
   }
 
   /**
-   * Remove a client by id.
-   * @param {string} clientId
+   * Distributed store used for cluster-wide limits, or null in single-instance mode.
+   * Loaded lazily to keep this module free of start-up ordering constraints.
+   * @private
    */
-  removeClient(clientId) {
-    this._clients.delete(clientId);
+  _sharedStore() {
+    const { getSharedStateStore } = require('../utils/sharedStateStore');
+    const store = getSharedStateStore();
+    return store.isDistributed ? store : null;
+  }
+
+  /**
+   * Register a client cluster-wide and close it if the key is over its limit.
+   * @private
+   */
+  _registerShared(store, client) {
+    store.addMember(sharedKeyFor(client.apiKey), client.clientId, SHARED_REGISTRATION_TTL_MS)
+      .then((count) => {
+        if (count <= MAX_CONNECTIONS_PER_KEY) return;
+        log.warn('SSE', 'Cluster-wide SSE connection limit exceeded; closing newest stream', {
+          apiKey: client.apiKey,
+          count,
+          limit: MAX_CONNECTIONS_PER_KEY,
+        });
+        if (client.res) {
+          try {
+            client.res.write(`event: connection_limit_exceeded\ndata: ${JSON.stringify({
+              type: 'connection_limit_exceeded',
+              limit: MAX_CONNECTIONS_PER_KEY,
+            })}\n\n`);
+            client.res.end();
+          } catch (_) { /* client gone */ }
+        }
+        this.removeClient(client.clientId, client);
+      })
+      .catch((err) => {
+        log.warn('SSE', 'Failed to register SSE connection in shared store', { error: err.message });
+      });
+  }
+
+  /** @private */
+  _unregisterShared(client) {
+    const shared = this._sharedStore();
+    if (!shared || !client) return;
+    shared.removeMember(sharedKeyFor(client.apiKey), client.clientId).catch((err) => {
+      log.warn('SSE', 'Failed to unregister SSE connection from shared store', { error: err.message });
+    });
+  }
+
+  /**
+   * Remove a client by id or reference.
+   * @param {string} clientId
+   * @param {object} [clientRef]
+   */
+  removeClient(clientId, clientRef) {
+    if (this._clients.has(clientId)) {
+      const client = this._clients.get(clientId);
+      this._clients.delete(clientId);
+      this._unregisterShared(client);
+      return;
+    }
+    if (clientRef) {
+      for (const [id, c] of this._clients.entries()) {
+        if (c === clientRef || c.apiKey === clientId) {
+          this._clients.delete(id);
+          this._unregisterShared(c);
+          break;
+        }
+      }
+    }
   }
 
   /**
@@ -117,10 +223,16 @@ class SseManager {
 
   /**
    * Broadcast a confirmed transaction to all matching clients.
+   * Format: `data: ${JSON.stringify({ type: 'transaction.confirmed', data: transaction })}\n\n`
    * @param {object} transaction
    */
   broadcastTransaction(transaction) {
-    this.broadcast('transaction.confirmed', transaction);
+    const event = `data: ${JSON.stringify({ type: 'transaction.confirmed', data: transaction })}\n\n`;
+    for (const client of this._clients.values()) {
+      if (this._matches(client.filters, transaction)) {
+        try { client.res.write(event); } catch (_) { /* client gone */ }
+      }
+    }
   }
 
   /**
@@ -158,6 +270,7 @@ class SseManager {
         client.res.write(payload);
         client.res.end();
       } catch (_) { /* client already gone */ }
+      this._unregisterShared(client);
     }
     this._clients.clear();
     return count;
@@ -219,6 +332,14 @@ class SseManager {
   _sendHeartbeat() {
     for (const client of this._clients.values()) {
       try { client.res.write(': ping\n\n'); } catch (_) { /* client gone */ }
+    }
+    // Keep cluster-wide registrations alive while their streams are open.
+    const shared = this._sharedStore();
+    if (shared) {
+      for (const client of this._clients.values()) {
+        shared.addMember(sharedKeyFor(client.apiKey), client.clientId, SHARED_REGISTRATION_TTL_MS)
+          .catch(() => { /* logged by the store */ });
+      }
     }
   }
 

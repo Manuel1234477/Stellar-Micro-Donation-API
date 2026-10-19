@@ -204,6 +204,20 @@ class Wallet {
     return rows.map(rowToWallet);
   }
 
+  /**
+   * Fetch one page of non-deleted wallets, bounded in SQL.
+   * @param {{ limit: number, offset: number }} page - Already-clamped page bounds.
+   * @returns {Promise<Object[]>} Wallets ordered by id.
+   */
+  static async getPage({ limit, offset }) {
+    await ensureWalletSchema();
+    const rows = await Database.all(
+      'SELECT * FROM wallets WHERE deletedAt IS NULL ORDER BY id ASC LIMIT ? OFFSET ?',
+      [limit, offset]
+    );
+    return rows.map(rowToWallet);
+  }
+
   static async getById(id) {
     await ensureWalletSchema();
     const row = await Database.get(

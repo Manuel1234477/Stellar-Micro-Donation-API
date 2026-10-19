@@ -17,9 +17,25 @@ process.env.MOCK_STELLAR = 'true';
 process.env.NODE_ENV = 'test';
 process.env.API_KEYS = 'test-key-graphql';
 
+// src/graphql/index instantiates real services at load time, which kicks off
+// background SQLite loads that can outlive the test environment. These tests
+// only exercise its pure helpers, so stub the service layer.
+jest.mock('../../src/config/stellar', () => ({ getStellarService: () => ({}) }));
+jest.mock('../../src/services/DonationService', () => jest.fn());
+jest.mock('../../src/services/WalletService', () => jest.fn());
+jest.mock('../../src/services/StatsService', () => ({}));
+
 const { buildSchema } = require('../../src/graphql/schema');
 const pubsub = require('../../src/graphql/pubsub');
 const { graphql, parse, validate } = require('graphql');
+const {
+  checkComplexity,
+  computeComplexity,
+  checkDepth,
+  hashQuery,
+  MAX_QUERY_COMPLEXITY,
+  LIST_FIELD_COST,
+} = require('../../src/graphql/index');
 
 // ─── Service stubs ────────────────────────────────────────────────────────────
 
@@ -35,9 +51,10 @@ const mockWallets = [
 
 const donationService = {
   getAllDonations: jest.fn(() => mockDonations),
-  getDonationById: jest.fn((id) => mockDonations.find((d) => d.id === id) ?? null),
+  getDonationsPage: jest.fn(({ limit, offset }) => mockDonations.slice(offset, offset + limit)),
+  getDonationById: jest.fn((id) => mockDonations.find((d) => String(d.id) === String(id)) ?? null),
   getRecentDonations: jest.fn((limit) => mockDonations.slice(0, limit)),
-  createDonationRecord: jest.fn(async (input) => ({ id: 99, ...input, status: 'pending', timestamp: new Date().toISOString() })),
+  sendCustodialDonation: jest.fn(async ({ amount }) => ({ id: 99, amount, stellarTxId: 'mock-tx', status: 'pending', timestamp: new Date().toISOString() })),
   updateDonationStatus: jest.fn((id, status) => {
     const d = mockDonations.find((x) => x.id === id);
     if (!d) throw new Error('Not found');
@@ -47,6 +64,7 @@ const donationService = {
 
 const walletService = {
   getAllWallets: jest.fn(() => mockWallets),
+  getWalletsPage: jest.fn(async ({ limit, offset }) => mockWallets.slice(offset, offset + limit)),
   getWalletById: jest.fn((id) => mockWallets.find((w) => w.id === id) ?? null),
   createWallet: jest.fn(async ({ address, label, ownerName }) => ({
     id: 99,
@@ -104,19 +122,19 @@ describe('GraphQL — Queries', () => {
     const result = await run('{ donations { id amount status } }');
     expect(result.errors).toBeUndefined();
     expect(result.data.donations).toHaveLength(2);
-    expect(result.data.donations[0].id).toBe(1);
-    expect(donationService.getAllDonations).toHaveBeenCalledTimes(1);
+    expect(result.data.donations[0].id).toBe('1');
+    expect(donationService.getDonationsPage).toHaveBeenCalledWith({ limit: 20, offset: 0 });
   });
 
   test('donation query returns a single donation by id', async () => {
-    const result = await run('query($id: Int!) { donation(id: $id) { id memo } }', { id: 1 });
+    const result = await run('query($id: ID!) { donation(id: $id) { id memo } }', { id: 1 });
     expect(result.errors).toBeUndefined();
-    expect(result.data.donation.id).toBe(1);
+    expect(result.data.donation.id).toBe('1');
     expect(result.data.donation.memo).toBe('test');
   });
 
   test('donation query returns null for unknown id', async () => {
-    const result = await run('query($id: Int!) { donation(id: $id) { id } }', { id: 999 });
+    const result = await run('query($id: ID!) { donation(id: $id) { id } }', { id: 999 });
     expect(result.errors).toBeUndefined();
     expect(result.data.donation).toBeNull();
   });
@@ -137,7 +155,7 @@ describe('GraphQL — Queries', () => {
     const result = await run('{ wallets { id address label } }');
     expect(result.errors).toBeUndefined();
     expect(result.data.wallets).toHaveLength(2);
-    expect(walletService.getAllWallets).toHaveBeenCalledTimes(1);
+    expect(walletService.getWalletsPage).toHaveBeenCalledWith({ limit: 20, offset: 0 });
   });
 
   test('wallet query returns a single wallet by id', async () => {
@@ -198,14 +216,12 @@ describe('GraphQL — Mutations', () => {
     expect(result.errors).toBeUndefined();
     expect(result.data.createDonation.success).toBe(true);
     expect(result.data.createDonation.donation.amount).toBe(25.0);
-    expect(donationService.createDonationRecord).toHaveBeenCalledWith(
-      expect.objectContaining({
-        senderId: 1,
-        receiverId: 2,
-        amount: 25.0,
-        memo: 'hello',
-      })
-    );
+    expect(donationService.sendCustodialDonation).toHaveBeenCalledWith({
+      senderId: 1,
+      receiverId: 2,
+      amount: 25.0,
+      memo: 'hello',
+    });
   });
 
   test('createDonation mutation works without optional fields', async () => {
@@ -219,6 +235,25 @@ describe('GraphQL — Mutations', () => {
     `, {}, userContext);
     expect(result.errors).toBeUndefined();
     expect(result.data.createDonation.success).toBe(true);
+    // Undefined optional fields must not be forwarded to the service
+    expect(donationService.sendCustodialDonation).toHaveBeenCalledWith({
+      senderId: 1,
+      receiverId: 2,
+      amount: 5.0,
+    });
+  });
+
+  test('createDonation mutation rejects non-XLM currency', async () => {
+    const result = await run(`
+      mutation {
+        createDonation(input: { senderId: 1, receiverId: 2, amount: 5.0, currency: "USD" }) {
+          success
+        }
+      }
+    `, {}, userContext);
+    expect(result.errors).toBeDefined();
+    expect(result.errors[0].message).toMatch(/Unsupported currency/);
+    expect(donationService.sendCustodialDonation).not.toHaveBeenCalled();
   });
 
   test('createDonation mutation fails when required fields are missing', async () => {
@@ -445,7 +480,7 @@ describe('GraphQL — Error handling', () => {
   beforeEach(() => jest.clearAllMocks());
 
   test('service error in query propagates as GraphQL error', async () => {
-    donationService.getAllDonations.mockImplementationOnce(() => {
+    donationService.getDonationsPage.mockImplementationOnce(() => {
       throw new Error('DB connection failed');
     });
     const result = await run('{ donations { id } }');
@@ -454,22 +489,22 @@ describe('GraphQL — Error handling', () => {
   });
 
   test('async service error in mutation propagates as GraphQL error', async () => {
-    donationService.createDonationRecord.mockRejectedValueOnce(new Error('Validation failed'));
+    donationService.sendCustodialDonation.mockRejectedValueOnce(new Error('Validation failed'));
     const result = await run(`
       mutation {
         createDonation(input: { senderId: 1, receiverId: 2, amount: 5.0 }) {
           success
         }
       }
-    `);
+    `, {}, userContext);
     expect(result.errors).toBeDefined();
     expect(result.errors[0].message).toMatch(/Validation failed/);
   });
 
   test('invalid variable type returns type error', async () => {
     const result = await run(
-      'query($id: Int!) { donation(id: $id) { id } }',
-      { id: 'not-an-int' }
+      'query($id: ID!) { donation(id: $id) { id } }',
+      { id: { nested: true } }
     );
     expect(result.errors).toBeDefined();
   });
@@ -597,14 +632,14 @@ describe('GraphQL — Pagination caps on queries (#1372)', () => {
       id: i + 1, senderId: 1, receiverId: 2, amount: 1, memo: null,
       status: 'pending', stellar_tx_id: null, timestamp: '2024-01-01T00:00:00Z',
     }));
-    donationService.getAllDonations.mockReturnValueOnce(bigList);
+    donationService.getDonationsPage.mockImplementationOnce(({ limit, offset }) => bigList.slice(offset, offset + limit));
     const result = await run('{ donations { id } }');
     expect(result.errors).toBeUndefined();
     expect(result.data.donations).toHaveLength(20);
   });
 
   test('donations query respects explicit limit within cap', async () => {
-    donationService.getAllDonations.mockReturnValueOnce(mockDonations);
+    donationService.getDonationsPage.mockImplementationOnce(({ limit, offset }) => mockDonations.slice(offset, offset + limit));
     const result = await run('{ donations(limit: 1) { id } }');
     expect(result.errors).toBeUndefined();
     expect(result.data.donations).toHaveLength(1);
@@ -615,7 +650,7 @@ describe('GraphQL — Pagination caps on queries (#1372)', () => {
       id: i + 1, senderId: 1, receiverId: 2, amount: 1, memo: null,
       status: 'pending', stellar_tx_id: null, timestamp: '2024-01-01T00:00:00Z',
     }));
-    donationService.getAllDonations.mockReturnValueOnce(bigList);
+    donationService.getDonationsPage.mockImplementationOnce(({ limit, offset }) => bigList.slice(offset, offset + limit));
     const result = await run('{ donations(limit: 10000) { id } }');
     expect(result.errors).toBeUndefined();
     expect(result.data.donations).toHaveLength(100);
@@ -628,7 +663,7 @@ describe('GraphQL — Pagination caps on queries (#1372)', () => {
       id: i + 1, address: `G${i}`, label: null, ownerName: null,
       createdAt: '2024-01-01T00:00:00Z', funded: false, sponsored: false,
     }));
-    walletService.getAllWallets.mockReturnValueOnce(bigList);
+    walletService.getWalletsPage.mockImplementationOnce(async ({ limit, offset }) => bigList.slice(offset, offset + limit));
     const result = await run('{ wallets { id } }');
     expect(result.errors).toBeUndefined();
     expect(result.data.wallets).toHaveLength(20);
@@ -639,7 +674,7 @@ describe('GraphQL — Pagination caps on queries (#1372)', () => {
       id: i + 1, address: `G${i}`, label: null, ownerName: null,
       createdAt: '2024-01-01T00:00:00Z', funded: false, sponsored: false,
     }));
-    walletService.getAllWallets.mockReturnValueOnce(bigList);
+    walletService.getWalletsPage.mockImplementationOnce(async ({ limit, offset }) => bigList.slice(offset, offset + limit));
     const result = await run('{ wallets(limit: 10000) { id } }');
     expect(result.errors).toBeUndefined();
     expect(result.data.wallets).toHaveLength(100);
@@ -701,7 +736,8 @@ describe('GraphQL — WS unauthenticated fallback (#1370)', () => {
 // ─────────────────────────────────────────────────────────────────────────────
 
 describe('GraphQL — WS onSubscribe validation (#1369)', () => {
-  const { parse: gqlParse, validate: gqlValidate } = require('graphql');
+  const gqlParse = parse;
+  const gqlValidate = validate;
 
   /**
    * Replicate the onSubscribe validation logic from index.js so we can unit-test
@@ -807,13 +843,7 @@ describe('GraphQL — WS onSubscribe validation (#1369)', () => {
 // ─── Query complexity tests (#1594) ──────────────────────────────────────────
 
 describe('GraphQL — Query complexity limiting (#1594)', () => {
-  const {
-    checkComplexity,
-    computeComplexity,
-    MAX_QUERY_COMPLEXITY,
-    LIST_FIELD_COST,
-  } = require('../../src/graphql/index');
-  const { parse: gqlParse } = require('graphql');
+  const gqlParse = parse;
 
   test('exports checkComplexity function', () => {
     expect(typeof checkComplexity).toBe('function');
@@ -917,7 +947,6 @@ describe('GraphQL — Query complexity limiting (#1594)', () => {
   });
 
   test('hashQuery returns a string for a valid document', () => {
-    const { hashQuery } = require('../../src/graphql/index');
     const doc = gqlParse('{ donations { id } }');
     const h = hashQuery(doc);
     expect(typeof h).toBe('string');
@@ -925,11 +954,22 @@ describe('GraphQL — Query complexity limiting (#1594)', () => {
   });
 
   test('checkDepth and checkComplexity are independently enforced', () => {
-    const { checkDepth } = require('../../src/graphql/index');
     const doc = gqlParse('{ donations { id amount } }');
     const depthResult = checkDepth(doc);
     const complexityResult = checkComplexity(doc);
     expect(typeof depthResult.valid).toBe('boolean');
     expect(typeof complexityResult.valid).toBe('boolean');
   });
+});
+
+// ─── Teardown ────────────────────────────────────────────────────────────────
+
+afterAll(async () => {
+  // Drop any subscribers left behind so no pending promises or timers keep the
+  // event loop alive after the suite finishes.
+  if (typeof pubsub.clearAllSubscriptions === 'function') {
+    pubsub.clearAllSubscriptions();
+  } else if (pubsub.subscriptions && typeof pubsub.subscriptions.clear === 'function') {
+    pubsub.subscriptions.clear();
+  }
 });

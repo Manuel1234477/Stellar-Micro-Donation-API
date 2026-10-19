@@ -37,22 +37,42 @@ const {
 const timerRegistry = require('../utils/timerRegistry');
 const leaderElection = require('../utils/leaderElection');
 
+function clearIntervalHandle(handle) {
+  if (!handle) return;
+  if (typeof handle.clear === 'function') handle.clear();
+  else clearInterval(handle);
+}
+
 class RecurringDonationScheduler {
   /**
    * @param {Object} stellarService - StellarService or MockStellarService instance
    * @param {Object} [networkStatusService] - Optional NetworkStatusService for health checks
    */
-  constructor(stellarService, networkStatusService = null) {
+  constructor(stellarService, networkStatusService = null, options = {}) {
     if (!stellarService) {
       throw new Error('stellarService is required');
     }
     this.stellarService = stellarService;
-    this.networkStatusService = networkStatusService;
+
+    let opts = options;
+    if (networkStatusService && typeof networkStatusService === 'object' && typeof networkStatusService.isHealthy !== 'function' && ('lockTtlMs' in networkStatusService || 'lockTtl' in networkStatusService || 'leaderElection' in networkStatusService)) {
+      opts = networkStatusService;
+      this.networkStatusService = null;
+    } else {
+      this.networkStatusService = networkStatusService;
+    }
+
     this.intervalId = null;
     this.isRunning = false;
 
+    /** Leader election utility instance */
+    this.leaderElection = opts.leaderElection || leaderElection;
+
+    /** Lock TTL in milliseconds for leader election (default: 90 seconds) */
+    this.lockTtlMs = opts.lockTtlMs || (opts.lockTtl ? opts.lockTtl * 1000 : null) || parseInt(process.env.SCHEDULER_LOCK_TTL_MS, 10) || 90_000;
+
     /** How often the scheduler polls for due donations (ms) */
-    this.checkInterval = 60_000; // 1 minute
+    this.checkInterval = opts.checkInterval || 60_000; // 1 minute
 
     // Backup configuration (default: daily)
     this.backupInterval = parseInt(process.env.BACKUP_INTERVAL_MS, 10) || 24 * 60 * 60 * 1000;
@@ -97,7 +117,7 @@ class RecurringDonationScheduler {
       this.checkInterval,
       'recurring-donation-scheduler'
     );
-    this.intervalId.unref();
+    if (typeof this.intervalId.unref === 'function') this.intervalId.unref();
 
     const correlation = getCorrelationSummary();
     log.info("RECURRING_SCHEDULER", "Scheduler started", {
@@ -115,7 +135,7 @@ class RecurringDonationScheduler {
     if (!this.isRunning) return;
 
     if (this.intervalId) {
-      this.intervalId.clear();
+      clearIntervalHandle(this.intervalId);
       this.intervalId = null;
     }
 
@@ -136,7 +156,7 @@ class RecurringDonationScheduler {
       this.checkInterval,
       'recurring-donation-scheduler'
     );
-    this.intervalId.unref();
+    if (typeof this.intervalId.unref === 'function') this.intervalId.unref();
 
     const { correlationId, traceId } = getCorrelationSummary();
     log.info('RECURRING_SCHEDULER', 'Scheduler resumed', { correlationId, traceId });
@@ -182,13 +202,14 @@ class RecurringDonationScheduler {
 
     return withBackgroundContext('scheduler_stop', () => {
       if (this.intervalId) {
-        this.intervalId.clear();
+        clearIntervalHandle(this.intervalId);
         this.intervalId = null;
       }
       this.isRunning = false;
 
       const { correlationId, traceId } = getCorrelationSummary();
       log.info('RECURRING_SCHEDULER', 'Scheduler stopped', { correlationId, traceId });
+      this.leaderElection.releaseLease('recurring_donation_scheduler').catch(() => {});
     });
   }
 
@@ -207,7 +228,7 @@ class RecurringDonationScheduler {
     if (!this.isRunning) return { waited: 0, interrupted: 0 };
 
     if (this.intervalId) {
-      this.intervalId.clear();
+      clearIntervalHandle(this.intervalId);
       this.intervalId = null;
     }
     this.isRunning = false;
@@ -280,6 +301,8 @@ class RecurringDonationScheduler {
       traceId,
     });
 
+    await this.leaderElection.releaseLease('recurring_donation_scheduler').catch(() => {});
+
     return { waited, interrupted };
   }
 
@@ -297,14 +320,13 @@ class RecurringDonationScheduler {
     }
 
     // Acquire leader-election lease: only one instance across the cluster processes each tick.
-    // TTL = 2× checkInterval so the lock expires if we crash before the next renewal.
-    const isLeader = await leaderElection.acquireLease(
+    const isLeader = await this.leaderElection.acquireLease(
       'recurring_donation_scheduler',
-      this.checkInterval * 2
+      this.lockTtlMs
     );
     if (!isLeader) {
-      log.debug('RECURRING_SCHEDULER', 'Skipping tick — lease held by another instance', {
-        instanceId: leaderElection.instanceId,
+      log.info('RECURRING_SCHEDULER', 'Instance is in standby — skipping tick', {
+        instanceId: this.leaderElection.instanceId,
       });
       recurringDonationsSkippedTotal.inc({ reason: 'not_leader' }, 1);
       return;
@@ -839,6 +861,10 @@ class RecurringDonationScheduler {
       case DONATION_FREQUENCIES.WEEKLY:
         nextDay += 7;
         break;
+      case 'biweekly':
+      case DONATION_FREQUENCIES.BIWEEKLY:
+        nextDay += 14;
+        break;
       case DONATION_FREQUENCIES.MONTHLY: {
         // Calendar-aware month addition: if current day doesn't exist in next month, use last day
         nextMonth += 1;
@@ -851,10 +877,23 @@ class RecurringDonationScheduler {
         nextDay = Math.min(day, lastDayOfMonth);
         break;
       }
+      case 'quarterly':
+      case DONATION_FREQUENCIES.QUARTERLY: {
+        // Calendar-aware quarterly addition: advance 3 months
+        nextMonth += 3;
+        while (nextMonth > 11) {
+          nextMonth -= 12;
+          nextYear += 1;
+        }
+        // Get last day of target month
+        const lastDayOfMonth = new Date(Date.UTC(nextYear, nextMonth + 1, 0)).getUTCDate();
+        nextDay = Math.min(day, lastDayOfMonth);
+        break;
+      }
       case DONATION_FREQUENCIES.CUSTOM: {
         const days = parseInt(customIntervalDays, 10);
-        if (!days || days < 1) {
-          throw new Error('customIntervalDays must be a positive integer for custom frequency');
+        if (!days || days < 1 || days > 365) {
+          throw new Error('customIntervalDays must be an integer between 1 and 365 for custom frequency');
         }
         nextDay += days;
         break;

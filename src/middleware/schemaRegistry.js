@@ -108,6 +108,32 @@ const TRANSFORMATION_TABLE = {
     transforms: [
       { field: 'public_key', action: 'rename', newField: 'publicKey' }
     ]
+  },
+
+  // ── Generic version upgrade paths (no schema key) ───────────────────────
+  // These allow any schema to be upgraded from an older version to 2.0.0
+  // when no schema-specific transformation is registered.
+  '1.0.0:2.0.0': {
+    from: '1.0.0',
+    to: '2.0.0',
+    transforms: [
+      { field: 'currency', action: 'default', defaultValue: 'XLM' }
+    ]
+  },
+
+  '1.1.0:2.0.0': {
+    from: '1.1.0',
+    to: '2.0.0',
+    transforms: [
+      { field: 'currency', action: 'default', defaultValue: 'XLM' }
+    ]
+  },
+
+  // ── Intermediate step for chaining 1.0.0 → 1.1.0 → 2.0.0 ────────────────
+  '1.0.0:1.1.0': {
+    from: '1.0.0',
+    to: '1.1.0',
+    transforms: []
   }
 };
 
@@ -254,76 +280,51 @@ registerSchema('createDonation', {
         metadata: {
           type: 'object',
           required: false,
-          description: 'Optional metadata object for additional context'
+          description: 'Additional metadata for the donation'
         }
       },
       allowUnknown: false
     }
   }
 }, {
-  deprecated: [],
+  deprecated: ['1.0.0'],
   migrationGuides: {
-    '1.0.0': 'Schema v1.0.0 is supported but v2.0.0 is recommended. Upgrade to v2.0.0 to specify currency (XLM or USDC) and include optional metadata.'
+    '1.0.0': 'Upgrade to v2.0.0: rename donor_name→donorName, recipient_address→recipient, amount_xlm→amount. Add required currency field.'
   }
 });
 
 /**
  * Wallet Creation Schema Versions
- *
- * v1.0.0: Original schema using snake_case field names
- * v2.0.0: Updated schema using camelCase field names with an optional label
  */
 registerSchema('createWallet', {
   '1.0.0': {
     body: {
       fields: {
-        public_key: {
-          type: 'string',
-          required: true,
-          description: 'Stellar public key (G…)'
-        },
-        memo: {
-          type: 'string',
-          required: false,
-          description: 'Optional memo associated with the wallet'
-        }
-      },
-      allowUnknown: false
-    }
-  },
-  '2.0.0': {
-    body: {
-      fields: {
         publicKey: {
           type: 'string',
           required: true,
-          description: 'Stellar public key (G…)'
-        },
-        memo: {
-          type: 'string',
-          required: false,
-          description: 'Optional memo associated with the wallet'
+          minLength: 56,
+          maxLength: 56,
+          pattern: /^G[A-Z2-7]{55}$/,
+          description: 'Stellar public key'
         },
         label: {
           type: 'string',
           required: false,
-          description: 'Human-readable label for the wallet'
+          minLength: 1,
+          maxLength: 255,
+          description: 'Human-readable wallet label'
         }
       },
       allowUnknown: false
     }
-  }
-}, {
-  deprecated: [],
-  migrationGuides: {
-    '1.0.0': 'Schema v1.0.0 uses snake_case fields. Upgrade to v2.0.0 and rename public_key to publicKey. The new label field is also available in v2.0.0.'
   }
 });
 
 module.exports = {
   registerSchema,
   getSchema,
-  registry: schemaRegistry,
   applyTransformations,
-  TRANSFORMATION_TABLE
+  TRANSFORMATION_TABLE,
+  schemaRegistry,
 };

@@ -97,7 +97,7 @@ class ImpactMetricService {
           updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
         )
       `);
-    } catch (_) {}
+    } catch (_) { /* best-effort */ }
   }
 
   /**
@@ -142,7 +142,7 @@ class ImpactMetricService {
       } else if (_inMemoryMappings.size === 0) {
         _inMemoryMappings = new Map(DEFAULT_MAPPINGS.map(m => [m.tag, m.sdgId]));
       }
-    } catch (_) {}
+    } catch (_) { /* best-effort */ }
 
     const result = Array.from(_inMemoryMappings.entries()).map(([tag, sdgId]) => {
       const info = this.getSdgInfo(sdgId);
@@ -188,7 +188,7 @@ class ImpactMetricService {
          ON CONFLICT(tag) DO UPDATE SET sdg_id = excluded.sdg_id, updated_at = CURRENT_TIMESTAMP`,
         [cleanTag, id]
       );
-    } catch (_) {}
+    } catch (_) { /* best-effort */ }
 
     const info = this.getSdgInfo(id);
     const mapping = {
@@ -223,7 +223,7 @@ class ImpactMetricService {
       if (res && res.changes > 0) {
         deleted = true;
       }
-    } catch (_) {}
+    } catch (_) { /* best-effort */ }
 
     if (deleted) {
       this.invalidateMappingCache();

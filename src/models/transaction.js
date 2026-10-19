@@ -2,7 +2,9 @@
  * Transaction Model - Data Access Layer (SQLite-backed)
  * No longer reads from or writes to data/donations.json.
  *
- * Uses an in-memory store initialised from SQLite on first access.
+ * Uses an in-memory store loaded from SQLite by Transaction.initialize(),
+ * which the server bootstrap calls after migrations have run. Requiring this
+ * module performs no database I/O.
  * All mutations are persisted to SQLite (fire-and-forget with error logging).
  * The synchronous public API is preserved for backward compatibility.
  */
@@ -27,9 +29,15 @@ const _store = new Map();
 const _idempotencyIndex = new Map();
 let _loaded = false;
 let _loading = null; // Promise<void> | null
+/** @type {Error|null} Error from the most recent failed load, if any. */
+let _loadError = null;
 
 /**
- * Persist a single record to SQLite (fire-and-forget).
+ * Persist a single record to SQLite.
+ *
+ * Returns the underlying promise so callers can await it. Failures are logged
+ * and rethrown (as DatabaseError where the driver provides one) rather than
+ * swallowed — a failed write must never be silently treated as success.
  * Stroop amounts are stored as exact integers to avoid float coercion.
  */
 function _persist(tx) {
@@ -37,16 +45,18 @@ function _persist(tx) {
   const amountStroops = Number.isInteger(tx.amount) ? tx.amount : null;
   const data = JSON.stringify(tx);
 
-  Database.run(
+  return Database.run(
     `INSERT INTO donations_store
        (id, donor, recipient, amount_stroops, amount_text, status,
-        idempotency_key, stellar_tx_id, timestamp, status_updated_at, deleted_at, data)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        idempotency_key, stellar_tx_id, timestamp, status_updated_at, deleted_at, valid_after, valid_before, data)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
      ON CONFLICT(id) DO UPDATE SET
        status = excluded.status,
        stellar_tx_id = excluded.stellar_tx_id,
        status_updated_at = excluded.status_updated_at,
        deleted_at = excluded.deleted_at,
+       valid_after = excluded.valid_after,
+       valid_before = excluded.valid_before,
        data = excluded.data`,
     [
       tx.id,
@@ -60,6 +70,8 @@ function _persist(tx) {
       tx.timestamp || new Date().toISOString(),
       tx.statusUpdatedAt || null,
       tx.deleted_at || null,
+      tx.validAfter || 0,
+      tx.validBefore || 0,
       data,
     ]
   ).catch(err => {
@@ -72,12 +84,30 @@ function _persist(tx) {
     }
 
     log.error('TRANSACTION_MODEL', 'SQLite persist failed', { id: tx.id, error: err.message });
+    throw err;
   });
 }
 
 /**
+ * Fire-and-forget wrapper around _persist() for the synchronous public API.
+ * The write still propagates its rejection to the returned promise; callers
+ * that cannot await get an unhandled-rejection-free log via this helper.
+ */
+function _persistAsync(tx) {
+  const pending = _persist(tx);
+  if (pending && typeof pending.catch === 'function') {
+    pending.catch(() => {
+      // Already logged inside _persist(); swallow only the unhandled rejection.
+    });
+  }
+  return pending;
+}
+
+/**
  * Load all records from SQLite into the in-memory store.
- * Called once lazily; subsequent calls are no-ops.
+ * Concurrent callers share one in-flight load; once loaded, calls are no-ops.
+ * A failed load leaves the store unloaded and rejects, so callers can retry
+ * and the readiness probe can report the failure.
  */
 async function _ensureLoaded() {
   if (_loaded) return;
@@ -94,13 +124,16 @@ async function _ensureLoaded() {
           if (tx.idempotencyKey) {
             _idempotencyIndex.set(tx.idempotencyKey, tx);
           }
-        } catch (_) { /* skip corrupt rows */ }
+        } catch (err) {
+          log.warn('TRANSACTION_MODEL', 'Skipping corrupt donations_store row', { error: err.message });
+        }
       }
       _loaded = true;
+      _loadError = null;
     } catch (err) {
-      // If DB isn't ready yet (e.g. first startup before migrations), start empty
-      log.warn('TRANSACTION_MODEL', 'Could not load from SQLite, starting empty', { error: err.message });
-      _loaded = true;
+      _loadError = err;
+      log.error('TRANSACTION_MODEL', 'Failed to load donations_store', { error: err.message });
+      throw err;
     } finally {
       _loading = null;
     }
@@ -109,12 +142,29 @@ async function _ensureLoaded() {
   return _loading;
 }
 
-// Kick off the load immediately so most requests find the store ready
-_ensureLoaded().catch(() => {});
-
 // ── Model class ──────────────────────────────────────────────────────────────
 
 class Transaction {
+  /**
+   * Load the in-memory store from SQLite. Must be called after migrations
+   * have created donations_store (see src/bootstrap/server.js).
+   *
+   * @returns {Promise<void>}
+   * @throws {Error} When donations_store cannot be read.
+   */
+  static async initialize() {
+    await _ensureLoaded();
+  }
+
+  /**
+   * Store initialisation status, used by the readiness probe.
+   *
+   * @returns {{ loaded: boolean, error: string|null }}
+   */
+  static getStoreStatus() {
+    return { loaded: _loaded, error: _loadError ? _loadError.message : null };
+  }
+
   /** @deprecated No longer used — retained for test compatibility only */
   static getDbPath() {
     return null;
@@ -181,13 +231,17 @@ class Transaction {
     if (newTransaction.idempotencyKey) {
       _idempotencyIndex.set(newTransaction.idempotencyKey, newTransaction);
     }
-    _persist(newTransaction);
+    _persistAsync(newTransaction);
 
     if (Array.isArray(newTransaction.tags) && newTransaction.tags.length > 0) {
       try {
         const TagService = require('../services/TagService');
-        TagService.associateTags(newTransaction.id, newTransaction.tags).catch(() => {});
-      } catch (_) {}
+        TagService.associateTags(newTransaction.id, newTransaction.tags).catch((err) => {
+          log.warn('TRANSACTION_MODEL', 'Failed to associate tags', { id: newTransaction.id, error: err.message });
+        });
+      } catch (err) {
+        log.warn('TRANSACTION_MODEL', 'TagService unavailable, tags not associated', { id: newTransaction.id, error: err.message });
+      }
     }
 
     const emitter = this.eventEmitter;
@@ -411,15 +465,43 @@ class Transaction {
   }
 
   static getByDateRange(startDate, endDate) {
-    return Array.from(_store.values()).filter(t => {
-      const txDate = new Date(t.timestamp);
-      return txDate >= startDate && txDate <= endDate;
-    });
+    // Compare numeric epoch values in a single pass instead of copying the
+    // store and allocating a Date per transaction (hot path for /stats/summary).
+    const startMs = new Date(startDate).getTime();
+    const endMs = new Date(endDate).getTime();
+    const result = [];
+    for (const t of _store.values()) {
+      const ts = t.timestamp;
+      const txMs = typeof ts === 'string' ? Date.parse(ts) : new Date(ts).getTime();
+      if (txMs >= startMs && txMs <= endMs) result.push(t);
+    }
+    return result;
   }
 
   static getAll({ includeDeleted = false } = {}) {
     const all = Array.from(_store.values());
     return includeDeleted ? all : all.filter(t => !t.deleted_at);
+  }
+
+  /**
+   * Fetch one page of transactions, stopping the scan once the page is full.
+   * Unlike getAll(), this does not copy the whole store.
+   * @param {{ limit: number, offset: number }} page - Already-clamped page bounds.
+   * @returns {Object[]} Transactions in insertion order.
+   */
+  static getPage({ limit, offset }) {
+    const page = [];
+    let skipped = 0;
+    for (const t of _store.values()) {
+      if (t.deleted_at) continue;
+      if (skipped < offset) {
+        skipped++;
+        continue;
+      }
+      page.push(t);
+      if (page.length >= limit) break;
+    }
+    return page;
   }
 
   static updateStatus(id, status, stellarData = {}) {
@@ -464,7 +546,7 @@ class Transaction {
     }
 
     _store.set(id, updated);
-    _persist(updated);
+    _persistAsync(updated);
 
     const emitter = this.eventEmitter;
     if (emitter) {
@@ -498,7 +580,7 @@ class Transaction {
     if (feeBumpData.stellarTxId !== undefined) updated.stellarTxId = feeBumpData.stellarTxId;
 
     _store.set(id, updated);
-    _persist(updated);
+    _persistAsync(updated);
     return updated;
   }
 
@@ -546,7 +628,7 @@ class Transaction {
     const updated = { ...tx, approvals };
 
     _store.set(id, updated);
-    _persist(updated);
+    _persistAsync(updated);
     return updated;
   }
 
@@ -562,7 +644,7 @@ class Transaction {
     const updated = { ...tx, matchedDonationId };
 
     _store.set(id, updated);
-    _persist(updated);
+    _persistAsync(updated);
     return updated;
   }
 
@@ -579,7 +661,7 @@ class Transaction {
     }
 
     _store.set(id, updated);
-    _persist(updated);
+    _persistAsync(updated);
     return updated;
   }
 
@@ -588,10 +670,12 @@ class Transaction {
     _store.clear();
     _idempotencyIndex.clear();
     _loaded = true;
+    _loadError = null;
     const Database = require('../utils/database');
-    Database.run('DELETE FROM donations_store').catch(err =>
-      log.error('TRANSACTION_MODEL', 'Failed to clear donations_store', { error: err.message })
-    );
+    return Database.run('DELETE FROM donations_store').catch(err => {
+      log.error('TRANSACTION_MODEL', 'Failed to clear donations_store', { error: err.message });
+      throw err;
+    });
   }
 
   /**
@@ -600,6 +684,7 @@ class Transaction {
    */
   static async _reloadFromDb() {
     _loaded = false;
+    _loadError = null;
     _store.clear();
     _idempotencyIndex.clear();
     await _ensureLoaded();

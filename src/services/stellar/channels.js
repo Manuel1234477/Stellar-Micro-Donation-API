@@ -1,6 +1,5 @@
-const StellarSdk = require('stellar-sdk');
+const StellarSdk = require('./sdk.js');
 const StellarErrorHandler = require('../../utils/stellarErrorHandler');
-const log = require('../../utils/log');
 
 class StellarChannels {
   constructor(service) {

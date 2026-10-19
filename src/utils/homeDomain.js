@@ -1,5 +1,6 @@
 const { ValidationError } = require('./errors');
 
+// eslint-disable-next-line security/detect-unsafe-regex -- anchored; repeated groups are separated by a literal delimiter, so matching is linear
 const HOME_DOMAIN_PATTERN = /^[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?(?:\.[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?)*$/;
 
 function validateHomeDomain(homeDomain, { allowEmpty = false } = {}) {

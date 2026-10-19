@@ -17,24 +17,23 @@
  *   - RSA-OAEP prevents chosen-ciphertext attacks.
  *   - Each request uses a fresh AES key + IV → no nonce reuse.
  *   - Private key never leaves the server process.
+ *
+ * All AES-256-GCM work (request bodies and field-level encryption) goes
+ * through src/utils/crypto.js (#1776). This service only adds the RSA-OAEP
+ * key transport and keeps its public API for existing callers.
  */
 
 'use strict';
 
 const crypto = require('crypto');
 const log = require('../utils/log');
+const cryptoCore = require('../utils/crypto');
 
 /** RSA key size in bits */
 const RSA_KEY_BITS = 2048;
 
 /** AES key length in bytes (256-bit) */
-const AES_KEY_BYTES = 32;
-
-/** GCM IV length in bytes (96-bit — NIST recommended) */
-const GCM_IV_BYTES = 12;
-
-/** GCM auth tag length in bytes */
-const GCM_TAG_BYTES = 16;
+const AES_KEY_BYTES = cryptoCore.KEY_BYTES;
 
 class EncryptionService {
   constructor() {
@@ -141,22 +140,12 @@ class EncryptionService {
       throw new Error(`Invalid AES key length: expected ${AES_KEY_BYTES}, got ${aesKey.length}`);
     }
 
-    // 2. Decrypt body with AES-256-GCM
-    const ivBuf = Buffer.from(iv, 'base64');
-    const tagBuf = Buffer.from(authTag, 'base64');
-    const ctBuf = Buffer.from(ciphertext, 'base64');
-
-    if (ivBuf.length !== GCM_IV_BYTES) {
-      throw new Error(`Invalid IV length: expected ${GCM_IV_BYTES}, got ${ivBuf.length}`);
-    }
-    if (tagBuf.length !== GCM_TAG_BYTES) {
-      throw new Error(`Invalid auth tag length: expected ${GCM_TAG_BYTES}, got ${tagBuf.length}`);
-    }
-
-    const decipher = crypto.createDecipheriv('aes-256-gcm', aesKey, ivBuf);
-    decipher.setAuthTag(tagBuf);
-
-    const plaintext = Buffer.concat([decipher.update(ctBuf), decipher.final()]);
+    // 2. Decrypt body with AES-256-GCM (core validates IV/tag lengths)
+    const plaintext = cryptoCore.open(aesKey, {
+      iv: Buffer.from(iv, 'base64'),
+      ciphertext: Buffer.from(ciphertext, 'base64'),
+      tag: Buffer.from(authTag, 'base64'),
+    });
     return JSON.parse(plaintext.toString('utf8'));
   }
 
@@ -173,17 +162,9 @@ class EncryptionService {
    * @returns {{ encryptedKey: string, iv: string, ciphertext: string, authTag: string }}
    */
   static encrypt(body, publicKeyPem) {
-    // 1. Generate fresh AES-256 key + 96-bit IV
-    const aesKey = crypto.randomBytes(AES_KEY_BYTES);
-    const iv = crypto.randomBytes(GCM_IV_BYTES);
-
-    // 2. Encrypt body with AES-256-GCM
-    const cipher = crypto.createCipheriv('aes-256-gcm', aesKey, iv);
-    const ciphertext = Buffer.concat([
-      cipher.update(JSON.stringify(body), 'utf8'),
-      cipher.final(),
-    ]);
-    const authTag = cipher.getAuthTag();
+    // 1-2. Fresh AES-256 key; core generates the 96-bit IV and encrypts
+    const aesKey = cryptoCore.generateKey();
+    const sealed = cryptoCore.seal(aesKey, JSON.stringify(body));
 
     // 3. Encrypt AES key with RSA-OAEP
     const encryptedKey = crypto.publicEncrypt(
@@ -197,9 +178,9 @@ class EncryptionService {
 
     return {
       encryptedKey: encryptedKey.toString('base64'),
-      iv: iv.toString('base64'),
-      ciphertext: ciphertext.toString('base64'),
-      authTag: authTag.toString('base64'),
+      iv: sealed.iv.toString('base64'),
+      ciphertext: sealed.ciphertext.toString('base64'),
+      authTag: sealed.tag.toString('base64'),
     };
   }
 
@@ -216,19 +197,14 @@ class EncryptionService {
   // ─────────────────────────────────────────────────────────────────────────
 
   /**
-   * Derive a 32-byte AES key from a versioned env var.
-   * Reads ENCRYPTION_KEY_<version> (or ENCRYPTION_KEY for version 1).
+   * Key for a field-level envelope version (shared key provider).
    *
    * @param {number} version - Key version number
    * @returns {Buffer} 32-byte key
    * @private
    */
   _getFieldKey(version) {
-    const raw = version === 1
-      ? (process.env[`ENCRYPTION_KEY_1`] || process.env.ENCRYPTION_KEY)
-      : process.env[`ENCRYPTION_KEY_${version}`];
-    if (!raw) throw new Error(`No encryption key configured for version ${version}`);
-    return crypto.createHash('sha256').update(raw).digest();
+    return cryptoCore.keyProvider.getVersionedKey(version);
   }
 
   /**
@@ -241,14 +217,7 @@ class EncryptionService {
    */
   encryptField(value, keyVersion) {
     if (value === null || value === undefined) return value;
-    const version = keyVersion || parseInt(process.env.ENCRYPTION_KEY_VERSION || '1', 10);
-    const key = this._getFieldKey(version);
-    const iv = crypto.randomBytes(GCM_IV_BYTES);
-    const cipher = crypto.createCipheriv('aes-256-gcm', key, iv);
-    let ct = cipher.update(String(value), 'utf8', 'hex');
-    ct += cipher.final('hex');
-    const tag = cipher.getAuthTag().toString('hex');
-    return `v${version}:${iv.toString('hex')}:${ct}:${tag}`;
+    return cryptoCore.encryptVersioned(String(value), keyVersion);
   }
 
   /**
@@ -262,18 +231,7 @@ class EncryptionService {
     if (ciphertext === null || ciphertext === undefined) return ciphertext;
     // Not encrypted (plaintext stored before encryption was enabled)
     if (!String(ciphertext).startsWith('v')) return ciphertext;
-    const parts = String(ciphertext).split(':');
-    if (parts.length !== 4) throw new Error('Invalid encrypted field format');
-    const version = parseInt(parts[0].slice(1), 10);
-    const key = this._getFieldKey(version);
-    const iv = Buffer.from(parts[1], 'hex');
-    const ct = parts[2];
-    const tag = Buffer.from(parts[3], 'hex');
-    const decipher = crypto.createDecipheriv('aes-256-gcm', key, iv);
-    decipher.setAuthTag(tag);
-    let plain = decipher.update(ct, 'hex', 'utf8');
-    plain += decipher.final('utf8');
-    return plain;
+    return cryptoCore.decryptVersioned(String(ciphertext));
   }
 }
 

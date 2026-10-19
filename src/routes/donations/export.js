@@ -65,6 +65,30 @@ router.get('/export/:jobId', requireApiKey, checkPermission(PERMISSIONS.ADMIN_AL
   }
 }));
 
+router.get('/export/:jobId/status', requireApiKey, checkPermission(PERMISSIONS.ADMIN_ALL), asyncHandler(async (req, res, next) => {
+  try {
+    const DonationExportService = require('../../services/DonationExportService');
+    const jobStatus = await DonationExportService.getJobStatus(req.params.jobId);
+    const normalizedStatus = jobStatus.status === 'completed' ? 'ready' : jobStatus.status;
+
+    return res.json({
+      success: true,
+      data: {
+        jobId: jobStatus.jobId,
+        status: normalizedStatus,
+        progress: jobStatus.progress,
+        downloadUrl: jobStatus.downloadUrl,
+        urlExpiresAt: jobStatus.urlExpiresAt,
+        error: jobStatus.error,
+        createdAt: jobStatus.createdAt,
+        updatedAt: jobStatus.updatedAt,
+      },
+    });
+  } catch (error) {
+    next(error);
+  }
+}));
+
 // ─── GET /donations/export/:jobId/download ────────────────────────────────────
 
 /**

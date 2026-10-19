@@ -11,6 +11,7 @@
 'use strict';
 
 const log = require('../utils/log');
+const timerRegistry = require('../utils/timerRegistry');
 const { runWithAbortController } = require('../utils/abortContext');
 
 /**
@@ -55,21 +56,21 @@ function requestTimeout(ms = TIMEOUTS.default) {
     req.abortController = controller;
     const startTime = Date.now();
 
-    const timer = setTimeout(() => {
+    const timer = timerRegistry.createTimeout(() => {
       // Abort in-flight requests (Horizon, fetch, etc.)
       try {
         controller.abort();
-      } catch (_) {}
+      } catch (_) { /* best-effort */ }
 
       // Roll back in-flight DB transaction if one exists
       if (req.dbTransaction && typeof req.dbTransaction.rollback === 'function') {
         try {
           req.dbTransaction.rollback();
-        } catch (_) {}
+        } catch (_) { /* best-effort */ }
       } else if (req.transaction && typeof req.transaction.rollback === 'function') {
         try {
           req.transaction.rollback();
-        } catch (_) {}
+        } catch (_) { /* best-effort */ }
       }
 
       const elapsed = Date.now() - startTime;
@@ -98,8 +99,8 @@ function requestTimeout(ms = TIMEOUTS.default) {
     }, ms);
 
     // Clear the timer as soon as the response is finished.
-    res.on('finish', () => clearTimeout(timer));
-    res.on('close', () => clearTimeout(timer));
+    res.on('finish', () => timer.clear());
+    res.on('close', () => timer.clear());
 
     runWithAbortController(controller, () => next());
   };
