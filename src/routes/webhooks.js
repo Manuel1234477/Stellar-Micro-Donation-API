@@ -45,6 +45,8 @@ function verifyWebhookSignature(getSecret) {
       });
     }
 
+    // #1929: rawBody is now a Buffer (or absent). crypto.createHmac works with
+    // both strings and Buffers, so this is backward-compatible.
     const expected = Buffer.from(`sha256=${crypto.createHmac('sha256', secret).update(rawBody).digest('hex')}`);
     const received = Buffer.from(header);
 
@@ -59,6 +61,10 @@ function verifyWebhookSignature(getSecret) {
         error: { code: 'INVALID_WEBHOOK_SIGNATURE', message: 'Invalid webhook signature' },
       });
     }
+
+    // #1929: Delete the raw body buffer after verification so it does not
+    // persist for the entire request lifetime (memory + secret exposure).
+    delete req.rawBody;
 
     next();
   });

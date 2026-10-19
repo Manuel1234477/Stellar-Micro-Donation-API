@@ -66,7 +66,8 @@
     "scan:container:all": "bash scripts/scan-container.sh --severity CRITICAL,HIGH,MEDIUM,LOW",
     "scan:container:json": "bash scripts/scan-container.sh --format json --output trivy-results.json",
     "check:isolation": "node scripts/check-test-isolation.js",
-    "test:ci": "npm run check:isolation && jest --ci --maxWorkers=2"
+    "test:ci": "npm run check:isolation && jest --ci --maxWorkers=2",
+    "boot-guard": "node scripts/boot-guard.js"
   },
   "dependencies": {
     "@opentelemetry/api": "^1.9.0",
