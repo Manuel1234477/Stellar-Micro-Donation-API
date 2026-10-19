@@ -66,6 +66,7 @@
     "scan:container:all": "bash scripts/scan-container.sh --severity CRITICAL,HIGH,MEDIUM,LOW",
     "scan:container:json": "bash scripts/scan-container.sh --format json --output trivy-results.json",
     "check:isolation": "node scripts/check-test-isolation.js",
+    "check:orphans": "node scripts/check-src-orphans.js",
     "test:ci": "npm run check:isolation && jest --ci --maxWorkers=2"
   },
   "dependencies": {
