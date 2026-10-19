@@ -14,6 +14,9 @@ spec:
     spec:
       # Includes the 5-second preStop hook, the application's
       # 30-second shutdown budget, and a 5-second buffer.
+
+       # Includes the 5-second preStop hook, the application's
+      # 30-second shutdown budget, and a 5-second buffer.
       terminationGracePeriodSeconds: 40
 
       containers:
