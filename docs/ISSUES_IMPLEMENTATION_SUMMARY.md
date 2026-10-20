@@ -120,7 +120,7 @@ SMTP_PASSWORD=password
 
 **Files Modified**:
 - `src/utils/errorResponseFormatter.js` (NEW)
-- `tests/misc/error-response-standardization.test.js` (NEW)
+- `tests/utils/error-response-standardization.test.js` (NEW)
 
 **Changes**:
 1. Created canonical error envelope: `{ error: { code, message, details, requestId, timestamp } }`
@@ -176,7 +176,7 @@ npm test
 npm test -- tests/security/constant-time-comparison.test.js
 npm test -- tests/stellar/stellar-sequence-manager.test.js
 npm test -- tests/webhooks/webhook-email-notifications.test.js
-npm test -- tests/misc/error-response-standardization.test.js
+npm test -- tests/utils/error-response-standardization.test.js
 ```
 
 ## Files Summary
@@ -192,7 +192,7 @@ npm test -- tests/misc/error-response-standardization.test.js
 | `tests/security/constant-time-comparison.test.js` | NEW | 145 | API key comparison tests |
 | `tests/stellar/stellar-sequence-manager.test.js` | NEW | 243 | Sequence manager tests |
 | `tests/webhooks/webhook-email-notifications.test.js` | NEW | 263 | Email notification tests |
-| `tests/misc/error-response-standardization.test.js` | NEW | 325 | Error response tests |
+| `tests/utils/error-response-standardization.test.js` | NEW | 325 | Error response tests |
 
 **Total**: 10 files, 2,197 lines of code + tests
 

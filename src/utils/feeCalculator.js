@@ -1,3 +1,5 @@
+// @ts-check
+
 /**
  * Fee Calculator Utility
  *

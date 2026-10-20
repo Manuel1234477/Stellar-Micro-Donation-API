@@ -17,6 +17,7 @@
 const timerRegistry = require('../utils/timerRegistry');
 const WebhookService = require('./WebhookService');
 const log = require('../utils/log');
+const { toStroops } = require('../utils/money');
 
 const DEFAULT_CHECK_INTERVAL_MS = 5 * 60 * 1000; // 5 minutes
 const DEFAULT_ALERT_THRESHOLD_XLM = 10;
@@ -102,18 +103,19 @@ class ServiceAccountBalanceMonitor {
 
     try {
       const { balance } = await this._stellar.getBalance(this.accountId);
-      const balanceXlm = parseFloat(balance);
+      const balanceXlm = Number(balance);
+      const balanceStroops = toStroops(String(balance));
       this.lastBalance = balanceXlm;
       this.lastCheckedAt = new Date().toISOString();
       this.lastError = null;
 
-      if (balanceXlm < this.criticalThresholdXlm) {
+      if (balanceStroops < toStroops(String(this.criticalThresholdXlm))) {
         await this._handleCritical(balanceXlm);
       } else {
         await this._handleCriticalRecovery(balanceXlm);
       }
 
-      if (balanceXlm < this.alertThresholdXlm) {
+      if (balanceStroops < toStroops(String(this.alertThresholdXlm))) {
         await this._handleAlert(balanceXlm);
       } else {
         this._alertActive = false;

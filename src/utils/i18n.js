@@ -89,6 +89,7 @@ const MESSAGES = {
   MISSING_REQUIRED_FIELD: { en: 'Missing required field',                 es: 'Campo obligatorio faltante',             fr: 'Champ obligatoire manquant',                       pt: 'Campo obrigatório ausente' },
   IDEMPOTENCY_KEY_REQUIRED:{ en: 'Idempotency key is required',           es: 'Se requiere clave de idempotencia',      fr: 'Clé d\'idempotence requise',                       pt: 'Chave de idempotência obrigatória' },
   INVALID_SCHEMA_VERSION: { en: 'Invalid schema version',                 es: 'Versión de esquema inválida',            fr: 'Version de schéma invalide',                       pt: 'Versão de esquema inválida' },
+  SSRF_BLOCKED:           { en: 'Request target is not allowed',         es: 'El destino de la solicitud no está permitido', fr: 'La cible de la requête n\'est pas autorisée', pt: 'O destino da solicitação não é permitido' },
 
   // ── Field-level validation errors (src/utils/validationErrorFormatter.js) ──
   MISSING_AMOUNT:          { en: 'amount is required',                    es: 'el monto es obligatorio',                fr: 'le montant est requis',                            pt: 'o valor é obrigatório' },
@@ -113,6 +114,7 @@ const MESSAGES = {
   FORBIDDEN:                { en: 'Forbidden',                            es: 'Prohibido',                              fr: 'Interdit',                                         pt: 'Proibido' },
   INSUFFICIENT_PERMISSIONS: { en: 'Insufficient permissions',             es: 'Permisos insuficientes',                 fr: 'Permissions insuffisantes',                        pt: 'Permissões insuficientes' },
   INVALID_API_KEY:          { en: 'Invalid API key',                      es: 'Clave de API inválida',                  fr: 'Clé API invalide',                                 pt: 'Chave de API inválida' },
+  SEP10_REPLAY_DETECTED:    { en: 'SEP-10 challenge replay detected',     es: 'Se detectó la repetición de un desafío SEP-10', fr: 'Rejeu du défi SEP-10 détecté',                  pt: 'Repetição do desafio SEP-10 detectada' },
 
   // ── Not found errors ─────────────────────────────────────────────────────
   NOT_FOUND:             { en: 'Resource not found',                      es: 'Recurso no encontrado',                  fr: 'Ressource introuvable',                            pt: 'Recurso não encontrado' },
@@ -149,8 +151,12 @@ const MESSAGES = {
   RECIPIENT_NOT_IN_POOL:      { en: 'Recipient not in pool',              es: 'El destinatario no está en el grupo',    fr: 'Destinataire absent du pool',                      pt: 'Destinatário não está no pool' },
   DONOR_COORDINATES_REQUIRED: { en: 'Donor coordinates are required',     es: 'Se requieren coordenadas del donante',   fr: 'Les coordonnées du donneur sont requises',         pt: 'Coordenadas do doador são obrigatórias' },
   NO_ELIGIBLE_RECIPIENTS:     { en: 'No eligible recipients found',       es: 'No se encontraron destinatarios elegibles', fr: 'Aucun destinataire éligible trouvé',            pt: 'Nenhum destinatário elegível encontrado' },
-  NO_ACTIVE_CAMPAIGNS:        { en: 'No active campaigns found',          es: 'No se encontraron campañas activas',     fr: 'Aucune campagne active trouvée',                   pt: 'Nenhuma campanha ativa encontrada' },
+    NO_ACTIVE_CAMPAIGNS:        { en: 'No active campaigns found',          es: 'No se encontraron campañas activas',     fr: 'Aucune campagne active trouvée',                   pt: 'Nenhuma campanha ativa encontrada' },
   RECIPIENT_ACCOUNT_NOT_FOUND:{ en: 'Recipient account not found',        es: 'Cuenta del destinatario no encontrada',  fr: 'Compte du destinataire introuvable',               pt: 'Conta do destinatário não encontrada' },
+  DONATION_APPROVAL_EXPIRED:   { en: 'Donation approval has expired',      es: 'La aprobación de la donación ha caducado', fr: 'L\'approbation du don a expiré',                  pt: 'A aprovação da doação expirou' },
+  DONATION_ALREADY_APPROVED_BY_SIGNER: { en: 'Signer has already approved this donation', es: 'El firmante ya aprobó esta donación', fr: 'Le signataire a déjà approuvé ce don', pt: 'O signatário já aprovou esta doação' },
+  INSUFFICIENT_BALANCE_AFTER_RESERVE: { en: 'Insufficient balance after reserve and fees', es: 'Saldo insuficiente después de la reserva y las tarifas', fr: 'Solde insuffisant après réserve et frais', pt: 'Saldo insuficiente após reserva e taxas' },
+  MISSING_SECRET_KEY:          { en: 'Secret key is required',             es: 'Se requiere la clave secreta',            fr: 'La clé secrète est requise',                        pt: 'A chave secreta é obrigatória' },
 
   // ── Rate limiting errors ─────────────────────────────────────────────────
   RATE_LIMIT_EXCEEDED: { en: 'Rate limit exceeded',                       es: 'Límite de tasa excedido',                fr: 'Limite de débit dépassée',                         pt: 'Limite de taxa excedido' },

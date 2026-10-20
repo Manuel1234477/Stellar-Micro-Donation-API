@@ -37,15 +37,8 @@ const STRICT = process.argv.includes('--strict');
 // When you migrate a call site to money.js, lower or remove its entry.
 /* eslint-disable no-secrets/no-secrets -- keys are file paths and field names */
 const KNOWN_FLOAT_MONEY = new Map([
-  ['src/models/transaction.js::amountMin', 1],
-  ['src/models/transaction.js::amountMax', 1],
-  ['src/routes/donations/create.js::amount', 1],
-  ['src/routes/donations/query.js::minAmount', 3],
-  ['src/routes/donations/query.js::maxAmount', 3],
   ['src/routes/transaction.js::amountMin', 1],
   ['src/routes/transaction.js::amountMax', 1],
-  ['src/services/AccountMonitorService.js::balance', 1],
-  ['src/services/CorporateMatchingService.js::matchAmount', 1],
   ['src/services/DonationService.js::donation', 1],
   ['src/services/DonationService.js::amount', 4],
   ['src/services/DonationService.js::minAmount', 1],
@@ -55,8 +48,6 @@ const KNOWN_FLOAT_MONEY = new Map([
   ['src/services/LiquidityPoolService.js::minPrice', 1],
   ['src/services/LiquidityPoolService.js::maxPrice', 1],
   ['src/services/LiquidityPoolService.js::amount', 1],
-  ['src/services/MatchingProgramService.js::matchAmount', 1],
-  ['src/services/ServiceAccountBalanceMonitor.js::balance', 1],
   ['src/services/SubscriptionTierService.js::amount', 1],
   ['src/services/WalletService.js::balanceData', 1],
   ['src/services/stellar/accounts.js::nativeBalance', 1],
@@ -67,7 +58,6 @@ const KNOWN_FLOAT_MONEY = new Map([
   ['src/services/stellar/payments.js::resolvedDestAmount', 1],
   ['src/services/stellar/payments.js::minDestAmount', 1],
   ['src/services/stellar/payments.js::maxSendAmount', 1],
-  ['src/utils/costBreakdown.js::amount', 1],
 ]);
 /* eslint-enable no-secrets/no-secrets */
 
@@ -203,7 +193,7 @@ function scanFile(filePath) {
           type: 'parseFloat_on_monetary',
           varName: v.varName,
           code: line.trim(),
-          message: `parseFloat() on monetary field "${v.varName}" — use money.js utility instead`,
+          message: `parseFloat() on monetary field "${v.varName}" — use toStroops()/fromStroops() and BigInt comparisons (docs/adr/004-money-as-stroops.md)`,
         });
       }
     }

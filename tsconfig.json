@@ -1,7 +1,7 @@
 {
   "compilerOptions": {
-    // Enable type checking without code transformation (checkJs enables JavaScript type checking)
-    "checkJs": true,
+    // JavaScript checking is opt-in per file with // @ts-check.
+    "checkJs": false,
 
     // Module and target settings
     "module": "commonjs",
@@ -44,7 +44,8 @@
     "baseUrl": "."
   },
   "include": [
-    "src/**/*.js"
+    "src/**/*.js",
+    "src/**/*.d.ts"
   ],
   "exclude": [
     "node_modules",

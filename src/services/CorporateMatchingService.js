@@ -19,6 +19,7 @@
 const Database = require('../utils/database');
 const { ValidationError, NotFoundError, ERROR_CODES } = require('../utils/errors');
 const log = require('../utils/log');
+const { toStroops, fromStroops } = require('../utils/money');
 
 class CorporateMatchingService {
   // ─── Program management ─────────────────────────────────────────────────────
@@ -253,15 +254,17 @@ class CorporateMatchingService {
   /** @private */
   static async _matchSingleProgram(program, donationId, amount, senderId) {
     const year = new Date().getFullYear();
-    const rawMatch = amount * program.match_ratio;
+    const rawMatchStroops = toStroops(String(amount)) * toStroops(String(program.match_ratio)) / 10_000_000n;
 
     const alreadyMatched = await this._getEmployeeYearlyMatched(program.id, senderId, year);
-    const employeeRemaining = program.per_employee_limit - alreadyMatched;
-    if (employeeRemaining <= 0) return null;
+    const employeeRemainingStroops = toStroops(String(program.per_employee_limit)) - toStroops(String(alreadyMatched));
+    const programRemainingStroops = toStroops(String(program.remaining_total_limit));
+    if (employeeRemainingStroops <= 0n) return null;
 
-    let matchAmount = Math.min(rawMatch, employeeRemaining, program.remaining_total_limit);
-    matchAmount = parseFloat(matchAmount.toFixed(7));
-    if (matchAmount <= 0) return null;
+    const matchStroops = [rawMatchStroops, employeeRemainingStroops, programRemainingStroops]
+      .reduce((minimum, value) => value < minimum ? value : minimum);
+    if (matchStroops <= 0n) return null;
+    const matchAmount = fromStroops(matchStroops);
 
     const [sponsor, employee] = await Promise.all([
       Database.get('SELECT id, publicKey, encryptedSecret FROM users WHERE id = ?', [program.sponsor_id]),
@@ -271,13 +274,16 @@ class CorporateMatchingService {
 
     // Atomic cap enforcement + bookkeeping for this program.
     let linkRowId;
+    let newRemainingStroops;
     await Database.runTransaction(async (tx) => {
       const fresh = await tx.get('SELECT remaining_total_limit FROM corporate_matching WHERE id = ?', [program.id]);
-      if (!fresh || fresh.remaining_total_limit < matchAmount) {
+      const freshRemainingStroops = fresh ? toStroops(String(fresh.remaining_total_limit)) : 0n;
+      if (!fresh || freshRemainingStroops < matchStroops) {
         throw new ValidationError(`Per-program match cap exceeded for program ${program.id}`, null, ERROR_CODES.VALIDATION_ERROR);
       }
 
-      const newRemaining = parseFloat((fresh.remaining_total_limit - matchAmount).toFixed(7));
+      newRemainingStroops = freshRemainingStroops - matchStroops;
+      const newRemaining = fromStroops(newRemainingStroops);
       await tx.run(
         `UPDATE corporate_matching SET remaining_total_limit = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?`,
         [newRemaining, program.id]
@@ -301,7 +307,7 @@ class CorporateMatchingService {
       );
       linkRowId = insertResult.id;
 
-      if (newRemaining <= 0) {
+      if (newRemainingStroops <= 0n) {
         await tx.run(`UPDATE corporate_matching SET status = 'exhausted', updated_at = CURRENT_TIMESTAMP WHERE id = ?`, [program.id]);
       }
     });
@@ -426,7 +432,13 @@ class CorporateMatchingService {
   static async getUtilization(id) {
     const program = await this.getById(id);
     const activity = await this.getMatchingActivity({ programId: id });
-    const totalMatched = parseFloat((program.total_limit - program.remaining_total_limit).toFixed(7));
+    const totalLimitStroops = toStroops(String(program.total_limit));
+    const remainingStroops = toStroops(String(program.remaining_total_limit));
+    const totalMatchedStroops = totalLimitStroops - remainingStroops;
+    const totalMatched = fromStroops(totalMatchedStroops);
+    const utilizationPercentage = totalLimitStroops > 0n
+      ? Number(totalMatchedStroops * 10_000n / totalLimitStroops) / 100
+      : 0;
 
     return {
       program_id: id,
@@ -436,7 +448,7 @@ class CorporateMatchingService {
       total_limit: program.total_limit,
       remaining_total_limit: program.remaining_total_limit,
       total_matched: totalMatched,
-      utilization_percentage: parseFloat(((totalMatched / program.total_limit) * 100).toFixed(2)),
+      utilization_percentage: utilizationPercentage,
       matching_donations_count: activity.length,
       status: program.status,
     };

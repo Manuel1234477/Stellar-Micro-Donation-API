@@ -1,7 +1,7 @@
 /**
  * Tests: cross-suite state leakage checker (#1585)
  *
- * Complements tests/misc/isolation.test.js, which verifies the RUNTIME helpers
+ * Complements tests/integration/isolation.test.js, which verifies the RUNTIME helpers
  * that reset state between tests. This suite covers the STATIC gate that finds
  * leakage those helpers cannot reach: two suites claiming the same fixture id,
  * or one suite overriding a worker-wide env value and never restoring it.

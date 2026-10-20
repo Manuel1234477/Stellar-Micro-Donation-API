@@ -277,7 +277,7 @@ HTTP Request
 
 ### Existing Tests (Should Pass)
 - `tests/utils/structured-logging-log-levels-and-o.test.js` - Logging tests
-- `tests/misc/correlation.test.js` - Correlation tests
+- `tests/tracing/correlation.test.js` - Correlation tests
 - `tests/middleware/requestId-correlation.test.js` - Request ID tests
 - `tests/tracing/distributed-tracing.test.js` - Tracing tests
 - `tests/tracing/distributed-tracing-opentelemetry.test.js` - OpenTelemetry tests
