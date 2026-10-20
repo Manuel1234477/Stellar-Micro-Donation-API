@@ -12,9 +12,12 @@ High line coverage only proves code ran—not that assertions would catch a real
 
 Stryker is configured via `stryker.conf.json` and targets critical modules:
 
-- `src/utils/money.js` - Financial calculations (stroop arithmetic, ADR-004)
+- `src/utils/money.js` and `src/utils/feeCalculator.js` - Financial calculations
 - `src/utils/validators.js` - Input validation
 - `src/utils/transactionStateMachine.js` - State transitions
+- `src/middleware/apiKey.js`, `src/middleware/rbac.js`,
+  `src/middleware/idempotency.js`, and `src/config/permissionMatrix.js` -
+  authentication and authorization
 
 ### Running Mutation Tests
 
@@ -134,14 +137,16 @@ npm run mutation:test
 
 ## CI Integration
 
-**Non-blocking initially**: Mutation tests run weekly (Mondays 03:00 UTC) via
+Mutation tests run weekly (Mondays 03:00 UTC) via
 `.github/workflows/mutation-weekly.yml`, and can be started manually from the
-Actions tab (`workflow_dispatch`). They do not block merge. The HTML and JSON
-reports from `reports/mutation/` are uploaded as the `mutation-report` artifact
-and kept for 30 days. The workflow installs Stryker with `npm install --no-save`,
-so it is not part of `package.json`.
+Actions tab (`workflow_dispatch`). The HTML and JSON reports from
+`reports/mutation/` are uploaded as the `mutation-report` artifact and kept for
+30 days. The workflow installs Stryker with `npm install --no-save`, so it is
+not part of `package.json`. The configured break threshold is 60%; the workflow
+fails when the mutation score falls below it.
 
-Once the baseline stabilizes (85%+), consider gating on mutation score to prevent regression.
+The 60% break threshold is the initial regression baseline. Raise it as the
+critical modules gain stronger mutation coverage.
 
 ### Future: CI Gating
 

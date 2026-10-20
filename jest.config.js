@@ -30,10 +30,39 @@ module.exports = {
   collectCoverageFrom: [
     'src/**/*.js',
     '!src/scripts/**',
-    '!src/config/**',
   ],
   coverageReporters: ['text', 'text-summary', 'lcov', 'html', 'json-summary'],
   coverageThreshold: {
+    './src/middleware/apiKey.js': {
+      branches: 90,
+      functions: 90,
+      lines: 90,
+      statements: 90,
+    },
+    './src/middleware/rbac.js': {
+      branches: 90,
+      functions: 90,
+      lines: 90,
+      statements: 90,
+    },
+    './src/middleware/idempotency.js': {
+      branches: 90,
+      functions: 90,
+      lines: 90,
+      statements: 90,
+    },
+    './src/utils/money.js': {
+      branches: 90,
+      functions: 90,
+      lines: 90,
+      statements: 90,
+    },
+    './src/utils/feeCalculator.js': {
+      branches: 90,
+      functions: 90,
+      lines: 90,
+      statements: 90,
+    },
     global: {
       branches: 80,
       functions: 80,

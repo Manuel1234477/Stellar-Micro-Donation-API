@@ -115,6 +115,9 @@ class AbuseDetectionService {
       new VelocityDetector(this),
       new AnomalyDetector(this)
     ];
+    this.trackedIPs = new Set();
+    this.failureTracking = new Set();
+    this.suspiciousIPs = new Set();
 
     this.ensureDbDir();
     this.startCleanup();
@@ -187,6 +190,7 @@ class AbuseDetectionService {
         continue;
       }
       if (result && result.suspicious) {
+        this.suspiciousIPs.add(ip);
         log.warn('ABUSE_DETECTION', 'Suspicious event tracked', {
           ip,
           detector: detector.name,
@@ -196,6 +200,31 @@ class AbuseDetectionService {
       }
     }
     return false;
+  }
+
+  async trackRequest(ip) {
+    if (!ip) return false;
+    this.trackedIPs.add(ip);
+    return this.trackSuspicious(ip);
+  }
+
+  async trackFailure(ip, reason) {
+    if (!ip) return false;
+    this.failureTracking.add(ip);
+    return this.trackSuspicious(ip, { pattern: reason });
+  }
+
+  async isSuspicious(ip) {
+    return this.suspiciousIPs.has(ip) || this.isBlocked(ip);
+  }
+
+  getStats() {
+    return {
+      suspiciousIPs: this.suspiciousIPs.size,
+      trackedIPs: this.trackedIPs.size,
+      failureTracking: this.failureTracking.size,
+      sharedStore: Boolean(getRateLimitStore())
+    };
   }
 
   /**
@@ -301,3 +330,4 @@ class AbuseDetectionService {
 const abuseDetectionService = new AbuseDetectionService();
 
 module.exports = abuseDetectionService;
+module.exports.AbuseDetectionService = AbuseDetectionService;

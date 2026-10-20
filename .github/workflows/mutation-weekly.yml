@@ -1,8 +1,8 @@
 name: Mutation Testing (weekly)
 
-# Weekly Stryker run on the critical money / validation / state-machine modules
-# listed in stryker.conf.json. Non-blocking: results are published as an
-# artifact for review. See docs/testing/MUTATION_TESTING_GUIDE.md. Refs #1790.
+# Weekly Stryker run on the critical money, validation, state-machine, and auth
+# modules listed in stryker.conf.json. Enforces its 60% break threshold and
+# publishes the report artifact. See docs/testing/MUTATION_TESTING_GUIDE.md.
 
 on:
   schedule:
