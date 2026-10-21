@@ -22,6 +22,7 @@ const asyncHandler = require('../utils/asyncHandler');
 const { payloadSizeLimiter, ENDPOINT_LIMITS } = require('../middleware/payloadSizeLimiter');
 // Counts through the shared rate limit store (#1777)
 const { sharedRateLimit } = require('../middleware/rateLimiter');
+const Database = require('../utils/database');
 
 // ── Annual summary rate limiter ───────────────────────────────────────────────
 // PDF generation is CPU-intensive; restrict to 10 requests per 15 minutes per IP
@@ -41,16 +42,19 @@ const annualSummaryRateLimiter = sharedRateLimit({
 });
 
 // ── Sequential receipt counter ────────────────────────────────────────────────
-let _receiptSequence = 0;
 
 /**
- * Generate a unique, sequential receipt number.
+ * Generate a unique, sequential receipt number backed by the database.
  * @param {string|number} donationId
- * @returns {string} e.g. "RCP-000042"
+ * @returns {Promise<string>} e.g. "RCP-000042-<id>"
  */
-function _nextReceiptNumber(donationId) {
-  _receiptSequence += 1;
-  return `RCP-${String(_receiptSequence).padStart(6, '0')}-${donationId}`;
+async function _nextReceiptNumber(donationId) {
+  const row = await Database.get(
+    `UPDATE receipt_sequence SET seq = seq + 1 WHERE id = 1 RETURNING seq`
+  );
+  // Fallback for SQLite versions that don't support RETURNING
+  const seq = row ? row.seq : (await Database.get('SELECT seq FROM receipt_sequence WHERE id = 1')).seq;
+  return `RCP-${String(seq).padStart(6, '0')}-${donationId}`;
 }
 
 /**
@@ -68,10 +72,6 @@ async function _getUsdRate() {
     return null;
   }
 }
-
-// In-memory receipt generation log (keyed by donation ID)
-// Stores { generatedAt: ISO string, emailedTo: string|null }
-const receiptLog = new Map();
 
 /**
  * GET /donations/annual-summary
@@ -173,7 +173,11 @@ router.post('/:id/receipt', requireApiKey, checkPermission(PERMISSIONS.DONATIONS
 
     // Record receipt generation
     const generatedAt = new Date().toISOString();
-    receiptLog.set(id, { generatedAt, emailedTo: email || null });
+    await Database.run(
+      `INSERT OR REPLACE INTO receipt_log (donation_id, generated_at, emailed_to)
+       VALUES (?, ?, ?)`,
+      [id, generatedAt, email || null]
+    );
 
     // Optionally send email
     let emailResult = null;
@@ -219,7 +223,7 @@ router.post('/:id/receipt', requireApiKey, checkPermission(PERMISSIONS.DONATIONS
  * GET /donations/:id/receipt/status
  * Returns whether a receipt has been generated for this donation.
  */
-router.get('/:id/receipt/status', requireApiKey, checkPermission(PERMISSIONS.DONATIONS_READ), (req, res, next) => {
+router.get('/:id/receipt/status', requireApiKey, checkPermission(PERMISSIONS.DONATIONS_READ), asyncHandler(async (req, res, next) => {
   try {
     const { id } = req.params;
 
@@ -228,22 +232,22 @@ router.get('/:id/receipt/status', requireApiKey, checkPermission(PERMISSIONS.DON
       throw new NotFoundError('Donation not found', ERROR_CODES.DONATION_NOT_FOUND);
     }
 
-    const entry = receiptLog.get(id);
+    const entry = await Database.get(
+      'SELECT generated_at, emailed_to FROM receipt_log WHERE donation_id = ?',
+      [id]
+    );
     res.json({
       success: true,
       data: {
         donationId: id,
         generated: !!entry,
-        generatedAt: entry ? entry.generatedAt : null,
-        emailedTo: entry ? entry.emailedTo : null,
+        generatedAt: entry ? entry.generated_at : null,
+        emailedTo: entry ? entry.emailed_to : null,
       },
     });
   } catch (err) {
     next(err);
   }
-});
-
-// Expose receiptLog for testing
-router._receiptLog = receiptLog;
+}));
 
 module.exports = router;

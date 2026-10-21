@@ -21,17 +21,40 @@ const router = express.Router();
 const log = require('../utils/log');
 const config = require('../config');
 const { resolveSep10SigningSecret } = require('../utils/sep10SigningKey');
+const Database = require('../utils/database');
 
 /**
- * In-memory federation registry: name (lowercase) → { account_id, memo_type?, memo? }
- * Populated via FEDERATION_RECORDS env var (JSON) or programmatically.
- *
- * Env var format (example): FEDERATION_RECORDS with JSON value
- * eslint-disable-next-line no-secrets/no-secrets
+ * Seed federation records from FEDERATION_RECORDS env var into the database.
+ * Each record is inserted with INSERT OR IGNORE so existing entries are preserved.
+ * Exported so tests can call it after seeding the in-memory env.
  */
-const federationRegistry = new Map();
+async function seedFederationRecordsFromEnv() {
+  try {
+    const raw = process.env.FEDERATION_RECORDS;
+    if (!raw) return;
+    const parsed = JSON.parse(raw);
+    for (const [name, value] of Object.entries(parsed)) {
+      const entry = typeof value === 'string' ? { account_id: value } : value;
+      await Database.run(
+        `INSERT OR IGNORE INTO federation_records (name, account_id, memo_type, memo)
+         VALUES (?, ?, ?, ?)`,
+        [
+          name.toLowerCase(),
+          entry.account_id,
+          entry.memo_type || null,
+          entry.memo || null,
+        ]
+      );
+    }
+  } catch (_) { /* invalid JSON or DB not ready — ignore */ }
+}
 
-// Seed from environment variable if provided
+// Seed on module load (best-effort; errors are swallowed)
+seedFederationRecordsFromEnv().catch(() => {});
+
+// Keep a backward-compatible in-memory Map for modules that import federationRegistry directly.
+// It is populated from the env var for compatibility but the GET /federation route reads from the DB.
+const federationRegistry = new Map();
 try {
   const raw = process.env.FEDERATION_RECORDS;
   if (raw) {
@@ -129,7 +152,7 @@ router.get('/.well-known/stellar.toml', (req, res) => {
  *   q    - federation address (name*domain) or account ID
  *   type - "name" | "id" (only "name" is implemented)
  */
-router.get('/federation', (req, res) => {
+router.get('/federation', async (req, res) => {
   const { q, type } = req.query;
 
   if (!q || !type) {
@@ -153,7 +176,10 @@ router.get('/federation', (req, res) => {
   }
 
   const name = q.slice(0, atIndex).toLowerCase();
-  const entry = federationRegistry.get(name);
+  const entry = await Database.get(
+    'SELECT account_id, memo_type, memo FROM federation_records WHERE name = ?',
+    [name]
+  );
 
   if (!entry) {
     log.debug('FEDERATION_SERVER', 'Address not found', { q });

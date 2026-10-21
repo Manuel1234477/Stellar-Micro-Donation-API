@@ -21,11 +21,9 @@ const { ValidationError } = require('../utils/errors');
 const { getStellarService } = require('../config/stellar');
 const { validateLimit } = require('../utils/pagination');
 
-const stellarService = getStellarService();
+const Database = require('../utils/database');
 
-// In-memory offer store (maps offerId -> offer metadata for listing)
-// In production this would be persisted to the database.
-const offerStore = new Map();
+const stellarService = getStellarService();
 
 /**
  * Parse asset string into a normalised form.
@@ -68,17 +66,21 @@ router.post('/', requireApiKey, checkPermission(PERMISSIONS.DONATIONS_CREATE), p
     const result = await stellarService.submitSignedTransaction(signedXDR);
 
     // Persist metadata for listing
-    offerStore.set(result.offerId, {
-      id: result.offerId,
-      sellingAsset: normSelling,
-      buyingAsset: normBuying,
-      amount: amount.toString(),
-      price: price.toString(),
-      transactionId: result.transactionId,
-      ledger: result.ledger,
-      createdAt: new Date().toISOString(),
-      status: 'active',
-    });
+    await Database.run(
+      `INSERT OR REPLACE INTO offers
+         (id, selling_asset, buying_asset, amount, price, transaction_id, ledger, status, created_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, 'active', ?)`,
+      [
+        String(result.offerId),
+        normSelling,
+        normBuying,
+        amount.toString(),
+        price.toString(),
+        result.transactionId,
+        result.ledger,
+        new Date().toISOString(),
+      ]
+    );
 
     return res.status(201).json({ success: true, data: result });
   } catch (err) {
@@ -89,12 +91,26 @@ router.post('/', requireApiKey, checkPermission(PERMISSIONS.DONATIONS_CREATE), p
 
 /**
  * GET /offers
- * List all active offers (from in-memory store).
+ * List all active offers (from the database).
  */
-router.get('/', requireApiKey, checkPermission(PERMISSIONS.DONATIONS_READ), (req, res) => {
-  const offers = Array.from(offerStore.values()).filter(o => o.status === 'active');
+router.get('/', requireApiKey, checkPermission(PERMISSIONS.DONATIONS_READ), asyncHandler(async (req, res) => {
+  const rows = await Database.query(
+    `SELECT id, selling_asset, buying_asset, amount, price, transaction_id, ledger, status, created_at
+     FROM offers WHERE status = 'active'`
+  );
+  const offers = rows.map(r => ({
+    id: r.id,
+    sellingAsset: r.selling_asset,
+    buyingAsset: r.buying_asset,
+    amount: r.amount,
+    price: r.price,
+    transactionId: r.transaction_id,
+    ledger: r.ledger,
+    createdAt: r.created_at,
+    status: r.status,
+  }));
   return res.status(200).json({ success: true, data: offers });
-});
+}));
 
 /**
  * DELETE /offers/:id
@@ -118,8 +134,10 @@ router.delete('/:id', requireApiKey, checkPermission(PERMISSIONS.DONATIONS_CREAT
 
     const result = await stellarService.submitSignedTransaction(signedXDR);
 
-    const stored = offerStore.get(offerId);
-    if (stored) stored.status = 'cancelled';
+    await Database.run(
+      `UPDATE offers SET status = 'cancelled' WHERE id = ?`,
+      [String(offerId)]
+    );
 
     return res.status(200).json({ success: true, data: result });
   } catch (err) {
@@ -160,8 +178,5 @@ router.get('/orderbook/:baseAsset/:counterAsset', requireApiKey, checkPermission
     return res.status(status).json({ success: false, error: { code: err.errorCode || 'ORDERBOOK_FAILED', message: clientErrorMessage('OFFERS', err, status) } });
   }
 }));
-
-// Expose store for testing
-router._offerStore = offerStore;
 
 module.exports = router;
