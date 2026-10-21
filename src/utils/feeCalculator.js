@@ -34,6 +34,13 @@ const MIN_FEE_STROOPS = 100_000n; // 0.01 XLM
  * }}
  */
 function calculateAnalyticsFee(amount, feeBps = DEFAULT_FEE_BPS) {
+  if (typeof feeBps === 'number' && !Number.isInteger(feeBps)) {
+    throw new TypeError('feeBps must be an integer');
+  }
+  if (typeof feeBps !== 'bigint' && typeof feeBps !== 'number') {
+    throw new TypeError('feeBps must be an integer');
+  }
+
   const bps = BigInt(feeBps);
   if (bps < 0n || bps > MAX_FEE_BPS) {
     throw new Error(`Fee bps must be between 0 and ${MAX_FEE_BPS} (${Number(MAX_FEE_BPS) / 100}%)`);
