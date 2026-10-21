@@ -18,6 +18,8 @@
 
 'use strict';
 
+const { toStroops, fromStroops } = require('./money');
+
 /** Stellar base fee in stroops (protocol constant) */
 const STELLAR_BASE_FEE_STROOPS = 100;
 
@@ -30,22 +32,40 @@ const STELLAR_BASE_FEE_XLM = STELLAR_BASE_FEE_STROOPS / STROOPS_PER_XLM; // 0.00
 /**
  * Round a number to exactly 7 decimal places (Stellar stroops precision).
  *
- * @param {number} value
+ * @param {number|string} value
  * @returns {string} Fixed-point string with 7 decimal places
  */
 function toStroopPrecision(value) {
-  return parseFloat(value.toFixed(7)).toFixed(7);
+  return fromStroops(toStroops(value));
+}
+
+function decimalFraction(value) {
+  const stringValue = String(value).trim();
+  if (!/^\d+(\.\d+)?$/.test(stringValue)) {
+    throw new Error(`Invalid decimal value: ${stringValue}`);
+  }
+  const [whole, fraction = ''] = stringValue.split('.');
+  const denominator = 10n ** BigInt(fraction.length);
+  return {
+    numerator: BigInt(`${whole}${fraction}`),
+    denominator,
+  };
 }
 
 /**
  * Convert XLM amount to USD using the provided rate.
  *
- * @param {number} xlmAmount
+ * @param {number|string} xlmAmount
  * @param {number} xlmUsdRate - Current XLM/USD exchange rate
  * @returns {string} USD amount rounded to 2 decimal places
  */
 function xlmToUsd(xlmAmount, xlmUsdRate) {
-  return (xlmAmount * xlmUsdRate).toFixed(2);
+  const { numerator, denominator } = decimalFraction(xlmUsdRate);
+  const amountStroops = toStroops(xlmAmount);
+  const usdCentsNumerator = amountStroops * numerator * 100n;
+  const usdCentsDenominator = BigInt(STROOPS_PER_XLM) * denominator;
+  const usdCents = (usdCentsNumerator + usdCentsDenominator / 2n) / usdCentsDenominator;
+  return `${usdCents / 100n}.${String(usdCents % 100n).padStart(2, '0')}`;
 }
 
 /**
@@ -79,8 +99,13 @@ function calculateCostBreakdown({
   xlmUsdRate = 0,
 }) {
   // ── Validate inputs ────────────────────────────────────────────────────────
-  const amountNum = parseFloat(amount);
-  if (isNaN(amountNum) || amountNum <= 0) {
+  let amountStroops;
+  try {
+    amountStroops = toStroops(amount);
+  } catch {
+    throw new Error('amount must be a positive number');
+  }
+  if (amountStroops <= 0n) {
     throw new Error('amount must be a positive number');
   }
 
@@ -92,34 +117,40 @@ function calculateCostBreakdown({
     throw new Error('platformFeePercent must be a number between 0 and 100');
   }
 
-  const rateNum = typeof xlmUsdRate === 'number' ? xlmUsdRate : parseFloat(xlmUsdRate) || 0;
-  const hasRate = rateNum > 0;
+  const rateNum = typeof xlmUsdRate === 'number' ? xlmUsdRate : Number(xlmUsdRate) || 0;
+  const hasRate = rateNum > 0 && Number.isFinite(rateNum);
+  const surgeMultiplier = decimalFraction(surgeFeeMultiplier);
+  const platformPercent = decimalFraction(platformFeePercent);
 
   // ── Calculate components ───────────────────────────────────────────────────
-  const networkFeeXlm = STELLAR_BASE_FEE_XLM * surgeFeeMultiplier;
-  const platformFeeXlm = amountNum * (platformFeePercent / 100);
-  const totalXlm = amountNum + networkFeeXlm + platformFeeXlm;
+  const networkFeeStroops = BigInt(STELLAR_BASE_FEE_STROOPS) * surgeMultiplier.numerator / surgeMultiplier.denominator;
+  const platformFeeStroops = amountStroops * platformPercent.numerator / (platformPercent.denominator * 100n);
+  const totalStroops = amountStroops + networkFeeStroops + platformFeeStroops;
+  const donationXlm = fromStroops(amountStroops);
+  const networkFeeXlm = fromStroops(networkFeeStroops);
+  const platformFeeXlm = fromStroops(platformFeeStroops);
+  const totalXlm = fromStroops(totalStroops);
 
   // ── Build response ─────────────────────────────────────────────────────────
   return {
     donationAmount: {
-      xlm: toStroopPrecision(amountNum),
-      usd: hasRate ? xlmToUsd(amountNum, rateNum) : null,
+      xlm: donationXlm,
+      usd: hasRate ? xlmToUsd(donationXlm, String(xlmUsdRate)) : null,
     },
     networkFee: {
-      xlm: toStroopPrecision(networkFeeXlm),
-      usd: hasRate ? xlmToUsd(networkFeeXlm, rateNum) : null,
+      xlm: networkFeeXlm,
+      usd: hasRate ? xlmToUsd(networkFeeXlm, String(xlmUsdRate)) : null,
       baseFeeStroops: STELLAR_BASE_FEE_STROOPS,
       surgeFeeMultiplier,
     },
     platformFee: {
-      xlm: toStroopPrecision(platformFeeXlm),
-      usd: hasRate ? xlmToUsd(platformFeeXlm, rateNum) : null,
+      xlm: platformFeeXlm,
+      usd: hasRate ? xlmToUsd(platformFeeXlm, String(xlmUsdRate)) : null,
       percent: platformFeePercent,
     },
     total: {
-      xlm: toStroopPrecision(totalXlm),
-      usd: hasRate ? xlmToUsd(totalXlm, rateNum) : null,
+      xlm: totalXlm,
+      usd: hasRate ? xlmToUsd(totalXlm, String(xlmUsdRate)) : null,
     },
     xlmUsdRate: rateNum,
     rateTimestamp: hasRate ? new Date().toISOString() : null,

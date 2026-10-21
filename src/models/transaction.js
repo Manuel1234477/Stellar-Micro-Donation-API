@@ -20,6 +20,7 @@ const {
   assertValidTransition,
 } = require('../utils/transactionStateMachine');
 const log = require('../utils/log');
+const { toStroops } = require('../utils/money');
 
 // ── In-memory store ──────────────────────────────────────────────────────────
 
@@ -345,12 +346,12 @@ class Transaction {
       predicates.push(t => t.recipient === effectiveTo);
     }
     if (amountMin != null) {
-      const min = parseFloat(amountMin);
-      predicates.push(t => t.amount >= min);
+      const min = toStroops(amountMin);
+      predicates.push(t => toStroops(String(t.amount)) >= min);
     }
     if (amountMax != null) {
-      const max = parseFloat(amountMax);
-      predicates.push(t => t.amount <= max);
+      const max = toStroops(amountMax);
+      predicates.push(t => toStroops(String(t.amount)) <= max);
     }
     if (effectiveStart) {
       const startMs = new Date(effectiveStart).getTime();

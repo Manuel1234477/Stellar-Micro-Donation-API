@@ -319,7 +319,7 @@ class DonationService {
     if (!asset || asset.type === 'native') {
     try {
       const reserveCheck = await withTimeout(
-        this.stellarService.accounts.checkDonationReserve(sender.publicKey, parseFloat(amount)),
+        this.stellarService.accounts.checkDonationReserve(sender.publicKey, String(amount)),
         2000,
         'reserveCheck'
       );
@@ -430,7 +430,7 @@ class DonationService {
     try {
       matchingDonations = await MatchingProgramService.processMatchingDonation({
         id: dbResult.id,
-        amount: parseFloat(amount),
+        amount: String(amount),
         campaign_id: campaign_id || null
       });
     } catch (err) {
@@ -473,7 +473,7 @@ class DonationService {
     const multisigConfig = require('../config').donations;
     if (
       multisigConfig.multisigThresholdXLM !== null &&
-      parseFloat(amount) >= multisigConfig.multisigThresholdXLM
+      toStroops(amount) >= toStroops(String(multisigConfig.multisigThresholdXLM))
     ) {
       // High-value donation: override to use at least a threshold of 2 if configured threshold is 1
       requiredThreshold = Math.max(CONFIRMATION_THRESHOLD, 2);
@@ -1522,7 +1522,7 @@ class DonationService {
       }).catch(() => {});
 
       if (updated.campaign_id) {
-        await this.processCampaignContribution(updated.campaign_id, parseFloat(updated.amount)).catch(err => {
+        await this.processCampaignContribution(updated.campaign_id, String(updated.amount)).catch(err => {
           log.error('DONATION_SERVICE', 'Failed to update campaign contribution after approval', { error: err.message });
         });
       }
@@ -1530,7 +1530,7 @@ class DonationService {
       try {
         const matchingResults = await MatchingProgramService.processMatchingDonation({
           id: updated.id,
-          amount: parseFloat(updated.amount),
+          amount: String(updated.amount),
           campaign_id: updated.campaign_id || null,
         });
         if (matchingResults.length > 0) {
@@ -1667,7 +1667,7 @@ class DonationService {
     try {
       const matchingDonations = await MatchingProgramService.processMatchingDonation({
         id: transaction.id,
-        amount: parseFloat(transaction.amount),
+        amount: String(transaction.amount),
         campaign_id: campaignId || null
       });
       if (matchingDonations.length > 0) {

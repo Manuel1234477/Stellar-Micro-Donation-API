@@ -423,7 +423,7 @@ router.get('/:id/impact', checkPermission(PERMISSIONS.DONATIONS_READ), donationI
     }
 
     const impact = await ImpactMetricService.calculateDonationImpact(
-      parseFloat(transaction.amount),
+      String(transaction.amount),
       transaction.campaign_id
     );
 

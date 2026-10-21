@@ -145,6 +145,7 @@ const { payloadSizeLimiter, ENDPOINT_LIMITS } = require('../../middleware/payloa
 const { validateSchema } = require('../../middleware/schemaValidation');
 const asyncHandler = require('../../utils/asyncHandler');
 const { validateDateRange } = require('../../middleware/validation');
+const { toStroops } = require('../../utils/money');
 
 const multiSigService = new MultiSigService(serviceContainer.getStellarService());
 
@@ -317,7 +318,7 @@ router.get('/', checkPermission(PERMISSIONS.TRANSACTIONS_READ), transactionListQ
     } = req.query;
 
     // Validate amountMin <= amountMax when both provided
-    if (amountMin != null && amountMax != null && parseFloat(amountMin) > parseFloat(amountMax)) {
+    if (amountMin != null && amountMax != null && toStroops(amountMin) > toStroops(amountMax)) {
       return res.status(400).json(
         buildErrorResponse([{ code: 'INVALID_AMOUNT_RANGE', message: 'amountMin must not exceed amountMax' }])
       );
