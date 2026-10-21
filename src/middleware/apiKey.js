@@ -312,6 +312,10 @@ const requireApiKey = async (req, res, next) => {
           });
         }
 
+        // #1929: Delete the raw body buffer after verification so it does not
+        // persist for the entire request lifetime (memory + secret exposure).
+        delete req.rawBody;
+
         // --- Nonce Replay Protection ---
         const nonce = req.get('x-nonce');
         if (!nonce) {

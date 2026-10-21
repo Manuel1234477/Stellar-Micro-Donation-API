@@ -16,9 +16,10 @@ to go from a fresh clone to an open PR.
 7. [Keeping Example Base URLs in Sync](#7-keeping-example-base-urls-in-sync)
 8. [Branch & Commit Conventions](#8-branch--commit-conventions)
 9. [Pre-PR Checklist](#9-pre-pr-checklist)
-10. [Implementation Notes & Work Tracking](#10-implementation-notes--work-tracking)
-11. [Security](#11-security)
-12. [Key Documentation](#12-key-documentation)
+10. [Release Process](#10-release-process)
+11. [Implementation Notes & Work Tracking](#11-implementation-notes--work-tracking)
+12. [Security](#12-security)
+13. [Key Documentation](#13-key-documentation)
 
 ---
 
@@ -229,7 +230,65 @@ When the PR is ready:
 
 ---
 
-## 10. Implementation Notes & Work Tracking
+## 10. Release Process
+
+This project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html) and
+[Keep a Changelog](https://keepachangelog.com/en/1.0.0/) format. Releases are cut
+from `main` after CI is green.
+
+### Cutting a Release
+
+1. **Ensure `main` is green** — all CI checks (including `boot-guard`) must pass.
+
+2. **Update the changelog** — move entries from `## [Unreleased]` into a new
+   version section:
+   ```bash
+   # Generate changelog entries from conventional commits since the last tag
+   npm run changelog:write
+   ```
+   Then manually edit `CHANGELOG.md`:
+   - Change `## [Unreleased]` to `## [x.y.z] - YYYY-MM-DD`
+   - Add a fresh `## [Unreleased]` section above it for future work
+   - Update the link references at the bottom of the file
+
+3. **Bump `package.json`** — update the `version` field to match the changelog:
+   ```bash
+   npm version <major|minor|patch> --no-git-tag-version
+   ```
+
+4. **Commit the release**:
+   ```bash
+   git add CHANGELOG.md package.json
+   git commit -m "chore(release): vX.Y.Z"
+   ```
+
+5. **Tag the release**:
+   ```bash
+   git tag -a vX.Y.Z -m "Release vX.Y.Z"
+   git push origin main --tags
+   ```
+
+6. **Create a GitHub Release** — go to Releases → Draft a new release, select
+   the tag, and paste the changelog section as the release notes.
+
+### Release Cadence
+
+- **Patch**: bug fixes, security patches — as needed
+- **Minor**: new features, backward-compatible — monthly or as features land
+- **Major**: breaking changes — planned and announced via `Sunset`/`Deprecation`
+  headers (see `docs/VERSIONING_STRATEGY.md`)
+
+### Automated Flow (Future)
+
+The project has `scripts/generate-changelog.js` for conventional-commit-based
+changelog generation. The eventual goal is an automated release flow
+(e.g. release-please or changesets) that bumps `package.json`, moves Unreleased
+entries under the new version, tags, and builds a versioned Docker image. Until
+then, follow the manual steps above.
+
+---
+
+## 11. Implementation Notes & Work Tracking
 
 Branch-specific implementation notes, status files and progress tracking do not belong in the repository root.
 
@@ -249,7 +308,7 @@ This keeps documentation organized and prevents stale working notes from mislead
 
 ---
 
-## 11. Security
+## 12. Security
 
 **Do not open a public GitHub issue for security vulnerabilities.**
 
@@ -261,7 +320,7 @@ See **[SECURITY.md](SECURITY.md)** for:
 
 ---
 
-## 12. Key Documentation
+## 13. Key Documentation
 
 When working on a feature, these docs will save you time:
 

@@ -7,6 +7,24 @@ on:
     branches: [main, master]
 
 jobs:
+  # #1927: Fast, dependency-free boot guard that runs first and must be required
+  # by branch protection.  Catches syntax errors and undefined exports that
+  # lint, typecheck and the test matrix all missed.  Completes in under a minute.
+  boot-guard:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: 'npm'
+      - run: npm ci
+      - run: npm run boot-guard
+        env:
+          NODE_ENV: test
+          API_KEYS: ci_key
+          ENCRYPTION_KEY: '0000000000000000000000000000000000000000000000000000000000000000'
+
   build:
     runs-on: ubuntu-latest
 

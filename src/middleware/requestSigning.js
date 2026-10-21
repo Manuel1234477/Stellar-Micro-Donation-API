@@ -111,6 +111,9 @@ function createRequestSigningMiddleware(options = {}) {
 
     // Verify signature
     const fullPath = req.originalUrl || req.url;
+    // #1929: rawBody is stored as a Buffer (or absent for non-signed requests).
+    // crypto.createHash works with both strings and Buffers, so just ensure
+    // we pass the raw bytes or an empty string when not present.
     const rawBody = req.rawBody || '';
     const expected = computeSignature(secret, req.method, fullPath, timestamp, nonce, rawBody);
 
@@ -121,6 +124,10 @@ function createRequestSigningMiddleware(options = {}) {
         error: { code: 'INVALID_SIGNATURE', message: 'Signature mismatch' },
       });
     }
+
+    // #1929: Delete the raw body buffer after verification so it does not
+    // persist for the entire request lifetime (memory + secret exposure).
+    delete req.rawBody;
 
     // Nonce replay check
     try {

@@ -74,16 +74,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Mutually-exclusive / co-required flag validation (`SIGNING_PROVIDER`→HSM/KMS creds, `REQUIRE_REQUEST_SIGNING`→`REQUEST_SIGNING_SECRET`, `RATE_LIMIT_STORE=redis`→`REDIS_URL`, `ENCRYPTION_KEY_VERSION=1`→`ENCRYPTION_KEY_1`)
   - Boot sequence (`src/app.js`) now runs the checks with `exitOnFailure` before binding the port
 - Fix `isBlockedIPv4` in `src/utils/ssrf.js` so private/link-local ranges with the high bit set (e.g. `192.168.0.0/16`, `172.16.0.0/12`, `169.254.0.0/16`) are actually blocked (#1119)
-
-### Changed
-- Startup checks log through the structured logger when run by the server (console output is kept for `npm run validate-env`); `no-console` now covers all of `src/config` except the two files the logger depends on (#1783)
-- Corrected defaults in `docs/CONFIGURATION.md` that disagreed with the code (e.g. `SSE_MAX_CONNECTIONS_PER_KEY` is 5, `TX_SYNC_INTERVAL_MS` is 15 min, `PLATFORM_FEE_PERCENT` is 1.5) (#1785)
-
----
-
-## [1.0.0] - 2025-04-01
-
-### Added
 - One-time donations via `POST /donations` with Stellar testnet/mainnet support
 - Recurring donation schedules (`POST /stream/create`, `GET /stream/schedules`)
 - Wallet management endpoints (`POST /wallets`, `GET /wallets`, `PATCH /wallets/:id`)
@@ -110,6 +100,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - PDF tax receipt generation
 - CSV export for donations and audit logs
 - Prometheus metrics at `/metrics`
+
+### Changed
+- Startup checks log through the structured logger when run by the server (console output is kept for `npm run validate-env`); `no-console` now covers all of `src/config` except the two files the logger depends on (#1783)
+- Corrected defaults in `docs/CONFIGURATION.md` that disagreed with the code (e.g. `SSE_MAX_CONNECTIONS_PER_KEY` is 5, `TX_SYNC_INTERVAL_MS` is 15 min, `PLATFORM_FEE_PERCENT` is 1.5) (#1785)
 
 ### Security
 - Helmet middleware for HTTP security headers

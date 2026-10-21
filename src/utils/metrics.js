@@ -295,6 +295,20 @@ function recordLeaderboardCacheMiss() {
   try { leaderboardCacheLookupsTotal.inc({ result: 'miss' }); } catch (_) { /* best-effort */ }
 }
 
+// ─── Process Error Metrics (#1928) ────────────────────────────────────────────
+
+/**
+ * Counter: total unhandled promise rejections (and uncaught exceptions).
+ * Incremented by the process-level handlers in src/app.js before graceful
+ * shutdown is triggered.
+ * @type {client.Counter}
+ */
+const processUnhandledRejectionsTotal = new client.Counter({
+  name: 'process_unhandled_rejections_total',
+  help: 'Total number of unhandled promise rejections and uncaught exceptions',
+  registers: [registry],
+});
+
 // ─── Legacy Unversioned Path Metrics (#1802) ─────────────────────────────────
 
 /**
@@ -428,6 +442,8 @@ module.exports = {
   recurringDonationsSuspendedTotal,
   recurringDonationsActiveCount,
   recurringDonationsSkippedTotal,
+  // Process error metrics (#1928)
+  processUnhandledRejectionsTotal,
   // Legacy unversioned path metrics (#1802)
   legacyPathRequestsTotal,
   recordLegacyPathRequest,
