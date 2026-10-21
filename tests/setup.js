@@ -89,37 +89,31 @@ try {
 try {
   const abuseDetectionService = require('../src/services/AbuseDetectionService');
   abuseDetectionService.blockedIps = [];
-  abuseDetectionService.suspiciousCounts = new Map();
+  abuseDetectionService.trackedIPs = new Set();
+  abuseDetectionService.failureTracking = new Set();
+  abuseDetectionService.suspiciousIPs = new Set();
 } catch (_) {}
 
-// 3. Abuse detector (observability) — request/failure counts persist
-try {
-  const abuseDetector = require('../src/utils/abuseDetector');
-  abuseDetector.requestCounts = new Map();
-  abuseDetector.failureCounts = new Map();
-  abuseDetector.suspiciousIPs = new Set();
-} catch (_) {}
-
-// 4. Replay detection store — nonce/request-id store persists
+// 3. Replay detection store — nonce/request-id store persists
 try {
   const { defaultStore } = require('../src/utils/nonceStore');
   if (defaultStore && typeof defaultStore.clear === 'function') defaultStore.clear();
 } catch (_) {}
 
-// 5. Deduplication middleware cache — content-hash cache persists
+// 4. Deduplication middleware cache — content-hash cache persists
 try {
   const dedup = require('../src/middleware/deduplication');
   if (dedup && typeof dedup.clearCache === 'function') dedup.clearCache();
 } catch (_) {}
 
-// 6. Idempotency store — in-memory request record persists across files
+// 5. Idempotency store — in-memory request record persists across files
 try {
   const idempotency = require('../src/middleware/idempotency');
   if (idempotency && typeof idempotency.clearStore === 'function') idempotency.clearStore();
   else if (idempotency && idempotency.store instanceof Map) idempotency.store.clear();
 } catch (_) {}
 
-// 7. Feature-flag cache — evaluated flags are cached module-level
+// 6. Feature-flag cache — evaluated flags are cached module-level
 try {
   const featureFlags = require('../src/utils/featureFlags');
   if (featureFlags && typeof featureFlags.resetCache === 'function') featureFlags.resetCache();
