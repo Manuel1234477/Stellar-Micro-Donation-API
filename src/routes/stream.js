@@ -106,6 +106,7 @@ const { payloadSizeLimiter, ENDPOINT_LIMITS } = require('../middleware/payloadSi
 const { requestTimeout, TIMEOUTS } = require('../middleware/requestTimeout');
 const AuditLogService = require('../services/AuditLogService');
 const asyncHandler = require('../utils/asyncHandler');
+const { toStroops, fromStroops } = require('../utils/money');
 
 const streamCreateSchema = validateSchema({
   body: {
@@ -759,7 +760,9 @@ router.patch('/schedules/:id', checkPermission(PERMISSIONS.STREAM_UPDATE), strea
     }
 
     const oldValues = { amount: schedule.amount, frequency: schedule.frequency };
-    const newAmount = amount !== undefined ? parseFloat(String(amount).trim()) : schedule.amount;
+    const newAmount = amount !== undefined
+      ? fromStroops(toStroops(String(amount).trim()))
+      : String(schedule.amount);
     const newFrequency = frequency !== undefined ? frequency.toLowerCase() : schedule.frequency;
 
     // Recalculate nextExecutionDate if frequency changed

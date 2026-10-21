@@ -5,7 +5,7 @@
   "license": "MIT",
   "main": "src/app.js",
   "engines": {
-    "node": ">=22.0.0",
+    "node": ">=24.0.0",
     "npm": ">=10.0.0"
   },
   "scripts": {
@@ -66,13 +66,14 @@
     "scan:container:all": "bash scripts/scan-container.sh --severity CRITICAL,HIGH,MEDIUM,LOW",
     "scan:container:json": "bash scripts/scan-container.sh --format json --output trivy-results.json",
     "check:isolation": "node scripts/check-test-isolation.js",
+    "check:orphans": "node scripts/check-src-orphans.js",
     "test:ci": "npm run check:isolation && jest --ci --maxWorkers=2"
   },
   "dependencies": {
     "@opentelemetry/api": "^1.9.0",
     "@stellar/stellar-sdk": "^17.2.1",
-    "ajv": "^8.20.0",
-    "csv-parse": "^6.2.1",
+    "ajv": "^8.12.0",
+    "csv-parse": "^7.0.3",
     "dotenv": "^18.0.8",
     "express": "^4.22.3",
     "express-rate-limit": "^8.7.1",

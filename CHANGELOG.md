@@ -7,6 +7,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Removed
+- Deleted 14 orphaned `src/` modules that had no importers and were never wired into the application (#1933):
+  - `src/services/BackupScheduler.js` — backup scheduling was never started at runtime; `BackupService` remains and is mounted under `/admin/backups`
+  - `src/services/FeeService.js` — student-fee installment service unrelated to the Stellar donation platform
+  - `src/services/MockStellarServiceStub.js` — thin test stub superseded by `MockStellarService`; tests that required the stub have been removed
+  - `src/services/NetworkFeeService.js` — duplicate fee-stats fetcher; live fee data comes from `NetworkStatusService` (already wired)
+  - `src/services/PaymentStreamService.js` — payment streaming logic never mounted; `PaymentChannelService` covers this use-case
+  - `src/services/RecipientAccountService.js` — recipient-account helpers with no callers in the application
+  - `src/services/RestoreTestRunner.js` — periodic restore-verification runner with no scheduler or route referencing it
+  - `src/services/SequenceCacheService.js` — duplicate sequence-number cache; the wired `services/SequenceManager.js` supersedes it (see #1773)
+  - `src/utils/errorResponseFormatter.js` — error-formatting helpers duplicated by the already-wired `utils/errors.js` / `utils/responseFormatter.js`
+  - `src/utils/fieldValidator.js` — unknown-field detection helpers not referenced by any route or middleware
+  - `src/utils/sequenceManager.js` — second sequence-manager implementation duplicating `services/SequenceManager.js` (see #1773)
+  - `src/middleware/apiVersion.js` — schema-version header parser duplicated by the already-wired `middleware/schemaVersion.js`
+  - `src/middleware/requestDecryption.js` — request-body decryption middleware never applied to any route
+  - `src/middleware/requestLogger.js` — configurable per-path request logger duplicated by the already-wired `middleware/logger.js`
+- Removed 12 test files whose sole purpose was to exercise the deleted modules (tests for `RestoreTestRunner`, `MockStellarServiceStub`, `SequenceCacheService`, `PaymentStreamService`, `NetworkFeeService`, `FeeService`, `requestLogger`, `requestDecryption`, `fieldValidator`, `errorResponseFormatter`, and `utils/sequenceManager`).
+
+### Added
+- `scripts/check-src-orphans.js`: madge-based orphan check that fails CI when a `src/` module has no importers (#1933). Entry points (`src/app.js`, scripts under `src/scripts/`) are allowlisted. Run with `npm run check:orphans`.
+- `check:orphans` npm script runs the orphan check; added to the `guards` CI job so every PR is gated on an orphan-free `src/`.
+
 ### Fixed
 - `SocialRecoveryService.setGuardians()` failed with `DatabaseError` because the test schema lacked the migration 045 columns; guardian replacement is now atomic and rejects duplicate keys (#1695)
 - Transaction model no longer queries `donations_store` at require time; the store loads after migrations in the bootstrap sequence and `/health/ready` reports not-ready until it has loaded (#1696)

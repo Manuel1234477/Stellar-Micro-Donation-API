@@ -18,8 +18,9 @@
 const Database = require('../utils/database');
 const WebhookService = require('./WebhookService');
 const ApiKeyExpirationNotifier = require('./ApiKeyExpirationNotifier');
-const { SCHEDULE_STATUS, DONATION_FREQUENCIES, STROOPS_PER_XLM } = require('../constants');
+const { SCHEDULE_STATUS, DONATION_FREQUENCIES } = require('../constants');
 const log = require('../utils/log');
+const { toStroops } = require('../utils/money');
 const { revokeExpiredDeprecatedKeys } = require('../models/apiKeys');
 const {
   recurringDonationsDueTotal,
@@ -625,7 +626,7 @@ class RecurringDonationScheduler {
             [
               schedule.donorId,
               schedule.recipientId,
-              Math.round(parseFloat(schedule.amount) * STROOPS_PER_XLM),
+              toStroops(schedule.amount).toString(),
               idempotencyKey,
               new Date().toISOString(),
             ]

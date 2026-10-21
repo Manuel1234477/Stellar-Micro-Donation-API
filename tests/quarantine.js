@@ -43,21 +43,21 @@ module.exports = {
     addedDate: '2026-10-17',
     deadline: '2026-11-17',
   },
-  'tests/misc/debug-mode.quarantine.test.js': {
+  'tests/utils/debug-mode.quarantine.test.js': {
     issue: '#1787',
     owner: 'emilioszn',
     reason: 'requires src/config/envValidation, which does not exist',
     addedDate: '2026-10-17',
     deadline: '2026-11-17',
   },
-  'tests/misc/request-counter.quarantine.test.js': {
+  'tests/utils/request-counter.quarantine.test.js': {
     issue: '#1787',
     owner: 'emilioszn',
     reason: 'requires src/middleware/RequestCounter, which does not exist',
     addedDate: '2026-10-17',
     deadline: '2026-11-17',
   },
-  'tests/misc/webhook-sdk.quarantine.test.js': {
+  'tests/webhooks/webhook-sdk.quarantine.test.js': {
     issue: '#1787',
     owner: 'emilioszn',
     reason: 'requires sdk/js/webhookVerifier and sdk/test-vectors, but there is no sdk/ directory',
@@ -65,7 +65,7 @@ module.exports = {
     deadline: '2026-11-17',
   },
   // Example (remove when issues are fixed):
-  // 'tests/scheduler-resilience.test.js': {
+  // 'tests/services/scheduler-resilience.test.js': {
   //   issue: '#9999',
   //   owner: 'team-member',
   //   reason: 'Intermittent race condition in scheduler state',

@@ -299,8 +299,7 @@ router.get('/stats', dbStatsRateLimiter, checkPermission(PERMISSIONS.ADMIN_ALL),
   }
 }));
 
-// In-memory vacuum job store
-const vacuumJobs = new Map();
+// In-memory vacuum job store replaced by admin_jobs table.
 let activeVacuumJobId = null;
 
 /**
@@ -309,17 +308,26 @@ let activeVacuumJobId = null;
  * Only one vacuum job may run at a time.
  */
 router.post('/vacuum', checkPermission(PERMISSIONS.ADMIN_ALL), asyncHandler(async (req, res) => {
-  if (activeVacuumJobId && vacuumJobs.get(activeVacuumJobId)?.status === 'running') {
-    return res.status(409).json({ success: false, error: { code: 'VACUUM_IN_PROGRESS', message: 'A vacuum job is already running' } });
+  if (activeVacuumJobId) {
+    const activeJob = await Database.get(
+      `SELECT status FROM admin_jobs WHERE job_id = ?`,
+      [activeVacuumJobId]
+    );
+    if (activeJob && activeJob.status === 'running') {
+      return res.status(409).json({ success: false, error: { code: 'VACUUM_IN_PROGRESS', message: 'A vacuum job is already running' } });
+    }
   }
 
   const jobId = `vacuum-${Date.now()}`;
   activeVacuumJobId = jobId;
-  vacuumJobs.set(jobId, { status: 'running', startedAt: Date.now() });
+  const startedAt = Date.now();
+  await Database.run(
+    `INSERT INTO admin_jobs (job_id, type, status, started_at) VALUES (?, 'vacuum', 'running', ?)`,
+    [jobId, startedAt]
+  );
 
   // Run in background
   setImmediate(async () => {
-    const job = vacuumJobs.get(jobId);
     try {
       const dbPath = process.env.DB_PATH || path.join(__dirname, '../../../data/stellar_donations.db');
       let sizeBefore = 0;
@@ -331,15 +339,24 @@ router.post('/vacuum', checkPermission(PERMISSIONS.ADMIN_ALL), asyncHandler(asyn
       let sizeAfter = 0;
       try { sizeAfter = fs.statSync(dbPath).size; } catch (_) { /* best-effort */ }
 
-      job.status = 'completed';
-      job.sizeBefore = sizeBefore;
-      job.sizeAfter = sizeAfter;
-      job.reclaimedBytes = sizeBefore - sizeAfter;
-      job.durationMs = Date.now() - job.startedAt;
+      const durationMs = Date.now() - startedAt;
+      await Database.run(
+        `UPDATE admin_jobs
+         SET status = 'completed', duration_ms = ?,
+             result_json = ?
+         WHERE job_id = ?`,
+        [
+          durationMs,
+          JSON.stringify({ sizeBefore, sizeAfter, reclaimedBytes: sizeBefore - sizeAfter }),
+          jobId,
+        ]
+      );
     } catch (err) {
-      job.status = 'failed';
-      job.error = err.message;
-      job.durationMs = Date.now() - job.startedAt;
+      const durationMs = Date.now() - startedAt;
+      await Database.run(
+        `UPDATE admin_jobs SET status = 'failed', duration_ms = ?, error = ? WHERE job_id = ?`,
+        [durationMs, err.message, jobId]
+      );
     } finally {
       activeVacuumJobId = null;
     }
@@ -352,18 +369,30 @@ router.post('/vacuum', checkPermission(PERMISSIONS.ADMIN_ALL), asyncHandler(asyn
  * GET /admin/db/vacuum/:jobId
  * Returns the status of a vacuum job.
  */
-router.get('/vacuum/:jobId', checkPermission(PERMISSIONS.ADMIN_ALL), (req, res) => {
-  const job = vacuumJobs.get(req.params.jobId);
-  if (!job) {
+router.get('/vacuum/:jobId', checkPermission(PERMISSIONS.ADMIN_ALL), asyncHandler(async (req, res) => {
+  const row = await Database.get(
+    `SELECT job_id, status, started_at, duration_ms, result_json, error
+     FROM admin_jobs WHERE job_id = ? AND type = 'vacuum'`,
+    [req.params.jobId]
+  );
+  if (!row) {
     return res.status(404).json({ success: false, error: { code: 'JOB_NOT_FOUND', message: 'Vacuum job not found' } });
   }
-  res.json({ success: true, data: { jobId: req.params.jobId, ...job } });
-});
+  const result = row.result_json ? JSON.parse(row.result_json) : {};
+  res.json({
+    success: true,
+    data: {
+      jobId: row.job_id,
+      status: row.status,
+      startedAt: row.started_at,
+      durationMs: row.duration_ms,
+      error: row.error || undefined,
+      ...result,
+    },
+  });
+}));
 
 // ─── Integrity Check ──────────────────────────────────────────────────────────
-
-/** In-memory store for integrity check jobs */
-const integrityJobs = new Map();
 
 /**
  * Run SQLite integrity_check and foreign_key_check pragmas.
@@ -404,38 +433,72 @@ async function runIntegrityCheck() {
  * Start a background integrity check job.
  * Returns { jobId } immediately; poll GET /admin/db/integrity-check/:jobId for results.
  */
-router.post('/integrity-check', checkPermission(PERMISSIONS.ADMIN_ALL), (req, res) => {
+router.post('/integrity-check', checkPermission(PERMISSIONS.ADMIN_ALL), asyncHandler(async (req, res) => {
   const jobId = `integrity-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
-  const job = { status: 'running', issues: [], checkedAt: null, durationMs: null };
-  integrityJobs.set(jobId, job);
+  const startedAt = Date.now();
+  await Database.run(
+    `INSERT INTO admin_jobs (job_id, type, status, started_at) VALUES (?, 'integrity', 'running', ?)`,
+    [jobId, startedAt]
+  );
 
   // Run asynchronously — do not await
-  runIntegrityCheck().then(result => {
-    Object.assign(job, result);
-  }).catch(err => {
-    job.status = 'corrupted';
-    job.issues = [`unexpected_error: ${err.message}`];
-    job.checkedAt = new Date().toISOString();
-    job.durationMs = 0;
+  runIntegrityCheck().then(async (result) => {
+    await Database.run(
+      `UPDATE admin_jobs
+       SET status = ?, duration_ms = ?, result_json = ?
+       WHERE job_id = ?`,
+      [
+        result.status === 'ok' ? 'completed' : 'corrupted',
+        result.durationMs,
+        JSON.stringify({ issues: result.issues, checkedAt: result.checkedAt }),
+        jobId,
+      ]
+    );
+  }).catch(async (err) => {
+    await Database.run(
+      `UPDATE admin_jobs
+       SET status = 'corrupted', duration_ms = 0,
+           result_json = ?, error = ?
+       WHERE job_id = ?`,
+      [
+        JSON.stringify({ issues: [`unexpected_error: ${err.message}`], checkedAt: new Date().toISOString() }),
+        err.message,
+        jobId,
+      ]
+    );
   });
 
   res.json({ success: true, jobId });
-});
+}));
 
 /**
  * GET /admin/db/integrity-check/:jobId
  * Returns the status and results of an integrity check job.
  */
-router.get('/integrity-check/:jobId', checkPermission(PERMISSIONS.ADMIN_ALL), (req, res) => {
-  const job = integrityJobs.get(req.params.jobId);
-  if (!job) {
+router.get('/integrity-check/:jobId', checkPermission(PERMISSIONS.ADMIN_ALL), asyncHandler(async (req, res) => {
+  const row = await Database.get(
+    `SELECT job_id, status, started_at, duration_ms, result_json, error
+     FROM admin_jobs WHERE job_id = ? AND type = 'integrity'`,
+    [req.params.jobId]
+  );
+  if (!row) {
     return res.status(404).json({
       success: false,
       error: { code: 'JOB_NOT_FOUND', message: 'Integrity check job not found' },
     });
   }
-  res.json({ success: true, data: { jobId: req.params.jobId, ...job } });
-});
+  const parsed = row.result_json ? JSON.parse(row.result_json) : { issues: [], checkedAt: null };
+  res.json({
+    success: true,
+    data: {
+      jobId: row.job_id,
+      status: row.status,
+      issues: parsed.issues || [],
+      checkedAt: parsed.checkedAt || null,
+      durationMs: row.duration_ms,
+    },
+  });
+}));
 
 module.exports = router;
 module.exports.sanitizeSql = sanitizeSql;

@@ -168,9 +168,65 @@ const asyncHandler = require('../../utils/asyncHandler');
 const router = express.Router();
 const backupService = new BackupService();
 
-// In-memory store for short-lived restore confirmation tokens { backupId -> { token, expiresAt } }
-const confirmTokens = new Map();
 const CONFIRM_TOKEN_TTL_MS = 5 * 60 * 1000; // 5 minutes
+
+/**
+ * Derive the HMAC signing key from ENCRYPTION_KEY (falling back to a
+ * process-scoped random secret so dev/test environments work without an
+ * ENCRYPTION_KEY set).
+ */
+let _hmacSecret = null;
+function getHmacSecret() {
+  if (_hmacSecret) return _hmacSecret;
+  const key = process.env.ENCRYPTION_KEY;
+  if (key) {
+    _hmacSecret = Buffer.from(key, 'hex');
+  } else {
+    // Ephemeral secret — tokens only survive the current process lifetime,
+    // which is safe: the original Map-based store had the same property.
+    _hmacSecret = crypto.randomBytes(32);
+  }
+  return _hmacSecret;
+}
+
+/**
+ * Issue a short-lived, stateless HMAC-signed restore confirmation token.
+ * Format: "<expiresAt>.<hmac-hex>"
+ *
+ * @param {string} backupId
+ * @returns {{ token: string, expiresAt: number }}
+ */
+function issueConfirmToken(backupId) {
+  const expiresAt = Date.now() + CONFIRM_TOKEN_TTL_MS;
+  const payload = `confirm:${backupId}:${expiresAt}`;
+  const mac = crypto.createHmac('sha256', getHmacSecret()).update(payload).digest('hex');
+  return { token: `${expiresAt}.${mac}`, expiresAt };
+}
+
+/**
+ * Verify a restore confirmation token.
+ * Returns true when the token is valid, unexpired, and bound to backupId.
+ *
+ * @param {string} backupId
+ * @param {string} token
+ * @returns {boolean}
+ */
+function verifyConfirmToken(backupId, token) {
+  if (!token || typeof token !== 'string') return false;
+  const dotIdx = token.indexOf('.');
+  if (dotIdx === -1) return false;
+  const expiresAt = parseInt(token.slice(0, dotIdx), 10);
+  const mac = token.slice(dotIdx + 1);
+  if (isNaN(expiresAt) || Date.now() > expiresAt) return false;
+  const payload = `confirm:${backupId}:${expiresAt}`;
+  const expected = crypto.createHmac('sha256', getHmacSecret()).update(payload).digest('hex');
+  // Constant-time comparison
+  try {
+    return crypto.timingSafeEqual(Buffer.from(mac, 'hex'), Buffer.from(expected, 'hex'));
+  } catch (_) {
+    return false;
+  }
+}
 
 const requireAdmin = checkPermission(PERMISSIONS.ADMIN_ALL);
 
@@ -243,9 +299,7 @@ router.post('/restore/:backupId/confirm', requireAdmin, asyncHandler(async (req,
   if (!backupService.resolveBackupPath(backupId)) return invalidBackupId(res);
   if (!(await backupService.hasBackup(backupId))) return backupNotFound(res);
 
-  const token = crypto.randomBytes(16).toString('hex');
-  const expiresAt = Date.now() + CONFIRM_TOKEN_TTL_MS;
-  confirmTokens.set(backupId, { token, expiresAt });
+  const { token, expiresAt } = issueConfirmToken(backupId);
 
   return res.status(200).json({
     success: true,
@@ -276,9 +330,7 @@ router.post('/restore/:backupId', requireAdmin, asyncHandler(async (req, res) =>
   }
 
   // Validate the confirmation token
-  const stored = confirmTokens.get(backupId);
-  if (!stored || stored.token !== confirmationToken || Date.now() > stored.expiresAt) {
-    confirmTokens.delete(backupId);
+  if (!verifyConfirmToken(backupId, confirmationToken)) {
     return res.status(400).json({
       success: false,
       error: { code: 'INVALID_CONFIRMATION_TOKEN', message: 'Confirmation token is invalid or has expired' },
@@ -295,9 +347,6 @@ router.post('/restore/:backupId', requireAdmin, asyncHandler(async (req, res) =>
       },
     });
   }
-
-  // Consume the token — single-use
-  confirmTokens.delete(backupId);
 
   try {
     const result = await backupService.restore(backupId);

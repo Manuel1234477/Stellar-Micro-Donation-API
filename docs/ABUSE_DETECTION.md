@@ -14,9 +14,10 @@ single middleware entry point. This document describes the consolidated model.
   service, and translates the service result into an HTTP response (or passes
   the request through).
 
-There is no longer a separate `src/utils/abuseDetector.js` implementation, nor
-separate `suspiciousPatternDetection.js` / `suspiciousPatternDetector.js`
-modules. Their logic lives in the detectors below.
+There is no longer a separate `src/utils/abuseDetector.js` implementation; it
+is a compatibility export of the service singleton. Abuse-detection middleware,
+stats, and block-management handlers use the service directly. Suspicious-
+pattern reporting remains a separate integration point.
 
 ## Detectors
 

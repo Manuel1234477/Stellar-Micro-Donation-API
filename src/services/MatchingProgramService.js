@@ -13,6 +13,7 @@
 const Database = require('../utils/database');
 const { ValidationError, NotFoundError, ERROR_CODES } = require('../utils/errors');
 const log = require('../utils/log');
+const { toStroops, fromStroops } = require('../utils/money');
 
 class MatchingProgramService {
   /**
@@ -139,13 +140,14 @@ class MatchingProgramService {
    *
    * @param {Object} donation - The original donation
    * @param {number} donation.id - Donation ID
-   * @param {number} donation.amount - Donation amount in XLM
+  * @param {string|number} donation.amount - Donation amount in XLM
    * @param {number|null} donation.campaign_id - Campaign ID if applicable
    * @returns {Promise<Array>} Array of matching donation records created
    */
   static async processMatchingDonation(donation) {
     const { id: donationId, amount, campaign_id } = donation;
     const matchingRecords = [];
+    const donationStroops = toStroops(String(amount));
 
     // Gather applicable programs: campaign-specific + global
     let programs = [];
@@ -156,18 +158,17 @@ class MatchingProgramService {
     programs = programs.concat(globalPrograms);
 
     for (const program of programs) {
-      if (program.remaining_match_amount <= 0) continue;
+      const remainingStroops = toStroops(String(program.remaining_match_amount));
+      if (remainingStroops <= 0n) continue;
 
-      const rawMatchAmount = amount * program.match_ratio;
-      const matchAmount = Math.min(rawMatchAmount, program.remaining_match_amount);
+      const ratioStroops = toStroops(String(program.match_ratio));
+      const rawMatchStroops = donationStroops * ratioStroops / 10_000_000n;
+      const finalMatchStroops = rawMatchStroops < remainingStroops ? rawMatchStroops : remainingStroops;
+      if (finalMatchStroops <= 0n) continue;
 
-      if (matchAmount <= 0) continue;
-
-      // Round to 7 decimal places (Stellar precision)
-      const finalMatchAmount = parseFloat(matchAmount.toFixed(7));
-
-      // Update remaining balance
-      const newRemaining = parseFloat((program.remaining_match_amount - finalMatchAmount).toFixed(7));
+      const finalMatchAmount = fromStroops(finalMatchStroops);
+      const newRemainingStroops = remainingStroops - finalMatchStroops;
+      const newRemaining = fromStroops(newRemainingStroops);
       await Database.run(
         `UPDATE matching_programs SET remaining_match_amount = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?`,
         [newRemaining, program.id]
@@ -196,7 +197,7 @@ class MatchingProgramService {
       });
 
       // Check if program is exhausted
-      if (newRemaining <= 0) {
+      if (newRemainingStroops <= 0n) {
         await this.markExhausted(program.id);
       }
     }
