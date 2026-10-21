@@ -14,13 +14,9 @@ const AuditLogService = require('../services/AuditLogService');
 function abuseDetectionMiddleware(req, res, next) {
   const ip = req.ip || req.connection.remoteAddress;
 
-  // Track the request through the unified service
-  Promise.resolve(AbuseDetectionService.trackRequest(ip)).catch(err => {
-    log.error('ABUSE_DETECTION', 'Track request failed', { error: err && err.message });
-  });
-
-  // Evaluate the request against all detectors and flag if suspicious
-  Promise.resolve(AbuseDetectionService.isSuspicious(ip))
+  // Track first so the subsequent suspicious check observes this request.
+  Promise.resolve(AbuseDetectionService.trackRequest(ip))
+    .then(() => AbuseDetectionService.isSuspicious(ip))
     .then(suspicious => {
       if (!suspicious) {
         return;
@@ -47,7 +43,6 @@ function abuseDetectionMiddleware(req, res, next) {
       });
     })
     .catch(err => {
-      // Don't block request if detection or audit logging fails
       log.error('ABUSE_DETECTION', 'Abuse detection failed', { error: err && err.message });
     });
 

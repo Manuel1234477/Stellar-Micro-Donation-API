@@ -483,9 +483,13 @@ class Database {
     }
 
     const category = this.classifyDatabaseError(err);
-    const message = category === 'timeout'
+    const baseMessage = category === 'timeout'
       ? (err && err.message) || failureMessage
       : failureMessage;
+    const diagnostic = process.env.NODE_ENV === 'test' && err && err.message
+      ? ` (${err.code || 'SQLITE_ERROR'}: ${err.message})`
+      : '';
+    const message = `${baseMessage}${diagnostic}`;
 
     const mapped = new DatabaseError(message, err);
     mapped.category = category;

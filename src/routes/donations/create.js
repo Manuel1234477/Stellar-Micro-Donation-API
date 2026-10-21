@@ -700,7 +700,7 @@ router.post(
       });
 
       Transaction.create({
-        amount: parseFloat(amount),
+        amount: String(amount).trim(),
         donor: claimants[0] && claimants[0].destination,
         recipient: claimants.map(c => c.destination).join(','),
         status: 'pending',

@@ -821,3 +821,6 @@ For comprehensive documentation, see the [Documentation Index](docs/README.md).
 
 <!-- handsoff-issue-1773 -->
 - #1773: Merge duplicate sequence-number managers (utils/sequenceManager.js, services/SequenceManager.js, SequenceCacheService)
+
+<!-- handsoff-issue-1911 -->
+- #1911: Leaderboard tests fail with "wallets.filter is not a function"

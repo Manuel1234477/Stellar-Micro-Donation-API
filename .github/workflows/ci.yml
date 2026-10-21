@@ -35,7 +35,7 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@v7
         with:
-          node-version: '20'
+          node-version-file: .nvmrc
           cache: 'npm'
 
       - name: Install dependencies
@@ -74,6 +74,8 @@ jobs:
         env:
           API_KEYS: ci_key
           ENCRYPTION_KEY: '0000000000000000000000000000000000000000000000000000000000000000'
+      # Ensure no src/ module is imported by nothing (dead code). Refs #1933.
+      - run: npm run check:orphans
       # Non-blocking until the JSDoc type errors on main are fixed; remove
       # continue-on-error once `npm run typecheck` exits 0.
       - run: npm run typecheck

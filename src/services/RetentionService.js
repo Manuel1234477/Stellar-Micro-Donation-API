@@ -5,10 +5,11 @@
  * OWNER: Backend Team
  * DEPENDENCIES: Database
  *
- * Supports three independent retention windows via environment variables:
+ * Supports independent retention windows via environment variables:
  *   RETENTION_DONATIONS_DAYS    (default: 2555, ~7 years) — anonymise donation records
  *   RETENTION_AUDIT_LOGS_DAYS   (default: 365)            — delete audit log entries
  *   RETENTION_IDEMPOTENCY_DAYS  (default: 30)             — delete idempotency keys
+ *   RETENTION_TRANSACTION_DAYS  (default: 2555, ~7 years) — anonymise transaction memos/notes
  *
  * Set any period to 0 to disable purging for that data type.
  * Set RETENTION_DRY_RUN=true to log what would be deleted without deleting.
@@ -33,6 +34,7 @@ function resolveRetentionDays(category) {
     case 'donations': return config.retention.donationsDays;
     case 'auditLogs': return config.retention.auditLogsDays;
     case 'idempotency': return config.retention.idempotencyDays;
+    case 'transactions': return config.retention.transactionDays;
     default: throw new Error(`Unknown retention category: ${category}`);
   }
 }
@@ -130,6 +132,63 @@ class RetentionService {
   }
 
   /**
+   * Anonymise transaction memos/notes and pseudonymise sender/receiver identifiers
+   * older than RETENTION_TRANSACTION_DAYS. Amounts and hashes are preserved for
+   * accounting. Returns 0 immediately if period is 0.
+   * @param {number} [days]
+   * @returns {Promise<{purged: number, remaining: number, durationMs: number}>}
+   */
+  async runTransactionRetention(days) {
+    const retentionDays = days !== undefined ? days : resolveRetentionDays('transactions');
+    if (retentionDays === 0) return { purged: 0, remaining: 0, durationMs: 0 };
+
+    const start = Date.now();
+    const cutoff = cutoffDate(retentionDays);
+
+    const rows = await Database.query(
+      `SELECT id, memo, notes, senderId, receiverId FROM transactions
+       WHERE timestamp < ? AND (
+         (memo IS NOT NULL AND memo NOT LIKE 'anon:%') OR
+         (notes IS NOT NULL AND notes NOT LIKE 'anon:%') OR
+         (senderId IS NOT NULL AND senderId NOT LIKE 'anon:%') OR
+         (receiverId IS NOT NULL AND receiverId NOT LIKE 'anon:%')
+       )`,
+      [cutoff]
+    );
+
+    if (!this.dryRun) {
+      for (const row of rows) {
+        await Database.run(
+          `UPDATE transactions SET memo = ?, notes = ?, senderId = ?, receiverId = ? WHERE id = ?`,
+          [
+            anonymize(row.memo),
+            anonymize(row.notes),
+            anonymize(row.senderId),
+            anonymize(row.receiverId),
+            row.id,
+          ]
+        );
+      }
+    }
+
+    const remaining = await Database.get(
+      `SELECT COUNT(*) as n FROM transactions WHERE timestamp < ? AND (
+         (memo IS NOT NULL AND memo NOT LIKE 'anon:%') OR
+         (notes IS NOT NULL AND notes NOT LIKE 'anon:%') OR
+         (senderId IS NOT NULL AND senderId NOT LIKE 'anon:%') OR
+         (receiverId IS NOT NULL AND receiverId NOT LIKE 'anon:%')
+       )`,
+      [cutoff]
+    ).catch(() => ({ n: 0 }));
+
+    const durationMs = Date.now() - start;
+    log.info('RETENTION_SERVICE', this.dryRun ? '[DRY RUN] Would anonymise transactions' : 'Anonymised transactions', {
+      dataType: 'transactions', purged: rows.length, remaining: remaining.n, retentionDays, cutoff, durationMs,
+    });
+    return { purged: rows.length, remaining: remaining.n, durationMs };
+  }
+
+  /**
    * Delete audit log entries older than RETENTION_AUDIT_LOGS_DAYS.
    * @param {number} [days]
    * @returns {Promise<{purged: number, remaining: number, durationMs: number}>}
@@ -203,175 +262,72 @@ class RetentionService {
     let purged = 0;
     if (!this.dryRun) {
       const result = await Database.run(
-        `DELETE FROM recurring_donations WHERE status = 'cancelled' AND cancelledAt < ?`,
+        `DELETE FROM recurring_donations WHERE status = 'cancelled' AND cancelledAt IS NOT NULL AND cancelledAt < ?`,
         [cutoff]
-      ).catch(() => ({ changes: 0 }));
+      );
       purged = result && result.changes != null ? result.changes : 0;
     } else {
       const preview = await Database.get(
-        `SELECT COUNT(*) as n FROM recurring_donations WHERE status = 'cancelled' AND cancelledAt < ?`,
+        `SELECT COUNT(*) as n FROM recurring_donations WHERE status = 'cancelled' AND cancelledAt IS NOT NULL AND cancelledAt < ?`,
         [cutoff]
       ).catch(() => ({ n: 0 }));
       purged = preview.n;
     }
 
     const remaining = await Database.get(
-      'SELECT COUNT(*) as n FROM recurring_donations WHERE status = \'cancelled\''
+      `SELECT COUNT(*) as n FROM recurring_donations WHERE status = 'cancelled'`
     ).catch(() => ({ n: 0 }));
     const durationMs = Date.now() - start;
-    log.info('RETENTION_SERVICE', this.dryRun ? '[DRY RUN] Would hard-delete cancelled schedules' : 'Hard-deleted cancelled schedules', {
+    log.info('RETENTION_SERVICE', this.dryRun ? '[DRY RUN] Would delete cancelled schedules' : 'Deleted cancelled schedules', {
       dataType: 'cancelledSchedules', purged, remaining: remaining.n, retentionDays, cutoff, durationMs,
     });
     return { purged, remaining: remaining.n, durationMs };
   }
 
   /**
-   * Run all four retention jobs and return a combined summary.
-   * @returns {Promise<{donations: Object, auditLogs: Object, idempotencyKeys: Object, cancelledSchedules: Object}>}
+   * Run all retention policies. Returns a summary keyed by data type.
+   * @returns {Promise<Object>}
    */
   async runAll() {
-    const runStart = Date.now();
-    const [donations, auditLogs, idempotencyKeys, cancelledSchedules] = await Promise.all([
-      this.runDonationRetention(),
-      this.runAuditLogRetention(),
-      this.runIdempotencyRetention(),
-      this.runCancelledSchedulesRetention(),
-    ]);
-    log.info('RETENTION_SERVICE', 'Full retention run complete', {
-      donations: donations.purged, auditLogs: auditLogs.purged,
-      idempotencyKeys: idempotencyKeys.purged, cancelledSchedules: cancelledSchedules.purged,
-      totalDurationMs: Date.now() - runStart,
-      dryRun: this.dryRun,
-    });
-    return { donations, auditLogs, idempotencyKeys, cancelledSchedules };
+    const results = {};
+    results.donations = await this.runDonationRetention();
+    results.transactions = await this.runTransactionRetention();
+    results.auditLogs = await this.runAuditLogRetention();
+    results.idempotencyKeys = await this.runIdempotencyRetention();
+    results.cancelledSchedules = await this.runCancelledSchedulesRetention();
+    return results;
   }
 
   /**
-   * Preview what would be purged without actually deleting.
-   * Returns counts and date ranges for each data type.
-   * @returns {Promise<Object>} Preview object with counts and size estimates
+   * Start the daily retention job. Idempotent.
    */
-  async preview() {
-    const donationDays = resolveRetentionDays('donations');
-    const auditLogDays = resolveRetentionDays('auditLogs');
-    const idempotencyDays = resolveRetentionDays('idempotency');
-
-    const donationCutoff = donationDays > 0 ? cutoffDate(donationDays) : null;
-    const auditLogCutoff = auditLogDays > 0 ? cutoffDate(auditLogDays) : null;
-    const idempotencyCutoff = idempotencyDays > 0 ? cutoffDate(idempotencyDays) : null;
-
-    const [donationPreview, auditLogPreview, idempotencyPreview] = await Promise.all([
-      donationDays > 0
-        ? Database.get(
-            `SELECT COUNT(*) as count, MIN(timestamp) as oldestRecord, MAX(timestamp) as newestRecord FROM transactions WHERE timestamp < ?`,
-            [donationCutoff]
-          ).catch(() => ({ count: 0, oldestRecord: null, newestRecord: null }))
-        : { count: 0, oldestRecord: null, newestRecord: null },
-      auditLogDays > 0
-        ? Database.get(
-            `SELECT COUNT(*) as count, MIN(timestamp) as oldestRecord, MAX(timestamp) as newestRecord FROM audit_logs WHERE timestamp < ?`,
-            [auditLogCutoff]
-          ).catch(() => ({ count: 0, oldestRecord: null, newestRecord: null }))
-        : { count: 0, oldestRecord: null, newestRecord: null },
-      idempotencyDays > 0
-        ? Database.get(
-            `SELECT COUNT(*) as count, MIN(createdAt) as oldestRecord, MAX(createdAt) as newestRecord FROM idempotency_keys WHERE createdAt < ?`,
-            [idempotencyCutoff]
-          ).catch(() => ({ count: 0, oldestRecord: null, newestRecord: null }))
-        : { count: 0, oldestRecord: null, newestRecord: null },
-    ]);
-
-    // Estimate sizes (rough approximation) — see DB_ESTIMATED_ROW_BYTES in src/constants/domain.js
-    const estimateDonationSize = donationPreview.count * DB_ESTIMATED_ROW_BYTES.DONATION;
-    const estimateAuditLogSize = auditLogPreview.count * DB_ESTIMATED_ROW_BYTES.AUDIT_LOG;
-    const estimateIdempotencySize = idempotencyPreview.count * DB_ESTIMATED_ROW_BYTES.IDEMPOTENCY_KEY;
-
-    const totalEstimatedSize = estimateDonationSize + estimateAuditLogSize + estimateIdempotencySize;
-
-    return {
-      donations: {
-        count: donationPreview.count,
-        oldestRecord: donationPreview.oldestRecord,
-        newestRecord: donationPreview.newestRecord,
-        estimatedSizeBytes: estimateDonationSize,
-        retentionDays: donationDays,
-      },
-      auditLogs: {
-        count: auditLogPreview.count,
-        oldestRecord: auditLogPreview.oldestRecord,
-        newestRecord: auditLogPreview.newestRecord,
-        estimatedSizeBytes: estimateAuditLogSize,
-        retentionDays: auditLogDays,
-      },
-      idempotencyKeys: {
-        count: idempotencyPreview.count,
-        oldestRecord: idempotencyPreview.oldestRecord,
-        newestRecord: idempotencyPreview.newestRecord,
-        estimatedSizeBytes: estimateIdempotencySize,
-        retentionDays: idempotencyDays,
-      },
-      totalEstimatedSizeBytes: totalEstimatedSize,
-    };
-  }
-
-  /**
-   * Return current retention configuration and record counts per data type.
-   * @returns {Promise<Object>} Status object
-   */
-  async getStatus() {
-    const [txTotal, txAnon, auditTotal, idempotencyTotal] = await Promise.all([
-      Database.get('SELECT COUNT(*) as n FROM transactions').catch(() => ({ n: 0 })),
-      Database.get(`SELECT COUNT(*) as n FROM transactions WHERE memo LIKE 'anon:%'`).catch(() => ({ n: 0 })),
-      Database.get('SELECT COUNT(*) as n FROM audit_logs').catch(() => ({ n: 0 })),
-      Database.get('SELECT COUNT(*) as n FROM idempotency_keys').catch(() => ({ n: 0 })),
-    ]);
-
-    return {
-      config: retentionSnapshot,
-      stats: {
-        donations: { total: txTotal.n, anonymized: txAnon.n },
-        auditLogs: { total: auditTotal.n },
-        idempotencyKeys: { total: idempotencyTotal.n },
-      },
-    };
-  }
-
-  /** Schedule a daily retention run at the configured UTC time. */
   start() {
     if (this._timer) return;
-    const [h, m] = parseScheduleTime();
-    const scheduleTime = `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')} UTC`;
-    log.info('RETENTION_SERVICE', 'Scheduled daily retention run', {
-      scheduledAt: scheduleTime,
-      donationDays: resolveRetentionDays('donations'),
-      auditLogDays: resolveRetentionDays('auditLogs'),
-      idempotencyDays: resolveRetentionDays('idempotency'),
-      dryRun: this.dryRun,
-    });
-    this._scheduleNext();
+    const [hour, minute] = parseScheduleTime();
+    const scheduleNext = () => {
+      const now = new Date();
+      const next = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate(), hour, minute, 0, 0));
+      if (next.getTime() <= now.getTime()) next.setUTCDate(next.getUTCDate() + 1);
+      const delay = next.getTime() - now.getTime();
+      this._timer = timerRegistry.setTimeout(async () => {
+        try {
+          await this.runAll();
+        } catch (err) {
+          log.error('RETENTION_SERVICE', 'Retention run failed', { error: err.message });
+        }
+        scheduleNext();
+      }, delay);
+    };
+    scheduleNext();
+    log.info('RETENTION_SERVICE', 'Retention scheduler started', { hour, minute });
   }
 
-  _scheduleNext() {
-    const [h, m] = parseScheduleTime();
-    const now = new Date();
-    const next = new Date();
-    next.setUTCHours(h, m, 0, 0);
-    if (next <= now) next.setUTCDate(next.getUTCDate() + 1);
-    const delay = next.getTime() - now.getTime();
-    log.debug('RETENTION_SERVICE', 'Scheduling next run', { delayMs: delay, hour: h, minute: m });
-    this._timer = timerRegistry.createTimeout(() => {
-      this.runAll().catch(err =>
-        log.error('RETENTION_SERVICE', 'Scheduled run failed', { error: err.message })
-      );
-      this._timer = null;
-      this._scheduleNext();
-    }, delay, 'retention-service-daily');
-    this._timer.unref();
-  }
-
+  /**
+   * Stop the scheduled retention job.
+   */
   stop() {
     if (this._timer) {
-      this._timer.clear();
+      timerRegistry.clearTimeout(this._timer);
       this._timer = null;
     }
   }

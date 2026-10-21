@@ -12,6 +12,7 @@
 const Database = require('../utils/database');
 const { NotFoundError, ValidationError, ERROR_CODES } = require('../utils/errors');
 const log = require('../utils/log');
+const { toStroops } = require('../utils/money');
 
 /**
  * UN Sustainable Development Goals — 17 SDGs with codes and descriptions.
@@ -238,7 +239,7 @@ class ImpactMetricService {
    * @param {Object} params
    * @param {number} params.campaign_id - ID of the campaign this metric belongs to
    * @param {string} params.unit - Human-readable unit label (e.g. "meal", "book")
-   * @param {number} params.amount_per_unit - Donation amount required to deliver one unit
+  * @param {number|string} params.amount_per_unit - Donation amount required to deliver one unit
    * @param {string} [params.description] - Optional longer description
    * @returns {Promise<Object>} Created impact metric record
    * @throws {ValidationError} If campaign does not exist
@@ -301,20 +302,24 @@ class ImpactMetricService {
    * For each metric defined on the campaign, the number of units delivered is
    * floor(donation_amount / amount_per_unit), supporting fractional amounts.
    *
-   * @param {number} donationAmount - Donation amount (e.g. in XLM or USD)
+  * @param {number|string} donationAmount - Donation amount in XLM
    * @param {number} campaign_id - Campaign ID to look up metrics for
    * @returns {Promise<Array<{unit: string, units_delivered: number, description: string|null}>>}
    *   Impact breakdown per metric
    */
   static async calculateDonationImpact(donationAmount, campaign_id) {
     const metrics = await this.getByCampaign(campaign_id);
+    const donationStroops = toStroops(String(donationAmount));
 
-    return metrics.map(metric => ({
-      unit: metric.unit,
-      amount_per_unit: metric.amount_per_unit,
-      units_delivered: Math.floor(donationAmount / metric.amount_per_unit),
-      description: metric.description,
-    }));
+    return metrics.map(metric => {
+      const unitStroops = toStroops(String(metric.amount_per_unit));
+      return {
+        unit: metric.unit,
+        amount_per_unit: metric.amount_per_unit,
+        units_delivered: unitStroops > 0n ? Number(donationStroops / unitStroops) : 0,
+        description: metric.description,
+      };
+    });
   }
 
   /**

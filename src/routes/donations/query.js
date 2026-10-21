@@ -42,6 +42,7 @@ const { buildErrorResponse } = require('../../utils/validationErrorFormatter');
 const { parseAssetInput } = require('../../utils/stellarAsset');
 const Cache = require('../../utils/cache');
 const donationEvents = require('../../events/donationEvents');
+const { toStroops, stroopsToString } = require('../../utils/money');
 
 const {
   donationIdParamSchema,
@@ -199,21 +200,27 @@ router.get('/', checkPermission(PERMISSIONS.DONATIONS_READ), asyncHandler(async 
     const { status, from, to, startDate, endDate, minAmount, maxAmount,
             tag, tags, donor, recipient, memo } = req.query;
 
-    // Validate minAmount/maxAmount
-    if (minAmount !== undefined && isNaN(parseFloat(minAmount))) {
+    // Validate minAmount/maxAmount as exact stroop values.
+    let minAmountStroops;
+    let maxAmountStroops;
+    try {
+      if (minAmount !== undefined) minAmountStroops = toStroops(minAmount);
+    } catch {
       return res.status(400).json({
         success: false,
         error: { code: 'INVALID_MIN_AMOUNT', message: 'minAmount must be a number' },
       });
     }
-    if (maxAmount !== undefined && isNaN(parseFloat(maxAmount))) {
+    try {
+      if (maxAmount !== undefined) maxAmountStroops = toStroops(maxAmount);
+    } catch {
       return res.status(400).json({
         success: false,
         error: { code: 'INVALID_MAX_AMOUNT', message: 'maxAmount must be a number' },
       });
     }
     if (minAmount !== undefined && maxAmount !== undefined &&
-        parseFloat(minAmount) > parseFloat(maxAmount)) {
+        minAmountStroops > maxAmountStroops) {
       return res.status(400).json({
         success: false,
         error: { code: 'INVALID_AMOUNT_RANGE', message: 'minAmount must not exceed maxAmount' },
@@ -712,14 +719,21 @@ router.get('/search', checkPermission(PERMISSIONS.DONATIONS_READ), asyncHandler(
       });
     }
 
-    const parsedMinAmount = minAmount !== undefined ? parseFloat(minAmount) : undefined;
-    const parsedMaxAmount = maxAmount !== undefined ? parseFloat(maxAmount) : undefined;
-
-    if (minAmount !== undefined && isNaN(parsedMinAmount)) {
-      return res.status(400).json({ success: false, error: { code: 'INVALID_MIN_AMOUNT', message: 'minAmount must be a valid number' } });
+    let parsedMinAmount;
+    let parsedMaxAmount;
+    try {
+      if (minAmount !== undefined) parsedMinAmount = toStroops(minAmount);
+    } catch {
+      return res.status(400).json({ success: false, error: { code: 'INVALID_MIN_AMOUNT', message: 'minAmount must be a valid XLM amount' } });
     }
-    if (maxAmount !== undefined && isNaN(parsedMaxAmount)) {
-      return res.status(400).json({ success: false, error: { code: 'INVALID_MAX_AMOUNT', message: 'maxAmount must be a valid number' } });
+    try {
+      if (maxAmount !== undefined) parsedMaxAmount = toStroops(maxAmount);
+    } catch {
+      return res.status(400).json({ success: false, error: { code: 'INVALID_MAX_AMOUNT', message: 'maxAmount must be a valid XLM amount' } });
+    }
+
+    if (parsedMinAmount !== undefined && parsedMaxAmount !== undefined && parsedMinAmount > parsedMaxAmount) {
+      return res.status(400).json({ success: false, error: { code: 'INVALID_AMOUNT_RANGE', message: 'minAmount must not exceed maxAmount' } });
     }
 
     const offset = cursor ? parseInt(cursor, 10) : 0;
@@ -738,8 +752,8 @@ router.get('/search', checkPermission(PERMISSIONS.DONATIONS_READ), asyncHandler(
       const storeConditions = [];
       const storeParams = [ftsQuery];
 
-      if (parsedMinAmount !== undefined) { storeConditions.push('ds.amount_stroops >= ?'); storeParams.push(Math.round(parsedMinAmount * 1e7)); }
-      if (parsedMaxAmount !== undefined) { storeConditions.push('ds.amount_stroops <= ?'); storeParams.push(Math.round(parsedMaxAmount * 1e7)); }
+      if (parsedMinAmount !== undefined) { storeConditions.push('ds.amount_stroops >= ?'); storeParams.push(stroopsToString(parsedMinAmount)); }
+      if (parsedMaxAmount !== undefined) { storeConditions.push('ds.amount_stroops <= ?'); storeParams.push(stroopsToString(parsedMaxAmount)); }
       if (startDate) { storeConditions.push('ds.timestamp >= ?'); storeParams.push(startDate); }
       if (endDate) { storeConditions.push('ds.timestamp <= ?'); storeParams.push(endDate); }
       if (status) { storeConditions.push('ds.status = ?'); storeParams.push(status); }
@@ -792,8 +806,8 @@ router.get('/search', checkPermission(PERMISSIONS.DONATIONS_READ), asyncHandler(
       const conditions = [];
       const params = [];
 
-      if (parsedMinAmount !== undefined) { conditions.push('amount_stroops >= ?'); params.push(Math.round(parsedMinAmount * 1e7)); }
-      if (parsedMaxAmount !== undefined) { conditions.push('amount_stroops <= ?'); params.push(Math.round(parsedMaxAmount * 1e7)); }
+      if (parsedMinAmount !== undefined) { conditions.push('amount_stroops >= ?'); params.push(stroopsToString(parsedMinAmount)); }
+      if (parsedMaxAmount !== undefined) { conditions.push('amount_stroops <= ?'); params.push(stroopsToString(parsedMaxAmount)); }
       if (startDate) { conditions.push('timestamp >= ?'); params.push(startDate); }
       if (endDate) { conditions.push('timestamp <= ?'); params.push(endDate); }
       if (status) { conditions.push('status = ?'); params.push(status); }

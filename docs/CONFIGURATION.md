@@ -313,6 +313,20 @@ npm run config:check      # what CI runs: schema covers src/, generated files ar
 | `SMTP_TO` | string | — | no | Fallback recipient for export notifications |
 | `SMTP_USER` | string | — | no | SMTP authentication username |
 
+> **Startup validation:** When `SMTP_HOST` is set, the startup checks verify that `SMTP_FROM` is also configured and, if `SMTP_USER` is provided, that `SMTP_PASSWORD` (or `SMTP_PASS`) is present. The check also attempts to verify the SMTP connection; a failed verification logs a warning but does not block startup.
+
+---
+
+## 11a. Webhook Email Notifications
+
+These variables control the email notifications sent when a webhook is auto-disabled after repeated delivery failures (`WebhookEmailNotificationService`). They only take effect when `SMTP_HOST` is configured.
+
+| Variable | Type | Default | Required? | Effect |
+|---|---|---|---|---|
+| `WEBHOOK_NOTIFICATION_DEDUP_WINDOW_MS` | integer | `3600000` | no | Duration (ms) of the deduplication window — a second notification for the same webhook is suppressed within this window |
+| `WEBHOOK_NOTIFICATION_MAX_RETRIES` | integer | `3` | no | Maximum retry attempts for failed notification emails |
+| `WEBHOOK_NOTIFICATION_RETRY_DELAYS_MS` | string | `60000,300000,1800000` | no | Comma-separated retry delays (ms) for each successive retry attempt |
+
 ---
 
 ## 12. IPFS / Pinata

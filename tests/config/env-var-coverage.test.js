@@ -110,7 +110,7 @@ describe('Environment variable documentation coverage (Issue #1177)', () => {
 
     if (undocumented.length > 0) {
       const list = undocumented.sort().map(v => `  - ${v}`).join('\n');
-      fail(
+      throw new Error(
         `The following environment variables are used in src/ but are not documented ` +
         `in docs/CONFIGURATION.md:\n\n${list}\n\n` +
         `Add each variable to the appropriate section of docs/CONFIGURATION.md ` +

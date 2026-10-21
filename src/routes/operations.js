@@ -18,7 +18,7 @@ const AUDIT_LOG_DEFAULT_LIMIT = 50;
 const AUDIT_LOG_MAX_LIMIT = 500;
 
 function abuseSignals(req, res) {
-  const abuseDetector = require('../utils/abuseDetector');
+  const abuseDetector = require('../services/AbuseDetectionService');
   res.json({ success: true, data: abuseDetector.getStats(), timestamp: new Date().toISOString() });
 }
 

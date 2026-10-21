@@ -14,12 +14,9 @@ const SRC = path.join(__dirname, '..', 'src');
 // jitter, log sampling, routing and mock services.
 const ALLOWLIST = new Set([
   'utils/log.js',
-  'utils/sequenceManager.js',
   'services/StellarService.js',
-  'services/NetworkFeeService.js',
   'services/RecurringDonationScheduler.js',
   'services/MockStellarService.js',
-  'services/MockStellarServiceStub.js',
   'services/mock/fees.js',
   'services/mock/payments.js',
 ]);
