@@ -96,7 +96,7 @@
   "optionalDependencies": {
     "@opentelemetry/auto-instrumentations-node": "^0.81.1",
     "@opentelemetry/exporter-trace-otlp-http": "^0.223.0",
-    "@opentelemetry/resources": "^2.12.0",
+    "@opentelemetry/resources": "^3.0.0",
     "@opentelemetry/sdk-node": "^0.223.0",
     "@opentelemetry/semantic-conventions": "^1.28.0"
   },
