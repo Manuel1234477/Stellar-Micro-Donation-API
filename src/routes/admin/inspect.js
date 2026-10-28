@@ -92,9 +92,11 @@ const { deprecated } = require('../../middleware/deprecation');
 
 const router = express.Router();
 
+const { XdrInspector } = require('../../utils/xdrInspector');
+
 /**
  * POST /admin/inspect/xdr/decode handler.
- * Decodes TransactionEnvelope and FeeBumpTransactionEnvelope XDR into JSON.
+ * Decodes TransactionEnvelope and FeeBumpTransactionEnvelope XDR into JSON using unified XdrInspector.
  */
 const decodeXdrHandler = asyncHandler(async (req, res, next) => {
   try {
@@ -104,45 +106,22 @@ const decodeXdrHandler = asyncHandler(async (req, res, next) => {
       throw new ValidationError('xdr (Base64-encoded string) is required');
     }
 
-    // Determine network passphrase
-    const networkPassphrase = network === 'public' || network === 'mainnet'
-      ? StellarSdk.Networks.PUBLIC
-      : StellarSdk.Networks.TESTNET;
-
-    let envelope;
-    let txType = 'transaction';
-    let decodedData = {};
-
+    let decodedData;
     try {
-      // Try decoding as standard transaction envelope
-      envelope = StellarSdk.TransactionBuilder.fromXDR(xdr, networkPassphrase);
-      
-      if (envelope.constructor.name === 'FeeBumpTransaction') {
-        txType = 'feeBump';
-        decodedData = decodeFeeBumpTransaction(envelope);
-      } else {
-        decodedData = decodeTransaction(envelope);
-      }
+      decodedData = XdrInspector.decode(xdr, { network });
     } catch (decodeError) {
-      // Try decoding as fee-bump transaction if standard decode failed
-      try {
-        envelope = new StellarSdk.FeeBumpTransaction(xdr, networkPassphrase);
-        txType = 'feeBump';
-        decodedData = decodeFeeBumpTransaction(envelope);
-      } catch (feeBumpError) {
-        throw new ValidationError(
-          `Invalid XDR format: ${decodeError.message}`,
-          { xdrError: decodeError.message, feeBumpError: feeBumpError.message },
-          'INVALID_XDR'
-        );
-      }
+      throw new ValidationError(
+        `Invalid XDR format: ${decodeError.message}`,
+        { xdrError: decodeError.message },
+        'INVALID_XDR'
+      );
     }
 
     return res.json({
       success: true,
       data: {
         ...decodedData,
-        type: txType,
+        type: decodedData.type,
         network: network,
       },
     });
