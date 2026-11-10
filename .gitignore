@@ -2,9 +2,7 @@
 node_modules/
 
 # Environment variables
-.env
 src/.env
-.env.local
 .env.development.local
 .env.test.local
 .env.production.local
@@ -90,7 +88,6 @@ Thumbs.db
 Desktop.ini
 
 # IDE
-.vscode/
 .idea/
 *.swp
 *.swo
@@ -157,3 +154,4 @@ tmp-*
 data/*.json
 data/memo-keys/
 .kiro/
+config.bat

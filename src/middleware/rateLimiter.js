@@ -517,9 +517,48 @@ const liveHistoryRateLimiter = rateLimit({
   }
 });
 
+/**
+ * XDR Decode Rate Limiter (#1986)
+ * Strict rate limiting for CPU-bound XDR parsing on public endpoints.
+ * Protects event loop from recursive parsing denial-of-service.
+ */
+const xdrDecodeRateLimiter = rateLimit({
+  storePrefix: 'xdr-decode',
+  windowMs: 60 * 1000,
+  max: 30,
+  keyGenerator: (req) => {
+    if (req.apiKey && req.apiKey.id && !req.apiKey.isLegacy) {
+      return `key:${req.apiKey.id}`;
+    }
+    return `ip:${req.ip}`;
+  },
+  message: {
+    success: false,
+    error: {
+      code: 'RATE_LIMIT_EXCEEDED',
+      message: 'Too many XDR decoding requests. Please try again later.',
+    }
+  },
+  standardHeaders: true,
+  legacyHeaders: true,
+  validate: false,
+  handler: (req, res) => {
+    res.set('Retry-After', calculateRetryAfter(req.rateLimit?.resetTime));
+    res.status(429).json({
+      success: false,
+      error: {
+        code: 'RATE_LIMIT_EXCEEDED',
+        message: 'Too many XDR decoding requests. Please try again later.',
+        retryAfter: req.rateLimit?.resetTime,
+      }
+    });
+  }
+});
+
 module.exports = {
   sharedRateLimit: rateLimit,
   donationRateLimiter,
+  xdrDecodeRateLimiter,
   listDonationsRateLimiter,
   cheapKeyGenerator,
   verificationRateLimiter,
