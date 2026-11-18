@@ -979,7 +979,9 @@ router.get('/feed', checkPermission(PERMISSIONS.STREAM_READ), (req, res) => {
   }
 
   const clientId = crypto.randomUUID ? crypto.randomUUID() : crypto.randomBytes(16).toString('hex');
-  const { added, limitExceeded, client } = SseManager.addClient(clientId, keyId, filter, res);
+  const { added, limitExceeded, globalLimit, client } = SseManager.addClient(clientId, keyId, filter, res);
+
+  if (globalLimit) return SseManager.sendGlobalLimitResponse(res);
 
   if (limitExceeded) {
     return res.status(429).json({

@@ -779,7 +779,9 @@ router.get('/stream', (req, res) => {
     minAmount: req.query.minAmount !== undefined ? parseFloat(req.query.minAmount) : null,
   };
 
-  const { added, limitExceeded } = sseManager.addClient(apiKey, res, filters);
+  const { added, limitExceeded, globalLimit } = sseManager.addClient(apiKey, res, filters);
+
+  if (globalLimit) return sseManager.sendGlobalLimitResponse(res);
 
   if (limitExceeded) {
     return res.status(429).json({

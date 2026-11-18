@@ -421,8 +421,62 @@ function recordSchedulerLockRelease() {
   } catch (_) { /* best-effort */ }
 }
 
+// ─── Stream connection metrics (#1983) ───────────────────────────────────────
+
+/**
+ * Gauge: currently open long-lived streams, labelled by transport
+ * (`sse`, `ws_balances`, `ws_graphql`).
+ * @type {client.Gauge}
+ */
+const streamConnectionsActive = new client.Gauge({
+  name: 'stream_connections_active',
+  help: 'Currently open SSE and WebSocket connections on this instance',
+  labelNames: ['transport'],
+  registers: [registry],
+});
+
+/**
+ * Counter: connections refused because a global cap was reached.
+ * @type {client.Counter}
+ */
+const streamConnectionsRejectedTotal = new client.Counter({
+  name: 'stream_connections_rejected_total',
+  help: 'SSE and WebSocket connections rejected by a global connection cap',
+  labelNames: ['transport'],
+  registers: [registry],
+});
+
+// ─── Stellar mode (#1984) ────────────────────────────────────────────────────
+
+const STELLAR_MODE_LABELS = ['mock', 'testnet', 'public'];
+
+/**
+ * Gauge: one series per Stellar mode; the active mode is 1, the rest 0.
+ * @type {client.Gauge}
+ */
+const stellarMode = new client.Gauge({
+  name: 'stellar_mode',
+  help: 'Active Stellar mode (mock, testnet or public). The active label is 1, the others 0',
+  labelNames: ['mode'],
+  registers: [registry],
+});
+
+/**
+ * Record the active Stellar mode on the stellar_mode gauge.
+ * @param {'mock'|'testnet'|'public'} mode
+ */
+function recordStellarMode(mode) {
+  for (const label of STELLAR_MODE_LABELS) {
+    stellarMode.set({ mode: label }, label === mode ? 1 : 0);
+  }
+}
+
 module.exports = {
   registry,
+  stellarMode,
+  recordStellarMode,
+  streamConnectionsActive,
+  streamConnectionsRejectedTotal,
   httpRequestDuration,
   stellarDonationsTotal,
   metricsMiddleware,

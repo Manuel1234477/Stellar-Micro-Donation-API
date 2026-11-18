@@ -214,7 +214,9 @@ router.get('/stream', checkPermission(PERMISSIONS.STATS_READ), (req, res, next) 
     const keyId = req.apiKey ? String(req.apiKey.id) : 'anonymous';
     const clientId = crypto.randomUUID ? crypto.randomUUID() : crypto.randomBytes(16).toString('hex');
     // Register before sending headers so limit errors can still set a status
-    const { added, limitExceeded, client } = SseManager.addClient(clientId, keyId, { window }, res);
+    const { added, limitExceeded, globalLimit, client } = SseManager.addClient(clientId, keyId, { window }, res);
+
+    if (globalLimit) return SseManager.sendGlobalLimitResponse(res);
 
     if (limitExceeded) {
       return res.status(429).json({
