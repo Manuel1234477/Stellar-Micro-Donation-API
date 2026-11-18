@@ -469,11 +469,17 @@ class Database {
    * deal with raw sqlite3 error shapes. The original error is preserved as
    * `cause` and the classification is exposed via `code`/`category`.
    *
+   * The client-facing message stays generic. The SQLite code, the original
+   * message and the SQL verb are attached to the error and logged server-side
+   * (#1949), and included in the message when NODE_ENV=test so failing suites
+   * show the real cause.
+   *
    * @param {Error} err - SQLite error.
    * @param {string} failureMessage - Safe top-level error message.
+   * @param {{ sql?: string, operation?: string }} [context] - Statement that failed.
    * @returns {Error} Normalized application error.
    */
-  static mapDatabaseError(err, failureMessage) {
+  static mapDatabaseError(err, failureMessage, context = {}) {
     if (err instanceof DatabaseError || err instanceof DuplicateError) {
       return err;
     }
@@ -483,20 +489,35 @@ class Database {
     }
 
     const category = this.classifyDatabaseError(err);
+    const sqliteCode = (err && typeof err.code === 'string' && err.code) || 'SQLITE_ERROR';
+    const operation = context.operation || (context.sql ? _parseSqlOperation(context.sql) : 'UNKNOWN');
+    const rawMessage = (err && err.message) || '';
     const baseMessage = category === 'timeout'
-      ? (err && err.message) || failureMessage
+      ? rawMessage || failureMessage
       : failureMessage;
-    const diagnostic = process.env.NODE_ENV === 'test' && err && err.message
-      ? ` (${err.code || 'SQLITE_ERROR'}: ${err.message})`
+    const diagnostic = process.env.NODE_ENV === 'test' && rawMessage
+      ? ` (${sqliteCode}: ${rawMessage})`
       : '';
     const message = `${baseMessage}${diagnostic}`;
 
     const mapped = new DatabaseError(message, err);
     mapped.category = category;
     mapped.retryable = this.isRetryableError(err);
-    if (err && err.code && !mapped.code) {
-      mapped.sqliteCode = err.code;
+    mapped.sqliteCode = sqliteCode;
+    mapped.operation = operation;
+
+    log.error('DATABASE', failureMessage, {
+      sqliteCode,
+      category,
+      operation,
+      error: rawMessage,
+    });
+    try {
+      require('./metrics').recordDatabaseError({ sqliteCode, category, operation });
+    } catch (_metricsErr) {
+      // Metrics must never change how a database error is reported.
     }
+
     return mapped;
   }
 
@@ -934,7 +955,7 @@ class Database {
           });
 
           if (err) {
-            rejectStatement(Database.mapDatabaseError(err, failureMessage));
+            rejectStatement(Database.mapDatabaseError(err, failureMessage, { sql, operation }));
           } else if (method === 'run') {
             const runResult = { id: statementContext.lastID, changes: statementContext.changes };
             // Record rows affected for write operations
@@ -955,7 +976,7 @@ class Database {
           lease.db[method](sql, params, callback);
         } catch (error) {
           completed = true;
-          const mappedError = Database.mapDatabaseError(error, failureMessage);
+          const mappedError = Database.mapDatabaseError(error, failureMessage, { sql, operation });
           rejectStatement(mappedError);
           // Retire the connection only when the failure indicates a broken handle.
           const retire = Database.classifyDatabaseError(error) === 'connection';
@@ -1000,7 +1021,7 @@ class Database {
 
           // Normalize anything else (e.g. connection drops surfaced by sqlite3)
           // so callers always receive a DatabaseError.
-          throw Database.mapDatabaseError(error, failureMessage);
+          throw Database.mapDatabaseError(error, failureMessage, { sql, operation });
         }
       },
       { kind: 2 /* SpanKind.CLIENT */ }
