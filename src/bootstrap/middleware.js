@@ -41,6 +41,42 @@ const STREAMING_PATH_RE = /\/(stream|sse|events|ws|websocket|subscribe)(\/|$)/i;
 // size (#1953). Every other path keeps the 100 KB default.
 const BATCH_BODY_PATH_RE = /^(?:\/api\/v1)?\/donations\/(?:batch|bulk)\/?$/;
 
+// Content types accepted on body-carrying requests. multipart/form-data is for
+// the bulk wallet import upload routes (multer). Form-encoded is accepted only on
+// SEP-10 token exchange, which parses it on its own router (#1955).
+const SUPPORTED_BODY_TYPES = new Set(['application/json', 'multipart/form-data']);
+const SEP10_FORM_PATH_RE = /^(?:\/api\/v1)?\/auth\/token\/?$/;
+const MUTATING_METHODS = new Set(['POST', 'PUT', 'PATCH', 'DELETE']);
+
+/**
+ * Reject body-carrying mutating requests whose Content-Type this API does not
+ * parse. Responds 415 with the standard error envelope (#1955).
+ */
+function unsupportedMediaTypeGuard(req, res, next) {
+  if (!MUTATING_METHODS.has(req.method)) return next();
+
+  const contentLength = req.get('content-length');
+  const hasBody = (contentLength !== undefined && contentLength !== '0') || req.get('transfer-encoding');
+  if (!hasBody) return next();
+
+  const rawType = req.get('content-type');
+  if (!rawType) return next();
+
+  const type = rawType.split(';')[0].trim().toLowerCase();
+  if (SUPPORTED_BODY_TYPES.has(type)) return next();
+  if (type === 'application/x-www-form-urlencoded' && SEP10_FORM_PATH_RE.test(req.path)) return next();
+
+  return res.status(415).json({
+    success: false,
+    error: {
+      code: 'UNSUPPORTED_MEDIA_TYPE',
+      message: 'Unsupported Content-Type. Send application/json.',
+      requestId: req.id,
+      timestamp: new Date().toISOString(),
+    },
+  });
+}
+
 /**
  * Apply all middleware to the given Express app.
  * Must be called exactly once, before mountRoutes().
@@ -137,7 +173,12 @@ function applyMiddleware(app) {
   const defaultJsonParser = express.json({ limit: ENDPOINT_LIMITS.default, verify: jsonBodyVerify });
   const batchJsonParser = express.json({ limit: ENDPOINT_LIMITS.batchDonation, verify: jsonBodyVerify });
   app.use((req, res, next) => (BATCH_BODY_PATH_RE.test(req.path) ? batchJsonParser : defaultJsonParser)(req, res, next));
-  app.use(express.urlencoded({ extended: true }));
+
+  // #1955: no global urlencoded parser. Form-encoded bodies are accepted only
+  // where the protocol requires them (SEP-10 token exchange, parsed on that
+  // router). Any other body with an unsupported Content-Type is rejected with 415
+  // instead of silently arriving as an empty or unexpectedly shaped body.
+  app.use(unsupportedMediaTypeGuard);
 
   // ─── Post-parse security ─────────────────────────────────────────────────────
   app.use(require('../middleware/blockCheck'));
