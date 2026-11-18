@@ -24,6 +24,7 @@
 
 const { EventEmitter } = require('events');
 const { WebSocketServer } = require('ws');
+const { upgradePathname } = require('../utils/wsUpgrade');
 const { validateKey } = require('../models/apiKeys');
 const { securityConfig } = require('../config/securityConfig');
 const donationEvents = require('../events/donationEvents');
@@ -188,10 +189,9 @@ function attach(server) {
   const wss = new WebSocketServer({ noServer: true });
 
   server.on('upgrade', async (req, socket, head) => {
-    if (req.url && !req.url.startsWith('/ws/balances')) {
-      socket.destroy();
-      return;
-    }
+    // Only handle our own path. Other upgrades belong to other transports (GraphQL)
+    // or to the unknown-path fallback in bootstrap/server.js. (#1980)
+    if (upgradePathname(req) !== '/ws/balances') return;
 
     const url = new URL(req.url, 'http://localhost');
     const apiKey = url.searchParams.get('apiKey') ||

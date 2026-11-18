@@ -14,6 +14,7 @@
 const { createHandler } = require('graphql-http/lib/use/express');
 const { useServer } = require('graphql-ws/use/ws');
 const { WebSocketServer } = require('ws');
+const { upgradePathname } = require('../utils/wsUpgrade');
 const { validate } = require('graphql');
 const { buildSchema } = require('./schema');
 const pubsub = require('./pubsub');
@@ -282,7 +283,14 @@ const graphqlHttpHandler = createHandler({
  * @returns {object} graphql-ws server handle (call .dispose() on shutdown)
  */
 function attachSubscriptionServer(httpServer) {
-  const wss = new WebSocketServer({ server: httpServer, path: '/graphql' });
+  // noServer: ws must not register its own 'upgrade' listener, because it would
+  // reject every non-/graphql upgrade (400) and break the balance WebSocket. (#1980)
+  const wss = new WebSocketServer({ noServer: true });
+
+  httpServer.on('upgrade', (req, socket, head) => {
+    if (upgradePathname(req) !== '/graphql') return;
+    wss.handleUpgrade(req, socket, head, (ws) => wss.emit('connection', ws, req));
+  });
 
   const wsServer = useServer(
     {
