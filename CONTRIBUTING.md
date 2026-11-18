@@ -39,13 +39,27 @@ npm run generate-key
 # 4. Initialise the database
 npm run init-db
 
-# 5. Start the dev server (auto-reload)
-npm run dev
+# 5. Start the API (runs validate-env, then the server)
+npm start
 ```
 
 The API will be available at `http://localhost:3000`.
 
 For development without a live Stellar network add `MOCK_STELLAR=true` to `.env`.
+
+### Verify your setup
+
+Once the server is running, confirm the baseline works. CI runs the same steps on a
+fresh runner (see the `onboarding` job in `.github/workflows/ci.yml`):
+
+```bash
+curl -i http://localhost:3000/health          # expect: HTTP/1.1 200 OK
+ONBOARDING_HEALTH_URL=http://localhost:3000/health bash scripts/validate-onboarding.sh
+                                              # expect: "All onboarding checks passed."
+```
+
+If `npm start` fails at `validate-env`, the message names the missing or invalid variable.
+Fix it in `.env` and run `npm start` again.
 
 ---
 

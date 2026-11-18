@@ -72,3 +72,39 @@ jobs:
           MOCK_STELLAR: 'true'
           API_KEYS: smoke-test-key
           ENCRYPTION_KEY: test_encryption_key_fixed_32bytes_hex_value_here_00
+
+  # Contributor onboarding (#1977): mirrors the steps in CONTRIBUTING.md on a
+  # fresh runner — install, migrate, boot in mock mode, call /health, then run
+  # scripts/validate-onboarding.sh against the live server.
+  onboarding:
+    runs-on: ubuntu-latest
+    env:
+      NODE_ENV: development
+      MOCK_STELLAR: 'true'
+      API_KEYS: onboarding-ci-key
+      ENCRYPTION_KEY: 0000000000000000000000000000000000000000000000000000000000000000
+      ONBOARDING_HEALTH_URL: http://localhost:3000/health
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+      - run: npm ci
+      - run: npm run validate-env
+      - run: npm run migrate
+      - name: Boot the API in mock mode
+        run: |
+          node src/app.js > onboarding-server.log 2>&1 &
+          for i in $(seq 1 30); do
+            if curl -fs http://localhost:3000/health > /dev/null; then
+              echo "API is up after ${i}s"
+              exit 0
+            fi
+            sleep 1
+          done
+          echo "API did not become healthy"; cat onboarding-server.log; exit 1
+      - run: bash scripts/validate-onboarding.sh
+      - name: Show server log on failure
+        if: failure()
+        run: cat onboarding-server.log || true
