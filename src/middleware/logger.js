@@ -4,7 +4,7 @@ const path = require('path');
 
 // Internal modules
 const log = require('../utils/log');
-const config = require('../config');
+const { env: typedEnv } = require('../config/env');
 const { maskSensitiveData } = require('../utils/dataMasker');
 
 /**
@@ -221,8 +221,8 @@ class Logger {
 
 
 const logger = new Logger({
-  logToFile: config.logging.toFile,
-  logDir: config.logging.directory
+  logToFile: typedEnv.LOG_TO_FILE,
+  logDir: typedEnv.LOG_DIR
 });
 
 module.exports = logger;
