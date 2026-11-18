@@ -28,6 +28,9 @@ const log = require('../utils/log');
 const { validateKey } = require('../models/apiKeys');
 const { securityConfig } = require('../config/securityConfig');
 const { parseLanguage, getMessage } = require('../utils/i18n');
+const { env } = require('../config/env');
+const { streamConnectionsActive, streamConnectionsRejectedTotal } = require('../utils/metrics');
+const { createTokenBucket } = require('../utils/tokenBucket');
 
 const IS_PRODUCTION = process.env.NODE_ENV === 'production';
 
@@ -412,11 +415,43 @@ const graphqlHttpHandler = createHandler({
  * @returns {object} graphql-ws server handle (call .dispose() on shutdown)
  */
 function attachSubscriptionServer(httpServer) {
-  const wss = new WebSocketServer({ server: httpServer, path: '/graphql' });
+  // Transport limits (#1981, #1983). maxPayload bounds per-frame memory; the ws
+  // default is 100 MiB. verifyClient rejects upgrades above the global cap with 503
+  // before the connection is accepted.
+  const wss = new WebSocketServer({
+    server: httpServer,
+    path: '/graphql',
+    maxPayload: env.WS_MAX_PAYLOAD_BYTES,
+    verifyClient: (_info, done) => {
+      if (wss.clients.size >= env.WS_MAX_CONNECTIONS) {
+        streamConnectionsRejectedTotal.inc({ transport: 'ws_graphql' });
+        return done(false, 503, 'Server at capacity', { 'Retry-After': '30' });
+      }
+      return done(true);
+    },
+  });
+
+  wss.on('connection', (socket) => {
+    streamConnectionsActive.set({ transport: 'ws_graphql' }, wss.clients.size);
+
+    // graphql-ws owns the message listener and cannot be told to drop a single frame,
+    // so an over-budget connection is closed instead (#1981).
+    const bucket = createTokenBucket(env.WS_MAX_MESSAGES_PER_SECOND);
+    socket.on('message', () => {
+      if (!bucket.take()) socket.close(4429, 'Too many messages');
+    });
+    socket.on('close', () => {
+      streamConnectionsActive.set({ transport: 'ws_graphql' }, wss.clients.size);
+    });
+  });
 
   const wsServer = useServer(
     {
       schema,
+      /**
+       * Close the socket if the client has not sent a valid connection_init in time (#1981).
+       */
+      connectionInitWaitTimeout: env.WS_AUTH_TIMEOUT_MS,
       /**
        * Authenticate WebSocket connections via connectionParams.
        * @param {object} ctx - graphql-ws context
@@ -454,6 +489,13 @@ function attachSubscriptionServer(httpServer) {
        * @returns {readonly GraphQLError[] | void} Return errors to reject the subscription
        */
       onSubscribe: (ctx, msg, args) => {
+        // ctx.subscriptions already holds this subscription's id, so the count includes it (#1981).
+        if (Object.keys(ctx.subscriptions || {}).length > env.WS_MAX_SUBSCRIPTIONS) {
+          const err = new Error(`Subscription limit is ${env.WS_MAX_SUBSCRIPTIONS} per connection.`);
+          err.extensions = { code: 'SUBSCRIPTION_LIMIT_EXCEEDED' };
+          return [err];
+        }
+
         // args may be undefined in some graphql-ws versions; fall back to parsing msg
         const document = args?.document;
         if (!document) return;
