@@ -1,7 +1,16 @@
 /**
  * EscrowContract
- * JavaScript simulation of a Soroban escrow smart contract.
+ * JavaScript simulation of a Soroban escrow smart contract (in-memory, test-only).
  * Holds donated funds and releases them only when a configurable campaign goal is reached.
+ *
+ * NOT a production escrow (issue #1939):
+ *   - Balances and donor records live in process memory and are lost on restart.
+ *   - Nothing is deployed on-chain, and no funds move on the Stellar network.
+ *   - No HTTP route imports this module. Production campaign escrow is
+ *     CrowdfundingService: real Stellar payments to a service account, with
+ *     state stored in the database.
+ * Do not mount this module on a route. tests/issues/issue-1939-escrow-not-exposed.test.js
+ * fails if that happens.
  */
 
 class EscrowContract {
