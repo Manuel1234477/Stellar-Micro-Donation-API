@@ -6,6 +6,9 @@ metadata:
     app.kubernetes.io/name: stellar-micro-donation-api
 data:
   NODE_ENV: production
+  # #1954: Trust only the ingress controller's pod CIDR so req.ip is the real
+  # client address. Replace with your cluster's ingress CIDR; never use "true".
+  TRUSTED_PROXIES: "10.244.0.0/16"
   PORT: "3000"
   DB_PATH: /data/stellar_donations.db
   SHUTDOWN_TIMEOUT_MS: "30000"
