@@ -145,8 +145,8 @@ const SECURITY_CONFIGS = {
  * Load and validate security configuration with safe defaults.
  *
  * Pure function of the supplied env object: no reads or writes of the global
- * `process.env`, so it can be exercised directly in tests without module cache
- * tricks. Defaults to `process.env` for production callers.
+ * `process.env`, so it can be exercised directly in tests. Defaults to
+ * `process.env` for production callers.
  */
 function loadSecurityConfig(env = process.env) {
   const config = {};
@@ -229,6 +229,105 @@ function loadSecurityConfig(env = process.env) {
 
     config[key] = finalValue;
 
-    // Log con
+    // Log configuration loading (without sensitive values)
+    const logValue = key.includes('KEY') || key.includes('SECRET') 
+      ? '[REDACTED]' 
+      : finalValue;
+    
+    log.debug('SECURITY_CONFIG', `Loaded ${key}`, {
+      value: logValue,
+      source: envValue ? 'environment' : 'default'
+    });
+  });
 
-/* … truncated 2928 chars — edit only what you need near the top … */
+  // Log misconfigurations
+  if (misconfigurations.length > 0) {
+    log.warn('SECURITY_CONFIG', 'Security configuration issues detected', {
+      count: misconfigurations.length,
+      issues: misconfigurations.map(m => ({
+        config: m.config,
+        issue: m.issue,
+        severity: m.severity
+      }))
+    });
+
+    // Check for critical issues
+    const criticalIssues = misconfigurations.filter(m => m.severity === 'ERROR');
+    if (criticalIssues.length > 0 && isProduction) {
+      log.error('SECURITY_CONFIG', 'CRITICAL security misconfigurations in production', {
+        issues: criticalIssues
+      });
+    }
+  }
+
+  // Security recommendations
+  logSecurityRecommendations(config, isProduction);
+
+  return config;
+}
+
+/**
+ * Log security recommendations based on current configuration
+ */
+function logSecurityRecommendations(config, isProduction) {
+  const recommendations = [];
+
+  if (isProduction) {
+    if (config.DEBUG_MODE === 'true') {
+      recommendations.push('Disable DEBUG_MODE in production');
+    }
+    if (config.MOCK_STELLAR === 'true') {
+      recommendations.push('Consider disabling MOCK_STELLAR in production');
+    }
+    if (!config.ENCRYPTION_KEY) {
+      recommendations.push('Set ENCRYPTION_KEY in production');
+    }
+    if (!config.SERVICE_SECRET_KEY && !config.STELLAR_SECRET) {
+      recommendations.push('Consider setting SERVICE_SECRET_KEY for service operations');
+    }
+  } else {
+    if (config.STELLAR_NETWORK === 'mainnet') {
+      recommendations.push('Avoid using mainnet in development environments');
+    }
+    if (config.RATE_LIMIT === '100') {
+      recommendations.push('Consider adjusting RATE_LIMIT for development testing');
+    }
+  }
+
+  if (recommendations.length > 0) {
+    log.info('SECURITY_CONFIG', 'Security recommendations', {
+      environment: isProduction ? 'production' : 'development',
+      recommendations
+    });
+  }
+}
+
+/**
+ * Get security configuration summary (safe for logging)
+ */
+function getSecuritySummary() {
+  const config = loadSecurityConfig();
+  const summary = {};
+
+  Object.entries(config).forEach(([key, value]) => {
+    if (key.includes('KEY') || key.includes('SECRET')) {
+      summary[key] = value ? '[CONFIGURED]' : '[NOT SET]';
+    } else if (key === 'API_KEYS') {
+      summary[key] = Array.isArray(value) && value.length > 0 ? '[CONFIGURED]' : '[NOT SET]';
+    } else {
+      summary[key] = value;
+    }
+  });
+
+  return summary;
+}
+
+// Load configuration at module initialization
+const securityConfig = loadSecurityConfig();
+
+module.exports = {
+  securityConfig,
+  loadSecurityConfig,
+  getSecuritySummary,
+  SECURITY_CONFIGS
+};
