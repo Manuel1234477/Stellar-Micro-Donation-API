@@ -60,7 +60,9 @@
     "scan:container:all": "bash scripts/scan-container.sh --severity CRITICAL,HIGH,MEDIUM,LOW",
     "scan:container:json": "bash scripts/scan-container.sh --format json --output trivy-results.json",
     "docs:error-codes:check": "node scripts/generate-error-codes.js --check",
-    "check:error-codes": "node scripts/check-error-codes.js"
+    "check:error-codes": "node scripts/check-error-codes.js",
+    "docs:api-matrix": "node scripts/generate-api-version-matrix.js",
+    "docs:api-matrix:check": "node scripts/generate-api-version-matrix.js --check"
   },
   "dependencies": {
     "ajv": "^8.12.0",
