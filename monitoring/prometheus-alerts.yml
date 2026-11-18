@@ -46,8 +46,8 @@ groups:
       - alert: APIAvailabilityBelowSLO
         expr: |
           (
-            sum(rate(http_request_duration_seconds_count{status_code=~"2.."}[5m])) +
-            sum(rate(http_request_duration_seconds_count{status_code=~"3.."}[5m]))
+            (sum(rate(http_request_duration_seconds_count{status_code=~"2.."}[5m])) or vector(0)) +
+            (sum(rate(http_request_duration_seconds_count{status_code=~"3.."}[5m])) or vector(0))
           ) /
           sum(rate(http_request_duration_seconds_count[5m])) < 0.99
         for: 5m
@@ -206,10 +206,10 @@ groups:
 
       - alert: RecurringDonationSuccessRateLow
         expr: |
-          sum(rate(stellar_recurring_donations_executed_total{status="success"}[1h])) /
+          (sum(rate(stellar_recurring_donations_executed_total{status="success"}[1h])) or vector(0)) /
           (
-            sum(rate(stellar_recurring_donations_executed_total{status="success"}[1h])) +
-            sum(rate(stellar_recurring_donations_executed_total{status="failure"}[1h]))
+            (sum(rate(stellar_recurring_donations_executed_total{status="success"}[1h])) or vector(0)) +
+            (sum(rate(stellar_recurring_donations_executed_total{status="failure"}[1h])) or vector(0))
           ) < 0.98
         for: 10m
         labels:

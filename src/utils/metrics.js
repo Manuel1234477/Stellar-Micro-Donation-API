@@ -14,6 +14,7 @@
  */
 
 const client = require('prom-client');
+const v8 = require('v8');
 
 // Use a dedicated registry so tests can reset state cleanly
 const registry = new client.Registry();
@@ -22,6 +23,21 @@ const registry = new client.Registry();
 if (process.env.NODE_ENV !== 'test' && process.env.NODE_ENV !== 'testing') {
   client.collectDefaultMetrics({ register: registry });
 }
+
+/**
+ * Gauge: V8 heap size limit in bytes, read from v8.getHeapStatistics() at
+ * scrape time. prom-client's default metrics do not expose this value, and the
+ * HighMemoryUsage alert (monitoring/prometheus-alerts.yml) depends on it.
+ * @type {client.Gauge}
+ */
+const heapSizeLimitBytes = new client.Gauge({
+  name: 'nodejs_heap_size_limit_bytes',
+  help: 'V8 heap size limit in bytes',
+  registers: [registry],
+  collect() {
+    this.set(v8.getHeapStatistics().heap_size_limit);
+  },
+});
 
 /**
  * Histogram tracking HTTP request duration.
@@ -423,6 +439,7 @@ function recordSchedulerLockRelease() {
 
 module.exports = {
   registry,
+  heapSizeLimitBytes,
   httpRequestDuration,
   stellarDonationsTotal,
   metricsMiddleware,

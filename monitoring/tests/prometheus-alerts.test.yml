@@ -1,0 +1,450 @@
+# promtool unit tests for monitoring/prometheus-alerts.yml (issue #1967)
+#
+# Run with:
+#   promtool test rules monitoring/tests/prometheus-alerts.test.yml
+#
+# Every alert has at least one case that expects it to FIRE and one case that
+# expects it NOT to fire. scripts/check-prometheus-rules.js enforces that
+# coverage in CI, so a new alert without tests fails the build.
+#
+# Series notation: '0+1x30' = 0, 1, 2, ... (31 samples, one per minute);
+# '0x30' = constant 0. With interval 1m, a counter stepping by N per sample
+# has a rate of N/60 per second.
+
+rule_files:
+  - ../prometheus-alerts.yml
+
+evaluation_interval: 1m
+
+tests:
+  # ─── APIAvailabilityBelowSLO ───────────────────────────────────────────────
+  - interval: 1m
+    input_series:
+      - series: 'http_request_duration_seconds_count{method="GET",route="/api/v1/donations",status_code="200"}'
+        values: '0+1x30'
+      - series: 'http_request_duration_seconds_count{method="GET",route="/api/v1/donations",status_code="500"}'
+        values: '0+9x30'
+    alert_rule_test:
+      - eval_time: 10m
+        alertname: APIAvailabilityBelowSLO
+        exp_alerts:
+          - exp_labels:
+              severity: critical
+              slo: availability
+              service: stellar-donation-api
+
+  # Total outage: no 2xx/3xx series at all must still fire (regression for the
+  # missing "or vector(0)" that silenced the alert when a term was absent).
+  - interval: 1m
+    input_series:
+      - series: 'http_request_duration_seconds_count{method="GET",route="/api/v1/donations",status_code="500"}'
+        values: '0+10x30'
+    alert_rule_test:
+      - eval_time: 10m
+        alertname: APIAvailabilityBelowSLO
+        exp_alerts:
+          - exp_labels:
+              severity: critical
+              slo: availability
+              service: stellar-donation-api
+
+  - interval: 1m
+    input_series:
+      - series: 'http_request_duration_seconds_count{method="GET",route="/api/v1/donations",status_code="200"}'
+        values: '0+999x30'
+      - series: 'http_request_duration_seconds_count{method="GET",route="/api/v1/donations",status_code="500"}'
+        values: '0+1x30'
+    alert_rule_test:
+      - eval_time: 10m
+        alertname: APIAvailabilityBelowSLO
+        exp_alerts: []
+
+  # ─── APIErrorRateAboveSLO ──────────────────────────────────────────────────
+  - interval: 1m
+    input_series:
+      - series: 'http_request_duration_seconds_count{method="GET",route="/api/v1/donations",status_code="200"}'
+        values: '0+98x30'
+      - series: 'http_request_duration_seconds_count{method="GET",route="/api/v1/donations",status_code="500"}'
+        values: '0+2x30'
+    alert_rule_test:
+      - eval_time: 10m
+        alertname: APIErrorRateAboveSLO
+        exp_alerts:
+          - exp_labels:
+              severity: critical
+              slo: error_rate
+              service: stellar-donation-api
+
+  - interval: 1m
+    input_series:
+      - series: 'http_request_duration_seconds_count{method="GET",route="/api/v1/donations",status_code="200"}'
+        values: '0+999x30'
+      - series: 'http_request_duration_seconds_count{method="GET",route="/api/v1/donations",status_code="500"}'
+        values: '0+1x30'
+    alert_rule_test:
+      - eval_time: 10m
+        alertname: APIErrorRateAboveSLO
+        exp_alerts: []
+
+  # ─── APIP95LatencyAboveSLO ─────────────────────────────────────────────────
+  # 95 of 100 requests fall in le=0.5 (cumulative 5 at le=0.1), so the p95
+  # interpolates to ~0.48s, above the 0.3s threshold.
+  - interval: 1m
+    input_series:
+      - series: 'http_request_duration_seconds_bucket{le="0.1"}'
+        values: '0+5x30'
+      - series: 'http_request_duration_seconds_bucket{le="0.5"}'
+        values: '0+100x30'
+      - series: 'http_request_duration_seconds_bucket{le="+Inf"}'
+        values: '0+100x30'
+    alert_rule_test:
+      - eval_time: 10m
+        alertname: APIP95LatencyAboveSLO
+        exp_alerts:
+          - exp_labels:
+              severity: warning
+              slo: latency
+              percentile: p95
+              service: stellar-donation-api
+
+  - interval: 1m
+    input_series:
+      - series: 'http_request_duration_seconds_bucket{le="0.1"}'
+        values: '0+100x30'
+      - series: 'http_request_duration_seconds_bucket{le="0.5"}'
+        values: '0+100x30'
+      - series: 'http_request_duration_seconds_bucket{le="+Inf"}'
+        values: '0+100x30'
+    alert_rule_test:
+      - eval_time: 10m
+        alertname: APIP95LatencyAboveSLO
+        exp_alerts: []
+
+  # ─── APIP99LatencyAboveSLO ─────────────────────────────────────────────────
+  # 10 of 100 requests land in (1, 2.5], so p99 interpolates to ~2.35s.
+  - interval: 1m
+    input_series:
+      - series: 'http_request_duration_seconds_bucket{le="1"}'
+        values: '0+90x30'
+      - series: 'http_request_duration_seconds_bucket{le="2.5"}'
+        values: '0+100x30'
+      - series: 'http_request_duration_seconds_bucket{le="+Inf"}'
+        values: '0+100x30'
+    alert_rule_test:
+      - eval_time: 10m
+        alertname: APIP99LatencyAboveSLO
+        exp_alerts:
+          - exp_labels:
+              severity: warning
+              slo: latency
+              percentile: p99
+              service: stellar-donation-api
+
+  - interval: 1m
+    input_series:
+      - series: 'http_request_duration_seconds_bucket{le="1"}'
+        values: '0+100x30'
+      - series: 'http_request_duration_seconds_bucket{le="2.5"}'
+        values: '0+100x30'
+      - series: 'http_request_duration_seconds_bucket{le="+Inf"}'
+        values: '0+100x30'
+    alert_rule_test:
+      - eval_time: 10m
+        alertname: APIP99LatencyAboveSLO
+        exp_alerts: []
+
+  # ─── SchedulerSkipRateWarning (> 0.1/s) ────────────────────────────────────
+  - interval: 1m
+    input_series:
+      - series: 'recurring_donations_skipped_total{reason="in_progress"}'
+        values: '0+10x30'
+    alert_rule_test:
+      - eval_time: 10m
+        alertname: SchedulerSkipRateWarning
+        exp_alerts:
+          - exp_labels:
+              severity: warning
+              slo: scheduler_lag
+              service: stellar-donation-api
+
+  - interval: 1m
+    input_series:
+      - series: 'recurring_donations_skipped_total{reason="in_progress"}'
+        values: '0+1x30'
+    alert_rule_test:
+      - eval_time: 10m
+        alertname: SchedulerSkipRateWarning
+        exp_alerts: []
+
+  # ─── SchedulerSkipRateCritical (> 0.5/s) ───────────────────────────────────
+  - interval: 1m
+    input_series:
+      - series: 'recurring_donations_skipped_total{reason="in_progress"}'
+        values: '0+60x30'
+    alert_rule_test:
+      - eval_time: 10m
+        alertname: SchedulerSkipRateCritical
+        exp_alerts:
+          - exp_labels:
+              severity: critical
+              slo: scheduler_lag
+              service: stellar-donation-api
+
+  - interval: 1m
+    input_series:
+      - series: 'recurring_donations_skipped_total{reason="in_progress"}'
+        values: '0+10x30'
+    alert_rule_test:
+      - eval_time: 10m
+        alertname: SchedulerSkipRateCritical
+        exp_alerts: []
+
+  # ─── RecurringDonationSuccessRateLow (< 98% over 1h) ───────────────────────
+  - interval: 1m
+    input_series:
+      - series: 'stellar_recurring_donations_executed_total{status="success"}'
+        values: '0+1x90'
+      - series: 'stellar_recurring_donations_executed_total{status="failure"}'
+        values: '0+1x90'
+    alert_rule_test:
+      - eval_time: 75m
+        alertname: RecurringDonationSuccessRateLow
+        exp_alerts:
+          - exp_labels:
+              severity: critical
+              slo: background_job
+              job_type: recurring_donations
+              service: stellar-donation-api
+
+  # All executions failing (no success series) must still fire.
+  - interval: 1m
+    input_series:
+      - series: 'stellar_recurring_donations_executed_total{status="failure"}'
+        values: '0+1x90'
+    alert_rule_test:
+      - eval_time: 75m
+        alertname: RecurringDonationSuccessRateLow
+        exp_alerts:
+          - exp_labels:
+              severity: critical
+              slo: background_job
+              job_type: recurring_donations
+              service: stellar-donation-api
+
+  - interval: 1m
+    input_series:
+      - series: 'stellar_recurring_donations_executed_total{status="success"}'
+        values: '0+99x90'
+      - series: 'stellar_recurring_donations_executed_total{status="failure"}'
+        values: '0+1x90'
+    alert_rule_test:
+      - eval_time: 75m
+        alertname: RecurringDonationSuccessRateLow
+        exp_alerts: []
+
+  # ─── RecurringDonationSuspensionRateHigh (> 0.01/s over 1h) ────────────────
+  - interval: 1m
+    input_series:
+      - series: 'stellar_recurring_donations_suspended_total'
+        values: '0+1x90'
+    alert_rule_test:
+      - eval_time: 75m
+        alertname: RecurringDonationSuspensionRateHigh
+        exp_alerts:
+          - exp_labels:
+              severity: warning
+              slo: background_job
+              job_type: recurring_donations
+              service: stellar-donation-api
+
+  - interval: 1m
+    input_series:
+      - series: 'stellar_recurring_donations_suspended_total'
+        values: '0x90'
+    alert_rule_test:
+      - eval_time: 75m
+        alertname: RecurringDonationSuspensionRateHigh
+        exp_alerts: []
+
+  # ─── HorizonPoolDegraded (> 50% unhealthy) ─────────────────────────────────
+  - interval: 1m
+    input_series:
+      - series: 'horizon_pool_size'
+        values: '10x30'
+      - series: 'horizon_pool_unhealthy_count'
+        values: '6x30'
+    alert_rule_test:
+      - eval_time: 10m
+        alertname: HorizonPoolDegraded
+        exp_alerts:
+          - exp_labels:
+              severity: warning
+              slo: external_api
+              external_service: horizon
+              service: stellar-donation-api
+
+  - interval: 1m
+    input_series:
+      - series: 'horizon_pool_size'
+        values: '10x30'
+      - series: 'horizon_pool_unhealthy_count'
+        values: '4x30'
+    alert_rule_test:
+      - eval_time: 10m
+        alertname: HorizonPoolDegraded
+        exp_alerts: []
+
+  # ─── HorizonPoolExhausted (no healthy members) ─────────────────────────────
+  - interval: 1m
+    input_series:
+      - series: 'horizon_pool_healthy_count'
+        values: '0x30'
+    alert_rule_test:
+      - eval_time: 10m
+        alertname: HorizonPoolExhausted
+        exp_alerts:
+          - exp_labels:
+              severity: critical
+              slo: external_api
+              external_service: horizon
+              service: stellar-donation-api
+
+  - interval: 1m
+    input_series:
+      - series: 'horizon_pool_healthy_count'
+        values: '2x30'
+    alert_rule_test:
+      - eval_time: 10m
+        alertname: HorizonPoolExhausted
+        exp_alerts: []
+
+  # ─── HorizonPoolCooldownRateHigh (> 0.1/s) ─────────────────────────────────
+  - interval: 1m
+    input_series:
+      - series: 'horizon_pool_cooldown_events_total'
+        values: '0+10x30'
+    alert_rule_test:
+      - eval_time: 10m
+        alertname: HorizonPoolCooldownRateHigh
+        exp_alerts:
+          - exp_labels:
+              severity: warning
+              slo: external_api
+              external_service: horizon
+              service: stellar-donation-api
+
+  - interval: 1m
+    input_series:
+      - series: 'horizon_pool_cooldown_events_total'
+        values: '0+1x30'
+    alert_rule_test:
+      - eval_time: 10m
+        alertname: HorizonPoolCooldownRateHigh
+        exp_alerts: []
+
+  # ─── HorizonPoolAcquireLatencyHigh (p99 > 100ms) ───────────────────────────
+  # 10 of 100 acquisitions land in (0.05, 0.5], so p99 is ~0.45s.
+  - interval: 1m
+    input_series:
+      - series: 'horizon_pool_acquire_duration_seconds_bucket{le="0.05"}'
+        values: '0+90x30'
+      - series: 'horizon_pool_acquire_duration_seconds_bucket{le="0.5"}'
+        values: '0+100x30'
+      - series: 'horizon_pool_acquire_duration_seconds_bucket{le="+Inf"}'
+        values: '0+100x30'
+    alert_rule_test:
+      - eval_time: 10m
+        alertname: HorizonPoolAcquireLatencyHigh
+        exp_alerts:
+          - exp_labels:
+              severity: warning
+              slo: scheduler_lag
+              scheduler: transaction_sync
+              service: stellar-donation-api
+
+  - interval: 1m
+    input_series:
+      - series: 'horizon_pool_acquire_duration_seconds_bucket{le="0.05"}'
+        values: '0+100x30'
+      - series: 'horizon_pool_acquire_duration_seconds_bucket{le="0.5"}'
+        values: '0+100x30'
+      - series: 'horizon_pool_acquire_duration_seconds_bucket{le="+Inf"}'
+        values: '0+100x30'
+    alert_rule_test:
+      - eval_time: 10m
+        alertname: HorizonPoolAcquireLatencyHigh
+        exp_alerts: []
+
+  # ─── HealthcheckFailing (scrape target down) ───────────────────────────────
+  - interval: 1m
+    input_series:
+      - series: 'up{job="stellar-donation-api"}'
+        values: '0x30'
+    alert_rule_test:
+      - eval_time: 10m
+        alertname: HealthcheckFailing
+        exp_alerts:
+          - exp_labels:
+              severity: critical
+              slo: availability
+              service: stellar-donation-api
+              job: stellar-donation-api
+
+  - interval: 1m
+    input_series:
+      - series: 'up{job="stellar-donation-api"}'
+        values: '1x30'
+    alert_rule_test:
+      - eval_time: 10m
+        alertname: HealthcheckFailing
+        exp_alerts: []
+
+  # ─── HighMemoryUsage (> 85% of heap limit + 100MB) ─────────────────────────
+  - interval: 1m
+    input_series:
+      - series: 'process_resident_memory_bytes'
+        values: '1000000000x30'
+      - series: 'nodejs_heap_size_limit_bytes'
+        values: '1000000000x30'
+    alert_rule_test:
+      - eval_time: 10m
+        alertname: HighMemoryUsage
+        exp_alerts:
+          - exp_labels:
+              severity: warning
+              component: nodejs
+              service: stellar-donation-api
+
+  - interval: 1m
+    input_series:
+      - series: 'process_resident_memory_bytes'
+        values: '500000000x30'
+      - series: 'nodejs_heap_size_limit_bytes'
+        values: '1000000000x30'
+    alert_rule_test:
+      - eval_time: 10m
+        alertname: HighMemoryUsage
+        exp_alerts: []
+
+  # ─── HighEventLoopLag (> 1s) ───────────────────────────────────────────────
+  - interval: 1m
+    input_series:
+      - series: 'nodejs_eventloop_lag_seconds'
+        values: '2x30'
+    alert_rule_test:
+      - eval_time: 10m
+        alertname: HighEventLoopLag
+        exp_alerts:
+          - exp_labels:
+              severity: warning
+              component: nodejs
+              service: stellar-donation-api
+
+  - interval: 1m
+    input_series:
+      - series: 'nodejs_eventloop_lag_seconds'
+        values: '0.1x30'
+    alert_rule_test:
+      - eval_time: 10m
+        alertname: HighEventLoopLag
+        exp_alerts: []
