@@ -448,3 +448,99 @@ tests:
       - eval_time: 10m
         alertname: HighEventLoopLag
         exp_alerts: []
+
+  # ─── Scrape-time lag gauges (#1968) ────────────────────────────────────────
+
+  # Stuck scheduler: the lag gauge grows by 60s per minute with no ticks running.
+  # Skip-rate alerts stay silent here, so this is the case the direct gauge covers.
+  - interval: 1m
+    input_series:
+      - series: 'stellar_scheduler_lag_seconds'
+        values: '0+60x30'
+    alert_rule_test:
+      - eval_time: 20m
+        alertname: SchedulerLagWarning
+        exp_alerts:
+          - exp_labels:
+              severity: warning
+              slo: scheduler_lag
+              service: stellar-donation-api
+
+  - interval: 1m
+    input_series:
+      - series: 'stellar_scheduler_lag_seconds'
+        values: '0+60x30'
+    alert_rule_test:
+      - eval_time: 20m
+        alertname: SchedulerLagCritical
+        exp_alerts:
+          - exp_labels:
+              severity: critical
+              slo: scheduler_lag
+              service: stellar-donation-api
+
+  - interval: 1m
+    input_series:
+      - series: 'stellar_scheduler_lag_seconds'
+        values: '5x30'
+    alert_rule_test:
+      - eval_time: 20m
+        alertname: SchedulerLagWarning
+        exp_alerts: []
+
+  - interval: 1m
+    input_series:
+      - series: 'stellar_scheduler_lag_seconds'
+        values: '60x30'
+    alert_rule_test:
+      - eval_time: 20m
+        alertname: SchedulerLagCritical
+        exp_alerts: []
+
+  # Sync interval is 15 minutes, so a warning at 30 minutes stale is 2x and a
+  # critical at 60 minutes stale is 4x. The gauge grows 120s per minute here.
+  - interval: 1m
+    input_series:
+      - series: 'stellar_transaction_sync_lag_seconds'
+        values: '0+120x30'
+    alert_rule_test:
+      - eval_time: 25m
+        alertname: TransactionSyncLagWarning
+        exp_alerts:
+          - exp_labels:
+              severity: warning
+              slo: scheduler_lag
+              scheduler: transaction_sync
+              service: stellar-donation-api
+
+  - interval: 1m
+    input_series:
+      - series: 'stellar_transaction_sync_lag_seconds'
+        values: '0+1x30'
+    alert_rule_test:
+      - eval_time: 25m
+        alertname: TransactionSyncLagWarning
+        exp_alerts: []
+
+  - interval: 1m
+    input_series:
+      - series: 'stellar_transaction_sync_lag_seconds'
+        values: '0+300x30'
+    alert_rule_test:
+      - eval_time: 25m
+        alertname: TransactionSyncLagCritical
+        exp_alerts:
+          - exp_labels:
+              severity: critical
+              slo: scheduler_lag
+              scheduler: transaction_sync
+              service: stellar-donation-api
+
+  - interval: 1m
+    input_series:
+      - series: 'stellar_transaction_sync_lag_seconds'
+        values: '0+120x30'
+    alert_rule_test:
+      - eval_time: 25m
+        alertname: TransactionSyncLagCritical
+        exp_alerts: []

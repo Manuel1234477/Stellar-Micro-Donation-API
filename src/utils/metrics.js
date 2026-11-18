@@ -40,6 +40,92 @@ const heapSizeLimitBytes = new client.Gauge({
 });
 
 /**
+ * Lag gauges (#1968).
+ *
+ * The values are computed at scrape time from persistent state rather than
+ * written on each tick. A scheduler that is stuck (for example because leader
+ * election throws before the tick does any work) therefore still shows lag that
+ * keeps growing. The database is required lazily so this module has no load-time
+ * dependency on it.
+ */
+
+/**
+ * Seconds elapsed between an ISO timestamp and now. Returns 0 for a missing or
+ * unparseable value so that "nothing to measure" never reports as lag.
+ * @param {string|null|undefined} isoTimestamp
+ * @param {number} [nowMs=Date.now()]
+ * @returns {number}
+ */
+function secondsSince(isoTimestamp, nowMs = Date.now()) {
+  if (!isoTimestamp) return 0;
+  const sinceMs = Date.parse(isoTimestamp);
+  if (Number.isNaN(sinceMs)) return 0;
+  return Math.max(0, (nowMs - sinceMs) / 1000);
+}
+
+/** Lag of the oldest due, active recurring donation (seconds). */
+async function readSchedulerLag() {
+  const Database = require('./database');
+  const { SCHEDULE_STATUS } = require('../constants');
+  const row = await Database.get(
+    `SELECT MIN(nextExecutionDate) AS oldest
+       FROM recurring_donations
+      WHERE status = ? AND nextExecutionDate <= ?`,
+    [SCHEDULE_STATUS.ACTIVE, new Date().toISOString()]
+  );
+  return secondsSince(row ? row.oldest : null);
+}
+
+/** Age of the least recently synced monitored wallet (seconds). */
+async function readTransactionSyncLag() {
+  const Database = require('./database');
+  const row = await Database.get(
+    `SELECT MIN(COALESCE(last_synced_at, createdAt)) AS oldest
+       FROM wallets
+      WHERE deletedAt IS NULL`,
+    []
+  );
+  return secondsSince(row ? row.oldest : null);
+}
+
+function createLagGauge(name, help, readLag) {
+  return new client.Gauge({
+    name,
+    help,
+    registers: [registry],
+    async collect() {
+      try {
+        this.set(await readLag());
+      } catch (_err) {
+        // Keep the previous value rather than failing the whole scrape.
+      }
+    },
+  });
+}
+
+/**
+ * Gauge: seconds the oldest due, active recurring donation has been waiting.
+ * SLO: docs/SLOs.md section 4.
+ * @type {client.Gauge}
+ */
+const schedulerLagSeconds = createLagGauge(
+  'stellar_scheduler_lag_seconds',
+  'Seconds the oldest due active recurring donation has been waiting (0 when none are overdue)',
+  readSchedulerLag
+);
+
+/**
+ * Gauge: seconds since the least recently synced monitored wallet was synced
+ * (never-synced wallets count from creation).
+ * @type {client.Gauge}
+ */
+const transactionSyncLagSeconds = createLagGauge(
+  'stellar_transaction_sync_lag_seconds',
+  'Seconds since the least recently synced monitored wallet was last synced',
+  readTransactionSyncLag
+);
+
+/**
  * Histogram tracking HTTP request duration.
  * Labels: method (GET/POST/…), route (normalised path), status_code (200/404/…)
  * @type {client.Histogram}
@@ -440,6 +526,10 @@ function recordSchedulerLockRelease() {
 module.exports = {
   registry,
   heapSizeLimitBytes,
+  // Scrape-time lag gauges (#1968)
+  schedulerLagSeconds,
+  transactionSyncLagSeconds,
+  secondsSince,
   httpRequestDuration,
   stellarDonationsTotal,
   metricsMiddleware,
