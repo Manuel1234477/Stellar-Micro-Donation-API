@@ -62,7 +62,9 @@
     "docs:error-codes:check": "node scripts/generate-error-codes.js --check",
     "check:error-codes": "node scripts/check-error-codes.js",
     "docs:api-matrix": "node scripts/generate-api-version-matrix.js",
-    "docs:api-matrix:check": "node scripts/generate-api-version-matrix.js --check"
+    "docs:api-matrix:check": "node scripts/generate-api-version-matrix.js --check",
+    "docs:db-schema": "node scripts/generate-database-schema.js",
+    "docs:db-schema:check": "node scripts/generate-database-schema.js --check"
   },
   "dependencies": {
     "ajv": "^8.12.0",
