@@ -34,8 +34,28 @@ const asyncHandler = require('../utils/asyncHandler');
 const log = require('../utils/log');
 const requestCounter = require('../utils/requestCounter');
 const state = require('./state');
+const { env } = require('../config/env');
 
 const STREAMING_PATH_RE = /\/(stream|sse|events|ws|websocket|subscribe)(\/|$)/i;
+
+/**
+ * Build the helmet HSTS option from typed environment values (#1956).
+ *
+ * HSTS pins browsers to HTTPS for the host, so it is sent only in production.
+ * `preload` is never on by default because it is an organisational commitment
+ * for the whole registrable domain.
+ *
+ * @param {{ NODE_ENV: string, HSTS_MAX_AGE: number, HSTS_INCLUDE_SUBDOMAINS: boolean, HSTS_PRELOAD: boolean }} values
+ * @returns {false | { maxAge: number, includeSubDomains: boolean, preload: boolean }}
+ */
+function buildHstsOptions(values) {
+  if (values.NODE_ENV !== 'production') return false;
+  return {
+    maxAge: values.HSTS_MAX_AGE,
+    includeSubDomains: values.HSTS_INCLUDE_SUBDOMAINS,
+    preload: values.HSTS_PRELOAD,
+  };
+}
 
 // Bulk donation endpoints accept the larger ENDPOINT_LIMITS.batchDonation body
 // size (#1953). Every other path keeps the 100 KB default.
@@ -123,7 +143,7 @@ function applyMiddleware(app) {
     frameguard: { action: 'deny' },
     noSniff: true,
     referrerPolicy: { policy: 'no-referrer' },
-    hsts: { maxAge: 31536000, includeSubDomains: true, preload: true },
+    hsts: buildHstsOptions(env),
     xssFilter: false,
     hidePoweredBy: true,
   }));
@@ -245,4 +265,4 @@ function applyMiddleware(app) {
   app.use(schemaVersionMiddleware);
 }
 
-module.exports = { applyMiddleware };
+module.exports = { applyMiddleware, buildHstsOptions };
