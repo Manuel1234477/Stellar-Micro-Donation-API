@@ -14,6 +14,14 @@ module.exports = {
   name: '041_queued_donations',
 
   async up(db) {
+    // The `donations` table is not created by any numbered migration (the live
+    // store is `donations_store`), so on a fresh database there is nothing to
+    // alter. Skip rather than fail the whole migration chain.
+    const donationsTable = await db.get(
+      `SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'donations'`,
+    );
+    if (!donationsTable) return;
+
     // Add queued tracking columns
     await db.exec(`
       ALTER TABLE donations ADD COLUMN queuedAt TEXT;

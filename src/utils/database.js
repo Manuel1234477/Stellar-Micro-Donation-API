@@ -963,6 +963,27 @@ class Database {
   }
 
   /**
+   * Execute a multi-statement SQL script (no parameters).
+   * Used by migrations whose up()/down() contain several statements in one
+   * string (sqlite3 `db.exec`). Not for user-supplied SQL.
+   *
+   * @param {string} sql - One or more semicolon-separated statements.
+   * @returns {Promise<void>}
+   */
+  static async exec(sql) {
+    const lease = await this.acquireConnection();
+    try {
+      await new Promise((resolve, reject) => {
+        lease.db.exec(sql, (err) => (err ? reject(err) : resolve()));
+      });
+    } catch (err) {
+      throw new DatabaseError('Database operation failed', err);
+    } finally {
+      await lease.release().catch(() => {});
+    }
+  }
+
+  /**
    * Execute a query and process each row with a callback function.
    * Rows are processed sequentially to avoid memory bloat on large result sets.
    *

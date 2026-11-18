@@ -439,45 +439,6 @@ class WalletService {
   }
 
   /**
-   * Set or update an account data entry
-   * @param {string|number} walletId - Wallet ID
-   * @param {string} secretKey - Secret key of the wallet owner
-   * @param {string} key - Data entry key (max 64 bytes)
-   * @param {string} value - Data entry value (max 64 bytes)
-   * @returns {Promise<Object>} Transaction result with hash and ledger
-   */
-  async setAccountData(walletId, secretKey, key, value) {
-    if (!this.stellarService) {
-      throw new ValidationError('Stellar service not available', null, ERROR_CODES.SERVICE_UNAVAILABLE);
-    }
-
-    const wallet = this.getWalletById(walletId);
-    if (!wallet) {
-      throw new NotFoundError('Wallet not found', ERROR_CODES.WALLET_NOT_FOUND);
-    }
-
-    // Call Stellar service to set the data entry
-    const result = await this.stellarService.setDataEntry(secretKey, key, value);
-    return result;
-  }
-
-  /**
-   * Delete an account data entry
-   * @param {string|number} walletId - Wallet ID
-   * @param {string} secretKey - Secret key of the wallet owner
-   * @param {string} key - Data entry key to delete
-   * @returns {Promise<Object>} Transaction result with hash and ledger
-   */
-  async deleteAccountData(walletId, secretKey, key) {
-    if (!this.stellarService) {
-      throw new ValidationError('Stellar service not available', null, ERROR_CODES.SERVICE_UNAVAILABLE);
-    }
-
-    const wallet = this.getWalletById(walletId);
-    if (!wallet) {
-      throw new NotFoundError('Wallet not found', ERROR_CODES.WALLET_NOT_FOUND);
-    }
-  /**
    * Set a data entry on a Stellar account using ManageDataOperation.
    * @param {string|number} walletId - Wallet ID
    * @param {string} secretKey - Secret key of the wallet

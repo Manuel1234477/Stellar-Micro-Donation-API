@@ -24,7 +24,32 @@ exports.name = '029_check_constraints_monetary';
 
 exports.up = async (db) => {
   // ── pledges ────────────────────────────────────────────────────────────────
-  // Recreate with CHECK (amount > 0)
+  // Recreate with CHECK (amount > 0). `pledges` is normally created lazily by
+  // src/models/Pledge.js rather than by a numbered migration. On a fresh
+  // database it does not exist yet, so create the baseline shape this chain
+  // expects (the pre-029 definition) before rebuilding it. Existing databases
+  // already have the table and are unaffected.
+  const pledgesExists = await db.get(
+    `SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'pledges'`,
+  );
+  if (!pledgesExists) {
+    await db.run(`
+      CREATE TABLE pledges (
+        id              TEXT PRIMARY KEY,
+        campaign_id     INTEGER NOT NULL,
+        donor_wallet_id TEXT NOT NULL,
+        amount          REAL NOT NULL,
+        status          TEXT NOT NULL DEFAULT 'pending'
+                          CHECK(status IN ('pending','fulfilled','expired','cancelled')),
+        expires_at      DATETIME NOT NULL,
+        cancel_reason   TEXT,
+        cancelled_at    DATETIME,
+        created_at      DATETIME DEFAULT CURRENT_TIMESTAMP,
+        FOREIGN KEY (campaign_id) REFERENCES campaigns(id)
+      )
+    `);
+  }
+
   await db.run('BEGIN');
   try {
     await db.run(`
@@ -52,6 +77,15 @@ exports.up = async (db) => {
     await db.run(`CREATE INDEX IF NOT EXISTS idx_pledges_status   ON pledges(status)`);
     await db.run(`CREATE INDEX IF NOT EXISTS idx_pledges_expires  ON pledges(expires_at)`);
 
+    await db.run('COMMIT');
+  } catch (err) {
+    await db.run('ROLLBACK');
+    throw err;
+  }
+
+  // campaigns and users are rebuilt in their own transaction, independent of pledges.
+  await db.run('BEGIN');
+  try {
     // ── campaigns ────────────────────────────────────────────────────────────
     // Recreate with CHECK (goal_amount > 0) and CHECK (current_amount >= 0)
     await db.run(`

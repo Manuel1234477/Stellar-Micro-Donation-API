@@ -10,8 +10,8 @@
  */
 
 const StellarSdk = require('stellar-sdk');
-const log = require('../utils/log');
-const { NotFoundError, ValidationError, BusinessLogicError, ERROR_CODES } = require('../utils/errors');
+const log = require('../../utils/log');
+const { NotFoundError, ValidationError, BusinessLogicError, ERROR_CODES } = require('../../utils/errors');
 
 class StellarAccounts {
   constructor(stellarService) {
