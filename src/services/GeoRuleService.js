@@ -12,6 +12,7 @@
  * request.
  */
 
+const fs = require('fs');
 const Database = require('../utils/database');
 const config = require('../config');
 const log = require('../utils/log');
@@ -237,6 +238,74 @@ async function listActiveRules(options = {}) {
 }
 
 /**
+ * Check whether the configured MaxMind database file exists on disk.
+ *
+ * @returns {boolean} True when the database path is configured and readable.
+ */
+function isMaxMindDatabasePresent() {
+  const dbPath = config.geoBlocking && config.geoBlocking.databasePath;
+  if (!dbPath) {
+    return false;
+  }
+
+  try {
+    return fs.existsSync(dbPath);
+  } catch (_) {
+    return false;
+  }
+}
+
+/**
+ * Build a geo-block status summary for startup diagnostics and health checks.
+ *
+ * Reports whether the MaxMind database is present, the configured strict-mode
+ * value, and the effective allow/block rule counts. Never throws; failures to
+ * load database rules are reported via the `error` field.
+ *
+ * @param {{ forceRefresh?: boolean }} [options={}] - Cache control options.
+ * @returns {Promise<Object>} Geo-block status summary.
+ */
+async function getGeoBlockStatus(options = {}) {
+  const geoConfig = config.geoBlocking || {};
+  const databasePresent = isMaxMindDatabasePresent();
+  const strictMode = Boolean(geoConfig.strictMode);
+
+  const status = {
+    enabled: Boolean(geoConfig.enabled),
+    databasePath: geoConfig.databasePath || null,
+    databasePresent,
+    strictMode,
+    // When the database is missing, strict mode fails closed (blocks all
+    // non-allowlisted traffic) while non-strict mode fails open.
+    failMode: strictMode ? 'closed' : 'open',
+    config: {
+      allowCountries: Array.isArray(geoConfig.allowedCountries) ? [...geoConfig.allowedCountries] : [],
+      blockCountries: Array.isArray(geoConfig.blockedCountries) ? [...geoConfig.blockedCountries] : [],
+      allowedIPs: Array.isArray(geoConfig.allowedIPs) ? [...geoConfig.allowedIPs] : [],
+    },
+    database: {
+      allowCountries: [],
+      blockCountries: [],
+    },
+    effective: {
+      allowCountries: [],
+      blockCountries: [],
+    },
+    error: null,
+  };
+
+  try {
+    const summary = await listActiveRules(options);
+    status.database = summary.database;
+    status.effective = summary.effective;
+  } catch (error) {
+    status.error = error.message;
+  }
+
+  return status;
+}
+
+/**
  * Insert a new geo rule into the database and invalidate the cache.
  *
  * @param {string} ruleType - Geo rule type.
@@ -395,8 +464,10 @@ module.exports = {
   ensureTable,
   getCachedRules,
   getById,
+  getGeoBlockStatus,
   getRuleSets,
   invalidateCache,
+  isMaxMindDatabasePresent,
   isValidCountryCode,
   listActiveRules,
   loadRules,

@@ -43,8 +43,8 @@ beforeEach(() => {
  * @returns {{publicKey: string, secretKey: string}}
  */
 function generateTestStellarKeyPair() {
-  const { StrKey } = require('stellar-sdk');
-  const keypair = require('stellar-sdk').Keypair.random();
+  const { StrKey } = require('@stellar/stellar-sdk');
+  const keypair = require('@stellar/stellar-sdk').Keypair.random();
   return {
     publicKey: keypair.publicKey(),
     secretKey: keypair.secret(),

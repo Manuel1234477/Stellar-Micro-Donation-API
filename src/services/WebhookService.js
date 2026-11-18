@@ -170,12 +170,15 @@ class WebhookService {
     }
 
     // SSRF protection — validate host is not private/loopback/metadata
-    if (parsedUrl.protocol === 'https:') {
-      try {
-        await assertSafeOutboundUrl(url);
-      } catch (ssrfErr) {
-        const e = new Error(ssrfErr.message); e.status = 400; throw e;
-      }
+    try {
+      await assertSafeOutboundUrl(url);
+    } catch (ssrfErr) {
+      const e = new Error(ssrfErr.message);
+      e.status = 400;
+      e.statusCode = 400;
+      e.code = 'SSRF_BLOCKED';
+      e.errorCode = 'SSRF_BLOCKED';
+      throw e;
     }
 
     // Always generate a 32-byte random secret server-side; never accept caller-supplied secrets
@@ -503,6 +506,13 @@ class WebhookService {
       return { delivered: false, error: 'Invalid webhook URL' };
     }
 
+    try {
+      await assertSafeOutboundUrl(webhookUrl);
+    } catch (err) {
+      log.warn('WEBHOOK_SERVICE', 'SSRF blocked for failure notification', { webhookUrl, error: err.message });
+      return { delivered: false, error: err.message };
+    }
+
     const timestamp = new Date().toISOString();
     const body = JSON.stringify({
       event: 'recurring_donation.persistent_failure',
@@ -676,6 +686,10 @@ class WebhookService {
     return crypto.createHmac('sha256', secret).update(payload).digest('hex');
   }
 
+  _sign(body, secret, timestamp) {
+    return WebhookService._sign(body, secret, timestamp);
+  }
+
   /**
    * POST a JSON body to a URL with a timeout.
    * Validates the URL against SSRF rules before every request (DNS rebinding protection).
@@ -707,7 +721,8 @@ class WebhookService {
       log.error('WEBHOOK_SERVICE', 'tls_skip_verify flag suppressed in production at delivery time', { webhookId, url });
     }
 
-    return new Promise((resolve, reject) => {
+    return (async () => {
+      await assertSafeOutboundUrl(url);
       const parsed = new URL(url);
       const lib = parsed.protocol === 'https:' ? https : http;
       const options = {
@@ -729,17 +744,26 @@ class WebhookService {
         timeout: 10000,
       };
 
-      const req = lib.request(options, (res) => {
-        res.resume();
-        const delivered = res.statusCode >= 200 && res.statusCode < 300;
-        resolve({ delivered, statusCode: res.statusCode });
-      });
+      return await new Promise((resolve, reject) => {
+        const req = lib.request(options, (res) => {
+          res.resume();
+          const delivered = res.statusCode >= 200 && res.statusCode < 300;
+          resolve({ delivered, statusCode: res.statusCode });
+        });
 
-      req.on('timeout', () => { req.destroy(); reject(new Error('Request timed out')); });
-      req.on('error', reject);
-      req.write(body);
-      req.end();
-    });
+        req.on('timeout', () => {
+          req.destroy();
+          reject(new Error('Request timed out'));
+        });
+        req.on('error', reject);
+        req.write(body);
+        req.end();
+      });
+    })();
+  }
+
+  _httpPost(url, body, signature, correlationHeaders = {}, tlsSkipVerify = false, webhookId = null, timestamp = null) {
+    return WebhookService._httpPost(url, body, signature, correlationHeaders, tlsSkipVerify, webhookId, timestamp);
   }
   /**
    * Flush all pending webhook deliveries from the retry queue.

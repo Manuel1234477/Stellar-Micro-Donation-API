@@ -5,194 +5,187 @@
  * KEK (Key Encryption Key) rotation script.
  *
  * Rotates the master ENCRYPTION_KEY without data loss by re-wrapping each
- * wallet's Data Encryption Key (DEK) under the new KEK while leaving the
- * plaintext wallet secret unchanged.
+ * memo's encryption key under the new KEK. The rotation is atomic at the database
+ * level and blocks donation creation via the rotationLockMiddleware.
  *
  * Usage:
  *   ENCRYPTION_KEY=<old-key> NEW_ENCRYPTION_KEY=<new-key> node src/scripts/rotateKEK.js
- *   # Optional: resume an interrupted run
- *   ENCRYPTION_KEY=<old-key> NEW_ENCRYPTION_KEY=<new-key> node src/scripts/rotateKEK.js --resume
  *
  * Safety guarantees:
- *   - Idempotent: already-rotated rows (detected by trying the new key first) are skipped.
- *   - Resumable: progress is written to a checkpoint file after each successful row.
- *   - Crash-safe: each row is updated atomically; a crash leaves at most one row unchanged.
- *   - No plaintext exposure: the plaintext DEK lives only in memory during rotation.
+ *   - Atomic: all memo re-encryptions happen in a single database transaction.
+ *   - Blocking: during rotation, POST /donations returns HTTP 503 with Retry-After.
+ *   - Idempotent: already-rotated rows (decrypt successfully with new key) are skipped.
+ *   - Resumable: logs progress every 100 rows.
  *
- * Emergency rotation:
- *   After rotation completes, set ENCRYPTION_KEY=<new-key> in your secrets manager,
- *   restart the service, and run `--verify` to confirm no record is still decryptable
- *   with the old key.
- *
- *   ENCRYPTION_KEY=<old-key> node src/scripts/rotateKEK.js --verify
+ * After rotation completes:
+ *   1. Set ENCRYPTION_KEY=<new-key> in your secrets manager
+ *   2. Restart the API service
+ *   3. Run --verify to confirm no record is still decryptable with the old key:
+ *      ENCRYPTION_KEY=<old-key> node src/scripts/rotateKEK.js --verify
  */
 
 require('dotenv').config();
 
-const path = require('path');
-const fs = require('fs');
 const crypto = require('crypto');
-const sqlite3 = require('sqlite3').verbose();
+const Database = require('../utils/database');
+const { getCacheTtlMs: getRotationLockCacheTtlMs } = require('../middleware/rotationLock');
 
-const ALGORITHM = 'aes-256-gcm';
-const IV_LENGTH = 12;
-const DB_PATH = path.join(__dirname, '../../../data/stellar_donations.db');
-const CHECKPOINT_PATH = path.join(__dirname, '../../../data/kek-rotation-checkpoint.json');
+const cryptoCore = require('../utils/crypto');
+const LOG_INTERVAL = 100;
 
 function deriveKEK(rawKey) {
   if (!rawKey) throw new Error('Key must not be empty');
-  return crypto.createHash('sha256').update(rawKey).digest();
+  return cryptoCore.deriveKey(rawKey);
 }
 
+// Same "iv:ct:tag" format as the local KMS provider (src/utils/kms.js)
 function encryptDEK(dek, kek) {
-  const iv = crypto.randomBytes(IV_LENGTH);
-  const cipher = crypto.createCipheriv(ALGORITHM, kek, iv);
-  const ct = Buffer.concat([cipher.update(dek), cipher.final()]);
-  const tag = cipher.getAuthTag();
-  return `${iv.toString('hex')}:${ct.toString('hex')}:${tag.toString('hex')}`;
+  return cryptoCore.formatLegacy(cryptoCore.seal(kek, dek));
 }
 
 function decryptDEK(encryptedDEK, kek) {
-  const parts = encryptedDEK.split(':');
-  if (parts.length !== 3) throw new Error('Invalid encrypted DEK format');
-  const [ivHex, ctHex, tagHex] = parts;
-  const decipher = crypto.createDecipheriv(ALGORITHM, kek, Buffer.from(ivHex, 'hex'));
-  decipher.setAuthTag(Buffer.from(tagHex, 'hex'));
-  return Buffer.concat([decipher.update(Buffer.from(ctHex, 'hex')), decipher.final()]);
-}
-
-function dbAll(db, sql, params) {
-  return new Promise((resolve, reject) =>
-    db.all(sql, params, (err, rows) => (err ? reject(err) : resolve(rows)))
-  );
-}
-
-function dbRun(db, sql, params) {
-  return new Promise((resolve, reject) =>
-    db.run(sql, params, (err) => (err ? reject(err) : resolve()))
-  );
-}
-
-function loadCheckpoint() {
-  try {
-    return JSON.parse(fs.readFileSync(CHECKPOINT_PATH, 'utf8'));
-  } catch (_) {
-    return { rotated: [] };
-  }
-}
-
-function saveCheckpoint(checkpoint) {
-  fs.writeFileSync(CHECKPOINT_PATH, JSON.stringify(checkpoint, null, 2));
+  return cryptoCore.open(kek, cryptoCore.parseLegacy(encryptedDEK, 'Invalid encrypted DEK format'));
 }
 
 async function rotate({ oldKey, newKey, verifyOnly }) {
   const oldKEK = deriveKEK(oldKey);
   const newKEK = deriveKEK(newKey);
 
-  const db = await new Promise((resolve, reject) => {
-    const conn = new sqlite3.Database(DB_PATH, (err) => (err ? reject(err) : resolve(conn)));
-  });
-
-  const rows = await dbAll(
-    db,
-    'SELECT id, encryptedSecret FROM users WHERE encryptedSecret IS NOT NULL',
+  // Fetch all memos that need re-encryption (this is a read-only scan)
+  const rows = await Database.query(
+    'SELECT id, memo FROM donations WHERE memo IS NOT NULL AND deletedAt IS NULL ORDER BY id ASC',
     []
   );
-
-  const checkpoint = loadCheckpoint();
-  const rotatedSet = new Set(checkpoint.rotated);
 
   let rotated = 0;
   let skipped = 0;
   let errors = 0;
 
-  for (const row of rows) {
-    if (!row.encryptedSecret.startsWith('{')) {
-      console.error(`Row ${row.id}: legacy v1 format — run migrateToEnvelopeEncryption.js first`);
-      errors++;
-      continue;
-    }
+  if (verifyOnly) {
+    for (const row of rows) {
+      let envelope;
+      try {
+        envelope = JSON.parse(row.memo);
+      } catch (_) {
+        console.error(`Donation ${row.id}: unparseable memo envelope — skipping`);
+        errors++;
+        continue;
+      }
 
-    let envelope;
-    try {
-      envelope = JSON.parse(row.encryptedSecret);
-    } catch (_) {
-      console.error(`Row ${row.id}: unparseable envelope — skipping`);
-      errors++;
-      continue;
-    }
-
-    if (verifyOnly) {
       // Attempt to decrypt with the OLD key; if it succeeds, rotation is incomplete.
       try {
         decryptDEK(envelope.encryptedDEK, oldKEK);
-        console.error(`Row ${row.id}: still decryptable with old key — rotation incomplete`);
+        console.error(`Donation ${row.id}: still decryptable with old key — rotation incomplete`);
         errors++;
       } catch (_) {
         skipped++; // Cannot decrypt with old key — correctly rotated
       }
-      continue;
     }
 
-    if (rotatedSet.has(String(row.id))) {
-      skipped++;
-      continue;
-    }
-
-    // Try new key first (idempotency: already rotated rows decrypt fine with new key)
-    let dek;
-    try {
-      dek = decryptDEK(envelope.encryptedDEK, newKEK);
-      // Successfully decrypted with new key — already rotated
-      rotatedSet.add(String(row.id));
-      saveCheckpoint({ rotated: [...rotatedSet] });
-      skipped++;
-      continue;
-    } catch (_) {
-      // Expected: row uses old key, proceed with re-wrap
-    }
-
-    try {
-      dek = decryptDEK(envelope.encryptedDEK, oldKEK);
-    } catch (err) {
-      console.error(`Row ${row.id}: cannot decrypt with either key — ${err.message}`);
-      errors++;
-      continue;
-    }
-
-    const newEncryptedDEK = encryptDEK(dek, newKEK);
-    const newEnvelope = JSON.stringify({ ...envelope, encryptedDEK: newEncryptedDEK });
-
-    await dbRun(db, 'UPDATE users SET encryptedSecret = ? WHERE id = ?', [newEnvelope, row.id]);
-
-    rotatedSet.add(String(row.id));
-    saveCheckpoint({ rotated: [...rotatedSet] });
-    rotated++;
-  }
-
-  db.close();
-
-  if (verifyOnly) {
     if (errors === 0) {
-      console.log(`Verify complete: all ${rows.length} row(s) are correctly rotated.`);
+      console.log(`✓ Verify complete: all ${rows.length} memo(s) are correctly rotated.`);
     } else {
-      console.error(`Verify failed: ${errors} row(s) still decryptable with the old key.`);
+      console.error(`✗ Verify failed: ${errors} memo(s) still decryptable with the old key.`);
       process.exit(1);
     }
     return;
   }
 
-  console.log(`Rotation complete: ${rotated} rotated, ${skipped} already up-to-date, ${errors} error(s).`);
+  console.log(`Starting atomic re-encryption of ${rows.length} memo(s)...`);
+  console.log('Note: API will return HTTP 503 during this operation.');
 
-  if (errors > 0) {
-    console.error('Some rows could not be rotated. Review the errors above and re-run.');
-    process.exit(1);
-  }
+  try {
+    // Mark rotation as in progress, blocking all donation writes
+    await Database.run(
+      `UPDATE rotation_locks SET status = ?, startedAt = ?, updatedAt = ? WHERE name = ?`,
+      ['in_progress', new Date().toISOString(), new Date().toISOString(), 'memoEncryption']
+    );
 
-  if (fs.existsSync(CHECKPOINT_PATH)) {
-    fs.unlinkSync(CHECKPOINT_PATH);
+    // API instances cache the lock status for up to one TTL; wait it out so
+    // every instance is rejecting donation writes before memos are rewritten.
+    const lockPropagationMs = getRotationLockCacheTtlMs();
+    if (lockPropagationMs > 0) {
+      console.log(`Waiting ${lockPropagationMs}ms for API instances to observe the rotation lock...`);
+      await new Promise((resolve) => setTimeout(resolve, lockPropagationMs)); // eslint-disable-line local/no-bare-timers
+    }
+    console.log('✓ Rotation lock acquired; API donations now return 503.');
+
+    // Perform all re-encryption inside a single database transaction
+    await Database.runTransaction(async (trx) => {
+      for (let i = 0; i < rows.length; i++) {
+        const row = rows[i];
+
+        if (i % LOG_INTERVAL === 0 && i > 0) {
+          console.log(`  Progress: ${i}/${rows.length} (${Math.round(100 * i / rows.length)}%)`);
+        }
+
+        let envelope;
+        try {
+          envelope = JSON.parse(row.memo);
+        } catch (_) {
+          console.error(`  Donation ${row.id}: unparseable memo envelope`);
+          errors++;
+          continue;
+        }
+
+        // Try new key first (idempotency: already rotated memos decrypt with new key)
+        let dek;
+        try {
+          dek = decryptDEK(envelope.encryptedDEK, newKEK);
+          // Successfully decrypted with new key — already rotated
+          skipped++;
+          continue;
+        } catch (_) {
+          // Expected: memo uses old key, proceed with re-wrap
+        }
+
+        try {
+          dek = decryptDEK(envelope.encryptedDEK, oldKEK);
+        } catch (err) {
+          console.error(`  Donation ${row.id}: cannot decrypt with either key`);
+          errors++;
+          continue;
+        }
+
+        const newEncryptedDEK = encryptDEK(dek, newKEK);
+        const newEnvelope = JSON.stringify({ ...envelope, encryptedDEK: newEncryptedDEK });
+
+        await trx.run('UPDATE donations SET memo = ?, updatedAt = ? WHERE id = ?',
+          [newEnvelope, new Date().toISOString(), row.id]);
+
+        rotated++;
+      }
+    });
+
+    // Mark rotation as complete
+    await Database.run(
+      `UPDATE rotation_locks SET status = ?, completedAt = ?, updatedAt = ? WHERE name = ?`,
+      ['idle', new Date().toISOString(), new Date().toISOString(), 'memoEncryption']
+    );
+
+    console.log(`\n✓ Rotation complete: ${rotated} rotated, ${skipped} already up-to-date, ${errors} error(s).`);
+    console.log('✓ Rotation lock released; API donations now accept requests again.');
+
+    if (errors > 0) {
+      console.error(`⚠ ${errors} memo(s) could not be rotated. Review the errors above.`);
+      process.exit(1);
+    }
+
+    console.log('\nNext steps:');
+    console.log('  1. Set ENCRYPTION_KEY=<new-key> in your secrets manager');
+    console.log('  2. Restart all API instances');
+    console.log('  3. Run: ENCRYPTION_KEY=<old-key> node src/scripts/rotateKEK.js --verify');
+  } catch (err) {
+    // On error, mark rotation as failed and release the lock
+    await Database.run(
+      `UPDATE rotation_locks SET status = ?, completedAt = ?, error = ?, updatedAt = ? WHERE name = ?`,
+      ['failed', new Date().toISOString(), err.message, new Date().toISOString(), 'memoEncryption']
+    ).catch(() => {
+      // Ignore errors releasing the lock on failure
+    });
+
+    throw err;
   }
-  console.log('Checkpoint cleared. Update ENCRYPTION_KEY to the new value and restart the service.');
 }
 
 const verifyOnly = process.argv.includes('--verify');
@@ -200,19 +193,24 @@ const oldKey = process.env.ENCRYPTION_KEY;
 const newKey = verifyOnly ? process.env.ENCRYPTION_KEY : process.env.NEW_ENCRYPTION_KEY;
 
 if (!oldKey) {
-  console.error('ENCRYPTION_KEY (old key) is required.');
+  console.error('✗ ENCRYPTION_KEY (old key) is required.');
   process.exit(1);
 }
 if (!verifyOnly && !newKey) {
-  console.error('NEW_ENCRYPTION_KEY is required for rotation.');
+  console.error('✗ NEW_ENCRYPTION_KEY is required for rotation.');
   process.exit(1);
 }
 if (!verifyOnly && oldKey === newKey) {
-  console.error('ENCRYPTION_KEY and NEW_ENCRYPTION_KEY must be different.');
+  console.error('✗ ENCRYPTION_KEY and NEW_ENCRYPTION_KEY must be different.');
   process.exit(1);
 }
 
-rotate({ oldKey, newKey, verifyOnly }).catch((err) => {
-  console.error('Rotation failed:', err.message);
-  process.exit(1);
-});
+rotate({ oldKey, newKey, verifyOnly })
+  .then(() => {
+    process.exit(0);
+  })
+  .catch((err) => {
+    console.error('✗ Rotation failed:', err.message);
+    if (err.stack) console.error(err.stack);
+    process.exit(1);
+  });

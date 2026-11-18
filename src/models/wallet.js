@@ -47,7 +47,9 @@ async function ensureWalletSchema() {
         updatedAt TEXT,
         deletedAt TEXT,
         label_encrypted INTEGER DEFAULT 0,
-        notes_encrypted INTEGER DEFAULT 0
+        notes_encrypted INTEGER DEFAULT 0,
+        donation_limit_min INTEGER,
+        donation_limit_max INTEGER
       )
     `);
 
@@ -59,6 +61,15 @@ async function ensureWalletSchema() {
     }
     if (!existingColumns.has('notes_encrypted')) {
       await Database.run('ALTER TABLE wallets ADD COLUMN notes_encrypted INTEGER DEFAULT 0');
+    }
+    if (!existingColumns.has('donation_limit_min')) {
+      await Database.run('ALTER TABLE wallets ADD COLUMN donation_limit_min INTEGER');
+    }
+    if (!existingColumns.has('donation_limit_max')) {
+      await Database.run('ALTER TABLE wallets ADD COLUMN donation_limit_max INTEGER');
+    }
+    if (!existingColumns.has('sdg_tags')) {
+      await Database.run("ALTER TABLE wallets ADD COLUMN sdg_tags TEXT DEFAULT '[]'");
     }
 
     _schemaReady = true;
@@ -125,7 +136,21 @@ function decryptWalletFields(wallet) {
 
 function rowToWallet(row) {
   if (!row) return null;
-  return decryptWalletFields({ ...row });
+  const wallet = decryptWalletFields({ ...row });
+  if (wallet.sdg_tags && typeof wallet.sdg_tags === 'string') {
+    try {
+      wallet.sdgTags = JSON.parse(wallet.sdg_tags);
+    } catch (_) {
+      wallet.sdgTags = [];
+    }
+  } else if (Array.isArray(wallet.sdg_tags)) {
+    wallet.sdgTags = wallet.sdg_tags;
+  } else if (Array.isArray(wallet.sdgTags)) {
+    wallet.sdg_tags = JSON.stringify(wallet.sdgTags);
+  } else {
+    wallet.sdgTags = [];
+  }
+  return wallet;
 }
 
 class Wallet {
@@ -133,9 +158,13 @@ class Wallet {
     await ensureWalletSchema();
     const id = walletData.id || uuidv4();
     const now = new Date().toISOString();
+    const sdgTags = walletData.sdgTags || walletData.sdg_tags || [];
+    const sdgTagsStr = Array.isArray(sdgTags) ? JSON.stringify(sdgTags) : (typeof sdgTags === 'string' ? sdgTags : '[]');
     const record = encryptWalletFields({
       ...walletData,
       id,
+      sdg_tags: sdgTagsStr,
+      sdgTags: Array.isArray(sdgTags) ? sdgTags : [],
       createdAt: walletData.createdAt || now,
       deletedAt: null,
       last_synced_at: walletData.last_synced_at || null,
@@ -144,8 +173,8 @@ class Wallet {
 
     await Database.run(
       `INSERT INTO wallets
-         (id, address, label, ownerName, notes, leaderboard_visibility, last_synced_at, last_cursor, createdAt, updatedAt, deletedAt, label_encrypted, notes_encrypted)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+         (id, address, label, ownerName, notes, leaderboard_visibility, last_synced_at, last_cursor, createdAt, updatedAt, deletedAt, label_encrypted, notes_encrypted, donation_limit_min, donation_limit_max, sdg_tags)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [
         record.id,
         record.address,
@@ -160,6 +189,9 @@ class Wallet {
         null,
         record.label_encrypted ? 1 : 0,
         record.notes_encrypted ? 1 : 0,
+        record.donation_limit_min || null,
+        record.donation_limit_max || null,
+        sdgTagsStr,
       ]
     );
 
@@ -169,6 +201,20 @@ class Wallet {
   static async getAll() {
     await ensureWalletSchema();
     const rows = await Database.all('SELECT * FROM wallets WHERE deletedAt IS NULL');
+    return rows.map(rowToWallet);
+  }
+
+  /**
+   * Fetch one page of non-deleted wallets, bounded in SQL.
+   * @param {{ limit: number, offset: number }} page - Already-clamped page bounds.
+   * @returns {Promise<Object[]>} Wallets ordered by id.
+   */
+  static async getPage({ limit, offset }) {
+    await ensureWalletSchema();
+    const rows = await Database.all(
+      'SELECT * FROM wallets WHERE deletedAt IS NULL ORDER BY id ASC LIMIT ? OFFSET ?',
+      [limit, offset]
+    );
     return rows.map(rowToWallet);
   }
 
@@ -201,16 +247,22 @@ class Wallet {
     const existing = await this.getById(id);
     if (!existing) return null;
 
+    const sdgTags = updates.sdgTags !== undefined ? updates.sdgTags : (updates.sdg_tags !== undefined ? updates.sdg_tags : existing.sdgTags);
+    const sdgTagsStr = Array.isArray(sdgTags) ? JSON.stringify(sdgTags) : (typeof sdgTags === 'string' ? sdgTags : '[]');
+
     const merged = encryptWalletFields({
       ...existing,
       ...updates,
+      sdg_tags: sdgTagsStr,
+      sdgTags: Array.isArray(sdgTags) ? sdgTags : [],
       updatedAt: new Date().toISOString(),
     });
 
     await Database.run(
       `UPDATE wallets SET
          label = ?, ownerName = ?, notes = ?, leaderboard_visibility = ?,
-         last_synced_at = ?, last_cursor = ?, updatedAt = ?, label_encrypted = ?, notes_encrypted = ?
+         last_synced_at = ?, last_cursor = ?, updatedAt = ?, label_encrypted = ?, notes_encrypted = ?,
+         donation_limit_min = ?, donation_limit_max = ?, sdg_tags = ?
        WHERE id = ? AND deletedAt IS NULL`,
       [
         merged.label || null,
@@ -222,6 +274,9 @@ class Wallet {
         merged.updatedAt,
         merged.label_encrypted ? 1 : 0,
         merged.notes_encrypted ? 1 : 0,
+        merged.donation_limit_min || null,
+        merged.donation_limit_max || null,
+        sdgTagsStr,
         String(id),
       ]
     );

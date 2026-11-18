@@ -5,9 +5,9 @@
  * Fixes #1134 and #1135
  */
 
-const name = '024_corporate_matching_and_sep10_challenges';
+exports.name = '024_corporate_matching_and_sep10_challenges';
 
-async function up(db) {
+exports.up = async (db) => {
   await db.run(`
     CREATE TABLE IF NOT EXISTS corporate_employers (
       id TEXT PRIMARY KEY,
@@ -53,12 +53,10 @@ async function up(db) {
     CREATE INDEX IF NOT EXISTS idx_sep10_challenges_expires
     ON sep10_challenges(expiresAt)
   `);
-}
+};
 
-async function down(db) {
+exports.down = async (db) => {
   await db.run('DROP TABLE IF EXISTS sep10_challenges');
   await db.run('DROP TABLE IF EXISTS corporate_claims');
   await db.run('DROP TABLE IF EXISTS corporate_employers');
-}
-
-module.exports = { name, up, down };
+};

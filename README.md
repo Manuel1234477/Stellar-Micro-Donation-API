@@ -78,7 +78,7 @@ For detailed architecture documentation, see:
 
 ### Prerequisites
 
-- Node.js (v20 or higher)
+- Node.js 24 (or Node.js 22+)
 - npm or yarn
 - SQLite3
 
@@ -317,6 +317,7 @@ API_KEYS=your-api-key-here
 
 Required at startup:
 - `API_KEYS` (legacy method, or use database-backed keys)
+  - Legacy keys are rejected after `LEGACY_API_KEYS_DISABLED_AFTER` (default `2026-12-31`). See [docs/MIGRATION_LEGACY_API_KEYS.md](docs/MIGRATION_LEGACY_API_KEYS.md) for migrating to database-backed keys.
 - `ENCRYPTION_KEY` (required only when `NODE_ENV=production`)
 
 Validated at startup (if provided):
@@ -438,6 +439,22 @@ For detailed information, see [Donation Routes Integration Tests](DONATION_ROUTE
 node test-recurring-donations.js
 ```
 
+### Load Testing & Performance Baselines
+
+The load test suite drives the app with concurrent virtual users and gates CI
+on defined performance baselines (p50/p95/p99 latency, throughput, error rate)
+for `POST /donations`, `GET /donations`, and `GET /stats/summary`:
+
+```bash
+npm run test:load
+```
+
+Runs nightly via `.github/workflows/nightly-load-test.yml`, which compares
+results against production SLA targets and automatically files a GitHub
+issue if latency regresses by more than 20%. See
+[docs/LOAD_TESTING.md](docs/LOAD_TESTING.md) for thresholds, local flags, and
+how to interpret a regression.
+
 ### Test Failure Scenarios
 
 The project includes comprehensive failure simulation for testing network errors and retry logic:
@@ -528,7 +545,7 @@ The following integrations are **completely optional**. If their env vars are ab
 
 | Integration | Required vars | Fallback behaviour |
 |-------------|---------------|--------------------|
-| CoinGecko price oracle | `COINGECKO_API_KEY` | Public rate-limited endpoint is used |
+| CoinGecko price oracle | `COINGECKO_API_KEY` | Public rate-limited endpoint is used; if CoinGecko is unreachable, XLM/USD comes from the Stellar DEX orderbook |
 | IPFS certificate pinning | `PINATA_API_KEY`, `PINATA_SECRET_KEY` | Certificates stored in local memory only |
 | Email receipts (SMTP) | `SMTP_HOST`, `SMTP_USER`, `SMTP_PASS`, `SMTP_FROM` | Email delivery skipped/graceful failure |
 | Geographic IP blocking | `GEO_BLOCKED_COUNTRIES`, `MAXMIND_DB_PATH` | All IPs allowed; no geo rules applied |
@@ -646,6 +663,7 @@ All variables in this section are **optional**. Omitting them disables the integ
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `COINGECKO_API_KEY` | — | API key for XLM/fiat rates. Without it the public (rate-limited) endpoint is used. |
+| `XLM_USDC_ASSET` | Circle USDC for the active network | `CODE:ISSUER` used for the Stellar DEX price fallback (XLM/USDC mid-market price). |
 
 #### IPFS Certificate Pinning (Pinata)
 
@@ -793,3 +811,16 @@ For comprehensive documentation, see the [Documentation Index](docs/README.md).
 - **[Mock Stellar Guide](docs/guides/MOCK_STELLAR_GUIDE.md)** - Testing without network calls
 - **[Versioning Strategy](docs/VERSIONING_STRATEGY.md)** - SemVer rules, release flow, and breaking change policy
 
+## Handsoff notes
+
+<!-- handsoff-issue-1731 -->
+- #1731: Account merge endpoint does not return the merge result or soft-delete the source wallet
+
+<!-- handsoff-issue-1772 -->
+- #1772: Continue decomposing DonationService.js (2,552 lines)
+
+<!-- handsoff-issue-1773 -->
+- #1773: Merge duplicate sequence-number managers (utils/sequenceManager.js, services/SequenceManager.js, SequenceCacheService)
+
+<!-- handsoff-issue-1911 -->
+- #1911: Leaderboard tests fail with "wallets.filter is not a function"

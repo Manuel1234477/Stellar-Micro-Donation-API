@@ -10,7 +10,7 @@
 
 const express = require('express');
 const router = express.Router();
-const { checkPermission, requireAdmin } = require('../../middleware/rbac');
+const { checkPermission } = require('../../middleware/rbac');
 const { PERMISSIONS } = require('../../utils/permissions');
 const { validateSchema } = require('../../middleware/schemaValidation');
 const { payloadSizeLimiter, ENDPOINT_LIMITS } = require('../../middleware/payloadSizeLimiter');
@@ -26,15 +26,6 @@ const walletIdSchema = validateSchema({
   params: {
     fields: {
       id: { type: 'string', required: true, trim: true, minLength: 1 }
-    }
-  }
-});
-
-const inflationDestinationSchema = validateSchema({
-  body: {
-    fields: {
-      destination: { type: 'string', required: true },
-      signedXDR: { type: 'string', required: true },
     }
   }
 });

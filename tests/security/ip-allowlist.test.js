@@ -189,7 +189,7 @@ describe('IP allowlist middleware integration', () => {
     });
     const res = await request(app).get('/health').set('x-api-key', key);
     expect(res.status).toBe(403);
-    expect(res.body.error.code).toBe('FORBIDDEN');
+    expect(res.body.error.code).toBe('API_KEY_IP_RESTRICTED');
   });
 
   it('allows requests matching a CIDR range that includes loopback', async () => {

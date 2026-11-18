@@ -35,7 +35,7 @@ These files exceed the limit but are in the process of being decomposed. As rela
 src/services/DonationService.js (1878 lines) - Issue #1212
 src/services/RecurringDonationScheduler.js (1010 lines) - Issue #1211
 src/routes/admin/featureFlags.js (696 lines) - Below limit, kept for reference
-src/routes/admin/geoBlocking.js (438 lines) - Below limit, kept for reference
+src/routes/admin/geoRules.js (874 lines) - Below limit; absorbed geoBlocking.js (#1778)
 ```
 
 ## Enforcing the Budget

@@ -7,10 +7,12 @@
  * - Releases escrowed funds to the campaign recipient when the goal is met.
  * - Refunds every donor when the deadline passes without reaching the goal.
  * - Keep-what-you-raise campaigns pass through unchanged.
+ * - Supports milestone-based fund releases for progressive funding.
  */
 
 const Database = require('../utils/database');
 const log = require('../utils/log');
+const WebhookService = require('./WebhookService');
 
 /**
  * Lazily resolve the Stellar service so this module can be required in test
@@ -77,7 +79,7 @@ async function pledge(campaignId, donorId, amount, options = {}) {
 
   let escrowPublicKey = escrowOverride;
   if (!escrowPublicKey) {
-    const StellarSdk = require('stellar-sdk');
+    const StellarSdk = require('./stellar/sdk.js');
     const serviceSecret = process.env.SERVICE_SECRET_KEY;
     if (serviceSecret) {
       escrowPublicKey = StellarSdk.Keypair.fromSecret(serviceSecret).publicKey();
@@ -144,6 +146,23 @@ async function pledge(campaignId, donorId, amount, options = {}) {
     'UPDATE campaigns SET current_amount = current_amount + ?, updatedAt = CURRENT_TIMESTAMP WHERE id = ?',
     [amount, campaignId]
   );
+
+  // Check for milestone achievements
+  try {
+    const CampaignMilestoneService = require('./CampaignMilestoneService');
+    const milestones = await CampaignMilestoneService.checkMilestones(campaignId);
+    
+    // Send email notifications for reached milestones
+    for (const milestone of milestones) {
+      await CampaignMilestoneService.sendMilestoneEmail(milestone);
+    }
+  } catch (error) {
+    log.error('CrowdfundingService', 'Failed to check campaign milestones', {
+      campaignId,
+      error: error.message,
+    });
+    // Don't fail the donation if milestone checking fails
+  }
 
   log.info('CrowdfundingService', 'Escrow pledge created', {
     pledgeId: result.id,
@@ -212,7 +231,7 @@ async function settle(campaignId, options = {}) {
   const escrowSecret = escrowSecretOverride || process.env.SERVICE_SECRET_KEY || null;
   let escrowPublicKey = null;
   if (escrowSecret) {
-    const StellarSdk = require('stellar-sdk');
+    const StellarSdk = require('./stellar/sdk.js');
     escrowPublicKey = StellarSdk.Keypair.fromSecret(escrowSecret).publicKey();
   }
 
@@ -366,4 +385,148 @@ async function getEscrowState(campaignId) {
   };
 }
 
-module.exports = { pledge, settle, getEscrowState };
+/**
+ * Check and trigger milestone fund releases when a donation arrives.
+ * Called after a donation is recorded to the campaign.
+ *
+ * @param {number} campaignId - Campaign ID
+ * @param {number} currentAmount - Current campaign amount after the donation
+ * @param {Object} [options]
+ * @param {string} [options.escrowSecret] - Escrow account secret key
+ * @param {Object} [options.stellarService] - Stellar service override (for testing)
+ * @returns {Promise<{releasedMilestones: Array<{milestoneId: number, amount: number, txHash: string}>}>}
+ */
+async function checkAndReleaseMilestones(campaignId, currentAmount, options = {}) {
+  const { escrowSecret: escrowSecretOverride, stellarService: svcOverride } = options;
+
+  // Get campaign
+  const campaign = await Database.get(
+    'SELECT * FROM campaigns WHERE id = ? AND deleted_at IS NULL',
+    [campaignId]
+  );
+  if (!campaign) {
+    log.warn('CROWDFUNDING_SERVICE', 'Campaign not found for milestone check', { campaignId });
+    return { releasedMilestones: [] };
+  }
+
+  // Only process milestones for keep-what-you-raise campaigns
+  if (campaign.funding_model !== 'keep-what-you-raise') {
+    return { releasedMilestones: [] };
+  }
+
+  // Get pending milestones that have been reached
+  const milestones = await Database.query(
+    `SELECT * FROM campaign_milestones 
+     WHERE campaign_id = ? AND status = 'pending' AND target_amount <= ?
+     ORDER BY target_amount ASC`,
+    [campaignId, currentAmount]
+  );
+
+  if (milestones.length === 0) {
+    return { releasedMilestones: [] };
+  }
+
+  const stellarService = svcOverride || getDefaultStellarService();
+  const escrowSecret = escrowSecretOverride || process.env.SERVICE_SECRET_KEY || null;
+
+  if (!escrowSecret) {
+    log.warn('CROWDFUNDING_SERVICE', 'No escrow secret configured; cannot release milestone funds', {
+      campaignId,
+      hint: 'Set SERVICE_SECRET_KEY to enable on-chain milestone fund releases',
+    });
+    return { releasedMilestones: [] };
+  }
+
+  if (!campaign.recipient_public_key) {
+    log.warn('CROWDFUNDING_SERVICE', 'Campaign has no recipient_public_key; cannot release funds', {
+      campaignId,
+    });
+    return { releasedMilestones: [] };
+  }
+
+  const StellarSdk = require('./stellar/sdk.js');
+  // Fail fast on a malformed escrow secret before any milestone is processed.
+  StellarSdk.Keypair.fromSecret(escrowSecret);
+  const releasedMilestones = [];
+
+  // Release funds for each milestone
+  for (const milestone of milestones) {
+    // Calculate release amount as percentage of milestone target
+    const releasePercentage = milestone.release_percentage || 100; // default to 100%
+    const releaseAmount = (milestone.target_amount * releasePercentage) / 100;
+
+    try {
+      // Submit payment to recipient
+      const result = await stellarService.sendDonation({
+        sourceSecret: escrowSecret,
+        destinationPublic: campaign.recipient_public_key,
+        amount: releaseAmount.toString(),
+        memo: `milestone:${campaignId}:${milestone.id}`,
+      });
+
+      const txHash = result.transactionId || result.hash || null;
+
+      // Update milestone status to verified with fund release transaction
+      await Database.run(
+        `UPDATE campaign_milestones
+         SET status = 'verified', 
+             verified_at = CURRENT_TIMESTAMP,
+             verified_by = 'auto_release',
+             fund_release_tx = ?
+         WHERE id = ?`,
+        [txHash, milestone.id]
+      );
+
+      releasedMilestones.push({
+        milestoneId: milestone.id,
+        title: milestone.title,
+        targetAmount: milestone.target_amount,
+        releaseAmount,
+        releasePercentage,
+        txHash,
+      });
+
+      // Dispatch webhook event
+      try {
+        await WebhookService.deliver('campaign.milestone_funds_released', {
+          campaign_id: campaignId,
+          campaign_name: campaign.name,
+          milestone_id: milestone.id,
+          milestone_title: milestone.title,
+          target_amount: milestone.target_amount,
+          release_amount: releaseAmount,
+          release_percentage: releasePercentage,
+          tx_hash: txHash,
+          timestamp: new Date().toISOString(),
+        });
+      } catch (webhookErr) {
+        log.error('CROWDFUNDING_SERVICE', 'Failed to deliver milestone webhook', {
+          campaignId,
+          milestoneId: milestone.id,
+          error: webhookErr.message,
+        });
+      }
+
+      log.info('CROWDFUNDING_SERVICE', 'Milestone fund release completed', {
+        campaignId,
+        milestoneId: milestone.id,
+        releaseAmount,
+        releasePercentage,
+        txHash,
+      });
+    } catch (err) {
+      log.error('CROWDFUNDING_SERVICE', 'Failed to release milestone funds', {
+        campaignId,
+        milestoneId: milestone.id,
+        targetAmount: milestone.target_amount,
+        releaseAmount,
+        error: err.message,
+      });
+      // Continue processing other milestones
+    }
+  }
+
+  return { releasedMilestones };
+}
+
+module.exports = { pledge, settle, getEscrowState, checkAndReleaseMilestones };

@@ -13,7 +13,7 @@
  *   - close() delegates to client.quit()
  */
 
-const { RedisRateLimitStore, MemoryRateLimitStore } = require('../../src/middleware/RateLimitStore');
+const { RedisRateLimitStore, MemoryRateLimitStore } = require('../../src/services/rateLimitStores');
 
 // ── Shared in-memory counter backing for the mock Redis ───────────────────────
 

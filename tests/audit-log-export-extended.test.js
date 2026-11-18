@@ -248,7 +248,7 @@ describe('AuditLogExportService - Issue #604', () => {
         status: 'PENDING',
       });
 
-      const auditLogExportRouter = require('../src/routes/admin/auditLogExport');
+      const auditLogExportRouter = require('../src/routes/auditLogExport').adminRouter;
       const express = require('express');
       const request = require('supertest');
       const app = express();

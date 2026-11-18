@@ -21,6 +21,12 @@ const {
   buildCursorMeta,
 } = require('../utils/pagination');
 
+// Buffer state for flush()/startAutoFlush(). _log() writes synchronously, so the
+// buffer normally stays empty and flush() is effectively a no-op.
+let _pendingBuffer = [];
+let _autoFlushTimer = null;
+const BUFFER_FLUSH_INTERVAL_MS = parseInt(process.env.AUDIT_LOG_FLUSH_INTERVAL_MS || '1000', 10);
+
 /**
  * Audit event severity levels
  */
@@ -39,6 +45,7 @@ const AUDIT_CATEGORY = {
   API_KEY_MANAGEMENT: 'API_KEY_MANAGEMENT',
   FINANCIAL_OPERATION: 'FINANCIAL_OPERATION',
   WALLET_OPERATION: 'WALLET_OPERATION',
+  WALLET_MANAGEMENT: 'WALLET_MANAGEMENT',
   CONFIGURATION: 'CONFIGURATION',
   RATE_LIMITING: 'RATE_LIMITING',
   ABUSE_DETECTION: 'ABUSE_DETECTION',
@@ -78,6 +85,7 @@ const AUDIT_ACTION = {
   WALLET_UPDATED: 'WALLET_UPDATED',
   WALLET_QUERIED: 'WALLET_QUERIED',
   WALLET_TRANSACTIONS_ACCESSED: 'WALLET_TRANSACTIONS_ACCESSED',
+  DONATION_LIMIT_OVERRIDE: 'DONATION_LIMIT_OVERRIDE',
   
   // Configuration
   CONFIG_LOADED: 'CONFIG_LOADED',

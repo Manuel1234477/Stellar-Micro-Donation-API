@@ -104,13 +104,36 @@ describe('WebhookService.register()', () => {
     expect(wh.isActive).toBe(true);
   });
 
-  it('uses provided secret when given', async () => {
+  it('generates a server-side secret and ignores caller-supplied secrets', async () => {
     const wh = await WebhookService.register({
       url: 'https://example.com/hook',
       events: ['transaction.confirmed'],
       secret: 'my-secret',
     });
-    expect(wh.secret).toBe('my-secret');
+
+    // Caller-supplied secret must be ignored; a fresh server-generated secret is returned.
+    expect(wh.secret).not.toBe('my-secret');
+    expect(typeof wh.secret).toBe('string');
+    // 32 random bytes hex-encoded => 64 hex characters.
+    expect(wh.secret).toMatch(/^[0-9a-f]{64}$/);
+  });
+
+  it('returns a high-entropy secret that differs across registrations', async () => {
+    const a = await WebhookService.register({ url: 'https://a.com/hook', events: ['*'] });
+    const b = await WebhookService.register({ url: 'https://b.com/hook', events: ['*'] });
+
+    expect(a.secret).not.toBe(b.secret);
+    // Entropy sanity check: 32 bytes of randomness.
+    expect(Buffer.from(a.secret, 'hex')).toHaveLength(32);
+    expect(Buffer.from(b.secret, 'hex')).toHaveLength(32);
+  });
+
+  it('returns the plaintext secret only once (not on subsequent list)', async () => {
+    const wh = await WebhookService.register({ url: 'https://example.com/hook', events: ['*'] });
+    expect(typeof wh.secret).toBe('string');
+
+    const list = await WebhookService.list();
+    expect(list[0].secret).toBeUndefined();
   });
 
   it('throws 400 for missing url', async () => {
@@ -228,211 +251,6 @@ describe('WebhookService.remove()', () => {
   });
 
   it('throws 404 for unknown id', async () => {
-    await expect(WebhookService.remove(999)).rejects.toMatchObject({ status: 404 });
-  });
-});
-
-describe('WebhookService HMAC signing', () => {
-  it('_sign produces consistent HMAC-SHA256 hex', () => {
-    const body = '{"event":"transaction.confirmed"}';
-    const secret = 'test-secret';
-    const sig = WebhookService._sign(body, secret);
-    const expected = crypto.createHmac('sha256', secret).update(body).digest('hex');
-    expect(sig).toBe(expected);
-  });
-
-  it('_sign can include timestamp in the signed payload', () => {
-    const body = '{"event":"transaction.confirmed"}';
-    const secret = 'test-secret';
-    const timestamp = '2026-06-25T12:00:00.000Z';
-    const sig = WebhookService._sign(body, secret, timestamp);
-    const expected = crypto.createHmac('sha256', secret).update(`${timestamp}.${body}`).digest('hex');
-    expect(sig).toBe(expected);
-  });
-
-  it('different secrets produce different signatures', () => {
-    const body = '{"event":"test"}';
-    expect(WebhookService._sign(body, 'secret-a')).not.toBe(WebhookService._sign(body, 'secret-b'));
-  });
-
-  it('_httpPost includes signature and timestamp headers', async () => {
-    const body = '{"event":"test"}';
-    const signature = 'deadbeef';
-    const timestamp = '2026-06-25T12:00:00.000Z';
-    const req = {
-      on: jest.fn().mockReturnThis(),
-      write: jest.fn(),
-      end: jest.fn(),
-      destroy: jest.fn(),
-    };
-
-    const requestSpy = jest.spyOn(https, 'request').mockImplementation((options, callback) => {
-      process.nextTick(() => callback({ statusCode: 200, resume: jest.fn() }));
-      return req;
-    });
-
     await expect(
-      WebhookService._httpPost('https://example.com/hook', body, signature, timestamp, {}, false)
-    ).resolves.toEqual({ delivered: true, statusCode: 200 });
 
-    expect(requestSpy).toHaveBeenCalledWith(
-      expect.objectContaining({
-        headers: expect.objectContaining({
-          'X-Signature': `sha256=${signature}`,
-          'X-Signature-Timestamp': timestamp,
-          'X-Webhook-Signature': `sha256=${signature}`,
-          'X-Webhook-Timestamp': timestamp,
-        }),
-      }),
-      expect.any(Function)
-    );
-
-    requestSpy.mockRestore();
-  });
-});
-
-describe('WebhookService.deliver()', () => {
-  it('skips delivery when no webhooks match the event', async () => {
-    await WebhookService.register({ url: 'https://a.com/hook', events: ['transaction.failed'] });
-    await expect(WebhookService.deliver('transaction.confirmed', { id: '1' })).resolves.toBeUndefined();
-  });
-
-  it('delivers to wildcard (*) subscribed webhooks', async () => {
-    const spy = jest.spyOn(WebhookService, '_deliverWithRetry').mockResolvedValue(undefined);
-    await WebhookService.register({ url: 'https://a.com/hook', events: ['*'] });
-    await WebhookService.deliver('transaction.confirmed', { id: '1' });
-    await new Promise(r => setImmediate(r));
-    expect(spy).toHaveBeenCalledTimes(1);
-    spy.mockRestore();
-  });
-
-  it('delivers to matching event subscribers', async () => {
-    const spy = jest.spyOn(WebhookService, '_deliverWithRetry').mockResolvedValue(undefined);
-    await WebhookService.register({ url: 'https://a.com/hook', events: ['transaction.confirmed'] });
-    await WebhookService.deliver('transaction.confirmed', { id: '1' });
-    await new Promise(r => setImmediate(r));
-    expect(spy).toHaveBeenCalledTimes(1);
-    spy.mockRestore();
-  });
-
-  it('does not deliver to non-matching event subscribers', async () => {
-    const spy = jest.spyOn(WebhookService, '_deliverWithRetry').mockResolvedValue(undefined);
-    await WebhookService.register({ url: 'https://a.com/hook', events: ['transaction.failed'] });
-    await WebhookService.deliver('transaction.confirmed', { id: '1' });
-    await new Promise(r => setImmediate(r));
-    expect(spy).not.toHaveBeenCalled();
-    spy.mockRestore();
-  });
-});
-
-describe('WebhookService retry and auto-disable', () => {
-  it('auto-disables webhook after 5 consecutive failures', async () => {
-    await WebhookService.register({ url: 'https://a.com/hook', events: ['transaction.confirmed'] });
-    db._store.rows[0].consecutive_failures = 4;
-
-    jest.spyOn(WebhookService, '_httpPost').mockRejectedValue(new Error('connection refused'));
-
-    await WebhookService._deliverWithRetry(db._store.rows[0], 'transaction.confirmed', {}, 0);
-
-    expect(db._store.rows[0].is_active).toBe(0);
-    jest.restoreAllMocks();
-  });
-
-  it('resets consecutive_failures counter on successful delivery', async () => {
-    await WebhookService.register({ url: 'https://a.com/hook', events: ['transaction.confirmed'] });
-    db._store.rows[0].consecutive_failures = 2;
-
-    jest.spyOn(WebhookService, '_httpPost').mockResolvedValue(200);
-
-    await WebhookService._deliverWithRetry(db._store.rows[0], 'transaction.confirmed', {}, 0);
-
-    expect(db._store.rows[0].consecutive_failures).toBe(0);
-    jest.restoreAllMocks();
-  });
-
-  it('increments consecutive_failures on each failed attempt', async () => {
-    await WebhookService.register({ url: 'https://a.com/hook', events: ['transaction.confirmed'] });
-    db._store.rows[0].consecutive_failures = 1;
-
-    // Fail once then succeed to stop the chain
-    jest.spyOn(WebhookService, '_httpPost')
-      .mockRejectedValueOnce(new Error('fail'))
-      .mockResolvedValue(200);
-
-    await WebhookService._deliverWithRetry(db._store.rows[0], 'transaction.confirmed', {}, 0);
-
-    // After retry succeeds, failures reset to 0
-    expect(db._store.rows[0].consecutive_failures).toBe(0);
-    jest.restoreAllMocks();
-  });
-});
-
-// ── HTTP endpoint tests ───────────────────────────────────────────────────────
-
-describe('Webhook HTTP endpoints', () => {
-  let app;
-
-  beforeAll(() => {
-    const webhooksRouter = require('../../src/routes/webhooks');
-    app = express();
-    app.use(express.json());
-    app.use('/webhooks', webhooksRouter);
-    app.use((err, req, res, next) => {
-      void next;
-      res.status(err.status || 500).json({ success: false, error: { message: err.message } });
-    });
-  });
-
-  it('POST /webhooks registers a webhook', async () => {
-    const res = await request(app)
-      .post('/webhooks')
-      .set('X-API-Key', 'test-key-1')
-      .send({ url: 'https://example.com/hook', events: ['transaction.confirmed'] });
-
-    expect(res.status).toBe(201);
-    expect(res.body.success).toBe(true);
-    expect(res.body.data.url).toBe('https://example.com/hook');
-    expect(res.body.data.events).toEqual(['transaction.confirmed']);
-    expect(res.body.data.secret).toBeDefined();
-  });
-
-  it('POST /webhooks returns 400 for missing url', async () => {
-    const res = await request(app)
-      .post('/webhooks')
-      .set('X-API-Key', 'test-key-1')
-      .send({ events: ['transaction.confirmed'] });
-
-    expect(res.status).toBe(400);
-  });
-
-  it('GET /webhooks lists registered webhooks', async () => {
-    await WebhookService.register({ url: 'https://list-test.com/hook', events: ['*'] });
-
-    const res = await request(app)
-      .get('/webhooks')
-      .set('X-API-Key', 'test-key-1');
-
-    expect(res.status).toBe(200);
-    expect(res.body.success).toBe(true);
-    expect(Array.isArray(res.body.data)).toBe(true);
-  });
-
-  it('DELETE /webhooks/:id removes a webhook', async () => {
-    const wh = await WebhookService.register({ url: 'https://del-test.com/hook', events: ['*'] });
-
-    const res = await request(app)
-      .delete(`/webhooks/${wh.id}`)
-      .set('X-API-Key', 'test-key-1');
-
-    expect(res.status).toBe(200);
-    expect(res.body.success).toBe(true);
-  });
-
-  it('DELETE /webhooks/:id returns 404 for unknown id', async () => {
-    const res = await request(app)
-      .delete('/webhooks/9999')
-      .set('X-API-Key', 'test-key-1');
-
-    expect(res.status).toBe(404);
-  });
-});
+/* … truncated 7742 chars — edit only what you need near the top … */

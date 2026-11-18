@@ -7,17 +7,92 @@
  * 
  * Provides endpoints for exporting audit logs with date range filtering,
  * JSON/CSV format support, and async generation for large exports.
+ *
+ * The single route module for audit log export (#1778):
+ *
+ *   module.exports              mounted at /api/v1/api-keys
+ *     Per-API-key export (admin, or self-service with audit:export)
+ *     GET /:id/audit-log, /:id/audit-log/export/:exportId[/download],
+ *         /:id/audit-log/exports, /:id/audit-log/stats
+ *
+ *   module.exports.adminRouter  mounted at /admin/audit-logs/export
+ *     Global async export jobs (admin only)
+ *     POST /, GET /:jobId/status, GET /:jobId/download
+ *
+ * Replaces the former routes/admin/auditLogExport.js.
  */
 
 const express = require('express');
 const router = express.Router();
-const { requireAdmin } = require('../middleware/rbac');
-const { ValidationError, NotFoundError, ERROR_CODES } = require('../utils/errors');
+const { requireAdmin, checkPermission } = require('../middleware/rbac');
+const { PERMISSIONS } = require('../utils/permissions');
+const { ValidationError, NotFoundError, ForbiddenError, UnauthorizedError, ERROR_CODES } = require('../utils/errors');
 const { validateSchema } = require('../middleware/schemaValidation');
 const asyncHandler = require('../utils/asyncHandler');
 const AuditLogService = require('../services/AuditLogService');
 const AuditLogExportService = require('../services/AuditLogExportService');
 const { requestTimeout, TIMEOUTS } = require('../middleware/requestTimeout');
+const { payloadSizeLimiter, ENDPOINT_LIMITS } = require('../middleware/payloadSizeLimiter');
+
+/**
+ * Access control for audit log export endpoints (Issue #1547).
+ *
+ * Admins keep the existing requireAdmin() gate (including its TOTP
+ * second-factor check) and may export any API key's audit log, redacted or
+ * not. Non-admins need the `audit:export` permission and may only export
+ * their OWN API key's audit log (self-service) — always redacted per the
+ * RBAC default enforced in AuditLogExportService.computeRedactFields().
+ */
+function auditExportAccess() {
+  const requireAdminMiddleware = requireAdmin();
+  const checkPermissionMiddleware = checkPermission(PERMISSIONS.AUDIT_LOG_EXPORT);
+
+  return (req, res, next) => {
+    if (!req.user || req.user.role === 'guest') {
+      return next(new UnauthorizedError('Authentication required'));
+    }
+
+    if (req.user.role === 'admin') {
+      return requireAdminMiddleware(req, res, next);
+    }
+
+    return checkPermissionMiddleware(req, res, (err) => {
+      if (err) return next(err);
+
+      const ownKeyId = req.user.apiKeyId;
+      if (!ownKeyId || String(ownKeyId) !== String(req.params.id)) {
+        return next(new ForbiddenError('You may only export audit logs for your own API key'));
+      }
+
+      next();
+    });
+  };
+}
+
+/**
+ * Compute the effective redact field list for the current request, honoring
+ * the RBAC default: non-admins always get the mandatory PII fields redacted
+ * regardless of what (or whether) they pass via ?redact=.
+ * @param {import('express').Request} req
+ * @returns {string[]}
+ */
+function resolveRedactFields(req) {
+  const isAdmin = req.user && req.user.role === 'admin';
+  return AuditLogExportService.computeRedactFields({ isAdmin, requestedRaw: req.query.redact });
+}
+
+/**
+ * Set the export manifest response headers (Issue #1547): which fields were
+ * redacted, when the export ran, and its redaction status.
+ * @param {import('express').Response} res
+ * @param {Object} manifest - From AuditLogExportService.buildManifest()
+ */
+function setManifestHeaders(res, manifest) {
+  res.setHeader('X-Export-Redacted-Fields', manifest.redactedFields.join(',') || 'none');
+  res.setHeader('X-Export-Redaction-Status', manifest.redactionStatus);
+  res.setHeader('X-Export-Timestamp', manifest.exportedAt);
+  res.setHeader('X-Export-Record-Count', String(manifest.recordCount));
+}
 
 /**
  * Schema for audit log export request
@@ -50,6 +125,11 @@ const auditLogExportSchema = validateSchema({
         required: false,
         enum: ['json', 'csv'],
         default: 'json'
+      },
+      redact: {
+        type: 'string',
+        required: false,
+        nullable: true
       }
     }
   }
@@ -73,10 +153,11 @@ const exportStatusSchema = validateSchema({
  *
  * Explicit 45s timeout (TIMEOUTS.export) — this generates CSV/JSON synchronously.
  */
-router.get('/:id/audit-log', requestTimeout(TIMEOUTS.export), requireAdmin(), auditLogExportSchema, asyncHandler(async (req, res, next) => {
+router.get('/:id/audit-log', requestTimeout(TIMEOUTS.export), auditExportAccess(), auditLogExportSchema, asyncHandler(async (req, res, next) => {
   try {
     const apiKeyId = req.params.id;
     const { startDate, endDate, action, format = 'json' } = req.query;
+    const redactFields = resolveRedactFields(req);
 
     // Validate API key exists
     const apiKeysModel = require('../models/apiKeys');
@@ -90,7 +171,8 @@ router.get('/:id/audit-log', requestTimeout(TIMEOUTS.export), requireAdmin(), au
       startDate,
       endDate,
       action,
-      format
+      format,
+      redactFields
     });
 
     // Log the export request
@@ -110,18 +192,25 @@ router.get('/:id/audit-log', requestTimeout(TIMEOUTS.export), requireAdmin(), au
         action,
         format,
         recordCount: result.recordCount,
-        async: result.async
+        async: result.async,
+        redactedFields: redactFields
       }
     });
 
     // Return response based on sync/async
     if (result.async) {
+      // Large export — the manifest reflects the redaction that WILL be
+      // applied when the caller polls the status/download endpoints below.
+      setManifestHeaders(res, AuditLogExportService.buildManifest({
+        redactedFields: redactFields, recordCount: result.recordCount, format
+      }));
       res.status(202).json({
         success: true,
         data: result
       });
     } else {
       // For sync exports, return content directly
+      setManifestHeaders(res, result.manifest);
       res.setHeader('Content-Type', format === 'csv' ? 'text/csv' : 'application/json');
       res.setHeader('Content-Disposition', `attachment; filename="audit-log-${apiKeyId}-${Date.now()}.${format}"`);
       res.send(result.content);
@@ -135,7 +224,7 @@ router.get('/:id/audit-log', requestTimeout(TIMEOUTS.export), requireAdmin(), au
  * GET /api-keys/:id/audit-log/export/:exportId
  * Get status of an async export
  */
-router.get('/:id/audit-log/export/:exportId', requireAdmin(), exportStatusSchema, asyncHandler(async (req, res, next) => {
+router.get('/:id/audit-log/export/:exportId', auditExportAccess(), exportStatusSchema, asyncHandler(async (req, res, next) => {
   try {
     const apiKeyId = req.params.id;
     const exportId = req.params.exportId;
@@ -156,10 +245,11 @@ router.get('/:id/audit-log/export/:exportId', requireAdmin(), exportStatusSchema
  * GET /api-keys/:id/audit-log/export/:exportId/download
  * Download completed export
  */
-router.get('/:id/audit-log/export/:exportId/download', requireAdmin(), exportStatusSchema, asyncHandler(async (req, res, next) => {
+router.get('/:id/audit-log/export/:exportId/download', auditExportAccess(), exportStatusSchema, asyncHandler(async (req, res, next) => {
   try {
     const apiKeyId = req.params.id;
     const exportId = req.params.exportId;
+    const redactFields = resolveRedactFields(req);
 
     // Get export status
     const status = await AuditLogExportService.getExportStatus(apiKeyId, exportId);
@@ -175,13 +265,17 @@ router.get('/:id/audit-log/export/:exportId/download', requireAdmin(), exportSta
     // In production, retrieve from file storage
     // For now, regenerate the export
     const exportRecord = await AuditLogExportService.getExportRecord(exportId);
-    
-    const logs = await AuditLogExportService.queryAuditLogs(apiKeyId, {
+
+    let logs = await AuditLogExportService.queryAuditLogs(apiKeyId, {
       startDate: exportRecord.startDate,
       endDate: exportRecord.endDate,
       action: exportRecord.actionFilter,
       limit: 100000
     });
+
+    // Apply field redaction (Issue #1547), computed fresh from the current
+    // requester's role/query — not persisted from the original request.
+    logs = AuditLogExportService.applyRedaction(logs, redactFields);
 
     let content;
     if (exportRecord.format === AuditLogExportService.EXPORT_FORMAT.CSV) {
@@ -192,6 +286,9 @@ router.get('/:id/audit-log/export/:exportId/download', requireAdmin(), exportSta
       res.setHeader('Content-Type', 'application/json');
     }
 
+    setManifestHeaders(res, AuditLogExportService.buildManifest({
+      redactedFields: redactFields, recordCount: logs.length, format: exportRecord.format
+    }));
     res.setHeader('Content-Disposition', `attachment; filename="audit-log-${apiKeyId}-${exportId}.${exportRecord.format}"`);
     res.send(content);
   } catch (error) {
@@ -280,4 +377,166 @@ router.get('/:id/audit-log/stats', requireAdmin(), asyncHandler(async (req, res,
   }
 }));
 
+// ─── Global admin export jobs (/admin/audit-logs/export) ─────────────────────
+/**
+ * @openapi
+ * tags:
+ *   - name: AuditLogExport
+ *     description: Compliance audit log export with async jobs and signed URLs
+ *
+ * /admin/audit-logs/export:
+ *   post:
+ *     tags: [AuditLogExport]
+ *     summary: Queue an async audit log export job
+ *     security:
+ *       - ApiKeyAuth: []
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             properties:
+ *               startDate:
+ *                 type: string
+ *                 format: date-time
+ *               endDate:
+ *                 type: string
+ *                 format: date-time
+ *               eventType:
+ *                 type: string
+ *               format:
+ *                 type: string
+ *                 enum: [json, csv]
+ *                 default: json
+ *     responses:
+ *       202:
+ *         description: Export job queued
+ *       400:
+ *         description: Validation error
+ *
+ * /admin/audit-logs/export/{jobId}/status:
+ *   get:
+ *     tags: [AuditLogExport]
+ *     summary: Poll export job status
+ *     security:
+ *       - ApiKeyAuth: []
+ *     parameters:
+ *       - in: path
+ *         name: jobId
+ *         required: true
+ *         schema:
+ *           type: string
+ *     responses:
+ *       200:
+ *         description: Job status
+ *       404:
+ *         description: Job not found
+ *
+ * /admin/audit-logs/export/{jobId}/download:
+ *   get:
+ *     tags: [AuditLogExport]
+ *     summary: Get signed download URL for completed export
+ *     security:
+ *       - ApiKeyAuth: []
+ *     parameters:
+ *       - in: path
+ *         name: jobId
+ *         required: true
+ *         schema:
+ *           type: string
+ *       - in: query
+ *         name: format
+ *         schema:
+ *           type: string
+ *           enum: [json, csv]
+ *     responses:
+ *       200:
+ *         description: Signed download URL
+ *       202:
+ *         description: Export not yet complete
+ *       404:
+ *         description: Job not found
+ */
+const adminRouter = express.Router();
+
+/**
+ * POST /admin/audit-logs/export
+ * Queue an async audit log export job with date range and event type filters.
+ */
+adminRouter.post('/', requireAdmin(), payloadSizeLimiter(ENDPOINT_LIMITS.admin), asyncHandler(async (req, res, next) => {
+  try {
+    const { startDate, endDate, eventType, format = 'json' } = req.body;
+
+    if (!['json', 'csv'].includes(format)) {
+      throw new ValidationError('format must be json or csv', null, ERROR_CODES.INVALID_REQUEST);
+    }
+
+    if (startDate && endDate && new Date(startDate) > new Date(endDate)) {
+      throw new ValidationError('startDate must be before endDate', null, ERROR_CODES.INVALID_REQUEST);
+    }
+
+    // Attribute export job to the authenticated admin API key or user context
+    const apiKeyId = (req.apiKey && (typeof req.apiKey === 'string' ? req.apiKey : (req.apiKey.id || req.apiKey.key))) || (req.user && req.user.id) || 'admin';
+
+    const result = await AuditLogExportService.queueExportJob(apiKeyId, {
+      startDate: startDate || null,
+      endDate: endDate || null,
+      eventType: eventType || null,
+      format
+    });
+
+    return res.status(202).json({
+      success: true,
+      data: {
+        jobId: result.jobId,
+        status: result.status,
+        message: 'Export job queued. Poll /status to check progress.'
+      }
+    });
+  } catch (error) {
+    next(error);
+  }
+}));
+
+/**
+ * GET /admin/audit-logs/export/:jobId/status
+ * Poll the status of an async export job.
+ */
+adminRouter.get('/:jobId/status', requireAdmin(), asyncHandler(async (req, res, next) => {
+  try {
+    const { jobId } = req.params;
+    const status = await AuditLogExportService.getJobStatus(jobId);
+    return res.json({ success: true, data: status });
+  } catch (error) {
+    next(error);
+  }
+}));
+
+/**
+ * GET /admin/audit-logs/export/:jobId/download
+ * Return a signed URL for downloading a completed export.
+ * Returns 202 if the job is not yet complete.
+ */
+adminRouter.get('/:jobId/download', requireAdmin(), asyncHandler(async (req, res, next) => {
+  try {
+    const { jobId } = req.params;
+    const { format } = req.query;
+
+    const result = await AuditLogExportService.getSignedDownloadUrl(jobId, { format });
+
+    if (result.pending) {
+      return res.status(202).json({
+        success: true,
+        data: { jobId, status: result.status, message: 'Export not yet complete' }
+      });
+    }
+
+    return res.json({ success: true, data: result });
+  } catch (error) {
+    next(error);
+  }
+}));
+
 module.exports = router;
+module.exports.adminRouter = adminRouter;

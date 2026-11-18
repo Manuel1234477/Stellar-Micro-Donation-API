@@ -214,6 +214,35 @@ describe('Centralized Configuration Module', () => {
       expect(config.donations.maxAmount).toBe(1000);
       expect(config.donations.maxDailyPerDonor).toBe(100);
     });
+
+    it('disables the multi-sig approval workflow by default (#1498)', () => {
+      cleanup = createIsolatedEnvironment({
+        NODE_ENV: 'test',
+        API_KEYS: 'test-key'
+      });
+
+      delete require.cache[require.resolve('../../src/config')];
+      config = require('../../src/config');
+
+      expect(config.donations.multisigThresholdXLM).toBeNull();
+      expect(config.donations.multisigRequiredApprovals).toBe(2);
+    });
+
+    it('parses a configured MULTISIG_THRESHOLD_XLM and MULTISIG_REQUIRED_APPROVALS', () => {
+      cleanup = createIsolatedEnvironment({
+        NODE_ENV: 'test',
+        API_KEYS: 'test-key',
+        MAX_DONATION_AMOUNT: '10000',
+        MULTISIG_THRESHOLD_XLM: '5000',
+        MULTISIG_REQUIRED_APPROVALS: '3'
+      });
+
+      delete require.cache[require.resolve('../../src/config')];
+      config = require('../../src/config');
+
+      expect(config.donations.multisigThresholdXLM).toBe(5000);
+      expect(config.donations.multisigRequiredApprovals).toBe(3);
+    });
   });
 
   describe('Logging Configuration', () => {

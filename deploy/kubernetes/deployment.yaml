@@ -1,42 +1,64 @@
 apiVersion: apps/v1
-kind: Deployment
+kind: StatefulSet
 metadata:
   name: stellar-micro-donation-api
+  labels:
+    app.kubernetes.io/name: stellar-micro-donation-api
+    app.kubernetes.io/component: api
 spec:
+  serviceName: stellar-micro-donation-api
   replicas: 1
   selector:
     matchLabels:
-      app: stellar-micro-donation-api
+      app.kubernetes.io/name: stellar-micro-donation-api
   template:
     metadata:
       labels:
-        app: stellar-micro-donation-api
+        app.kubernetes.io/name: stellar-micro-donation-api
+        app.kubernetes.io/component: api
     spec:
-      # Includes the 5-second preStop hook, the application's
-      # 30-second shutdown budget, and a 5-second buffer.
       terminationGracePeriodSeconds: 40
-
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        runAsGroup: 1000
+        fsGroup: 1000
+        seccompProfile:
+          type: RuntimeDefault
       containers:
         - name: api
-          image: your-registry/stellar-micro-donation-api:latest
+          image: stellar-micro-donation-api:1.0.0
+          imagePullPolicy: IfNotPresent
           ports:
             - name: http
               containerPort: 3000
-
-          env:
-            - name: NODE_ENV
-              value: production
-            - name: SHUTDOWN_TIMEOUT_MS
-              value: "30000"
-
+              protocol: TCP
+          envFrom:
+            - secretRef:
+                name: stellar-micro-donation-api-secrets
+            - configMapRef:
+                name: stellar-micro-donation-api-config
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop:
+                - ALL
+          volumeMounts:
+            - name: data
+              mountPath: /data
+            - name: tmp
+              mountPath: /tmp
           resources:
             requests:
-              cpu: "1"
-              memory: 512Mi
+              cpu: "100m"
+              memory: 256Mi
             limits:
-              cpu: "2"
+              cpu: "1"
               memory: 1Gi
-
+          # Probe endpoints are exempt from rate limiting (see
+          # src/bootstrap/routes.js). Use /health/live for liveness and
+          # /health/ready for readiness; keep /health for humans/monitoring.
           readinessProbe:
             httpGet:
               path: /health/ready
@@ -45,7 +67,9 @@ spec:
             periodSeconds: 10
             timeoutSeconds: 5
             failureThreshold: 3
-
+          # Liveness must not depend on external services: /health/live only
+          # checks the process, so a dependency outage cannot restart healthy
+          # containers and turn a partial outage into a full one.
           livenessProbe:
             httpGet:
               path: /health/live
@@ -54,8 +78,19 @@ spec:
             periodSeconds: 20
             timeoutSeconds: 5
             failureThreshold: 3
-
           lifecycle:
             preStop:
               exec:
                 command: ["/bin/sh", "-c", "sleep 5"]
+      volumes:
+        - name: tmp
+          emptyDir: {}
+  volumeClaimTemplates:
+    - metadata:
+        name: data
+      spec:
+        accessModes:
+          - ReadWriteOnce
+        resources:
+          requests:
+            storage: 10Gi

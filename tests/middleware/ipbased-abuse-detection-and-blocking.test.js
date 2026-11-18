@@ -5,7 +5,7 @@
  * Uses no live Stellar network (service only)
  */
 
-const AbuseDetectionService = require('../../src/services/AbuseDetectionService');
+const { AbuseDetectionService } = require('../../src/services/AbuseDetectionService');
 const blockCheck = require('../../src/middleware/blockCheck');
 const request = require('supertest');
 const express = require('express');
@@ -194,4 +194,3 @@ afterAll(() => {
   const service = require('../../src/services/AbuseDetectionService');
   service.stop();
 });
-

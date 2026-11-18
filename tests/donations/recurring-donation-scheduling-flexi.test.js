@@ -108,6 +108,34 @@ describe('calculateNextExecutionDate', () => {
     expect(next.getDate()).toBe(15);
   });
 
+  test('biweekly adds 14 days', () => {
+    const next = scheduler.calculateNextExecutionDate(base, 'biweekly');
+    expect(next.toISOString()).toBe('2026-01-29T12:00:00.000Z');
+  });
+
+  test('quarterly advances 3 months', () => {
+    const next = scheduler.calculateNextExecutionDate(base, 'quarterly');
+    expect(next.toISOString()).toBe('2026-04-15T12:00:00.000Z');
+  });
+
+  test('quarterly clamps to month-end on 31st', () => {
+    const jan31 = new Date('2026-01-31T12:00:00.000Z');
+    const next = scheduler.calculateNextExecutionDate(jan31, 'quarterly');
+    expect(next.toISOString()).toBe('2026-04-30T12:00:00.000Z');
+  });
+
+  test('monthly clamps to month-end on non-leap year (Feb 28)', () => {
+    const jan31 = new Date('2025-01-31T12:00:00.000Z');
+    const next = scheduler.calculateNextExecutionDate(jan31, 'monthly');
+    expect(next.toISOString()).toBe('2025-02-28T12:00:00.000Z');
+  });
+
+  test('monthly clamps to month-end on leap year (Feb 29)', () => {
+    const jan31Leap = new Date('2024-01-31T12:00:00.000Z');
+    const next = scheduler.calculateNextExecutionDate(jan31Leap, 'monthly');
+    expect(next.toISOString()).toBe('2024-02-29T12:00:00.000Z');
+  });
+
   test('custom adds specified days', () => {
     const next = scheduler.calculateNextExecutionDate(base, 'custom', 10);
     expect(next.toISOString()).toBe('2026-01-25T12:00:00.000Z');
@@ -118,12 +146,21 @@ describe('calculateNextExecutionDate', () => {
     expect(next.toISOString()).toBe('2026-01-16T12:00:00.000Z');
   });
 
+  test('custom with 365 days', () => {
+    const next = scheduler.calculateNextExecutionDate(base, 'custom', 365);
+    expect(next.toISOString()).toBe('2027-01-15T12:00:00.000Z');
+  });
+
   test('custom throws when customIntervalDays missing', () => {
     expect(() => scheduler.calculateNextExecutionDate(base, 'custom')).toThrow();
   });
 
   test('custom throws when customIntervalDays < 1', () => {
     expect(() => scheduler.calculateNextExecutionDate(base, 'custom', 0)).toThrow();
+  });
+
+  test('custom throws when customIntervalDays > 365', () => {
+    expect(() => scheduler.calculateNextExecutionDate(base, 'custom', 366)).toThrow();
   });
 
   test('invalid frequency throws', () => {
@@ -750,6 +787,56 @@ describe('POST /donations/recurring', () => {
         customIntervalDays: 14,
       });
     expect(res.status).toBe(201);
+  });
+
+  test('201 on valid custom schedule with intervalDays', async () => {
+    const res = await request(app)
+      .post('/donations/recurring')
+      .send({
+        donorPublicKey: 'GDONOR1234567890123456789012345678901234567890123456',
+        recipientPublicKey: 'GRECIP1234567890123456789012345678901234567890123456',
+        amount: '10',
+        frequency: 'custom',
+        intervalDays: 30,
+      });
+    expect(res.status).toBe(201);
+  });
+
+  test('201 on valid biweekly schedule', async () => {
+    const res = await request(app)
+      .post('/donations/recurring')
+      .send({
+        donorPublicKey: 'GDONOR1234567890123456789012345678901234567890123456',
+        recipientPublicKey: 'GRECIP1234567890123456789012345678901234567890123456',
+        amount: '15',
+        frequency: 'biweekly',
+      });
+    expect(res.status).toBe(201);
+  });
+
+  test('201 on valid quarterly schedule', async () => {
+    const res = await request(app)
+      .post('/donations/recurring')
+      .send({
+        donorPublicKey: 'GDONOR1234567890123456789012345678901234567890123456',
+        recipientPublicKey: 'GRECIP1234567890123456789012345678901234567890123456',
+        amount: '25',
+        frequency: 'quarterly',
+      });
+    expect(res.status).toBe(201);
+  });
+
+  test('400 for custom frequency with intervalDays > 365', async () => {
+    const res = await request(app)
+      .post('/donations/recurring')
+      .send({
+        donorPublicKey: 'GDONOR1234567890123456789012345678901234567890123456',
+        recipientPublicKey: 'GRECIP1234567890123456789012345678901234567890123456',
+        amount: '10',
+        frequency: 'custom',
+        intervalDays: 400,
+      });
+    expect(res.status).toBe(400);
   });
 
   test('400 when amount missing', async () => {

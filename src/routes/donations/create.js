@@ -15,11 +15,13 @@
 'use strict';
 
 const express = require('express');
+const { clientErrorMessage } = require('../../utils/clientErrorMessage');
 const router = express.Router();
 
 const requireApiKey = require('../../middleware/apiKey');
 const { requireIdempotency, storeIdempotencyResponse } = require('../../middleware/idempotency');
 const { checkPermission } = require('../../middleware/rbac');
+const { rotationLockMiddleware } = require('../../middleware/rotationLock');
 const { PERMISSIONS } = require('../../utils/permissions');
 const { ValidationError, ERROR_CODES } = require('../../utils/errors');
 const log = require('../../utils/log');
@@ -41,28 +43,47 @@ const {
   sendDonationSchema,
   createDonationSchema,
   crossAssetSchema,
-  crossAssetPathsSchema,
   createClaimableSchema,
   withDonorLock,
-  formatBatchDonationError,
-  formatBatchDonationSuccess,
   LIFECYCLE_STAGES,
 } = require('./helpers');
 
 const donationService = new DonationService(getStellarService());
 const stellarService = getStellarService();
 
+/**
+ * Leading middleware for mutating donation routes (#1694).
+ *
+ * Authentication and RBAC run before anything that touches shared state
+ * (rotation-lock DB lookup, rate-limit counters), so unauthenticated callers
+ * always get 401 and under-privileged callers 403 — never a 429/500/503 that
+ * leaks behaviour or consumes resources. Only the identity-independent body
+ * size guard runs ahead of authentication.
+ *
+ * @param {number} payloadLimit - Max body size for the route (ENDPOINT_LIMITS.*)
+ * @returns {Function[]} Middleware chain to spread into the route definition
+ */
+function authenticatedCreateGuards(payloadLimit) {
+  return [
+    payloadSizeLimiter(payloadLimit),
+    requireApiKey,
+    checkPermission(PERMISSIONS.DONATIONS_CREATE),
+    rotationLockMiddleware(),
+  ];
+}
+
 // ─── POST /donations/send ─────────────────────────────────────────────────────
 
 /**
  * POST /donations/send
  * Send XLM from one wallet to another and record it.
+ * Requires an API key with donations:create (401 without a key, 403 without the permission).
  * Requires idempotency key to prevent duplicate transactions.
  * Rate limited: 10 requests per minute per IP.
  */
-router.post('/send', payloadSizeLimiter(ENDPOINT_LIMITS.singleDonation), donationRateLimiter, requireIdempotency, sendDonationSchema, async (req, res, next) => {
+router.post('/send', rotationLockMiddleware(), payloadSizeLimiter(ENDPOINT_LIMITS.singleDonation), donationRateLimiter, requireApiKey, checkPermission(PERMISSIONS.DONATIONS_CREATE), requireIdempotency, sendDonationSchema, asyncHandler(async (req, res, next) => {
   try {
-    const { senderId, receiverId, amount, memo, campaign_id } = req.body;
+    const { senderId, receiverId, amount, memo, campaign_id, asset } = req.body;
 
     log.debug('DONATION_ROUTE', 'Processing donation request', {
       requestId: req.id,
@@ -128,6 +149,7 @@ router.post('/send', payloadSizeLimiter(ENDPOINT_LIMITS.singleDonation), donatio
       amount: amountValidation.xlm,
       memo,
       campaign_id,
+      asset: asset ? parseAssetInput(asset, 'asset') : null,
       idempotencyKey: req.idempotency.key,
       requestId: req.id,
       apiKeyId: req.apiKey ? req.apiKey.id : null,
@@ -152,7 +174,7 @@ router.post('/send', payloadSizeLimiter(ENDPOINT_LIMITS.singleDonation), donatio
       },
     };
 
-    await storeIdempotencyResponse(req, response);
+    await storeIdempotencyResponse(req, response, { statusCode: 201 });
     res.status(201).json(response);
   } catch (error) {
     log.error('DONATION_ROUTE', 'Failed to send donation', {
@@ -175,16 +197,16 @@ router.post('/send', payloadSizeLimiter(ENDPOINT_LIMITS.singleDonation), donatio
     res.status(500).json({
       success: false,
       error: 'Failed to send donation',
-      message: error.message
+      message: clientErrorMessage('DONATION_ROUTE', error, 500, 'Failed to send donation')
     });
   }
-});
+}));
 
 // ─── Custodial donation helper (used by POST /) ───────────────────────────────
 
 async function processCustodialDonation(req, res, next) {
   try {
-    const { senderId, receiverId, amount, memo } = req.body;
+    const { senderId, receiverId, amount, memo, asset } = req.body;
 
     if (!senderId || !receiverId || !amount) {
       return res.status(400).json({
@@ -249,6 +271,7 @@ async function processCustodialDonation(req, res, next) {
       receiverId,
       amount: amountValidation.xlm,
       memo: memo || null,
+      asset: asset ? parseAssetInput(asset, 'asset') : null,
       idempotencyKey: req.idempotency && req.idempotency.key,
       requestId: req.id,
     });
@@ -260,7 +283,7 @@ async function processCustodialDonation(req, res, next) {
         transactionHash: result.stellarTxId || null,
       },
     };
-    await storeIdempotencyResponse(req, response);
+    await storeIdempotencyResponse(req, response, { statusCode: 201 });
 
     return res.status(201).json(response);
   } catch (error) {
@@ -276,13 +299,17 @@ async function processCustodialDonation(req, res, next) {
  * both senderId and receiverId are present.
  * Requires Idempotency-Key header (UUID v4) to prevent duplicate donations.
  */
-router.post('/', payloadSizeLimiter(ENDPOINT_LIMITS.singleDonation), donationRateLimiter, perKeyRateLimit, requireApiKey, requireIdempotency, createDonationSchema, async (req, res, next) => {
+router.post('/', rotationLockMiddleware(), payloadSizeLimiter(ENDPOINT_LIMITS.singleDonation), donationRateLimiter, perKeyRateLimit, requireApiKey, requireIdempotency, createDonationSchema, asyncHandler(async (req, res, next) => {
   try {
     if (req.body.senderId != null && req.body.receiverId != null) {
       return await processCustodialDonation(req, res, next);
     }
 
-    const { amount, currency, donor, recipient, memo, memoType, notes, tags, encryptMemo, anonymous, sourceAsset, sourceAmount } = req.body;
+    if (Array.isArray(req.body.claimants) && req.body.claimants.length > 0) {
+      return await processClaimableDonation(req, res, next);
+    }
+
+    const { amount, asset, currency, donor, recipient, memo, memoType, notes, tags, encryptMemo, anonymous, sourceAsset, sourceAmount, sendAsset, receiveAsset, slippageTolerance, validAfter, validBefore, validFrom, validUntil, contractAddress } = req.body;
 
     if (!amount || !recipient) {
       throw new ValidationError('Missing required fields: amount, recipient', null, ERROR_CODES.MISSING_REQUIRED_FIELD);
@@ -301,6 +328,22 @@ router.post('/', payloadSizeLimiter(ENDPOINT_LIMITS.singleDonation), donationRat
       });
     }
 
+    const parsedValidAfter = validFrom ? Math.floor(new Date(validFrom).getTime() / 1000) : (validAfter === undefined || validAfter === null ? 0 : Number(validAfter));
+    const parsedValidBefore = validUntil ? Math.floor(new Date(validUntil).getTime() / 1000) : (validBefore === undefined || validBefore === null ? 0 : Number(validBefore));
+    const nowSeconds = Math.floor(Date.now() / 1000);
+    if (!Number.isInteger(parsedValidAfter) || parsedValidAfter < 0) {
+      return res.status(400).json({ success: false, error: { code: 'VALIDATION_ERROR', message: 'validAfter must be a non-negative Unix timestamp in seconds' } });
+    }
+    if (!Number.isInteger(parsedValidBefore) || parsedValidBefore < 0) {
+      return res.status(400).json({ success: false, error: { code: 'VALIDATION_ERROR', message: 'validBefore must be a non-negative Unix timestamp in seconds' } });
+    }
+    if (parsedValidAfter && parsedValidBefore && parsedValidAfter >= parsedValidBefore) {
+      return res.status(400).json({ success: false, error: { code: 'VALIDATION_ERROR', message: 'validAfter must be strictly less than validBefore' } });
+    }
+    if (parsedValidBefore && parsedValidBefore <= nowSeconds) {
+      return res.status(400).json({ success: false, error: { code: 'VALIDATION_ERROR', message: 'validBefore must be in the future' } });
+    }
+
     let sourceAmountValidation = null;
     let normalizedSourceAsset = null;
     if (sourceAsset || sourceAmount) {
@@ -310,6 +353,36 @@ router.post('/', payloadSizeLimiter(ENDPOINT_LIMITS.singleDonation), donationRat
         return res.status(400).json({
           error: `Invalid sourceAmount: ${sourceAmountValidation.error}`
         });
+      }
+    }
+
+    let normalizedSendAsset = null;
+    let normalizedReceiveAsset = null;
+    let normalizedSlippageTolerance = null;
+    let customAsset = null;
+    if (asset) {
+      customAsset = parseAssetInput(asset, 'asset');
+    }
+    if (sendAsset || receiveAsset) {
+      if (!sendAsset || !receiveAsset) {
+        return res.status(400).json({
+          success: false,
+          error: { code: 'VALIDATION_ERROR', message: 'Both sendAsset and receiveAsset must be provided for cross-asset donations' }
+        });
+      }
+      normalizedSendAsset = parseAssetInput(sendAsset, 'sendAsset');
+      normalizedReceiveAsset = parseAssetInput(receiveAsset, 'receiveAsset');
+
+      if (slippageTolerance !== undefined && slippageTolerance !== null) {
+        if (typeof slippageTolerance !== 'number' || slippageTolerance < 0 || slippageTolerance > 1) {
+          return res.status(400).json({
+            success: false,
+            error: { code: 'VALIDATION_ERROR', message: 'slippageTolerance must be a number between 0 and 1' }
+          });
+        }
+        normalizedSlippageTolerance = slippageTolerance;
+      } else {
+        normalizedSlippageTolerance = 0.01;
       }
     }
 
@@ -356,6 +429,10 @@ router.post('/', payloadSizeLimiter(ENDPOINT_LIMITS.singleDonation), donationRat
       memo,
       sourceAsset: normalizedSourceAsset,
       sourceAmount: sourceAmountValidation ? sourceAmountValidation.value : undefined,
+      sendAsset: normalizedSendAsset,
+      receiveAsset: normalizedReceiveAsset,
+      asset: customAsset,
+      slippageTolerance: normalizedSlippageTolerance,
       memoType: memoType || 'text',
       notes,
       tags,
@@ -365,6 +442,9 @@ router.post('/', payloadSizeLimiter(ENDPOINT_LIMITS.singleDonation), donationRat
       apiKeyId: req.apiKey ? req.apiKey.id : null,
       apiKeyRole: req.apiKey ? req.apiKey.role : (req.user?.role || 'user'),
       anonymous: anonymous === true,
+      validAfter: parsedValidAfter,
+      validBefore: parsedValidBefore,
+      contractAddress: contractAddress || null,
       correlationId: req.id,
     });
 
@@ -395,12 +475,12 @@ router.post('/', payloadSizeLimiter(ENDPOINT_LIMITS.singleDonation), donationRat
       }
     };
 
-    await storeIdempotencyResponse(req, response);
+    await storeIdempotencyResponse(req, response, { statusCode: 201 });
     res.status(201).json(response);
   } catch (error) {
     next(error);
   }
-});
+}));
 
 // ─── POST /donations/batch (simple, no RBAC) ──────────────────────────────────
 
@@ -409,7 +489,7 @@ router.post('/', payloadSizeLimiter(ENDPOINT_LIMITS.singleDonation), donationRat
  * Create up to 100 donations in a single request.
  * Rate limited: 1 batch request per minute per IP.
  */
-router.post('/batch', payloadSizeLimiter(ENDPOINT_LIMITS.batchDonation), batchRateLimiter, requireApiKey, async (req, res, next) => {
+router.post('/batch', rotationLockMiddleware(), payloadSizeLimiter(ENDPOINT_LIMITS.batchDonation), batchRateLimiter, requireApiKey, asyncHandler(async (req, res, next) => {
   try {
     const { donations } = req.body;
 
@@ -450,113 +530,6 @@ router.post('/batch', payloadSizeLimiter(ENDPOINT_LIMITS.batchDonation), batchRa
   } catch (error) {
     next(error);
   }
-});
-
-// ─── POST /donations/batch (RBAC-guarded authenticated batch) ─────────────────
-
-/**
- * POST /donations/batch (authenticated, RBAC-guarded)
- * Full per-item validation with 207 Multi-Status response.
- * Requires donations:create permission.
- */
-router.post('/batch', requireApiKey, batchRateLimiter, checkPermission(PERMISSIONS.DONATIONS_CREATE), payloadSizeLimiter(ENDPOINT_LIMITS.batchDonation), asyncHandler(async (req, res, next) => {
-  try {
-    const donations = req.body;
-
-    if (!Array.isArray(donations)) {
-      return res.status(400).json({
-        success: false,
-        error: {
-          code: 'INVALID_PAYLOAD',
-          message: 'Request body must be an array of donation objects'
-        }
-      });
-    }
-
-    if (donations.length === 0 || donations.length > 100) {
-      return res.status(400).json({
-        success: false,
-        error: {
-          code: 'INVALID_BATCH_SIZE',
-          message: 'Batch must contain between 1 and 100 donation objects'
-        }
-      });
-    }
-
-    const results = [];
-
-    for (let index = 0; index < donations.length; index += 1) {
-      const donation = donations[index];
-
-      if (!donation || typeof donation !== 'object' || Array.isArray(donation)) {
-        results.push(formatBatchDonationError(index, 'INVALID_DONATION', 'Each batch item must be an object'));
-        continue;
-      }
-
-      const missingFields = [];
-      if (donation.senderId === undefined || donation.senderId === null) missingFields.push('senderId');
-      if (donation.receiverId === undefined || donation.receiverId === null) missingFields.push('receiverId');
-      if (donation.amount === undefined || donation.amount === null) missingFields.push('amount');
-
-      if (missingFields.length > 0) {
-        results.push(formatBatchDonationError(index, 'MISSING_FIELDS', `Missing required fields: ${missingFields.join(', ')}`));
-        continue;
-      }
-
-      const senderIdValidation = validateInteger(donation.senderId, { min: 1 });
-      if (!senderIdValidation.valid) {
-        results.push(formatBatchDonationError(index, 'INVALID_SENDER_ID', `Invalid senderId: ${senderIdValidation.error}`));
-        continue;
-      }
-
-      const receiverIdValidation = validateInteger(donation.receiverId, { min: 1 });
-      if (!receiverIdValidation.valid) {
-        results.push(formatBatchDonationError(index, 'INVALID_RECEIVER_ID', `Invalid receiverId: ${receiverIdValidation.error}`));
-        continue;
-      }
-
-      const amountValidation = validateFloat(donation.amount);
-      if (!amountValidation.valid) {
-        results.push(formatBatchDonationError(index, 'INVALID_AMOUNT', `Invalid amount: ${amountValidation.error}`));
-        continue;
-      }
-
-      if (donation.memo !== undefined && donation.memo !== null && donation.memo !== '') {
-        if (typeof donation.memo !== 'string') {
-          results.push(formatBatchDonationError(index, 'INVALID_MEMO', 'Memo must be a string'));
-          continue;
-        }
-        const MemoValidator = require('../../utils/memoValidator');
-        const memoValidation = MemoValidator.validate(donation.memo);
-        if (!memoValidation.valid) {
-          results.push(formatBatchDonationError(index, 'INVALID_MEMO', 'Memo text must be 28 bytes or less'));
-          continue;
-        }
-      }
-
-      try {
-        const result = await donationService.sendCustodialDonation({
-          senderId: senderIdValidation.value,
-          receiverId: receiverIdValidation.value,
-          amount: amountValidation.xlm,
-          memo: donation.memo || null,
-          notes: donation.notes || null,
-          tags: donation.tags || null,
-          apiKeyId: req.apiKey?.id,
-          requestId: req.id,
-        });
-        results.push(formatBatchDonationSuccess(index, result));
-      } catch (error) {
-        const code = error.code || 'DONATION_FAILED';
-        const message = error.message || 'Donation processing failed';
-        results.push(formatBatchDonationError(index, code, message));
-      }
-    }
-
-    return res.status(207).json({ success: true, results });
-  } catch (error) {
-    next(error);
-  }
 }));
 
 // ─── POST /donations/bulk ─────────────────────────────────────────────────────
@@ -567,7 +540,7 @@ router.post('/batch', requireApiKey, batchRateLimiter, checkPermission(PERMISSIO
  * Up to 50 items; concurrency controlled by BULK_DONATION_CONCURRENCY env var.
  * Requires donations:create permission.
  */
-router.post('/bulk', checkPermission(PERMISSIONS.DONATIONS_CREATE), payloadSizeLimiter(ENDPOINT_LIMITS.batchDonation), asyncHandler(async (req, res, next) => {
+router.post('/bulk', ...authenticatedCreateGuards(ENDPOINT_LIMITS.batchDonation), asyncHandler(async (req, res, next) => {
   try {
     const { donations } = req.body || {};
 
@@ -678,7 +651,7 @@ router.post('/bulk', checkPermission(PERMISSIONS.DONATIONS_CREATE), payloadSizeL
  * Execute a cross-asset donation via Stellar DEX path payment.
  * The transaction must be built and signed client-side (pre-signed XDR).
  */
-router.post('/cross-asset', payloadSizeLimiter(ENDPOINT_LIMITS.singleDonation), donationRateLimiter, requireApiKey, requireIdempotency, crossAssetSchema, asyncHandler(async (req, res, next) => {
+router.post('/cross-asset', ...authenticatedCreateGuards(ENDPOINT_LIMITS.singleDonation), donationRateLimiter, requireIdempotency, crossAssetSchema, asyncHandler(async (req, res, next) => {
   try {
     const { signedXDR, destPublicKey } = req.body;
 
@@ -705,8 +678,8 @@ router.post('/cross-asset', payloadSizeLimiter(ENDPOINT_LIMITS.singleDonation), 
 router.post(
   '/claimable',
   requireApiKey,
-  donationRateLimiter,
   checkPermission(PERMISSIONS.DONATIONS_CREATE),
+  donationRateLimiter,
   createClaimableSchema,
   asyncHandler(async (req, res, next) => {
     try {
@@ -727,7 +700,7 @@ router.post(
       });
 
       Transaction.create({
-        amount: parseFloat(amount),
+        amount: String(amount).trim(),
         donor: claimants[0] && claimants[0].destination,
         recipient: claimants.map(c => c.destination).join(','),
         status: 'pending',
@@ -755,8 +728,8 @@ router.post(
 router.post(
   '/claimable/:id/claim',
   requireApiKey,
-  donationRateLimiter,
   checkPermission(PERMISSIONS.DONATIONS_CREATE),
+  donationRateLimiter,
   asyncHandler(async (req, res, next) => {
     try {
       const { id } = req.params;

@@ -31,12 +31,13 @@ const apiKeyCreateSchema = validateSchema({
   body: {
     fields: {
       name: { type: 'string', required: true, trim: true, minLength: 1, maxLength: 255 },
-      role: { type: 'string', required: false, enum: ['admin', 'user', 'guest'] },
+      role: { type: 'string', required: false, enum: ['admin', 'user', 'signer', 'guest'] },
       expiresInDays: { type: 'integer', required: false, min: 1 },
       metadata: { type: 'object', required: false, nullable: true },
       rateLimit: { type: 'integer', required: false, min: 1 },
       rateLimitWindowSeconds: { type: 'integer', required: false, min: 1 },
       allowedIps: { type: 'array', required: false, nullable: true },
+      scopes: { types: ['array', 'string', 'object', 'boolean', 'number'], required: false, nullable: true },
     },
   },
 });
@@ -45,7 +46,7 @@ const apiKeyListQuerySchema = validateSchema({
   query: {
     fields: {
       status: { type: 'string', required: false, enum: Object.values(API_KEY_STATUS) },
-      role: { type: 'string', required: false, enum: ['admin', 'user', 'guest'] },
+      role: { type: 'string', required: false, enum: ['admin', 'user', 'signer', 'guest'] },
     },
   },
 });
@@ -94,9 +95,15 @@ router.post('/', requireAdmin(), apiKeyCreateSchema, payloadSizeLimiter(ENDPOINT
     }
 
     // Validate scopes
-    const scopeValidation = validateScopes(scopes);
+    const scopeValidation = validateScopes(scopes || []);
     if (!scopeValidation.valid) {
-      throw new ValidationError(`Invalid scopes: ${scopeValidation.errors.join('; ')}`);
+      // Use 'INVALID_SCOPES' code (no i18n entry) so the specific error message
+      // is preserved in the response rather than being replaced by a generic translation.
+      throw new ValidationError(
+        `Invalid scopes: ${scopeValidation.errors.join('; ')}`,
+        scopeValidation.errors,
+        'INVALID_SCOPES'
+      );
     }
 
     const keyInfo = await apiKeysModel.createApiKey({
@@ -108,6 +115,7 @@ router.post('/', requireAdmin(), apiKeyCreateSchema, payloadSizeLimiter(ENDPOINT
       rateLimit: rateLimit || null,
       rateLimitWindowSeconds: rateLimitWindowSeconds || null,
       allowedIps: allowedIps || null,
+      scopes: scopeValidation.scopes,
     });
 
     // Audit log: API key created

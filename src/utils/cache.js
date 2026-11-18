@@ -92,8 +92,9 @@ class Cache {
    */
   static startCleanup() {
     if (_cleanupTimer) return;
-    _cleanupTimer = setInterval(() => Cache.cleanup(), CLEANUP_INTERVAL_MS);
-    if (_cleanupTimer.unref) _cleanupTimer.unref();
+    const timerRegistry = require('./timerRegistry');
+    _cleanupTimer = timerRegistry.createInterval(() => Cache.cleanup(), CLEANUP_INTERVAL_MS, 'cache-cleanup');
+    _cleanupTimer.unref();
   }
 
   /**
@@ -101,7 +102,7 @@ class Cache {
    */
   static stopCleanup() {
     if (_cleanupTimer) {
-      clearInterval(_cleanupTimer);
+      _cleanupTimer.clear();
       _cleanupTimer = null;
     }
   }

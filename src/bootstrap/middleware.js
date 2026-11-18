@@ -24,6 +24,7 @@ const { createRequestSigningMiddleware } = require('../middleware/requestSigning
 const trackQuotaUsage = require('../middleware/quotaTracker');
 const { metricsMiddleware, registry } = require('../utils/metrics');
 const { createDeduplicationMiddleware } = require('../middleware/deduplication');
+const { createCompressionMiddleware } = require('../middleware/compression');
 const { fieldFilterMiddleware } = require('../middleware/fieldFilter');
 const { requestTimeout, TIMEOUTS } = require('../middleware/requestTimeout');
 const schemaVersionMiddleware = require('../middleware/schemaVersion');
@@ -99,9 +100,30 @@ function applyMiddleware(app) {
   app.use(payloadSizeLimiter());
 
   // ─── Body parsers ────────────────────────────────────────────────────────────
+  // #1929: The raw request body is only needed for signature verification
+  // (request-signing middleware and inbound webhook verification).  Capturing
+  // it for every JSON request doubles per-request memory and keeps secrets
+  // (e.g. sourceSecret) in an unredacted string that dataMasker does not touch.
+  //
+  // The verify callback now stores the raw Buffer only when a signature
+  // header is present, and never converts it to a string.  The signing
+  // middleware deletes req.rawBody after verification so it does not live
+  // for the entire request lifetime.
   const express = require('express');
+  const SIGNATURE_HEADERS = [
+    'x-signature',           // request-signing middleware
+    'x-webhook-signature',    // outbound webhook signature verification
+    'stripe-signature',        // inbound webhook (Stripe-style)
+    'x-hub-signature-256',    // inbound webhook (GitHub-style)
+    'x-hub-signature',        // inbound webhook (GitHub-style legacy)
+  ];
   app.use(express.json({
-    verify: (req, _res, buf) => { req.rawBody = buf.toString('utf8'); },
+    verify: (req, _res, buf) => {
+      const hasSignatureHeader = SIGNATURE_HEADERS.some(h => req.get(h));
+      if (hasSignatureHeader) {
+        req.rawBody = buf; // keep as Buffer — never convert to string
+      }
+    },
   }));
   app.use(express.urlencoded({ extended: true }));
 
@@ -134,6 +156,13 @@ function applyMiddleware(app) {
       });
     }
   }));
+
+  // ─── Response compression ────────────────────────────────────────────────────
+  // Mounted BEFORE deduplication and field filtering on purpose. Each of these
+  // wraps res.json, and the wrapper installed last runs first — so compression
+  // has to be installed first to run last and see the final, filtered body
+  // rather than compressing something a later middleware still rewrites.
+  app.use(createCompressionMiddleware());
 
   // ─── Deduplication & field filtering ─────────────────────────────────────────
   app.use(createDeduplicationMiddleware());

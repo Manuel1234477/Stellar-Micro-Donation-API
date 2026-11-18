@@ -125,6 +125,7 @@ const requireApiKey = require('../middleware/apiKey');
 const { checkPermission } = require('../middleware/rbac');
 const { PERMISSIONS } = require('../utils/permissions');
 const { getStellarService } = require('../config/stellar');
+const LiquidityPoolService = require('../services/LiquidityPoolService');
 const asyncHandler = require('../utils/asyncHandler');
 const { payloadSizeLimiter, ENDPOINT_LIMITS } = require('../middleware/payloadSizeLimiter');
 
@@ -134,7 +135,7 @@ const { payloadSizeLimiter, ENDPOINT_LIMITS } = require('../middleware/payloadSi
  */
 router.post('/deposit', requireApiKey, checkPermission(PERMISSIONS.DONATIONS_WRITE), payloadSizeLimiter(ENDPOINT_LIMITS.default), asyncHandler(async (req, res, next) => {
   try {
-    const { secret, assetA, assetB, maxAmountA, maxAmountB } = req.body;
+    const { secret, assetA, assetB, maxAmountA, maxAmountB, minPrice, maxPrice } = req.body;
 
     if (!secret || !assetA || !assetB || !maxAmountA || !maxAmountB) {
       return res.status(400).json({
@@ -144,7 +145,8 @@ router.post('/deposit', requireApiKey, checkPermission(PERMISSIONS.DONATIONS_WRI
     }
 
     const stellarService = getStellarService();
-    const result = await stellarService.depositLiquidityPool(secret, assetA, assetB, maxAmountA, maxAmountB);
+    const poolService = new LiquidityPoolService(stellarService);
+    const result = await poolService.depositLiquidityPool(secret, assetA, assetB, maxAmountA, maxAmountB, minPrice, maxPrice);
 
     return res.json({ success: true, data: result });
   } catch (error) {
@@ -158,7 +160,7 @@ router.post('/deposit', requireApiKey, checkPermission(PERMISSIONS.DONATIONS_WRI
  */
 router.post('/withdraw', requireApiKey, checkPermission(PERMISSIONS.DONATIONS_WRITE), payloadSizeLimiter(ENDPOINT_LIMITS.default), asyncHandler(async (req, res, next) => {
   try {
-    const { secret, poolId, amount } = req.body;
+    const { secret, poolId, amount, minAmountA, minAmountB } = req.body;
 
     if (!secret || !poolId || !amount) {
       return res.status(400).json({
@@ -168,8 +170,25 @@ router.post('/withdraw', requireApiKey, checkPermission(PERMISSIONS.DONATIONS_WR
     }
 
     const stellarService = getStellarService();
-    const result = await stellarService.withdrawLiquidityPool(secret, poolId, amount);
+    const poolService = new LiquidityPoolService(stellarService);
+    const result = await poolService.withdrawLiquidityPool(secret, poolId, amount, minAmountA, minAmountB);
 
+    return res.json({ success: true, data: result });
+  } catch (error) {
+    next(error);
+  }
+}));
+
+/**
+ * GET /liquidity-pools/:id
+ * Get liquidity pool data from Horizon.
+ */
+router.get('/:id', requireApiKey, checkPermission(PERMISSIONS.STATS_READ), asyncHandler(async (req, res, next) => {
+  try {
+    const { id } = req.params;
+    const stellarService = getStellarService();
+    const poolService = new LiquidityPoolService(stellarService);
+    const result = await poolService.getLiquidityPool(id);
     return res.json({ success: true, data: result });
   } catch (error) {
     next(error);
@@ -184,7 +203,8 @@ router.get('/:id/earnings', requireApiKey, checkPermission(PERMISSIONS.STATS_REA
   try {
     const { id } = req.params;
     const stellarService = getStellarService();
-    const result = await stellarService.getLiquidityPoolEarnings(id);
+    const poolService = new LiquidityPoolService(stellarService);
+    const result = await poolService.getLiquidityPoolEarnings(id);
     return res.json({ success: true, data: result });
   } catch (error) {
     next(error);

@@ -56,7 +56,8 @@ try {
 let logStream = null;
 let currentLogDate = null;
 let currentLogSize = 0;
-const MAX_LOG_SIZE = parseInt(process.env.LOG_MAX_SIZE, 10) || 10 * 1024 * 1024; // 10MB
+const MAX_LOG_SIZE = parseInt(process.env.LOG_MAX_SIZE, 10) || 50 * 1024 * 1024; // 50MB
+const MAX_BACKUP_FILES = parseInt(process.env.LOG_MAX_BACKUPS, 10) || 10; // Retain 10 backup files
 let logRotations = 0;
 
 function ensureLogDirectory() {
@@ -64,6 +65,37 @@ function ensureLogDirectory() {
     if (!fs.existsSync(config.logging.directory)) {
       fs.mkdirSync(config.logging.directory, { recursive: true });
     }
+  }
+}
+
+function cleanupOldLogFiles() {
+  if (!config.logging.toFile) return;
+
+  try {
+    const logDir = config.logging.directory;
+    if (!fs.existsSync(logDir)) return;
+
+    const files = fs.readdirSync(logDir)
+      .filter(file => file.startsWith('app-') && file.endsWith('.log'))
+      .map(file => ({
+        name: file,
+        path: path.join(logDir, file),
+        time: fs.statSync(path.join(logDir, file)).mtime.getTime()
+      }))
+      .sort((a, b) => b.time - a.time); // Sort newest first
+
+    // Keep only the MAX_BACKUP_FILES most recent log files
+    if (files.length > MAX_BACKUP_FILES) {
+      files.slice(MAX_BACKUP_FILES).forEach(file => {
+        try {
+          fs.unlinkSync(file.path);
+        } catch (err) {
+          // Silently ignore if file is already deleted
+        }
+      });
+    }
+  } catch (error) {
+    // Silently ignore cleanup errors to avoid breaking logging
   }
 }
 
@@ -83,19 +115,19 @@ function rotateLogStream(forceSizeRotate = false) {
 
   ensureLogDirectory();
   currentLogDate = dateStr;
-  
+
   if (forceSizeRotate) {
     logRotations++;
   } else {
     logRotations = 0;
   }
 
-  const filename = logRotations > 0 
+  const filename = logRotations > 0
     ? `app-${dateStr}.${logRotations}.log`
     : `app-${dateStr}.log`;
-  
+
   const filepath = path.join(config.logging.directory, filename);
-  
+
   // Initialize size tracker
   if (fs.existsSync(filepath)) {
     const stats = fs.statSync(filepath);
@@ -105,6 +137,9 @@ function rotateLogStream(forceSizeRotate = false) {
   }
 
   logStream = fs.createWriteStream(filepath, { flags: 'a' });
+
+  // Clean up old log files after rotation
+  cleanupOldLogFiles();
 }
 
 function writeToFile(output) {

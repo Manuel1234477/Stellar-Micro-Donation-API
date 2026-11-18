@@ -1,4 +1,4 @@
-const StellarSdk = require('stellar-sdk');
+const StellarSdk = require('../services/stellar/sdk.js');
 const { ValidationError, ERROR_CODES } = require('./errors');
 
 const NATIVE_ASSET_CODE = 'XLM';
@@ -94,7 +94,7 @@ function parseAssetInput(value, fieldName) {
  * Convert a normalized asset object into a Stellar SDK asset.
  *
  * @param {{ type: string, code: string, issuer: string|null }} asset - Normalized asset.
- * @returns {import('stellar-sdk').Asset} Stellar SDK asset instance.
+ * @returns {import('@stellar/stellar-sdk').Asset} Stellar SDK asset instance.
  */
 function toStellarSdkAsset(asset) {
   if (asset.type === 'native') {

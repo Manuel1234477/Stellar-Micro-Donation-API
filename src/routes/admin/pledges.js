@@ -23,6 +23,7 @@ const WebhookService = require('../../services/WebhookService');
 const AuditLogService = require('../../services/AuditLogService');
 const log = require('../../utils/log');
 const { validateSchema } = require('../../middleware/schemaValidation');
+const { formatListResponse } = require('../../utils/responseFormatter');
 
 const cancelPledgeSchema = validateSchema({
   body: {
@@ -41,7 +42,7 @@ const VALID_STATUSES = ['pending', 'fulfilled', 'cancelled', 'expired'];
  * Query params:
  *   status  — one of: pending | fulfilled | cancelled | expired
  *
- * Response: { success: true, data: Pledge[] }
+ * Response: { success: true, data: { items: Pledge[], total, page, limit } }
  */
 router.get(
   '/',
@@ -62,10 +63,7 @@ router.get(
 
       const pledges = await Pledge.listAll(status ? { status } : {});
 
-      return res.json({
-        success: true,
-        data: pledges,
-      });
+      return res.json(formatListResponse(pledges));
     } catch (err) {
       next(err);
     }

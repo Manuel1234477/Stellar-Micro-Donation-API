@@ -179,99 +179,90 @@ class StatsService {
   }
 
   /**
-   * Get stats by donor.
+   * Get stats by donor using SQL GROUP BY for efficiency.
    * Anonymous donations are excluded so that pseudonymous IDs do not pollute
    * public donor rankings or leaderboards.
    * @param {Date} startDate - Start date for aggregation
    * @param {Date} endDate - End date for aggregation
    * @param {boolean} [isAdmin=false] - Whether caller is admin (for anonymization)
-   * @returns {Array} Array of donor stats sorted by total volume
+   * @param {number} [limit=null] - Optional limit for pagination
+   * @param {number} [offset=0] - Optional offset for pagination
+   * @returns {Promise<Array>} Array of donor stats sorted by total volume
    */
-  static getDonorStats(startDate, endDate, isAdmin = false) {
-    const transactions = Transaction.getByDateRange(startDate, endDate);
-    const donorMap = new Map();
+  static async getDonorStats(startDate, endDate, isAdmin = false, limit = null, offset = 0) {
+    const Database = require('../utils/database');
 
-    // Exclude anonymous donations from public donor stats / leaderboards
-    transactions.filter(tx => !tx.anonymous).forEach(tx => {
-      const donor = tx.donor || 'Anonymous';
-      
-      if (!donorMap.has(donor)) {
-        donorMap.set(donor, {
-          donor,
-          _totalDonatedStroops: 0n,
-          donationCount: 0,
-          donations: []
-        });
-      }
+    let sql = `
+      SELECT
+        json_extract(data, '$.donor') AS donor,
+        COUNT(*) AS donationCount,
+        SUM(CAST(json_extract(data, '$.amount') AS REAL)) AS totalDonatedAmount
+      FROM donations_store
+      WHERE
+        timestamp >= ? AND
+        timestamp < ? AND
+        json_extract(data, '$.anonymous') != 1 AND
+        deleted_at IS NULL
+      GROUP BY json_extract(data, '$.donor')
+      ORDER BY totalDonatedAmount DESC
+    `;
 
-      const donorStats = donorMap.get(donor);
-      donorStats._totalDonatedStroops = addStroops(donorStats._totalDonatedStroops, toStroops(tx.amount || 0));
-      donorStats.donationCount += 1;
-      donorStats.donations.push({
-        id: tx.id,
-        amount: tx.amount,
-        recipient: this.getDisplayKey(tx.recipient, false, isAdmin),
-        timestamp: tx.timestamp
-      });
-    });
+    const params = [startDate.toISOString(), endDate.toISOString()];
 
-    return Array.from(donorMap.values())
-      .map(d => {
-        const { _totalDonatedStroops, ...rest } = d;
-        return { ...rest, totalDonated: fromStroops(_totalDonatedStroops) };
-      })
-      .sort((a, b) => {
-        // sort descending by stroop value (compare as strings of equal-length wouldn't work; re-parse)
-        const aS = toStroops(a.totalDonated);
-        const bS = toStroops(b.totalDonated);
-        return bS > aS ? 1 : bS < aS ? -1 : 0;
-      });
+    if (limit !== null) {
+      sql += ` LIMIT ? OFFSET ?`;
+      params.push(limit, offset);
+    }
+
+    const rows = await Database.all(sql, params);
+
+    return rows.map(row => ({
+      donor: row.donor || 'Anonymous',
+      totalDonated: (row.totalDonatedAmount || 0).toFixed(7),
+      donationCount: row.donationCount
+    }));
   }
 
   /**
-   * Get stats by recipient
+   * Get stats by recipient using SQL GROUP BY for efficiency.
    * @param {Date} startDate - Start date for aggregation
    * @param {Date} endDate - End date for aggregation
    * @param {boolean} [isAdmin=false] - Whether caller is admin (for anonymization)
-   * @returns {Array} Array of recipient stats sorted by total received
+   * @param {number} [limit=null] - Optional limit for pagination
+   * @param {number} [offset=0] - Optional offset for pagination
+   * @returns {Promise<Array>} Array of recipient stats sorted by total received
    */
-  static getRecipientStats(startDate, endDate, isAdmin = false) {
-    const transactions = Transaction.getByDateRange(startDate, endDate);
-    const recipientMap = new Map();
+  static async getRecipientStats(startDate, endDate, isAdmin = false, limit = null, offset = 0) {
+    const Database = require('../utils/database');
 
-    transactions.forEach(tx => {
-      const recipient = tx.recipient || 'Unknown';
-      
-      if (!recipientMap.has(recipient)) {
-        recipientMap.set(recipient, {
-          recipient,
-          _totalReceivedStroops: 0n,
-          donationCount: 0,
-          donations: []
-        });
-      }
+    let sql = `
+      SELECT
+        json_extract(data, '$.recipient') AS recipient,
+        COUNT(*) AS donationCount,
+        SUM(CAST(json_extract(data, '$.amount') AS REAL)) AS totalReceivedAmount
+      FROM donations_store
+      WHERE
+        timestamp >= ? AND
+        timestamp < ? AND
+        deleted_at IS NULL
+      GROUP BY json_extract(data, '$.recipient')
+      ORDER BY totalReceivedAmount DESC
+    `;
 
-      const recipientStats = recipientMap.get(recipient);
-      recipientStats._totalReceivedStroops = addStroops(recipientStats._totalReceivedStroops, toStroops(tx.amount || 0));
-      recipientStats.donationCount += 1;
-      recipientStats.donations.push({
-        id: tx.id,
-        amount: tx.amount,
-        donor: this.getDisplayKey(tx.donor, tx.anonymous, isAdmin),
-        timestamp: tx.timestamp
-      });
-    });
+    const params = [startDate.toISOString(), endDate.toISOString()];
 
-    return Array.from(recipientMap.values())
-      .map(r => {
-        const { _totalReceivedStroops, ...rest } = r;
-        return { ...rest, totalReceived: fromStroops(_totalReceivedStroops) };
-      })
-      .sort((a, b) => {
-        const aS = toStroops(a.totalReceived);
-        const bS = toStroops(b.totalReceived);
-        return bS > aS ? 1 : bS < aS ? -1 : 0;
-      });
+    if (limit !== null) {
+      sql += ` LIMIT ? OFFSET ?`;
+      params.push(limit, offset);
+    }
+
+    const rows = await Database.all(sql, params);
+
+    return rows.map(row => ({
+      recipient: row.recipient || 'Unknown',
+      totalReceived: (row.totalReceivedAmount || 0).toFixed(7),
+      donationCount: row.donationCount
+    }));
   }
 
   /**
@@ -369,9 +360,6 @@ class StatsService {
     const transactions = Transaction.getByDateRange(startDate, endDate);
     const byAsset = {};
 
-    let totalFeeStroops = 0n;
-    let totalVolumeStroops = 0n;
-
     transactions.forEach(tx => {
       const asset = tx.asset || tx.assetCode || 'XLM';
       const amountStroops = toStroops(tx.amount || 0);
@@ -395,8 +383,6 @@ class StatsService {
       const feeInXLMStroops = asset === 'XLM' ? feeStroops : BigInt(Math.floor(Number(feeStroops) * xlmRate));
       byAsset[asset]._totalFeesInXLMStroops += feeInXLMStroops;
 
-      totalFeeStroops += feeInXLMStroops;
-      totalVolumeStroops += asset === 'XLM' ? amountStroops : 0n;
     });
 
     const feesByAsset = Object.values(byAsset).map(a => {
@@ -648,7 +634,10 @@ class StatsService {
     let granularity = 'daily';
     if (hours <= 48) granularity = 'hourly';
     else if (hours <= 24 * 14) granularity = 'daily';
-    else if (hours <= 24 * 90) granularity = 'weekly';
+    // Upper bound generous enough to cover a calendar '3m' period regardless
+    // of which months it spans (28-31 days each, so up to ~93 days) while
+    // staying well under a 1y period (365 days), which must stay monthly.
+    else if (hours <= 24 * 100) granularity = 'weekly';
     else granularity = 'monthly';
 
     return { start, end: now, granularity };

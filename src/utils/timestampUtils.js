@@ -75,6 +75,7 @@ function toISOStringUTC(value) {
   // SQLite CURRENT_TIMESTAMP format: "YYYY-MM-DD HH:MM:SS"
   // JavaScript's Date parser treats this as local time on most runtimes.
   // We rewrite it to an unambiguous UTC ISO string before parsing.
+  // eslint-disable-next-line security/detect-unsafe-regex -- anchored; repeated groups are separated by a literal delimiter, so matching is linear
   const sqliteDateRe = /^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}(\.\d+)?$/;
   if (sqliteDateRe.test(trimmed)) {
     // Append 'Z' to tell the JS engine this is UTC, not local time

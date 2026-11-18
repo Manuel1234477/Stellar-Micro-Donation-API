@@ -10,7 +10,6 @@
  */
 
 require('dotenv').config({ path: require('path').join(__dirname, '../../.env') });
-const path = require('path');
 const log = require('../utils/log');
 
 const serviceContainer = require('./serviceContainer');

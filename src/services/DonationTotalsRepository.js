@@ -18,7 +18,6 @@
 const Database = require('../utils/database');
 const log = require('../utils/log');
 
-const STROOPS_PER_XLM = 10_000_000n;
 
 /** Simple in-process drift metric counter. */
 const driftMetrics = {

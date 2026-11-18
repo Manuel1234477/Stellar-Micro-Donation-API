@@ -14,7 +14,7 @@ process.env.API_KEYS = 'bulk-cap-test-key';
 
 const request = require('supertest');
 const express = require('express');
-const StellarSdk = require('stellar-sdk');
+const StellarSdk = require('@stellar/stellar-sdk');
 const walletRouter = require('../../src/routes/wallet');
 
 // === Helpers

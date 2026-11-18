@@ -1,27 +1,86 @@
 version: 2
 updates:
+  # ────────────────────────────────────────────────────────────────────────────
+  # npm packages
+  # ────────────────────────────────────────────────────────────────────────────
   - package-ecosystem: "npm"
     directory: "/"
     schedule:
       interval: "weekly"
+      day: "monday"
+      time: "08:00"
+      timezone: "UTC"
     open-pull-requests-limit: 10
-    commit-message:
-      prefix: "chore(deps)"
     labels:
       - "dependencies"
+
+    commit-message:
+      prefix: "chore(deps)"
+      prefix-development: "chore(deps-dev)"
+      include: "scope"
+
     groups:
+      # Security patches (highest priority) — applies to ALL security updates
+      # regardless of whether the package is prod or dev.
+      # Major security bumps are left out so they open as their own PR and get
+      # the "major-update" label (see .github/workflows/dependabot-labels.yml).
       security-patches:
         applies-to: security-updates
+        update-types:
+          - "minor"
+          - "patch"
         patterns:
           - "*"
 
+      # Production dependencies — minor and patch bumps only.
+      # Major version updates will still be opened as individual PRs so
+      # breaking-change review is not skipped.
+      production-deps:
+        applies-to: version-updates
+        dependency-type: "production"
+        update-types:
+          - "minor"
+          - "patch"
+        patterns:
+          - "*"
+        exclude-patterns:
+          # Exclude dev-only scopes from this group
+          - "@types/*"
+
+      # Dev / tooling dependencies — all minor and patch updates grouped.
+      # Major bumps (ESLint, TypeScript, Jest, ...) open as individual PRs.
+      dev-deps:
+        applies-to: version-updates
+        dependency-type: "development"
+        update-types:
+          - "minor"
+          - "patch"
+        patterns:
+          - "*"
+
+  # ────────────────────────────────────────────────────────────────────────────
+  # GitHub Actions
+  # ────────────────────────────────────────────────────────────────────────────
   - package-ecosystem: "github-actions"
     directory: "/"
     schedule:
       interval: "weekly"
+      day: "monday"
+      time: "08:00"
+      timezone: "UTC"
     open-pull-requests-limit: 5
-    commit-message:
-      prefix: "chore(deps-actions)"
     labels:
       - "dependencies"
       - "github-actions"
+    commit-message:
+      prefix: "chore(deps-actions)"
+      include: "scope"
+    groups:
+      # Minor/patch only; a major Action bump (e.g. actions/checkout v4 -> v5)
+      # opens as its own PR for manual review.
+      actions-updates:
+        update-types:
+          - "minor"
+          - "patch"
+        patterns:
+          - "*"

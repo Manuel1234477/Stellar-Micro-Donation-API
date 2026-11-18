@@ -38,6 +38,7 @@ function escapeField(value) {
 
   // Neutralize formula-injection prefixes (except legitimate negative numbers)
   if (FORMULA_PREFIXES.has(str.charAt(0))) {
+    // eslint-disable-next-line security/detect-unsafe-regex -- anchored; repeated groups are separated by a literal delimiter, so matching is linear
     const isNegativeNumber = /^-\d+(\.\d+)?([eE][+-]?\d+)?$/.test(str);
     if (!isNegativeNumber) {
       str = `'${str}`;

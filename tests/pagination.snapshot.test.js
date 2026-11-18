@@ -8,8 +8,8 @@ const {
   parseCursorPaginationQuery,
   buildCursorWhereClause,
   buildCursorMeta,
-} = require('../utils/pagination');
-const { ValidationError } = require('../utils/errors');
+} = require('../src/utils/pagination');
+const { ValidationError } = require('../src/utils/errors');
 
 describe('Pagination Snapshot Tests', () => {
   describe('validateSnapshotAt', () => {

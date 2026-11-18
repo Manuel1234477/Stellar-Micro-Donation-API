@@ -106,9 +106,19 @@ describe('RecurringDonationScheduler — #709 acceptance criteria', () => {
     db.run.mockResolvedValue({});
     db.get.mockResolvedValue(null);
 
-    scheduler = new RecurringDonationScheduler({
-      sendPayment: jest.fn().mockResolvedValue({ hash: 'tx-abc' }),
-    });
+    scheduler = new RecurringDonationScheduler(
+      { sendPayment: jest.fn().mockResolvedValue({ hash: 'tx-abc' }) },
+      null,
+      // These tests cover scheduling, not election: the DB mock returns no lock row,
+      // so inject a leader stub instead of the real leaderElection module.
+      {
+        leaderElection: {
+          instanceId: 'test-instance',
+          acquireLease: jest.fn().mockResolvedValue(true),
+          releaseLease: jest.fn().mockResolvedValue(undefined),
+        },
+      }
+    );
   });
 
   afterEach(() => {

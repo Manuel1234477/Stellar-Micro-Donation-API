@@ -50,7 +50,7 @@ function withTimeout(promise, timeoutMs, operation = 'operation', abortControlle
   return Promise.race([
     promise,
     new Promise((_, reject) => {
-      const timer = setTimeout(() => {
+      const timer = setTimeout(() => { // eslint-disable-line local/no-bare-timers -- awaited delay; must not be cancelled by clearAll()
         const error = new TimeoutError(
           `Operation '${operation}' timed out after ${timeoutMs}ms`,
           operation,

@@ -72,6 +72,7 @@ async function startServer(app, overrideServices = {}) {
     const recurringDonationScheduler = overrideServices.recurringDonationScheduler || serviceContainer.getRecurringDonationScheduler();
     const networkStatusService = overrideServices.networkStatusService || serviceContainer.getNetworkStatusService();
     const transactionSyncScheduler = overrideServices.transactionSyncScheduler || serviceContainer.getTransactionSyncScheduler();
+    const serviceAccountBalanceMonitor = overrideServices.serviceAccountBalanceMonitor || serviceContainer.getServiceAccountBalanceMonitor();
 
     // Wire network status service into the network route (must happen before requests)
     const { setService: setNetworkService } = require('../routes/network');
@@ -81,6 +82,16 @@ async function startServer(app, overrideServices = {}) {
     app._services = { stellarService, networkStatusService, recurringDonationScheduler, transactionSyncScheduler, reconciliationService };
 
     await logStartupDiagnostics();
+
+    // ── #1533: Refuse startup if GEO_BLOCKED_COUNTRIES configured but MaxMind DB is missing in strict mode
+    if (config.geoBlocking.strictMode !== false && config.geoBlocking.blockedCountries.length > 0) {
+      const fs = require('fs');
+      if (!fs.existsSync(config.geoBlocking.maxmindDbPath)) {
+        const errorMsg = `MaxMind GeoIP database not found at ${config.geoBlocking.maxmindDbPath} with GEO_BLOCKED_COUNTRIES configured and GEO_STRICT_MODE=true. Refusing to start.`;
+        log.error('GEO_BLOCK', errorMsg);
+        throw new Error(errorMsg);
+      }
+    }
 
     // ── #714: Bind port immediately so /health/live responds right away ───────
     const server = app.listen(PORT);
@@ -127,6 +138,7 @@ async function startServer(app, overrideServices = {}) {
 
 
     let cleanupInterval = null;
+    let _replayCleanupTimer = null;
 
     // ── Async initialisation after port is bound ───────────────────────────────
     // /health/ready returns false until this block completes.
@@ -134,6 +146,9 @@ async function startServer(app, overrideServices = {}) {
       try {
         const { runMigrations } = require('../utils/migrationRunner');
         await runMigrations();
+        // Load the donation store only after migration 033 has created
+        // donations_store; a failure here aborts startup (never "starts empty").
+        await require('../models/transaction').initialize();
         await initializeApiKeysTable();
         initializeDefaultStore(Database);
 
@@ -148,6 +163,9 @@ async function startServer(app, overrideServices = {}) {
         if (process.env.FEATURE_FLAGS) {
           await loadFlagsFromEnv(process.env.FEATURE_FLAGS);
         }
+
+        // Verify the shared rate limit store; falls back to memory if Redis is down (#1777)
+        await require('../services/rateLimitStores').initializeRateLimitStore();
 
         await WebhookService.WebhookService.initTable();
         await validateRBAC();
@@ -186,11 +204,14 @@ async function startServer(app, overrideServices = {}) {
           server.stopQuotaResetJob = stopQuotaResetJob;
 
           require('../workers/expiryWorker').start();
+          require('../workers/donationApprovalExpiryWorker').start();
+          require('../workers/confirmationThresholdWorker').start();
           recurringDonationScheduler.start();
           reconciliationService.start();
           auditLogRetentionService.start();
           retentionService.start();
           transactionSyncScheduler.start();
+          serviceAccountBalanceMonitor.start();
           sseManager.start();
 
           runCleanup();
@@ -217,8 +238,7 @@ async function startServer(app, overrideServices = {}) {
 
         const { startCleanup } = require('../utils/replayDetector');
         const replayConfig = require('../config/replayDetection');
-        // Interval is tracked by timerRegistry and cleared in gracefulShutdown via timerRegistry.clearAll().
-        startCleanup(replayDetectionMiddleware.trackingStore, replayConfig);
+        _replayCleanupTimer = startCleanup(replayDetectionMiddleware.trackingStore, replayConfig);
 
         try {
           const LeaderboardSSE = require('../services/LeaderboardSSE');
@@ -347,6 +367,8 @@ async function startServer(app, overrideServices = {}) {
         retentionService.stop();
         transactionSyncScheduler.stop();
         require('../workers/expiryWorker').stop();
+        require('../workers/donationApprovalExpiryWorker').stop();
+        require('../workers/confirmationThresholdWorker').stop();
 
         if (server.stopQuotaResetJob) {
           server.stopQuotaResetJob();
@@ -365,6 +387,9 @@ async function startServer(app, overrideServices = {}) {
           stellarService.circuitBreaker.stopSync();
         }
 
+        // Close the shared rate limit store (Redis connection, if any)
+        await require('../services/rateLimitStores').shutdownRateLimitStore();
+
         // 8. Checkpoint SQLite WAL (must happen before DB close, after all writes)
         try {
           await Database.run('PRAGMA wal_checkpoint(TRUNCATE)');
@@ -380,6 +405,13 @@ async function startServer(app, overrideServices = {}) {
           log.info('SHUTDOWN', 'Audit log buffer flushed');
         } catch (err) {
           log.error('SHUTDOWN', 'Error flushing audit log buffer', { error: err.message });
+        }
+
+        // Close the shared-state backend connection (no-op for the memory backend)
+        try {
+          await require('../utils/sharedStateStore').getSharedStateStore().close();
+        } catch (err) {
+          log.error('SHUTDOWN', 'Error closing shared-state store', { error: err.message });
         }
 
         // 10. Close DB pool (last — nothing else writes after this)

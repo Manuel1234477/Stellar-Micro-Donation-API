@@ -22,13 +22,11 @@
 exports.name = '039_api_keys_add_scopes';
 
 exports.up = async (db) => {
-  try {
-    await db.run(`ALTER TABLE api_keys ADD COLUMN scopes TEXT`);
-  } catch (err) {
-    // Column already exists — safe to ignore (e.g. databases bootstrapped via
-    // the model's own CREATE_TABLE_SQL fallback before this migration ran).
-    if (!err.message.includes('duplicate column')) throw err;
-  }
+  // Check the schema instead of matching the error text: the database wrapper
+  // replaces SQLite's "duplicate column" message, so a text match never fires.
+  const columns = await db.all('PRAGMA table_info(api_keys)');
+  if (columns.some((c) => c.name === 'scopes')) return;
+  await db.run(`ALTER TABLE api_keys ADD COLUMN scopes TEXT`);
 };
 
 exports.down = async (db) => {

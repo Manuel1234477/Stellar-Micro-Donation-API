@@ -40,10 +40,6 @@ function isPositiveInt(v) { return /^\d+$/.test(v) && parseInt(v, 10) > 0; }
 function isPositiveNumber(v) { return !isNaN(parseFloat(v)) && parseFloat(v) > 0; }
 function isNonNegativeNumber(v) { return !isNaN(parseFloat(v)) && parseFloat(v) >= 0; }
 
-function isValidUrl(v) {
-  try { new URL(v); return true; } catch { return false; }
-}
-
 // ── Required variables ────────────────────────────────────────────────────
 
 function checkRequired(name, validator, hint) {
@@ -75,15 +71,31 @@ function checkOptional(name, validator, hint) {
 
 console.log('\nValidating environment variables…\n');
 
-// REQUIRED
-checkRequired(
-  'ENCRYPTION_KEY',
-  v => /^[0-9a-fA-F]{64}$/.test(v),
-  'must be exactly 64 hex characters — run `npm run generate-key`'
-);
+const kmsConfigured = !!(process.env.KMS_KEY_ID || process.env.KMS_PROVIDER);
 
-checkRequired('API_KEYS', v => v.split(',').map(k => k.trim()).filter(Boolean).length > 0,
-  'must contain at least one API key (comma-separated)');
+// REQUIRED
+if (kmsConfigured) {
+  checkRequired(
+    'KMS_KEY_ID',
+    v => v.trim().length > 0,
+    'must be set when KMS is enabled'
+  );
+  checkRequired(
+    'ENCRYPTED_ENCRYPTION_KEY',
+    v => v.trim().length > 0,
+    'must be provided when KMS_KEY_ID is configured'
+  );
+} else {
+  checkRequired(
+    'ENCRYPTION_KEY',
+    v => /^[0-9a-fA-F]{64}$/.test(v),
+    'must be exactly 64 hex characters — run `npm run generate-key`'
+  );
+}
+
+// OPTIONAL — legacy keys; database-backed keys (npm run keys:create) are the supported path
+checkOptional('API_KEYS', v => v.split(',').map(k => k.trim()).filter(Boolean).length > 0,
+  'if set, must contain at least one API key (comma-separated)');
 
 // OPTIONAL — server
 checkOptional('PORT',
@@ -99,9 +111,26 @@ checkOptional('STELLAR_ENVIRONMENT',
   v => ['testnet', 'mainnet', 'futurenet'].includes(v),
   'must be one of: testnet, mainnet, futurenet');
 
-checkOptional('HORIZON_URL', isValidUrl, 'must be a valid URL');
-
 checkOptional('MOCK_STELLAR', isBool, 'must be true or false');
+
+// Production Mainnet Guard (#1597)
+if ((process.env.NODE_ENV || '').toLowerCase() === 'production') {
+  const network = (process.env.STELLAR_NETWORK || process.env.STELLAR_ENVIRONMENT || 'testnet').toLowerCase();
+  const isMock = process.env.MOCK_STELLAR === 'true' || process.env.USE_MOCK_STELLAR === 'true';
+  const allowOverride = process.env.ALLOW_TESTNET_IN_PRODUCTION === 'true';
+  if ((network !== 'mainnet' || isMock) && !allowOverride) {
+    error(
+      'STELLAR_NETWORK',
+      'PRODUCTION SAFETY: testnet or mock mode is not allowed in NODE_ENV=production. ' +
+      'Set STELLAR_NETWORK=mainnet and MOCK_STELLAR=false, or set ALLOW_TESTNET_IN_PRODUCTION=true for staging.'
+    );
+  } else if ((network !== 'mainnet' || isMock) && allowOverride) {
+    warn(
+      'STELLAR_NETWORK',
+      'ALLOW_TESTNET_IN_PRODUCTION=true override active: testnet or mock mode permitted in production'
+    );
+  }
+}
 
 // OPTIONAL — database
 checkOptional('DB_TYPE', v => v === 'sqlite', 'must be: sqlite');

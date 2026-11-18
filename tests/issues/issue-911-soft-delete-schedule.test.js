@@ -79,7 +79,10 @@ beforeAll(async () => {
       executedAt TEXT NOT NULL,
       status TEXT NOT NULL,
       transactionHash TEXT,
-      errorMessage TEXT
+      errorMessage TEXT,
+      retryCount INTEGER DEFAULT 0,
+      durationMs INTEGER DEFAULT 0,
+      createdAt TEXT NOT NULL DEFAULT (datetime('now'))
     )
   `);
 

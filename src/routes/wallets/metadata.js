@@ -18,7 +18,6 @@ const asyncHandler = require('../../utils/asyncHandler');
 const Database = require('../../utils/database');
 const WalletService = require('../../services/WalletService');
 const AuditLogService = require('../../services/AuditLogService');
-const log = require('../../utils/log');
 const { getStellarService } = require('../../config/stellar');
 const {
   walletIdSchema,
@@ -40,7 +39,7 @@ router.get(
   asyncHandler(async (req, res, next) => {
     try {
       const wallet = await Database.get(
-        'SELECT id, publicKey, label, ownerName, createdAt, updatedAt FROM users WHERE id = ? AND deleted_at IS NULL',
+        'SELECT * FROM users WHERE id = ? AND deleted_at IS NULL',
         [req.params.id]
       );
       if (!wallet) {
@@ -226,12 +225,14 @@ router.get(
   asyncHandler(async (req, res, next) => {
     try {
       const deleted = await Database.all(
-        'SELECT id, publicKey, label, ownerName, deletedAt FROM users WHERE deleted_at IS NOT NULL ORDER BY deletedAt DESC LIMIT 100'
+        'SELECT * FROM users WHERE deleted_at IS NOT NULL ORDER BY deleted_at DESC LIMIT 100'
       );
 
       res.json({
         success: true,
-        data: deleted,
+        data: {
+          wallets: (deleted || []).map(toWalletResponse),
+        },
         count: deleted.length
       });
     } catch (error) {

@@ -405,18 +405,99 @@ class Database {
   }
 
   /**
+   * Classify a raw SQLite error so callers (and the chaos suite) can decide
+   * whether an operation is retryable.
+   *
+   * @param {Error} err - Raw or normalized error.
+   * @returns {'duplicate'|'timeout'|'connection'|'busy'|'constraint'|'unknown'} Error category.
+   */
+  static classifyDatabaseError(err) {
+    if (!err) return 'unknown';
+
+    if (err.code === 'QUERY_TIMEOUT' || err instanceof TimeoutError) {
+      return 'timeout';
+    }
+
+    if (this.isUniqueConstraintError(err)) {
+      return 'duplicate';
+    }
+
+    const code = typeof err.code === 'string' ? err.code : '';
+    const message = typeof err.message === 'string' ? err.message : '';
+
+    if (
+      code === 'SQLITE_BUSY' ||
+      code === 'SQLITE_LOCKED' ||
+      /database is locked|database table is locked/i.test(message)
+    ) {
+      return 'busy';
+    }
+
+    if (
+      code === 'SQLITE_CANTOPEN' ||
+      code === 'SQLITE_IOERR' ||
+      code === 'SQLITE_NOTADB' ||
+      code === 'SQLITE_CORRUPT' ||
+      /SQLITE_(CANTOPEN|IOERR|NOTADB|CORRUPT)/i.test(message) ||
+      /database connection is not open|database handle is closed|connection (?:is )?(?:closed|dropped)/i.test(message)
+    ) {
+      return 'connection';
+    }
+
+    if (code === 'SQLITE_CONSTRAINT') {
+      return 'constraint';
+    }
+
+    return 'unknown';
+  }
+
+  /**
+   * Determine whether an error is safe to retry.
+   *
+   * @param {Error} err - Raw or normalized error.
+   * @returns {boolean} True when the operation may be retried.
+   */
+  static isRetryableError(err) {
+    const category = this.classifyDatabaseError(err);
+    return category === 'timeout' || category === 'busy' || category === 'connection';
+  }
+
+  /**
    * Convert raw SQLite errors into application errors.
+   *
+   * Always returns a DatabaseError (or DuplicateError) so callers never have to
+   * deal with raw sqlite3 error shapes. The original error is preserved as
+   * `cause` and the classification is exposed via `code`/`category`.
    *
    * @param {Error} err - SQLite error.
    * @param {string} failureMessage - Safe top-level error message.
    * @returns {Error} Normalized application error.
    */
   static mapDatabaseError(err, failureMessage) {
+    if (err instanceof DatabaseError || err instanceof DuplicateError) {
+      return err;
+    }
+
     if (this.isUniqueConstraintError(err)) {
       return new DuplicateError('Duplicate donation detected - this transaction has already been processed');
     }
 
-    return new DatabaseError(failureMessage, err);
+    const category = this.classifyDatabaseError(err);
+    const baseMessage = category === 'timeout'
+      ? (err && err.message) || failureMessage
+      : failureMessage;
+    const diagnostic = process.env.NODE_ENV === 'test' && err && err.message
+      ? ` (${err.code || 'SQLITE_ERROR'}: ${err.message})`
+      : '';
+    const message = `${baseMessage}${diagnostic}`;
+
+    const mapped = new DatabaseError(message, err);
+    mapped.category = category;
+    mapped.retryable = this.isRetryableError(err);
+    if (err && err.code && !mapped.code) {
+      mapped.sqliteCode = err.code;
+    }
+    return mapped;
   }
 
   /**
@@ -538,6 +619,32 @@ class Database {
   }
 
   /**
+   * Query database pragmas to report active journal mode and sync settings.
+   * Used for startup diagnostics (#1483).
+   *
+   * @returns {Promise<{journalMode: string, synchronous: string, autoVacuum: string}>} Pragma values.
+   */
+  static async getDiagnosticPragmas() {
+    try {
+      const journalRow = await this.get('PRAGMA journal_mode');
+      const syncRow = await this.get('PRAGMA synchronous');
+      const vacuumRow = await this.get('PRAGMA auto_vacuum');
+
+      return {
+        journalMode: journalRow?.journal_mode || 'UNKNOWN',
+        synchronous: syncRow?.synchronous || 'UNKNOWN',
+        autoVacuum: vacuumRow?.auto_vacuum || 'UNKNOWN',
+      };
+    } catch (err) {
+      return {
+        journalMode: 'ERROR',
+        synchronous: 'ERROR',
+        autoVacuum: 'ERROR',
+      };
+    }
+  }
+
+  /**
    * Ensure the pool is initialized exactly once.
    *
    * @returns {Promise<void>} Resolves when initialization completes.
@@ -607,7 +714,7 @@ class Database {
         timer: null,
       };
 
-      waiter.timer = setTimeout(() => {
+      waiter.timer = setTimeout(() => { // eslint-disable-line local/no-bare-timers
         const index = state.waitQueue.indexOf(waiter);
         if (index !== -1) {
           state.waitQueue.splice(index, 1);
@@ -847,9 +954,13 @@ class Database {
         try {
           lease.db[method](sql, params, callback);
         } catch (error) {
-          rejectStatement(Database.mapDatabaseError(error, failureMessage));
-          lease.release({ retire: true }).catch((releaseError) => {
-            log.warn('DATABASE', 'Failed to retire pooled connection after synchronous error', {
+          completed = true;
+          const mappedError = Database.mapDatabaseError(error, failureMessage);
+          rejectStatement(mappedError);
+          // Retire the connection only when the failure indicates a broken handle.
+          const retire = Database.classifyDatabaseError(error) === 'connection';
+          lease.release({ retire }).catch((releaseError) => {
+            log.warn('DATABASE', 'Failed to release pooled connection after synchronous error', {
               error: releaseError.message,
             });
           });
@@ -880,12 +991,16 @@ class Database {
               `QUERY_TIMEOUT: query exceeded ${this.poolState.queryTimeoutMs || DEFAULT_QUERY_TIMEOUT_MS}ms (actual: ${durationMs.toFixed(1)}ms) — ${sql.slice(0, 200)}`
             );
             timeoutError.code = 'QUERY_TIMEOUT';
+            timeoutError.category = 'timeout';
+            timeoutError.retryable = true;
             timeoutError.sql = sql.slice(0, 200);
             timeoutError.durationMs = durationMs;
             throw timeoutError;
           }
 
-          throw error;
+          // Normalize anything else (e.g. connection drops surfaced by sqlite3)
+          // so callers always receive a DatabaseError.
+          throw Database.mapDatabaseError(error, failureMessage);
         }
       },
       { kind: 2 /* SpanKind.CLIENT */ }
@@ -937,6 +1052,54 @@ class Database {
   }
 
   /**
+   * Execute a query and process each row with a callback function.
+   * Rows are processed sequentially to avoid memory bloat on large result sets.
+   *
+   * @param {string} sql - SQL query statement
+   * @param {Array} params - Query parameters
+   * @param {Function} callback - Function called for each row: (row, rowIndex) => void
+   * @returns {Promise<number>} Total number of rows processed
+   */
+  static async each(sql, params = [], callback) {
+    await this.ensureInitialized();
+    const lease = await this.acquireConnection();
+    const db = lease.db;
+
+    return new Promise((resolve, reject) => {
+      let rowCount = 0;
+      let settled = false;
+
+      const fail = (err, message) => {
+        if (settled) return;
+        settled = true;
+        const mappedError = Database.mapDatabaseError(err, message);
+        const retire = Database.classifyDatabaseError(err) === 'connection';
+        lease.release({ retire }).catch(() => {});
+        reject(mappedError);
+      };
+
+      db.each(sql, params, (err, row) => {
+        if (err) return fail(err, 'Row processing failed');
+        try {
+          callback(row, rowCount);
+          rowCount++;
+        } catch (callbackErr) {
+          if (settled) return;
+          settled = true;
+          lease.release().catch(() => {});
+          reject(callbackErr);
+        }
+      }, (err) => {
+        if (err) return fail(err, 'Query iteration failed');
+        if (settled) return;
+        settled = true;
+        lease.release().catch(() => {});
+        resolve(rowCount);
+      });
+    });
+  }
+
+  /**
    * Execute multiple operations within a single SQLite transaction on one connection.
    * All operations either commit or rollback together.
    *
@@ -978,9 +1141,97 @@ class Database {
       return result;
     } catch (err) {
       try { await runOnConn('ROLLBACK'); } catch (_) {}
-      throw err;
+      // Never surface raw sqlite errors from a transaction.
+      throw Database.mapDatabaseError(err, 'Transaction failed');
     } finally {
       await lease.release().catch(() => {});
+    }
+  }
+
+  /**
+   * Execute a callback inside a single SQLite transaction on one pooled connection.
+   *
+   * This is the preferred helper for multi-step writes that must be atomic:
+   * every statement issued through the provided transaction handle runs on the
+   * same connection, and the whole unit is either committed or rolled back.
+   * If the callback throws (or the COMMIT fails), a ROLLBACK is issued so that
+   * failed operations leave no partial writes behind.
+   *
+   * The callback receives a transaction handle with `run`, `get` and `all`
+   * methods bound to the transaction's connection. Nested calls are not
+   * supported and will throw.
+   *
+   * @param {function(tx: {run: Function, get: Function, all: Function}): Promise<*>} callback
+   *   Async function receiving the bound transaction handle.
+   * @returns {Promise<*>} The value returned by the callback.
+   */
+  static async withTransaction(callback) {
+    if (typeof callback !== 'function') {
+      throw new DatabaseError('withTransaction requires a callback function');
+    }
+
+    await this.ensureInitialized();
+
+    const state = this.poolState;
+    if (state.closing) {
+      throw new DatabaseError('Database pool is shutting down');
+    }
+
+    const lease = await this.acquireConnection();
+    const db = lease.db;
+
+    const runOnConn = (sql, params = []) => new Promise((resolve, reject) => {
+      db.run(sql, params, function(err) {
+        if (err) return reject(Database.mapDatabaseError(err, 'Transaction operation failed'));
+        resolve({ id: this.lastID, changes: this.changes });
+      });
+    });
+
+    const getOnConn = (sql, params = []) => new Promise((resolve, reject) => {
+      db.get(sql, params, (err, row) => {
+        if (err) return reject(Database.mapDatabaseError(err, 'Transaction query failed'));
+        resolve(row);
+      });
+    });
+
+    const allOnConn = (sql, params = []) => new Promise((resolve, reject) => {
+      db.all(sql, params, (err, rows) => {
+        if (err) return reject(Database.mapDatabaseError(err, 'Transaction query failed'));
+        resolve(rows);
+      });
+    });
+
+    const tx = { run: runOnConn, get: getOnConn, all: allOnConn };
+
+    let began = false;
+    let settled = false;
+
+    try {
+      await runOnConn('BEGIN IMMEDIATE');
+      began = true;
+
+      const result = await callback(tx);
+
+      await runOnConn('COMMIT');
+      settled = true;
+      return result;
+    } catch (err) {
+      if (began && !settled) {
+        try {
+          await runOnConn('ROLLBACK');
+        } catch (rollbackErr) {
+          log.warn('DATABASE', 'Failed to roll back transaction', {
+            error: rollbackErr.message,
+          });
+        }
+      }
+      throw err;
+    } finally {
+      await lease.release().catch((releaseError) => {
+        log.warn('DATABASE', 'Failed to release pooled connection after transaction', {
+          error: releaseError.message,
+        });
+      });
     }
   }
 
@@ -1033,17 +1284,17 @@ class Database {
   static _startHealthCheck() {
     if (this._healthCheckTimer) return;
     if (process.env.NODE_ENV === 'test') return;
-    
-    this._healthCheckTimer = setInterval(() => {
+    const timerRegistry = require('./timerRegistry');
+    this._healthCheckTimer = timerRegistry.createInterval(() => {
       this._runHealthCheck().catch(() => {});
-    }, HEALTH_CHECK_INTERVAL_MS);
-    if (this._healthCheckTimer.unref) this._healthCheckTimer.unref();
+    }, HEALTH_CHECK_INTERVAL_MS, 'db-health-check');
+    this._healthCheckTimer.unref();
   }
 
   /** @private */
   static _stopHealthCheck() {
     if (this._healthCheckTimer) {
-      clearInterval(this._healthCheckTimer);
+      this._healthCheckTimer.clear();
       this._healthCheckTimer = null;
     }
   }
@@ -1147,7 +1398,7 @@ class Database {
         return;
       } catch (err) {
         log.warn('DATABASE', 'Reconnect attempt failed', { attempt, error: err.message });
-        await new Promise(resolve => setTimeout(resolve, delay));
+        await new Promise(resolve => setTimeout(resolve, delay)); // eslint-disable-line local/no-bare-timers
         delay = Math.min(delay * 2, RECONNECT_MAX_DELAY_MS);
       }
     }

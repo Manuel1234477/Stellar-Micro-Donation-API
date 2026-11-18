@@ -349,7 +349,6 @@ md += `\n---\n`;
 for (const cat of CATEGORIES) {
   const rows = byCategory[cat.title];
   if (!rows || rows.length === 0) continue;
-  const anchor = cat.title.toLowerCase().replace(/[^a-z0-9 ]/g, '').replace(/ /g, '-');
   md += `\n## ${cat.title}\n\n`;
   md += `| Code | Numeric | HTTP | Meaning | Remediation |\n`;
   md += `|------|---------|------|---------|-------------|\n`;

@@ -4,7 +4,7 @@
  * RESPONSIBILITY: Resolve Stellar federation addresses to public keys,
  *   with in-memory caching and graceful error handling.
  * OWNER: Backend Team
- * DEPENDENCIES: stellar-sdk (Federation.Server), log
+ * DEPENDENCIES: @stellar/stellar-sdk (Federation.Server), log
  *
  * Federation address format: <name>*<domain>  e.g. alice*example.com
  * Resolution flow:
@@ -16,7 +16,7 @@
 
 'use strict';
 
-const { Federation } = require('stellar-sdk');
+const { Federation } = require('../services/stellar/sdk.js');
 const log = require('./log');
 const { assertSafeOutboundUrl } = require('./ssrf');
 
@@ -155,8 +155,9 @@ function cleanupCache() {
  */
 function startCacheCleanup() {
   if (_cleanupTimer) return;
-  _cleanupTimer = setInterval(cleanupCache, CLEANUP_INTERVAL_MS);
-  if (_cleanupTimer.unref) _cleanupTimer.unref();
+  const timerRegistry = require('./timerRegistry');
+  _cleanupTimer = timerRegistry.createInterval(cleanupCache, CLEANUP_INTERVAL_MS, 'federation-cache-cleanup');
+  _cleanupTimer.unref();
 }
 
 /**
@@ -164,7 +165,7 @@ function startCacheCleanup() {
  */
 function stopCacheCleanup() {
   if (_cleanupTimer) {
-    clearInterval(_cleanupTimer);
+    _cleanupTimer.clear();
     _cleanupTimer = null;
   }
 }

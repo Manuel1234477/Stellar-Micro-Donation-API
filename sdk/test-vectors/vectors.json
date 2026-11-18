@@ -1,0 +1,16 @@
+{
+  "vectors": [
+    {
+      "description": "basic JSON payload",
+      "payload": "{\"event\":\"donation.created\",\"id\":\"donation-1\"}",
+      "secret": "test-webhook-secret",
+      "expected_signature": "sha256=73f36d818c35bfa84611db5754aa41a0352b15ec3e8ebf7edec75dd250d96a1e"
+    },
+    {
+      "description": "plain text payload",
+      "payload": "hello world",
+      "secret": "another-secret",
+      "expected_signature": "sha256=12571c8f42acaf9aa9924a24c16c1bf17d2be211f237ac061ddd7d0f548af9b5"
+    }
+  ]
+}

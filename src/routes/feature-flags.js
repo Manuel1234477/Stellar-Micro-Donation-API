@@ -5,8 +5,12 @@
  * OWNER: Platform Team
  * DEPENDENCIES: Feature flags utility, API key middleware
  * 
- * Provides:
- * - GET /feature-flags - Returns enabled flags for authenticated API key
+ * Provides (read-only, mounted at /api/v1/feature-flags):
+ * - GET /feature-flags       - Returns enabled flags for authenticated API key
+ * - GET /feature-flags/:flag - Checks one flag for authenticated API key
+ *
+ * Flag management (create/toggle/override/delete) is only available through
+ * the single admin router in src/routes/admin/featureFlags.js (#1775).
  */
 
 'use strict';
@@ -35,7 +39,7 @@ router.get('/', requireApiKey, asyncHandler(async (req, res, next) => {
   try {
     // Get the current API key ID from middleware
     const apiKeyId = req.apiKey?.id;
-    const environment = req.query.environment || process.env.NODE_ENV || 'production';
+    const environment = req.query.environment || featureFlagsUtil.getDefaultEnvironment();
 
     if (!apiKeyId) {
       return res.status(401).json({
@@ -117,7 +121,7 @@ router.get('/:flag', requireApiKey, asyncHandler(async (req, res, next) => {
   try {
     const { flag } = req.params;
     const apiKeyId = req.apiKey?.id;
-    const environment = req.query.environment || process.env.NODE_ENV || 'production';
+    const environment = req.query.environment || featureFlagsUtil.getDefaultEnvironment();
 
     if (!flag || typeof flag !== 'string' || flag.trim() === '') {
       return res.status(400).json({

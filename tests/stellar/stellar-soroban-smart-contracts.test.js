@@ -10,6 +10,7 @@ const request = require('supertest');
 const MockStellarService = require('../../src/services/MockStellarService');
 const StellarService = require('../../src/services/StellarService');
 const EscrowContract = require('../../src/contracts/EscrowContract');
+const timerRegistry = require('../../src/utils/timerRegistry');
 
 // ─── App setup for route tests ────────────────────────────────────────────────
 // Override getStellarService so the route uses a fresh MockStellarService per test
@@ -26,6 +27,12 @@ function freshMock() {
   mockServiceInstance = new MockStellarService();
   return mockServiceInstance;
 }
+
+// Ensure no timers or mock state outlive the suite so Jest can exit cleanly.
+afterAll(() => {
+  timerRegistry.clearAll();
+  mockServiceInstance = null;
+});
 
 // =============================================================================
 // MockStellarService — invokeContract

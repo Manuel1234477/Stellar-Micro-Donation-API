@@ -12,6 +12,9 @@
  * - Parameterised paths are stored with their Express-style patterns
  *   (e.g. "/wallets/:id") and matched via regex at request time.
  * - OPTIONS is automatically added to every registered path.
+ * - Each explicit method+path registration is counted so startup can fail
+ *   when the same endpoint is defined twice (issue #1779). Express silently
+ *   lets the first definition win, which hides the second one.
  */
 
 'use strict';
@@ -23,10 +26,18 @@
 const methodRegistry = new Map();
 
 /**
+ * @type {Map<string, number>}
+ * "METHOD /path" → number of times that endpoint was registered
+ */
+const registrationCounts = new Map();
+
+/**
  * Normalise a path for use as a registry key.
  *
  * Rules:
  *   - Always starts with /
+ *   - Repeated slashes collapse to one (nested routers mounted at "/" produce
+ *     prefixes like "/api/v1/donations/" + "/batch")
  *   - No trailing slash (unless the path IS just "/")
  *   - Lowercase
  *
@@ -37,6 +48,7 @@ function normalizePath(path) {
   if (typeof path !== 'string' || path.length === 0) return '/';
   let p = path.toLowerCase();
   if (!p.startsWith('/')) p = '/' + p;
+  p = p.replace(/\/{2,}/g, '/');
   if (p.length > 1 && p.endsWith('/')) p = p.slice(0, -1);
   return p;
 }
@@ -79,6 +91,10 @@ function registerMethod(method, path) {
     methodRegistry.set(key, new Set(['OPTIONS']));
   }
   methodRegistry.get(key).add(upper);
+
+  const registrationKey = `${upper} ${key}`;
+  registrationCounts.set(registrationKey, (registrationCounts.get(registrationKey) || 0) + 1);
+
   // HEAD is implicitly supported whenever GET is registered
   if (upper === 'GET') {
     methodRegistry.get(key).add('HEAD');
@@ -128,10 +144,44 @@ function findMatchingRoute(requestPath) {
 }
 
 /**
+ * List endpoints that were registered more than once.
+ *
+ * @returns {{ method: string, path: string, count: number }[]}
+ */
+function findDuplicateRegistrations() {
+  const duplicates = [];
+  for (const [registrationKey, count] of registrationCounts.entries()) {
+    if (count > 1) {
+      const [method, path] = registrationKey.split(' ');
+      duplicates.push({ method, path, count });
+    }
+  }
+  return duplicates;
+}
+
+/**
+ * Throw if any endpoint was registered more than once.
+ *
+ * @throws {Error} listing every duplicated method + path
+ */
+function assertNoDuplicateRoutes() {
+  const duplicates = findDuplicateRegistrations();
+  if (duplicates.length === 0) return;
+  const list = duplicates
+    .map(({ method, path, count }) => `  ${method} ${path} (registered ${count} times)`)
+    .join('\n');
+  throw new Error(
+    `Duplicate route registrations detected. Only the first definition would ever run:\n${list}\n` +
+    'Remove or merge the duplicate definitions.'
+  );
+}
+
+/**
  * Clear the registry (for testing).
  */
 function clearRegistry() {
   methodRegistry.clear();
+  registrationCounts.clear();
 }
 
 module.exports = {
@@ -142,4 +192,6 @@ module.exports = {
   normalizePath,
   patternToRegex,
   clearRegistry,
+  findDuplicateRegistrations,
+  assertNoDuplicateRoutes,
 };

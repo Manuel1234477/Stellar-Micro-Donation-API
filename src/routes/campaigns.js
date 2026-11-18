@@ -5,6 +5,7 @@
  */
 
 const express = require('express');
+const timerRegistry = require('../utils/timerRegistry');
 const router = express.Router();
 const Database = require('../utils/database');
 const requireApiKey = require('../middleware/apiKey');
@@ -49,7 +50,7 @@ const updateCampaignSchema = validateSchema({
  */
 router.post('/', requireApiKey, checkPermission(PERMISSIONS.ADMIN), createCampaignSchema, payloadSizeLimiter(ENDPOINT_LIMITS.campaign), asyncHandler(async (req, res, next) => {
   try {
-    const { name, description, goal_amount, start_date, end_date, funding_model } = req.body;
+    const { name, description, goal_amount, start_date, end_date, funding_model, sdg_tags, sdgTags } = req.body;
     
     // Explicit numeric validation bridging
     const goalValidation = validateFloat(goal_amount);
@@ -57,11 +58,14 @@ router.post('/', requireApiKey, checkPermission(PERMISSIONS.ADMIN), createCampai
       return res.status(400).json({ success: false, error: 'Goal Amount must be a valid number' });
     }
 
+    const tags = sdgTags || sdg_tags || [];
+    const tagsStr = Array.isArray(tags) ? JSON.stringify(tags) : (typeof tags === 'string' ? tags : '[]');
+
     const model = funding_model || 'keep-what-you-raise';
 
     const dbResult = await Database.run(
-      `INSERT INTO campaigns (name, description, goal_amount, current_amount, start_date, end_date, created_by, status, funding_model)
-       VALUES (?, ?, ?, 0, ?, ?, ?, 'active', ?)`,
+      `INSERT INTO campaigns (name, description, goal_amount, current_amount, start_date, end_date, created_by, status, funding_model, sdg_tags)
+       VALUES (?, ?, ?, 0, ?, ?, ?, 'active', ?, ?)`,
       [
         name,
         description || null,
@@ -69,7 +73,8 @@ router.post('/', requireApiKey, checkPermission(PERMISSIONS.ADMIN), createCampai
         start_date || new Date().toISOString(),
         end_date || null,
         req.user ? req.user.id : null,
-        model
+        model,
+        tagsStr,
       ]
     );
 
@@ -82,11 +87,12 @@ router.post('/', requireApiKey, checkPermission(PERMISSIONS.ADMIN), createCampai
 
 /**
  * GET /campaigns
- * Retrieves campaigns with optional ?status= filter.
+ * Retrieves campaigns with optional ?status= filter and FTS5 ?q= keyword search.
  *
  * ?status=active (default) — non-expired campaigns only
  * ?status=expired           — campaigns past their end_date
  * ?status=all               — all campaigns regardless of end_date
+ * ?q=keyword                — full-text search across name and description (FTS5, BM25 ranked)
  */
 router.get('/', cacheMiddleware('campaign', 'public'), asyncHandler(async (req, res, next) => {
   try {
@@ -96,6 +102,38 @@ router.get('/', cacheMiddleware('campaign', 'public'), asyncHandler(async (req, 
 
     const pagination = parseCursorPaginationQuery(req.query);
     const status = req.query.status || 'active';
+    const q = req.query.q;
+
+    // If FTS5 keyword search requested, use campaigns_fts virtual table
+    if (q) {
+      const ftsQuery = q.replace(/['"*()]/g, ' ').trim();
+      if (!ftsQuery) {
+        return res.status(400).json({ success: false, error: { code: 'INVALID_QUERY', message: 'q must contain searchable text' } });
+      }
+
+      let statusCondition = '';
+      const extraParams = [ftsQuery];
+      if (status === 'active') {
+        statusCondition = `AND c.status != 'expired' AND (c.end_date IS NULL OR c.end_date > datetime('now'))`;
+      } else if (status === 'expired') {
+        statusCondition = `AND (c.status = 'expired' OR (c.end_date IS NOT NULL AND c.end_date < datetime('now')))`;
+      }
+
+      const rows = await Database.query(
+        `SELECT c.*, bm25(campaigns_fts) AS relevance_score
+         FROM campaigns_fts
+         JOIN campaigns c ON c.id = campaigns_fts.campaign_id
+         WHERE campaigns_fts MATCH ? AND c.deleted_at IS NULL ${statusCondition}
+         ORDER BY bm25(campaigns_fts)
+         LIMIT ?`,
+        [...extraParams, pagination.limit + 1]
+      );
+
+      const hasMore = rows.length > pagination.limit;
+      const data = hasMore ? rows.slice(0, pagination.limit) : rows;
+
+      return res.status(200).json({ success: true, count: data.length, data, pagination: { hasMore, total: data.length } });
+    }
 
     let baseWhere = 'deleted_at IS NULL';
     if (status === 'active') {
@@ -336,12 +374,12 @@ router.get('/:id/progress/stream', requireApiKey, asyncHandler(async (req, res, 
   }
 
   // Heartbeat to keep connection alive
-  const heartbeatInterval = setInterval(() => {
+  const heartbeatInterval = timerRegistry.createInterval(() => {
     try {
       res.write(': heartbeat\n\n');
     } catch (error) {
       log.warn('SSE', 'Failed to send heartbeat', { clientId, error: error.message });
-      clearInterval(heartbeatInterval);
+      heartbeatInterval.clear();
     }
   }, SseManager.HEARTBEAT_INTERVAL_MS);
 
@@ -371,13 +409,13 @@ router.get('/:id/progress/stream', requireApiKey, asyncHandler(async (req, res, 
 
   // Handle client disconnect
   req.on('close', () => {
-    clearInterval(heartbeatInterval);
+    heartbeatInterval.clear();
     SseManager.removeClient(clientId);
     log.info('SSE', `Campaign progress stream disconnected: ${clientId}`, { campaignId });
   });
 
   req.on('error', (error) => {
-    clearInterval(heartbeatInterval);
+    heartbeatInterval.clear();
     SseManager.removeClient(clientId);
     log.error('SSE', 'Client connection error', { clientId, error: error.message });
   });

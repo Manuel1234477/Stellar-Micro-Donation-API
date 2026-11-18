@@ -1,4 +1,4 @@
-# Type Checking Plan - JSDoc + checkJs
+# Type Checking Plan - Incremental JSDoc + checkJs
 
 ## Overview
 
@@ -6,13 +6,13 @@ This document outlines the incremental adoption of static type checking via JSDo
 
 ## Current Status
 
-Type checking is **enabled** via `jsconfig.json` for critical modules:
+Type checking is enabled per file through `// @ts-check`, with global `checkJs`
+disabled in `tsconfig.json`. The checked slice is:
 - `src/utils/money.js` - Money math and stroop arithmetic
-- `src/utils/validators.js` - API input validation
-- `src/services/StellarService.js` - Stellar blockchain interface (placeholder)
-- `src/services/DonationService.js` - Core donation logic (placeholder)
+- `src/utils/feeCalculator.js` - Fee calculations built on BigInt stroops
 
-All critical utilities have JSDoc type annotations via `@param`, `@returns`, `@typedef`, and inline `@type` declarations.
+Shared Express request metadata (`apiKey`, `user`, and `id`) is declared in
+`src/types.d.ts`.
 
 ## Motivation
 
@@ -51,25 +51,25 @@ function addStroops(a, b) {
 
 ## Expansion Phases
 
-### Phase 1: Core Utilities (DONE)
+### Phase 1: Core Utilities (IN PROGRESS)
 - ✓ `src/utils/money.js` - Money math and stroop conversion
-- ✓ `src/utils/validators.js` - Validation functions
-- Scope: ~30 functions, critical financial code
+- `src/utils/feeCalculator.js` - Fee calculations built on stroop helpers
+- Scope: critical financial arithmetic
 
-### Phase 2: Service Interfaces (PLANNED)
+### Phase 2: Authentication Middleware (PLANNED)
+- `src/middleware/apiKey.js` - API key validation and request metadata
+- `src/middleware/rbac.js` - Authorization and request metadata
+- Add JSDoc contracts and resolve diagnostics before opting in each file
+
+### Phase 3: Service Interfaces (PLANNED)
 - `src/services/StellarService.js` - Stellar SDK wrapper
 - `src/services/DonationService.js` - Donation workflow
-- Scope: ~50-70 functions, public API surface
+- Add other services after their contracts are documented
 
-### Phase 3: Middleware & Route Handlers (PLANNED)
-- Core middleware: `src/middleware/rbac.js`, `src/middleware/validation.js`
+### Phase 4: Routes and Remaining Critical Modules (PLANNED)
 - High-value route handlers
-- Scope: ~80-100 functions, request/response contracts
-
-### Phase 4: Remaining Critical Modules (PLANNED)
 - Database layer utilities
 - Error handling and logging
-- Scope: ~100+ functions
 
 ### Phase 5: Optional Features (DEFERRED)
 - Tests (may stay untyped)
@@ -78,17 +78,21 @@ function addStroops(a, b) {
 
 ## Configuration
 
-The `jsconfig.json` file configures:
-- `checkJs: true` - Enable type checking for `.js` files
+The `tsconfig.json` file configures:
+- `checkJs: false` - Require per-file `// @ts-check` opt-in
 - `strict: true` - Strict mode for missing types, implicit `any`, etc.
-- `include` - Explicit list of modules to type-check
+- `include` - Source JavaScript and declaration files
 - `exclude` - Excludes `node_modules`, tests, etc.
 
 To add a module to type checking:
 1. Add JSDoc type annotations (`@param`, `@returns`, etc.)
 2. Add `// @ts-check` at the top of the file
-3. List the file path in `jsconfig.json` `include` array
+3. Keep the file under `src/**/*.js` so it is included by `tsconfig.json`
 4. Run type checking: `npx tsc --noEmit`
+
+After syntax errors are fixed, record the diagnostic baseline. Expand checking
+one file at a time and clear diagnostics there before opting in the next. Avoid
+a repository-wide baseline that could hide regressions in unchecked files.
 
 ## Continuous Integration
 

@@ -233,28 +233,15 @@ module.exports = {
 };
 ```
 
-### GitHub Actions
-```yaml
-name: Chaos Testing
-on:
-  schedule:
-    - cron: '0 2 * * *'  # Nightly at 2 AM
+### GitHub Actions (Nightly Workflow)
 
-jobs:
-  chaos:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v2
-      - run: npm install
-      - run: npm test -- chaos-testing.test.js
-      - name: Check Results
-        run: |
-          if grep -q "Crashes: 0" test-results.txt; then
-            echo "✅ Chaos tests passed"
-          else
-            echo "❌ Chaos tests failed"
-            exit 1
-          fi
+The automated nightly chaos workflow is configured in `.github/workflows/chaos-nightly.yml`:
+- **Trigger**: Runs nightly at 3 AM UTC (`cron: '0 3 * * *'`) and via `workflow_dispatch`.
+- **Failure Notification**: On test failure, the workflow comments on the tracking issue #1649 (rather than opening new issues) with the commit SHA and direct links to the failing run logs.
+
+```bash
+# Run chaos suite manually
+npm run test:chaos
 ```
 
 ### Pre-commit Hook
@@ -301,6 +288,33 @@ const results = await chaos.simulateConcurrentChaos([
   () => operation3(),
 ]);
 ```
+
+## Known Root Cause: Database Chaos Failures (Issue #1649)
+
+The nightly chaos suite failed consistently from 2026-08-30, most visibly in
+`Database Chaos › should handle intermittent database failures`. The root cause
+was a combination of two defects:
+
+1. **`DatabaseError` mapping** — database-level failures (connection drops,
+   lock timeouts, I/O errors) were not being mapped to `DatabaseError`. Raw
+   driver errors leaked through, so retry/circuit-breaker logic that keys off
+   `DatabaseError` never engaged and the chaos scenarios saw unhandled
+   exceptions instead of graceful failures.
+2. **`Transaction` model silent fallback** — when a database operation failed,
+   the `Transaction` model silently fell back to an in-memory/default value
+   instead of surfacing the error. This masked failures, produced inconsistent
+   balances, and made the chaos assertions (no data corruption, consistent
+   state) fail intermittently.
+
+**Fix**: map all database failures to `DatabaseError` at the data-access
+boundary, and remove the silent fallback in the `Transaction` model so errors
+propagate to the retry/circuit-breaker layers. With these changes the database
+chaos scenario (and the dependent partial-failure, scheduler-resilience and
+network-failure suites) pass again.
+
+**Closure criteria**: Issue #1649 should be closed once the chaos suite has
+passed nightly for 7 consecutive nights; document the root cause above in the
+closing comment.
 
 ## Troubleshooting
 

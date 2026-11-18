@@ -1,0 +1,57 @@
+{
+  "compilerOptions": {
+    // JavaScript checking is opt-in per file with // @ts-check.
+    "checkJs": false,
+
+    // Module and target settings
+    "module": "commonjs",
+    "target": "ES2020",
+
+    // JavaScript/JSDoc file support
+    "allowJs": true,
+    "noEmit": true,
+
+    // Strict type checking
+    "strict": true,
+    "strictFunctionTypes": true,
+    "strictNullChecks": true,
+    "strictPropertyInitialization": true,
+    "strictBindCallApply": true,
+    "noImplicitAny": true,
+    "noImplicitThis": true,
+
+    // Other type checks
+    "noUnusedLocals": false,
+    "noUnusedParameters": false,
+    "noImplicitReturns": true,
+    "noFallthroughCasesInSwitch": true,
+    "noUncheckedIndexedAccess": true,
+    "noImplicitOverride": true,
+
+    // Module resolution
+    "esModuleInterop": true,
+    "skipLibCheck": true,
+    "forceConsistentCasingInFileNames": true,
+    "resolveJsonModule": true,
+
+    // Diagnostic options
+    "declaration": false,
+    "declarationMap": false,
+    "sourceMap": false,
+    "pretty": true,
+
+    // Path mapping (Node.js style)
+    "baseUrl": "."
+  },
+  "include": [
+    "src/**/*.js",
+    "src/**/*.d.ts"
+  ],
+  "exclude": [
+    "node_modules",
+    "tests",
+    "coverage",
+    "dist",
+    ".git"
+  ]
+}

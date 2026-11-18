@@ -1,5 +1,14 @@
 const { ERROR_CODES } = require('../utils/errors');
 const schemaRegistry = require('./schemaRegistry');
+const {
+  sanitizeMemo,
+  sanitizeLabel,
+  sanitizeName,
+  sanitizeIdentifier,
+  sanitizeDescription,
+  sanitizeMarkup,
+  stripHtmlTags,
+} = require('../utils/sanitizer');
 
 const {
   formatTypeError,
@@ -160,6 +169,38 @@ function validateField(value, rules, fieldPath) {
   return null;
 }
 
+function sanitizeFieldValue(key, value, rules = {}) {
+  if (typeof value !== 'string') return value;
+  if (rules.sanitize === false) return rules.trim === true ? value.trim() : value;
+
+  const val = rules.trim === true ? value.trim() : value;
+
+  if (rules.sanitize === 'markup' || rules.allowMarkup === true) {
+    return sanitizeMarkup(val, rules.allowedTags);
+  }
+  if (rules.sanitize === 'memo' || key === 'memo') {
+    return sanitizeMemo(val);
+  }
+  if (rules.sanitize === 'label' || key === 'label') {
+    return sanitizeLabel(val);
+  }
+  if (rules.sanitize === 'name' || key === 'ownerName' || key === 'name') {
+    return sanitizeName(val);
+  }
+  if (rules.sanitize === 'identifier' || key === 'donor' || key === 'recipient') {
+    return sanitizeIdentifier(val);
+  }
+  if (rules.sanitize === 'description' || key === 'description') {
+    return sanitizeDescription(val, { allowMarkup: rules.allowMarkup || false, maxLength: rules.maxLength });
+  }
+
+  if (rules.sanitize === true || rules.stripTags === true) {
+    return stripHtmlTags(val);
+  }
+
+  return val;
+}
+
 function stripUnknown(data, segmentSchema) {
   const fields = segmentSchema.fields || {};
   const allowUnknown = segmentSchema.allowUnknown === true;
@@ -174,7 +215,7 @@ function stripUnknown(data, segmentSchema) {
       if (isPlainObject(value) && rules.fields) {
         result[key] = stripUnknown(value, rules);
       } else {
-        result[key] = (typeof value === 'string' && rules.trim === true) ? value.trim() : value;
+        result[key] = sanitizeFieldValue(key, value, rules);
       }
     } else if (allowUnknown) {
       result[key] = value;
@@ -209,9 +250,29 @@ function validateSegment(data, segmentSchema, segmentName) {
       continue;
     }
 
-    const fieldError = validateField(value, rules, `${segmentName}.${fieldName}`);
-    if (fieldError) {
-      errors.push(fieldError);
+    // Handle array validation with index tracking
+    if (Array.isArray(value) && rules.items) {
+      for (let i = 0; i < value.length; i++) {
+        const item = value[i];
+        const itemPath = `${segmentName}.${fieldName}[${i}]`;
+        
+        if (isPlainObject(item) && rules.items.fields) {
+          // Validate nested object within array
+          const nestedErrors = validateNestedObject(item, rules.items, itemPath);
+          errors.push(...nestedErrors);
+        } else {
+          // Validate scalar array item
+          const itemError = validateField(item, rules.items, itemPath);
+          if (itemError) {
+            errors.push(itemError);
+          }
+        }
+      }
+    } else {
+      const fieldError = validateField(value, rules, `${segmentName}.${fieldName}`);
+      if (fieldError) {
+        errors.push(fieldError);
+      }
     }
   }
 
@@ -224,6 +285,48 @@ function validateSegment(data, segmentSchema, segmentName) {
           typeof segmentError === 'string' ? segmentError : 'Invalid input'
         )
       );
+    }
+  }
+
+  return errors;
+}
+
+/**
+ * Validate a nested object (e.g., within an array).
+ * @param {Object} data - Object to validate
+ * @param {Object} schema - Schema with fields definition
+ * @param {string} path - Dot-notation path prefix
+ * @returns {Array} Array of validation errors
+ */
+function validateNestedObject(data, schema, path) {
+  const errors = [];
+  const fields = schema.fields || {};
+
+  if (!isPlainObject(data)) {
+    errors.push(formatSegmentError(path, `Expected an object, received ${getValueType(data)}.`));
+    return errors;
+  }
+
+  for (const [fieldName, rules] of Object.entries(fields)) {
+    const value = data[fieldName];
+    const isMissing = value === undefined;
+    const fieldPath = `${path}.${fieldName}`;
+
+    if (isMissing) {
+      if (rules.required) {
+        errors.push(formatRequiredError(fieldPath, rules));
+      }
+      continue;
+    }
+
+    if (value === null && rules.nullable !== true) {
+      errors.push(formatNullError(fieldPath, rules));
+      continue;
+    }
+
+    const fieldError = validateField(value, rules, fieldPath);
+    if (fieldError) {
+      errors.push(fieldError);
     }
   }
 

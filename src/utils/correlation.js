@@ -274,6 +274,12 @@ function generateCorrelationHeaders() {
   if (!context) return {};
   const headers = {};
 
+  // Carry the original HTTP request ID so outbound calls (e.g. Horizon) can be
+  // traced back to the API request that triggered them.
+  if (context.requestId) {
+    headers['X-Request-ID'] = context.requestId;
+  }
+
   if (context.correlationId) {
     headers['X-Correlation-ID'] = context.correlationId;
   }

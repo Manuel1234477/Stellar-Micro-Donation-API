@@ -59,36 +59,56 @@ Location: `src/utils/sanitizer.js`
    - Removes control characters, null bytes, ANSI codes
    - Configurable length limits and character restrictions
 
-2. **sanitizeMemo(memo)**
+2. **stripHtmlTags(str)**
+   - Strips all HTML tags completely from plain-text fields
+   - Strips script, style, and iframe tags
+
+3. **sanitizeMarkup(str, allowedTags)**
+   - Allowlist-based HTML sanitizer for rich-text fields (campaign descriptions)
+   - Allows safe tags (`<b>`, `<i>`, `<em>`, `<strong>`, `<a>`, `<p>`, `<br>`, `<ul>`, `<ol>`, `<li>`, `<blockquote>`, `<code>`, `<pre>`)
+   - Neutralizes event handlers and javascript: URLs
+
+4. **sanitizeMemo(memo)**
    - Specialized for Stellar transaction memos
    - 28-byte limit (Stellar MEMO_TEXT specification)
-   - Removes all control characters
+   - Strips HTML tags and removes all control characters
 
-3. **sanitizeLabel(label)**
+5. **sanitizeLabel(label)**
    - For wallet labels
    - 100-character limit
-   - Allows most characters but removes control codes
+   - Strips HTML tags and removes control codes
 
-4. **sanitizeName(name)**
+6. **sanitizeName(name)**
    - For owner names
    - 100-character limit
-   - Removes control characters
+   - Strips HTML tags and removes control characters
 
-5. **sanitizeIdentifier(identifier)**
+7. **sanitizeIdentifier(identifier)**
    - For donor/recipient identifiers
    - Strict character restrictions (alphanumeric, basic punctuation only)
    - Prevents injection in identifiers
 
-6. **sanitizeForLogging(data)**
+8. **sanitizeDescription(description, options)**
+   - For campaign and metadata descriptions
+   - Supports plain-text (HTML stripped) or allowlist markup sanitization
+
+9. **sanitizeForLogging(data)**
    - Recursively sanitizes objects/arrays for safe logging
    - Prevents log injection attacks
    - Handles nested structures
 
-7. **sanitizeRequestBody(body, fieldConfig)**
-   - Batch sanitization for request bodies
-   - Field-specific sanitization based on configuration
+10. **sanitizeRequestBody(body, fieldConfig)**
+    - Batch sanitization for request bodies
+    - Field-specific sanitization based on configuration
 
 ### Integration Points
+
+#### 1. Schema Validation Middleware (`src/middleware/schemaValidation.js`)
+
+All incoming request payloads (`req.body`, `req.query`, `req.params`) are automatically sanitized at the request boundary before passing to route handlers and service layers:
+- Plain-text fields (`memo`, `label`, `name`, plain `description`) have HTML tags stripped and control characters removed.
+- Markup fields (e.g. campaign description with `allowMarkup: true`) are filtered through the HTML allowlist.
+- Identifiers (`donor`, `recipient`) are strictly normalized.
 
 #### 1. Donation Routes (`src/routes/donation.js`)
 

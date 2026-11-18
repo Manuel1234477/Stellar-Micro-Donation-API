@@ -88,14 +88,16 @@
  */
 
 const express = require('express');
+const { clientErrorMessage } = require('../utils/clientErrorMessage');
 const router = express.Router();
 const crypto = require('crypto');
 const Database = require('../utils/database');
 const { checkPermission } = require('../middleware/rbac');
 const { PERMISSIONS } = require('../utils/permissions');
 const { VALID_FREQUENCIES, SCHEDULE_STATUS } = require('../constants');
-const { validateRequiredFields, validateFloat, validateXLMAmount, validateEnum } = require('../utils/validationHelpers');
+const { validateRequiredFields, validateXLMAmount, validateEnum } = require('../utils/validationHelpers');
 const log = require('../utils/log');
+const timerRegistry = require('../utils/timerRegistry');
 const { validateSchema } = require('../middleware/schemaValidation');
 const { isValidStellarPublicKey } = require('../utils/validators');
 const SseManager = require('../services/SseManager');
@@ -104,6 +106,7 @@ const { payloadSizeLimiter, ENDPOINT_LIMITS } = require('../middleware/payloadSi
 const { requestTimeout, TIMEOUTS } = require('../middleware/requestTimeout');
 const AuditLogService = require('../services/AuditLogService');
 const asyncHandler = require('../utils/asyncHandler');
+const { toStroops, fromStroops } = require('../utils/money');
 
 const streamCreateSchema = validateSchema({
   body: {
@@ -319,9 +322,11 @@ router.get('/schedules', checkPermission(PERMISSIONS.STREAM_READ), asyncHandler(
     const { status, all } = req.query;
     const isAdmin = req.user?.role === 'admin' || req.apiKey?.role === 'admin';
     const userPublicKey = req.user?.subject || req.apiKey?.subject;
+    // Legacy/system API keys (isLegacy: true) have no subject but are trusted callers
+    const isLegacyKey = (req.apiKey && req.apiKey.isLegacy) || (req.user && req.user.isLegacy);
 
-    // Non-admins must be filtered to their own schedules
-    if (!isAdmin && !userPublicKey) {
+    // Non-admins without a subject must be identified — unless they are legacy keys
+    if (!isAdmin && !userPublicKey && !isLegacyKey) {
       return res.status(403).json({
         success: false,
         error: { code: 'FORBIDDEN', message: 'Cannot identify requesting user' }
@@ -421,10 +426,12 @@ router.post('/schedules/:id/pause', checkPermission(PERMISSIONS.STREAM_UPDATE), 
     }
 
     // Authorization check: verify ownership or admin role
-    const isAdmin = req.user && req.user.role === 'admin';
-    const userPublicKey = req.user && req.user.subject;
+    const isAdmin = (req.user && req.user.role === 'admin') || (req.apiKey && req.apiKey.role === 'admin');
+    const userPublicKey = (req.user && req.user.subject) || (req.apiKey && req.apiKey.subject);
+    // Legacy/system API keys (no subject) bypass ownership check — they are trusted callers
+    const isLegacyKey = (req.apiKey && req.apiKey.isLegacy) || (req.user && req.user.isLegacy);
     
-    if (!isAdmin && userPublicKey !== schedule.donorPublicKey) {
+    if (!isAdmin && !isLegacyKey && userPublicKey !== schedule.donorPublicKey) {
       return res.status(403).json({
         success: false,
         error: {
@@ -482,10 +489,12 @@ router.post('/schedules/:id/resume', checkPermission(PERMISSIONS.STREAM_UPDATE),
     }
 
     // Authorization check: verify ownership or admin role
-    const isAdmin = req.user && req.user.role === 'admin';
-    const userPublicKey = req.user && req.user.subject;
+    const isAdmin = (req.user && req.user.role === 'admin') || (req.apiKey && req.apiKey.role === 'admin');
+    const userPublicKey = (req.user && req.user.subject) || (req.apiKey && req.apiKey.subject);
+    // Legacy/system API keys (no subject) bypass ownership check — they are trusted callers
+    const isLegacyKey = (req.apiKey && req.apiKey.isLegacy) || (req.user && req.user.isLegacy);
     
-    if (!isAdmin && userPublicKey !== schedule.donorPublicKey) {
+    if (!isAdmin && !isLegacyKey && userPublicKey !== schedule.donorPublicKey) {
       return res.status(403).json({
         success: false,
         error: {
@@ -576,7 +585,7 @@ router.get('/schedules/:id', checkPermission(PERMISSIONS.STREAM_READ), streamSch
     res.status(500).json({
       success: false,
       error: 'Failed to fetch schedule',
-      message: error.message
+      message: clientErrorMessage('STREAM_ROUTE', error, 500, 'Failed to fetch schedule')
     });
   }
 }));
@@ -751,7 +760,9 @@ router.patch('/schedules/:id', checkPermission(PERMISSIONS.STREAM_UPDATE), strea
     }
 
     const oldValues = { amount: schedule.amount, frequency: schedule.frequency };
-    const newAmount = amount !== undefined ? parseFloat(String(amount).trim()) : schedule.amount;
+    const newAmount = amount !== undefined
+      ? fromStroops(toStroops(String(amount).trim()))
+      : String(schedule.amount);
     const newFrequency = frequency !== undefined ? frequency.toLowerCase() : schedule.frequency;
 
     // Recalculate nextExecutionDate if frequency changed
@@ -925,7 +936,7 @@ router.delete('/schedules/:id', checkPermission(PERMISSIONS.STREAM_DELETE), stre
     res.status(500).json({
       success: false,
       error: 'Failed to cancel schedule',
-      message: error.message
+      message: clientErrorMessage('STREAM_ROUTE', error, 500, 'Failed to cancel schedule')
     });
   }
 }));
@@ -1003,12 +1014,12 @@ router.get('/feed', checkPermission(PERMISSIONS.STREAM_READ), (req, res) => {
   SseManager.writeSseEvent(res, '0', 'connected', { clientId, message: 'Stream connected' });
 
   // Heartbeat
-  const heartbeat = setInterval(() => {
+  const heartbeat = timerRegistry.createInterval(() => {
     res.write(': ping\n\n');
   }, SseManager.HEARTBEAT_INTERVAL_MS);
 
   req.on('close', () => {
-    clearInterval(heartbeat);
+    heartbeat.clear();
     SseManager.removeClient(clientId);
     log.info('SSE', 'Client disconnected', { clientId, keyId });
   });

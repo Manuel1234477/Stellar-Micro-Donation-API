@@ -89,6 +89,24 @@ const MESSAGES = {
   MISSING_REQUIRED_FIELD: { en: 'Missing required field',                 es: 'Campo obligatorio faltante',             fr: 'Champ obligatoire manquant',                       pt: 'Campo obrigatório ausente' },
   IDEMPOTENCY_KEY_REQUIRED:{ en: 'Idempotency key is required',           es: 'Se requiere clave de idempotencia',      fr: 'Clé d\'idempotence requise',                       pt: 'Chave de idempotência obrigatória' },
   INVALID_SCHEMA_VERSION: { en: 'Invalid schema version',                 es: 'Versión de esquema inválida',            fr: 'Version de schéma invalide',                       pt: 'Versão de esquema inválida' },
+  SSRF_BLOCKED:           { en: 'Request target is not allowed',         es: 'El destino de la solicitud no está permitido', fr: 'La cible de la requête n\'est pas autorisée', pt: 'O destino da solicitação não é permitido' },
+
+  // ── Field-level validation errors (src/utils/validationErrorFormatter.js) ──
+  MISSING_AMOUNT:          { en: 'amount is required',                    es: 'el monto es obligatorio',                fr: 'le montant est requis',                            pt: 'o valor é obrigatório' },
+  INVALID_AMOUNT_TYPE:     { en: 'amount must be a valid number',         es: 'el monto debe ser un número válido',     fr: 'le montant doit être un nombre valide',            pt: 'o valor deve ser um número válido' },
+  AMOUNT_TOO_LOW:          { en: 'amount must be greater than zero',      es: 'el monto debe ser mayor que cero',       fr: 'le montant doit être supérieur à zéro',            pt: 'o valor deve ser maior que zero' },
+  AMOUNT_BELOW_MINIMUM:    { en: 'amount is below the minimum allowed',   es: 'el monto está por debajo del mínimo permitido', fr: 'le montant est inférieur au minimum autorisé', pt: 'o valor está abaixo do mínimo permitido' },
+  AMOUNT_EXCEEDS_MAXIMUM:  { en: 'amount exceeds the maximum allowed',    es: 'el monto supera el máximo permitido',    fr: 'le montant dépasse le maximum autorisé',           pt: 'o valor excede o máximo permitido' },
+  DAILY_LIMIT_EXCEEDED:    { en: 'daily donation limit would be exceeded', es: 'se superaría el límite diario de donación', fr: 'la limite quotidienne de don serait dépassée', pt: 'o limite diário de doação seria excedido' },
+  MISSING_RECIPIENT:       { en: 'recipient is required',                 es: 'el destinatario es obligatorio',         fr: 'le destinataire est requis',                       pt: 'o destinatário é obrigatório' },
+  SAME_SENDER_RECIPIENT:   { en: 'sender and recipient must be different', es: 'el remitente y el destinatario deben ser diferentes', fr: 'l\'expéditeur et le destinataire doivent être différents', pt: 'remetente e destinatário devem ser diferentes' },
+  MISSING_IDEMPOTENCY_KEY: { en: 'Idempotency-Key header is required',    es: 'el encabezado Idempotency-Key es obligatorio', fr: 'l\'en-tête Idempotency-Key est requis',       pt: 'o cabeçalho Idempotency-Key é obrigatório' },
+  MISSING_ADDRESS:         { en: 'address is required',                   es: 'la dirección es obligatoria',             fr: 'l\'adresse est requise',                           pt: 'o endereço é obrigatório' },
+  MISSING_STATUS:          { en: 'status is required',                    es: 'el estado es obligatorio',                fr: 'le statut est requis',                             pt: 'o status é obrigatório' },
+  INVALID_STATUS:          { en: 'status value is not recognised',        es: 'el valor de estado no es válido',         fr: 'la valeur du statut n\'est pas reconnue',          pt: 'o valor de status não é reconhecido' },
+  MISSING_PUBLIC_KEY:      { en: 'publicKey is required',                 es: 'publicKey es obligatorio',                fr: 'publicKey est requis',                             pt: 'publicKey é obrigatório' },
+  MISSING_TRANSACTION_HASH:{ en: 'transactionHash is required',           es: 'transactionHash es obligatorio',          fr: 'transactionHash est requis',                       pt: 'transactionHash é obrigatório' },
+  MISSING_WALLET_FIELD:    { en: 'at least one of label or ownerName is required', es: 'se requiere al menos uno entre label u ownerName', fr: 'au moins l\'un de label ou ownerName est requis', pt: 'é necessário pelo menos um entre label ou ownerName' },
 
   // ── Authentication / Authorisation errors ────────────────────────────────
   UNAUTHORIZED:             { en: 'Unauthorized',                         es: 'No autorizado',                          fr: 'Non autorisé',                                     pt: 'Não autorizado' },
@@ -96,6 +114,7 @@ const MESSAGES = {
   FORBIDDEN:                { en: 'Forbidden',                            es: 'Prohibido',                              fr: 'Interdit',                                         pt: 'Proibido' },
   INSUFFICIENT_PERMISSIONS: { en: 'Insufficient permissions',             es: 'Permisos insuficientes',                 fr: 'Permissions insuffisantes',                        pt: 'Permissões insuficientes' },
   INVALID_API_KEY:          { en: 'Invalid API key',                      es: 'Clave de API inválida',                  fr: 'Clé API invalide',                                 pt: 'Chave de API inválida' },
+  SEP10_REPLAY_DETECTED:    { en: 'SEP-10 challenge replay detected',     es: 'Se detectó la repetición de un desafío SEP-10', fr: 'Rejeu du défi SEP-10 détecté',                  pt: 'Repetição do desafio SEP-10 detectada' },
 
   // ── Not found errors ─────────────────────────────────────────────────────
   NOT_FOUND:             { en: 'Resource not found',                      es: 'Recurso no encontrado',                  fr: 'Ressource introuvable',                            pt: 'Recurso não encontrado' },
@@ -132,8 +151,12 @@ const MESSAGES = {
   RECIPIENT_NOT_IN_POOL:      { en: 'Recipient not in pool',              es: 'El destinatario no está en el grupo',    fr: 'Destinataire absent du pool',                      pt: 'Destinatário não está no pool' },
   DONOR_COORDINATES_REQUIRED: { en: 'Donor coordinates are required',     es: 'Se requieren coordenadas del donante',   fr: 'Les coordonnées du donneur sont requises',         pt: 'Coordenadas do doador são obrigatórias' },
   NO_ELIGIBLE_RECIPIENTS:     { en: 'No eligible recipients found',       es: 'No se encontraron destinatarios elegibles', fr: 'Aucun destinataire éligible trouvé',            pt: 'Nenhum destinatário elegível encontrado' },
-  NO_ACTIVE_CAMPAIGNS:        { en: 'No active campaigns found',          es: 'No se encontraron campañas activas',     fr: 'Aucune campagne active trouvée',                   pt: 'Nenhuma campanha ativa encontrada' },
+    NO_ACTIVE_CAMPAIGNS:        { en: 'No active campaigns found',          es: 'No se encontraron campañas activas',     fr: 'Aucune campagne active trouvée',                   pt: 'Nenhuma campanha ativa encontrada' },
   RECIPIENT_ACCOUNT_NOT_FOUND:{ en: 'Recipient account not found',        es: 'Cuenta del destinatario no encontrada',  fr: 'Compte du destinataire introuvable',               pt: 'Conta do destinatário não encontrada' },
+  DONATION_APPROVAL_EXPIRED:   { en: 'Donation approval has expired',      es: 'La aprobación de la donación ha caducado', fr: 'L\'approbation du don a expiré',                  pt: 'A aprovação da doação expirou' },
+  DONATION_ALREADY_APPROVED_BY_SIGNER: { en: 'Signer has already approved this donation', es: 'El firmante ya aprobó esta donación', fr: 'Le signataire a déjà approuvé ce don', pt: 'O signatário já aprovou esta doação' },
+  INSUFFICIENT_BALANCE_AFTER_RESERVE: { en: 'Insufficient balance after reserve and fees', es: 'Saldo insuficiente después de la reserva y las tarifas', fr: 'Solde insuffisant après réserve et frais', pt: 'Saldo insuficiente após reserva e taxas' },
+  MISSING_SECRET_KEY:          { en: 'Secret key is required',             es: 'Se requiere la clave secreta',            fr: 'La clé secrète est requise',                        pt: 'A chave secreta é obrigatória' },
 
   // ── Rate limiting errors ─────────────────────────────────────────────────
   RATE_LIMIT_EXCEEDED: { en: 'Rate limit exceeded',                       es: 'Límite de tasa excedido',                fr: 'Limite de débit dépassée',                         pt: 'Limite de taxa excedido' },

@@ -51,10 +51,19 @@ function validateRolesConfig(config) {
     return { valid: false, errors, warnings };
   }
 
+  const allowedRoleKeys = new Set(['name', 'permissions']);
+
   for (const [i, role] of config.roles.entries()) {
     if (!role || typeof role !== 'object' || Array.isArray(role)) {
       errors.push(`Role at index ${i} must be a non-null object`);
       continue;
+    }
+
+    // Validate no unknown keys
+    for (const key of Object.keys(role)) {
+      if (!allowedRoleKeys.has(key)) {
+        errors.push(`Role at index ${i} has unknown key "${key}" (allowed: name, permissions)`);
+      }
     }
 
     // Validate role name

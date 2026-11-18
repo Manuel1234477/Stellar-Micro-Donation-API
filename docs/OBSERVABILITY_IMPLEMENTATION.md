@@ -80,7 +80,7 @@ This document summarizes the implementation of observability features across fou
 - `src/services/DonationService.js` (1878 lines) → Issue #1212
 - `src/services/RecurringDonationScheduler.js` (1010 lines) → Issue #1211
 - `src/routes/admin/featureFlags.js` (696 lines)
-- `src/routes/admin/geoBlocking.js` (438 lines)
+- `src/routes/admin/geoRules.js` (874 lines, absorbed geoBlocking.js in #1778)
 
 **Acceptance Criteria Met:**
 - ✅ Lint rule warns/fails beyond 1000 lines
@@ -277,7 +277,7 @@ HTTP Request
 
 ### Existing Tests (Should Pass)
 - `tests/utils/structured-logging-log-levels-and-o.test.js` - Logging tests
-- `tests/misc/correlation.test.js` - Correlation tests
+- `tests/tracing/correlation.test.js` - Correlation tests
 - `tests/middleware/requestId-correlation.test.js` - Request ID tests
 - `tests/tracing/distributed-tracing.test.js` - Tracing tests
 - `tests/tracing/distributed-tracing-opentelemetry.test.js` - OpenTelemetry tests

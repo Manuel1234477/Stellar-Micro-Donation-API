@@ -15,6 +15,7 @@ const {
   rotateRefreshToken,
 } = require('../services/JwtService');
 const SEP10Service = require('../services/SEP10Service');
+const { resolveSep10SigningSecret } = require('../utils/sep10SigningKey');
 const config = require('../config');
 const { getStellarService } = require('../config/stellar');
 const log = require('../utils/log');
@@ -25,11 +26,8 @@ const bruteForce = require('../utils/bruteForceProtection');
 
 const stellarService = getStellarService();
 const sep10Config = config.sep10 || {};
-const serverSigningKey =
-  config.stellar?.serviceSecretKey ||
-  process.env.SERVICE_SECRET_KEY ||
-  process.env.STELLAR_SECRET ||
-  null;
+// Same resolution as the SIGNING_KEY in stellar.toml (issue #1888)
+const serverSigningKey = resolveSep10SigningSecret().secret || null;
 
 const sep10Service = serverSigningKey
   ? new SEP10Service(stellarService, {
@@ -48,7 +46,9 @@ router.post('/token/apikey', bruteForce.middleware(), requireApiKey, payloadSize
   try {
     const apiKeyId = req.apiKey.id || 0;
     const claims = { role: req.apiKey.role || 'user' };
-    const { accessToken, refreshToken, familyId } = await issueTokenPair(apiKeyId, claims);
+    // Optional: lets the owner tell their sessions apart when reviewing them.
+    const deviceId = req.get('X-Device-ID');
+    const { accessToken, refreshToken, familyId } = await issueTokenPair(apiKeyId, claims, { deviceId });
 
     bruteForce.recordSuccess(req.ip || 'unknown');
     log.info('AUTH', 'Token pair issued', { apiKeyId, familyId });
@@ -85,7 +85,7 @@ router.post('/refresh', bruteForce.middleware(), authRefreshRateLimiter, payload
   }
 
   try {
-    const result = await rotateRefreshToken(refreshToken);
+    const result = await rotateRefreshToken(refreshToken, { deviceId: req.get('X-Device-ID') });
 
     if (!result) {
       bruteForce.recordFailure(req.ip || 'unknown');

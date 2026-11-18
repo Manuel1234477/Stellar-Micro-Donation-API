@@ -10,8 +10,10 @@
  * - Donation date and fair market value in USD
  * - Statement that no goods or services were provided in exchange
  * - Exchange rate snapshot at time of donation
+ * - Annual summary PDFs for year-end tax filing (#1595)
  */
 
+const PDFDocument = require('pdfkit');
 const Database = require('../utils/database');
 const config = require('../config');
 const log = require('../utils/log');
@@ -33,12 +35,14 @@ class TaxReceiptService {
    * @returns {boolean} True if tax receipt generation is configured
    */
   static isConfigured() {
-    return config.taxReceipt?.isConfigured || false;
+    return Boolean(config.taxReceipt?.isConfigured);
   }
 
   /**
    * Get organization tax configuration
-   * @returns {Object} Tax configuration
+   * @returns {{ein: string, legalName: string, address?: string, city?: string, state?: string,
+   *   zipCode?: string, phone?: string, email?: string, website?: string}} Tax configuration
+   * @throws {ValidationError} When the organization tax configuration is incomplete
    */
   static getOrganizationConfig() {
     if (!this.isConfigured()) {
@@ -141,6 +145,7 @@ class TaxReceiptService {
         t.fair_market_value_usd,
         t.stellar_tx_id,
         t.status,
+        t.is_anonymous,
         sender.publicKey as donorPublicKey,
         receiver.publicKey as recipientPublicKey
       FROM transactions t
@@ -200,6 +205,9 @@ class TaxReceiptService {
     // Get organization config
     const orgConfig = this.getOrganizationConfig();
 
+    // Anonymous donations must never expose donor identity in metadata or body
+    const isAnonymous = Boolean(donation.is_anonymous);
+
     // Generate receipt data
     const receiptData = {
       // Organization information
@@ -220,7 +228,8 @@ class TaxReceiptService {
         id: donation.id,
         date: donation.timestamp,
         stellarTxId: donation.stellar_tx_id,
-        donorPublicKey: donation.donorPublicKey,
+        isAnonymous,
+        donorPublicKey: isAnonymous ? null : donation.donorPublicKey,
         recipientPublicKey: donation.recipientPublicKey
       },
 
@@ -255,111 +264,99 @@ class TaxReceiptService {
   }
 
   /**
+   * Build PDF document metadata for a tax receipt.
+   *
+   * Named donations include donor and recipient in the document metadata so
+   * donor/accounting systems can index receipts. Anonymous donations
+   * deliberately omit the donor identity (explicit branch, not an accident).
+   *
+   * @param {Object} receiptData - Receipt data from generateTaxReceiptData
+   * @returns {Object} pdfkit document info object
+   */
+  static buildReceiptMetadata(receiptData) {
+    const { donation, organization } = receiptData;
+    const isAnonymous = Boolean(donation.isAnonymous);
+
+    const info = {
+      Title: `Tax Receipt ${receiptData.receiptNumber}`,
+      Author: organization.legalName,
+      Creator: organization.legalName,
+      Producer: 'HandsOff Tax Receipt Service'
+    };
+
+    if (isAnonymous) {
+      // Explicit anonymity branch: never include donor identity in metadata
+      info.Subject = `Anonymous donation receipt ${receiptData.receiptNumber}`;
+      info.Keywords = [
+        'tax-receipt',
+        'anonymous',
+        `recipient:${donation.recipientPublicKey || 'unknown'}`
+      ].join(', ');
+    } else {
+      info.Subject = `Donation receipt for ${donation.donorPublicKey || 'unknown donor'}`;
+      info.Keywords = [
+        'tax-receipt',
+        `donor:${donation.donorPublicKey || 'unknown'}`,
+        `recipient:${donation.recipientPublicKey || 'unknown'}`
+      ].join(', ');
+    }
+
+    return info;
+  }
+
+  /**
    * Generate tax receipt as PDF (placeholder - requires PDF library)
    * @param {number} donationId - Donation ID
    * @returns {Promise<Buffer>} PDF buffer
    */
   static async generateTaxReceiptPDF(donationId) {
     const receiptData = await this.generateTaxReceiptData(donationId);
+    const info = this.buildReceiptMetadata(receiptData);
 
-    // Note: This is a placeholder for PDF generation
-    // In production, use a library like pdfkit, puppeteer, or jsPDF
-    // For now, return JSON representation
-    
-    log.info('TAX_RECEIPT_SERVICE', 'Tax receipt PDF generation requested', {
-      donationId,
-      receiptNumber: receiptData.receiptNumber
+    return new Promise((resolve, reject) => {
+      try {
+        const doc = new PDFDocument({ info });
+        const chunks = [];
+
+        doc.on('data', (chunk) => chunks.push(chunk));
+        doc.on('end', () => resolve(Buffer.concat(chunks)));
+        doc.on('error', reject);
+
+        const { organization, donation, financial, irs } = receiptData;
+
+        doc.fontSize(18).text(organization.legalName, { align: 'center' });
+        doc.moveDown();
+        doc.fontSize(12).text(`EIN: ${organization.ein}`);
+        doc.text(`${organization.address}, ${organization.city}, ${organization.state} ${organization.zipCode}`);
+        doc.moveDown();
+
+        doc.fontSize(14).text('Tax Receipt', { align: 'center' });
+        doc.moveDown();
+        doc.fontSize(10).text(`Receipt Number: ${receiptData.receiptNumber}`);
+        doc.text(`Date: ${donation.date}`);
+        doc.text(`Stellar Transaction ID: ${donation.stellarTxId || 'N/A'}`);
+
+        if (donation.isAnonymous) {
+          doc.text('Donor: Anonymous');
+        } else {
+          doc.text(`Donor: ${donation.donorPublicKey || 'Unknown'}`);
+        }
+        doc.text(`Recipient: ${donation.recipientPublicKey || 'Unknown'}`);
+        doc.moveDown();
+
+        doc.text(`Amount: ${financial.xlmAmount} ${financial.currency}`);
+        doc.text(`Exchange Rate: ${financial.xlmUsdRate} USD/XLM`);
+        doc.text(`Fair Market Value: $${financial.fairMarketValueUsd} USD`);
+        doc.moveDown();
+
+        doc.text(`IRS Form: ${irs.formType}`);
+        doc.text(irs.statement);
+
+        doc.end();
+      } catch (error) {
+        reject(error);
+      }
     });
-
-    // Return receipt data as JSON for now
-    // In production, this would return a PDF buffer
-    return JSON.stringify(receiptData, null, 2);
-  }
-
-  /**
-   * Mark donation as having tax receipt generated
-   * @param {number} donationId - Donation ID
-   * @returns {Promise<void>}
-   */
-  static async markReceiptGenerated(donationId) {
-    try {
-      await Database.run(
-        'UPDATE transactions SET tax_receipt_generated = 1 WHERE id = ?',
-        [donationId]
-      );
-
-      log.info('TAX_RECEIPT_SERVICE', 'Donation marked as tax receipt generated', {
-        donationId
-      });
-    } catch (error) {
-      log.error('TAX_RECEIPT_SERVICE', 'Failed to mark receipt as generated', {
-        donationId,
-        error: error.message
-      });
-    }
-  }
-
-  /**
-   * Check if tax receipt has been generated for a donation
-   * @param {number} donationId - Donation ID
-   * @returns {Promise<boolean>} True if receipt has been generated
-   */
-  static async hasReceiptBeenGenerated(donationId) {
-    const donation = await Database.get(
-      'SELECT tax_receipt_generated FROM transactions WHERE id = ?',
-      [donationId]
-    );
-
-    return donation && donation.tax_receipt_generated === 1;
-  }
-
-  /**
-   * Get all donations eligible for tax receipts
-   * @param {Object} options - Query options
-   * @param {string} options.startDate - Start date filter
-   * @param {string} options.endDate - End date filter
-   * @param {number} options.limit - Maximum results
-   * @returns {Promise<Array>} List of donations
-   */
-  static async getEligibleDonations(options = {}) {
-    const { startDate, endDate, limit = 100 } = options;
-
-    let query = `
-      SELECT 
-        t.id,
-        t.amount,
-        t.timestamp,
-        t.xlm_usd_rate,
-        t.fair_market_value_usd,
-        t.tax_receipt_generated,
-        t.status,
-        sender.publicKey as donorPublicKey
-      FROM transactions t
-      LEFT JOIN users sender ON t.senderId = sender.id
-      WHERE 1=1
-      AND t.status NOT IN ('refunded', 'failed', 'cancelled')
-    `;
-    const params = [];
-
-    if (startDate) {
-      query += ' AND t.timestamp >= ?';
-      params.push(startDate);
-    }
-
-    if (endDate) {
-      query += ' AND t.timestamp <= ?';
-      params.push(endDate);
-    }
-
-    query += ' ORDER BY t.timestamp DESC LIMIT ?';
-    params.push(limit);
-
-    const donations = await Database.query(query, params);
-
-    return donations.map(d => ({
-      ...d,
-      hasReceipt: d.tax_receipt_generated === 1
-    }));
   }
 }
 

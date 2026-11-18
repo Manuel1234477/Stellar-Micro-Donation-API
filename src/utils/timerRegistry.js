@@ -67,6 +67,24 @@ class TimerRegistry {
     };
   }
 
+  /**
+   * Schedule a daily background callback without requiring an undeclared cron
+   * package. The expression is retained for diagnostics and API compatibility;
+   * callers that need calendar-precise scheduling should use a dedicated job
+   * runner outside the application process.
+   * @param {string} expression - Cron expression retained for diagnostics.
+   * @param {Function} fn - Callback to invoke.
+   * @returns {{ stop: Function, destroy: Function, nextDate: Function }}
+   */
+  scheduleCron(expression, fn) {
+    const interval = this.createInterval(fn, 24 * 60 * 60 * 1000, `cron-${expression}`);
+    return {
+      stop: interval.clear,
+      destroy: interval.clear,
+      nextDate: () => new Date(Date.now() + 24 * 60 * 60 * 1000),
+    };
+  }
+
   /** @private */
   _clear(id) {
     const entry = this._timers.get(id);
@@ -77,8 +95,43 @@ class TimerRegistry {
   }
 
   /**
+   * Cancel every registered timer whose label matches the given label or prefix.
+   * Useful in tests (afterAll) to tear down only the timers a suite created,
+   * without disturbing timers owned by other suites or the app itself.
+   *
+   * Matching rules:
+   *  - exact label match, or
+   *  - label starts with `prefix` when `prefix` is true (default), so
+   *    clearByLabel('cache') clears 'cache' and 'cache-sweeper'.
+   *
+   * @param {string} label - Label or label prefix to match.
+   * @param {boolean} [prefix=true] - Whether to match by prefix.
+   * @returns {number} Number of timers cleared.
+   */
+  clearByLabel(label, prefix = true) {
+    if (!label) return 0;
+    let count = 0;
+    for (const [id, entry] of this._timers) {
+      const matches = prefix
+        ? (entry.label === label || entry.label.startsWith(label))
+        : entry.label === label;
+      if (!matches) continue;
+      if (entry.type === 'interval') clearInterval(entry.handle);
+      else clearTimeout(entry.handle);
+      this._timers.delete(id);
+      count++;
+    }
+    if (count > 0) {
+      log.info('TIMER_REGISTRY', `Cleared ${count} timer(s) matching "${label}"`);
+    }
+    return count;
+  }
+
+  /**
    * Cancel every registered timer.
    * Called once by the graceful-shutdown sequence before the DB pool closes.
+   * Safe to call from test afterAll hooks: it is idempotent and a no-op
+   * when no timers are registered.
    */
   clearAll() {
     let count = 0;

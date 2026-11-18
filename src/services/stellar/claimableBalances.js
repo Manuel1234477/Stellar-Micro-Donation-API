@@ -1,4 +1,4 @@
-const StellarSdk = require('stellar-sdk');
+const StellarSdk = require('./sdk.js');
 const StellarErrorHandler = require('../../utils/stellarErrorHandler');
 const { toStellarSdkAsset } = require('../../utils/stellarAsset');
 

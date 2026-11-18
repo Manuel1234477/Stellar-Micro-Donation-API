@@ -5,7 +5,7 @@ process.env.DB_JSON_PATH = require('path').join(__dirname, 'tmp-cross-asset-dona
 const fs = require('fs');
 const express = require('express');
 const request = require('supertest');
-const StellarSdk = require('stellar-sdk');
+const StellarSdk = require('@stellar/stellar-sdk');
 
 const donationRouter = require('../../src/routes/donation');
 const Transaction = require('../../src/models/transaction');

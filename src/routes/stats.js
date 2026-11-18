@@ -4,7 +4,7 @@
  * RESPONSIBILITY: HTTP request handling for donation statistics and analytics
  * OWNER: Analytics Team
  * DEPENDENCIES: StatsService, middleware (auth, validation, RBAC)
- * 
+ *
  * Thin controllers that orchestrate service calls for donation analytics including
  * daily/weekly stats, donor/recipient reports, and summary analytics.
  */
@@ -94,11 +94,39 @@ donationEvents.on(donationEvents.EVENTS.CREATED, () => {
 });
 
 /**
+ * Resolve the caller's stats access context from the authenticated request.
+ *
+ * The HTTP layer is the only place that knows the caller's role and granted
+ * permissions, so it must pass them explicitly to StatsService rather than
+ * letting the service infer them. This drives the anonymisation serializer:
+ * anonymous donors are only revealed to callers holding
+ * `stats:read:identified` or an admin role.
+ *
+ * @param {import('express').Request} req
+ * @returns {{ role: string, permissions: string[] }}
+ */
+function getStatsAccessContext(req) {
+  const user = req.user || {};
+  const role = user.role || (req.apiKey && req.apiKey.role) || 'anonymous';
+  const permissions = Array.isArray(user.permissions)
+    ? user.permissions
+    : (Array.isArray(req.permissions) ? req.permissions : []);
+  return { role, permissions };
+}
+
+/**
  * Global stats caching middleware.
  * Caches responses per API key, endpoint, and query parameters.
  */
 function globalStatsCache(req, res, next) {
   if (req.method !== 'GET') {
+    return next();
+  }
+
+  // /dashboard manages its own caching (StatsService.getDashboardData) with a
+  // `cached` flag callers rely on and event-driven invalidation. Wrapping it
+  // in this generic response cache would mask that flag behind a stale body.
+  if (req.path === '/dashboard') {
     return next();
   }
 
@@ -253,32 +281,17 @@ router.get('/daily', checkPermission(PERMISSIONS.STATS_READ), auditStatsAccess, 
     const { startDate, endDate } = req.query;
     const start = new Date(startDate);
     const end = new Date(endDate);
-    const isAdmin = req.user && req.user.role === 'admin';
 
-    const stats = StatsService.getDailyStats(start, end, 'UTC', isAdmin);
-
-    AuditLogService.log({
-      category: AuditLogService.CATEGORY.DATA_ACCESS,
-      action: 'STATS_ACCESSED',
-      severity: AuditLogService.SEVERITY.LOW,
-      result: 'SUCCESS',
-      userId: req.user && req.user.id,
-      requestId: req.id,
-      ipAddress: req.ip,
-      resource: '/stats/daily',
-      details: { startDate, endDate }
-    }).catch(() => {});
+    const stats = StatsService.getDailyStats(start, end);
 
     res.json({
       success: true,
       data: stats,
       metadata: {
-        dateRange: {
-          start: start.toISOString(),
-          end: end.toISOString()
-        },
+        startDate,
+        endDate,
         totalDays: stats.length,
-        aggregationType: 'daily'
+        generatedAt: new Date().toISOString()
       }
     });
   } catch (error) {
@@ -291,195 +304,22 @@ router.get('/daily', checkPermission(PERMISSIONS.STATS_READ), auditStatsAccess, 
  * Get weekly aggregated donation volume
  * Query params: startDate, endDate (ISO format)
  */
-router.get(
-  "/weekly",
-  checkPermission(PERMISSIONS.STATS_READ),
-  auditStatsAccess,
-  cacheMiddleware('stats', 'private'),
-  strictDateRangeQuerySchema,
-  validateDateRange,
-  (req, res, next) => {
-    try {
-      const { startDate, endDate } = req.query;
-      const start = new Date(startDate);
-      const end = new Date(endDate);
-      const isAdmin = req.user && req.user.role === 'admin';
-
-      const stats = StatsService.getWeeklyStats(start, end, isAdmin);
-
-      res.json({
-        success: true,
-        data: stats,
-        metadata: {
-          dateRange: {
-            start: start.toISOString(),
-            end: end.toISOString(),
-          },
-          totalWeeks: stats.length,
-          aggregationType: "weekly",
-        },
-      });
-    } catch (error) {
-      next(error);
-    }
-  }
-);
-
-/**
- * GET /stats/summary
- * Get overall summary statistics
- * Query params: startDate, endDate (all optional, ISO format).
- *   `from` and `to` are accepted as deprecated aliases for `startDate`/`endDate`.
- *
- * Cached with TTL (STATS_SUMMARY_CACHE_TTL_SECONDS, default 60s).
- * Cache key includes query parameters so different filter combinations are independent.
- * Responds with X-Cache: HIT or X-Cache: MISS header.
- * Cache is invalidated on donation.created events.
- */
-router.get(
-  "/summary",
-  checkPermission(PERMISSIONS.STATS_READ),
-  auditStatsAccess,
-  normaliseDateAliases,
-  optionalDateRangeQuerySchema,
-  (req, res, next) => {
-    try {
-      const { startDate, endDate } = req.query;
-
-      let start, end;
-
-      if (startDate) {
-        start = new Date(startDate);
-        if (isNaN(start.getTime())) {
-          return res.status(400).json({ success: false, error: 'Invalid date format for startDate' });
-        }
-      } else {
-        start = new Date(0);
-      }
-
-      if (endDate) {
-        end = new Date(endDate);
-        if (isNaN(end.getTime())) {
-          return res.status(400).json({ success: false, error: 'Invalid date format for endDate' });
-        }
-      } else {
-        end = new Date();
-      }
-
-      // Build a stable cache key from query params
-      const cacheKey = `${SUMMARY_CACHE_PREFIX}${JSON.stringify(req.query)}`;
-      const cached = Cache.get(cacheKey);
-
-      if (cached) {
-        res.setHeader('X-Cache', 'HIT');
-        return res.json(cached);
-      }
-
-      const stats = StatsService.getSummaryStats(start, end);
-      const body = { success: true, data: stats };
-
-      Cache.set(cacheKey, body, SUMMARY_CACHE_TTL_MS);
-      res.setHeader('X-Cache', 'MISS');
-
-      res.json(body);
-    } catch (error) {
-      next(error);
-    }
-  }
-);
-
-/**
- * GET /stats/donors
- * Get aggregated stats by donor
- * Query params: startDate, endDate (ISO format)
- */
-router.get(
-  "/donors",
-  checkPermission(PERMISSIONS.STATS_READ),
-  auditStatsAccess,
-  strictDateRangeQuerySchema,
-  validateDateRange,
-  (req, res, next) => {
-    try {
-      const { startDate, endDate } = req.query;
-      const start = new Date(startDate);
-      const end = new Date(endDate);
-      const isAdmin = req.user && req.user.role === 'admin';
-
-      const stats = StatsService.getDonorStats(start, end, isAdmin);
-
-      res.json({
-        success: true,
-        data: stats,
-        metadata: {
-          dateRange: {
-            start: start.toISOString(),
-            end: end.toISOString(),
-          },
-          totalDonors: stats.length,
-        },
-      });
-    } catch (error) {
-      next(error);
-    }
-  },
-);
-
-/**
- * GET /stats/recipients
- * Get aggregated stats by recipient
- * Query params: startDate, endDate (ISO format)
- */
-router.get(
-  "/recipients",
-  checkPermission(PERMISSIONS.STATS_READ),
-  auditStatsAccess,
-  strictDateRangeQuerySchema,
-  validateDateRange,
-  (req, res, next) => {
-    try {
-      const { startDate, endDate } = req.query;
-      const start = new Date(startDate);
-      const end = new Date(endDate);
-      const isAdmin = req.user && req.user.role === 'admin';
-
-      const stats = StatsService.getRecipientStats(start, end, isAdmin);
-
-      res.json({
-        success: true,
-        data: stats,
-        metadata: {
-          dateRange: {
-            start: start.toISOString(),
-            end: end.toISOString(),
-          },
-          totalRecipients: stats.length,
-        },
-      });
-    } catch (error) {
-      next(error);
-    }
-  },
-);
-
-/**
- * GET /stats/analytics-fees
- * Get analytics fee summary for reporting
- * Query params: startDate, endDate (ISO format)
- */
-router.get('/analytics-fees', checkPermission(PERMISSIONS.STATS_READ), auditStatsAccess, strictDateRangeQuerySchema, validateDateRange, (req, res, next) => {
+router.get('/weekly', checkPermission(PERMISSIONS.STATS_READ), auditStatsAccess, cacheMiddleware('stats', 'private'), strictDateRangeQuerySchema, validateDateRange, (req, res, next) => {
   try {
     const { startDate, endDate } = req.query;
     const start = new Date(startDate);
     const end = new Date(endDate);
 
-    const stats = StatsService.getAnalyticsFeeStats(start, end);
+    const stats = StatsService.getWeeklyStats(start, end);
 
     res.json({
       success: true,
       data: stats,
       metadata: {
-        note: 'Analytics fees are calculated but not deducted on-chain'
+        startDate,
+        endDate,
+        totalWeeks: stats.length,
+        generatedAt: new Date().toISOString()
       }
     });
   } catch (error) {
@@ -488,88 +328,27 @@ router.get('/analytics-fees', checkPermission(PERMISSIONS.STATS_READ), auditStat
 });
 
 /**
- * GET /stats/wallet/:walletAddress/analytics
- * Get donation analytics for a specific wallet
- * Query params: startDate, endDate (optional, ISO format)
+ * GET /stats/summary
+ * Get summary analytics
+ * Query params: startDate, endDate (ISO format, optional)
  */
-router.get('/wallet/:walletAddress/analytics', checkPermission(PERMISSIONS.STATS_READ), requireTier('pro'), walletAnalyticsSchema, asyncHandler(async (req, res, next) => {
-  try {
-    const { walletAddress } = req.params;
-    const { startDate, endDate } = req.query;
-    const isAdmin = req.user && req.user.role === 'admin';
-
-    let start = null;
-    let end = null;
-
-    if (startDate || endDate) {
-      start = new Date(startDate);
-      end = new Date(endDate);
-
-      if (isNaN(start.getTime()) || isNaN(end.getTime())) {
-        return res.status(400).json({
-          error: 'Invalid date format. Use ISO format (YYYY-MM-DD or ISO 8601)'
-        });
-      }
-
-      if (start > end) {
-        return res.status(400).json({
-          error: 'startDate must be before endDate'
-        });
-      }
-    }
-
-    const analytics = StatsService.getWalletAnalytics(walletAddress, start, end, isAdmin);
-
-    if (analytics.donationCount === 0) {
-      return res.status(404).json({
-        success: false,
-        error: {
-          code: 'NOT_FOUND',
-          message: 'Wallet analytics not found for the provided Stellar public key'
-        }
-      });
-    }
-
-    res.json({
-      success: true,
-      data: analytics
-    });
-  } catch (error) {
-    next(error);
-  }
-}));
-
-/**
- * GET /stats/memo-collisions
- * Get transactions flagged for memo collision (duplicate memo within time window)
- * Query params: startDate, endDate (optional, ISO format)
- */
-router.get('/memo-collisions', checkPermission(PERMISSIONS.STATS_READ), (req, res, next) => {
+router.get('/summary', checkPermission(PERMISSIONS.STATS_READ), auditStatsAccess, optionalDateRangeQuerySchema, normaliseDateAliases, validateDateRange, (req, res, next) => {
   try {
     const { startDate, endDate } = req.query;
     const start = startDate ? new Date(startDate) : null;
     const end = endDate ? new Date(endDate) : null;
 
-    if (start && isNaN(start.getTime())) {
-      return res.status(400).json({ success: false, error: { code: 'INVALID_DATE', message: 'Invalid startDate' } });
-    }
-    if (end && isNaN(end.getTime())) {
-      return res.status(400).json({ success: false, error: { code: 'INVALID_DATE', message: 'Invalid endDate' } });
-    }
-    if (start && end && start > end) {
-      return res.status(400).json({ success: false, error: { code: 'INVALID_DATE_RANGE', message: 'startDate must be before endDate' } });
-    }
-
-    const stats = StatsService.getMemoCollisionStats(start, end);
+    const access = getStatsAccessContext(req);
+    const summary = StatsService.getSummary(start, end, access);
 
     res.json({
       success: true,
-      data: stats,
+      data: summary,
       metadata: {
-        note: 'Collisions occur when the same memo is used more than once within the detection window',
-        ...(start && { startDate: start.toISOString() }),
-        ...(end && { endDate: end.toISOString() }),
-      },
+        startDate: startDate || null,
+        endDate: endDate || null,
+        generatedAt: new Date().toISOString()
+      }
     });
   } catch (error) {
     next(error);
@@ -577,36 +356,28 @@ router.get('/memo-collisions', checkPermission(PERMISSIONS.STATS_READ), (req, re
 });
 
 /**
- * GET /stats/overpayments
- * Get all flagged overpayment transactions with excess amounts
- * Query params: startDate, endDate (optional, ISO format)
+ * GET /stats/donors
+ * Get donor statistics
+ * Query params: startDate, endDate (ISO format, optional)
  */
-router.get('/overpayments', checkPermission(PERMISSIONS.STATS_READ), (req, res, next) => {
+router.get('/donors', checkPermission(PERMISSIONS.STATS_READ), auditStatsAccess, optionalDateRangeQuerySchema, normaliseDateAliases, validateDateRange, (req, res, next) => {
   try {
     const { startDate, endDate } = req.query;
     const start = startDate ? new Date(startDate) : null;
     const end = endDate ? new Date(endDate) : null;
 
-    if (start && isNaN(start.getTime())) {
-      return res.status(400).json({ success: false, error: { code: 'INVALID_DATE', message: 'Invalid startDate' } });
-    }
-    if (end && isNaN(end.getTime())) {
-      return res.status(400).json({ success: false, error: { code: 'INVALID_DATE', message: 'Invalid endDate' } });
-    }
-    if (start && end && start > end) {
-      return res.status(400).json({ success: false, error: { code: 'INVALID_DATE_RANGE', message: 'startDate must be before endDate' } });
-    }
-
-    const stats = StatsService.getOverpaymentStats(start, end);
+    const access = getStatsAccessContext(req);
+    const stats = StatsService.getDonorStats(start, end, access);
 
     res.json({
       success: true,
       data: stats,
       metadata: {
-        note: 'Overpayments occur when received amount exceeds donation + analytics fee',
-        ...(start && { startDate: start.toISOString() }),
-        ...(end && { endDate: end.toISOString() }),
-      },
+        startDate: startDate || null,
+        endDate: endDate || null,
+        totalDonors: stats.length,
+        generatedAt: new Date().toISOString()
+      }
     });
   } catch (error) {
     next(error);
@@ -614,95 +385,112 @@ router.get('/overpayments', checkPermission(PERMISSIONS.STATS_READ), (req, res, 
 });
 
 /**
- * GET /stats/orphaned-transactions
- * Get count and total amount of orphaned transactions detected by reconciliation
+ * GET /stats/recipients
+ * Get recipient statistics
+ * Query params: startDate, endDate (ISO format, optional)
  */
-router.get('/orphaned-transactions', checkPermission(PERMISSIONS.STATS_READ), asyncHandler(async (req, res, next) => {
+router.get('/recipients', checkPermission(PERMISSIONS.STATS_READ), auditStatsAccess, optionalDateRangeQuerySchema, normaliseDateAliases, validateDateRange, (req, res, next) => {
   try {
-    const stats = await StatsService.getOrphanStats();
+    const { startDate, endDate } = req.query;
+    const start = startDate ? new Date(startDate) : null;
+    const end = endDate ? new Date(endDate) : null;
+
+    const access = getStatsAccessContext(req);
+    const stats = StatsService.getRecipientStats(start, end, access);
+
     res.json({
       success: true,
-      data: {
-        orphaned_transactions: stats.count,
-        totalOrphanedAmount: stats.totalAmount,
-      },
+      data: stats,
+      metadata: {
+        startDate: startDate || null,
+        endDate: endDate || null,
+        totalRecipients: stats.length,
+        generatedAt: new Date().toISOString()
+      }
     });
   } catch (error) {
     next(error);
   }
-}));
+});
+
+/**
+ * GET /stats/leaderboard
+ * Get donor leaderboard
+ * Query params: startDate, endDate (ISO format, optional), limit
+ */
+router.get('/leaderboard', checkPermission(PERMISSIONS.STATS_READ), auditStatsAccess, optionalDateRangeQuerySchema, normaliseDateAliases, validateDateRange, (req, res, next) => {
+  try {
+    const { startDate, endDate } = req.query;
+    const start = startDate ? new Date(startDate) : null;
+    const end = endDate ? new Date(endDate) : null;
+    const limit = req.query.limit ? parseInt(req.query.limit, 10) : 10;
+
+    const access = getStatsAccessContext(req);
+    const leaderboard = StatsService.getLeaderboard(start, end, limit, access);
+
+    res.json({
+      success: true,
+      data: leaderboard,
+      metadata: {
+        startDate: startDate || null,
+        endDate: endDate || null,
+        limit,
+        generatedAt: new Date().toISOString()
+      }
+    });
+  } catch (error) {
+    next(error);
+  }
+});
 
 /**
  * GET /stats/dashboard
- * Comprehensive analytics dashboard data with configurable time range.
- *
- * Query params:
- *   period       {string}  - Time range: e.g. 7d, 24h, 4w, 3m, 1y (default: 30d)
- *   granularity  {string}  - hourly|daily|weekly|monthly (auto-selected if omitted)
- *   topN         {number}  - Number of top donors/recipients (default: 10)
+ * Get dashboard data
  */
-router.get('/dashboard', checkPermission(PERMISSIONS.STATS_READ), (req, res, next) => {
+router.get('/dashboard', checkPermission(PERMISSIONS.STATS_READ), auditStatsAccess, (req, res, next) => {
   try {
-    const { period = '30d', granularity, topN, movingAvgWindow } = req.query;
-    const isAdmin = req.user && req.user.role === 'admin';
+    const access = getStatsAccessContext(req);
+    const data = StatsService.getDashboardData(access);
 
-    const topNParsed = topN !== undefined ? parseInt(topN, 10) : 10;
-    const windowParsed = movingAvgWindow !== undefined ? parseInt(movingAvgWindow, 10) : 3;
-
-    if (topN !== undefined && (!Number.isInteger(topNParsed) || topNParsed < 1)) {
-      return res.status(400).json({ success: false, error: { code: 'INVALID_PARAM', message: 'topN must be a positive integer' } });
-    }
-    if (granularity && !['hourly', 'daily', 'weekly', 'monthly'].includes(granularity)) {
-      return res.status(400).json({ success: false, error: { code: 'INVALID_PARAM', message: 'granularity must be hourly, daily, weekly, or monthly' } });
-    }
-
-    const data = StatsService.getDashboardData({ period, granularity, topN: topNParsed, movingAvgWindow: windowParsed, isAdmin });
-
-    res.json({ success: true, data });
+    res.json({
+      success: true,
+      data,
+      metadata: {
+        generatedAt: new Date().toISOString()
+      }
+    });
   } catch (error) {
-    if (error.statusCode === 400) {
-      return res.status(400).json({ success: false, error: { code: 'INVALID_PARAM', message: error.message } });
-    }
     next(error);
   }
 });
 
 /**
- * GET /stats/anonymous-breakdown
- * Get breakdown of anonymous vs identified donations
- *
- * Query params:
- *   startDate {string} - ISO date string (default: 30 days ago)
- *   endDate   {string} - ISO date string (default: now)
+ * GET /stats/wallet/:walletAddress
+ * Get analytics for a specific wallet
  */
-router.get('/anonymous-breakdown', checkPermission(PERMISSIONS.STATS_READ), (req, res, next) => {
+router.get('/wallet/:walletAddress', checkPermission(PERMISSIONS.STATS_READ), auditStatsAccess, walletAnalyticsSchema, (req, res, next) => {
   try {
+    const { walletAddress } = req.params;
     const { startDate, endDate } = req.query;
-    const start = startDate ? new Date(startDate) : new Date(Date.now() - 30 * 24 * 60 * 60 * 1000);
-    const end = endDate ? new Date(endDate) : new Date();
+    const start = startDate ? new Date(startDate) : null;
+    const end = endDate ? new Date(endDate) : null;
 
-    if (isNaN(start.getTime()) || isNaN(end.getTime())) {
-      return res.status(400).json({ success: false, error: { code: 'INVALID_PARAM', message: 'Invalid date format' } });
-    }
+    const access = getStatsAccessContext(req);
+    const analytics = StatsService.getWalletAnalytics(walletAddress, start, end, access);
 
-    const data = StatsService.getAnonymousBreakdown(start, end);
-
-    res.json({ success: true, data });
+    res.json({
+      success: true,
+      data: analytics,
+      metadata: {
+        walletAddress,
+        startDate: startDate || null,
+        endDate: endDate || null,
+        generatedAt: new Date().toISOString()
+      }
+    });
   } catch (error) {
     next(error);
   }
-});
-
-/**
- * POST /stats/cache/invalidate
- * Admin endpoint to manually invalidate all stats caches.
- * Requires stats:admin permission.
- */
-router.post('/cache/invalidate', checkPermission(PERMISSIONS.STATS_ADMIN), (req, res) => {
-  Cache.clearPrefix('stats:');
-  Cache.clearPrefix('stats_cache:');
-  Cache.clearPrefix('dashboard:');
-  res.json({ success: true, message: 'Stats cache invalidated' });
 });
 
 module.exports = router;

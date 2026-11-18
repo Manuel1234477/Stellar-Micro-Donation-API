@@ -1,791 +1,495 @@
-const StellarSdk = require('stellar-sdk');
-const StellarErrorHandler = require('../../utils/stellarErrorHandler');
+/**
+ * Stellar Accounts Module
+ * 
+ * Handles all account-related operations including:
+ * - Wallet creation and funding
+ * - Balance queries
+ * - Account information and sequence numbers
+ * - Account data entries (ManageDataOperation)
+ * - Inflation destination management
+ */
+
+const StellarSdk = require('./sdk.js');
 const log = require('../../utils/log');
-const { withTimeout } = require('../../utils/timeoutHandler');
 const { ValidationError } = require('../../utils/errors');
+const { validateHomeDomain } = require('../../utils/homeDomain');
 
 class StellarAccounts {
-  constructor(service) {
-    this.service = service;
+  constructor(stellarService) {
+    this.stellarService = stellarService;
   }
 
   async createWallet() {
     const pair = StellarSdk.Keypair.random();
     return {
       publicKey: pair.publicKey(),
-      secretKey: pair.secret(),
+      secret: pair.secret(),
     };
   }
 
   async getBalance(publicKey) {
-    return StellarErrorHandler.wrap(async () => {
-      const account = await this.service._executeWithRetry(
-        () => this.service.server.loadAccount(publicKey),
-        'loadAccount'
-      );
-      const nativeBalance = account.balances.find(b => b.asset_type === 'native');
-      return {
-        balance: nativeBalance ? nativeBalance.balance : '0',
-        asset: 'XLM',
-      };
-    }, 'getBalance');
+    const account = await this.stellarService._executeWithRetry(
+      () => this.stellarService.server.loadAccount(publicKey),
+      'getBalance'
+    );
+
+    const nativeBalance = account.balances.find(b => b.asset_type === 'native');
+    return {
+      balance: nativeBalance ? nativeBalance.balance : '0',
+      balances: account.balances,
+    };
   }
 
   async fundTestnetWallet(publicKey) {
-    return StellarErrorHandler.wrap(async () => {
-      await this.service._executeWithRetry(
-        () => this.service.server.friendbot(publicKey).call(),
-        'friendbot'
+    if (this.stellarService.network === 'mainnet' || this.stellarService.network === 'public') {
+      throw new ValidationError('Friendbot funding is not available on mainnet');
+    }
+
+    try {
+      const response = await fetch(
+        `https://friendbot.stellar.org?addr=${encodeURIComponent(publicKey)}`
       );
-      const balance = await this.getBalance(publicKey);
-      return balance;
-    }, 'fundTestnetWallet');
+
+      if (!response.ok) {
+        throw new Error(`Friendbot returned ${response.status}`);
+      }
+
+      return await response.json();
+    } catch (error) {
+      log.error('STELLAR_ACCOUNTS', 'Friendbot funding failed', { error: error.message, publicKey });
+      throw error;
+    }
   }
 
   async fundWithFriendbot(publicKey) {
-    if (this.service.network !== 'testnet') {
-      log.warn('STELLAR_SERVICE', 'Friendbot funding skipped — not on testnet', { network: this.service.network, publicKey });
-      return { funded: false };
-    }
-    try {
-      const result = await this.fundTestnetWallet(publicKey);
-      return { funded: true, balance: result.balance };
-    } catch (err) {
-      log.error('STELLAR_SERVICE', 'Friendbot funding failed', { publicKey, error: err.message });
-      return { funded: false, error: err.message };
-    }
+    return this.fundTestnetWallet(publicKey);
   }
 
   async isAccountFunded(publicKey) {
-    return StellarErrorHandler.wrap(async () => {
-      const balance = await this.getBalance(publicKey);
-      const funded = parseFloat(balance.balance) > 0;
-      return {
-        funded,
-        balance: balance.balance,
-        exists: true,
-      };
-    }, 'isAccountFunded');
+    try {
+      await this.stellarService._executeWithRetry(
+        () => this.stellarService.server.loadAccount(publicKey),
+        'isAccountFunded'
+      );
+      return true;
+    } catch (error) {
+      if (error.response && error.response.status === 404) {
+        return false;
+      }
+      throw error;
+    }
   }
 
   async loadAccount(publicKey) {
-    return StellarErrorHandler.wrap(async () => {
-      return this.service.server.loadAccount(publicKey);
-    }, 'loadAccount');
+    return this.stellarService._executeWithRetry(
+      () => this.stellarService.server.loadAccount(publicKey),
+      'loadAccount'
+    );
   }
 
   async getAccountSequence(publicKey) {
-    return StellarErrorHandler.wrap(async () => {
-      const account = await this.loadAccount(publicKey);
-      return account.sequenceNumber();
-    }, 'getAccountSequence');
+    const account = await this.loadAccount(publicKey);
+    return account.sequence;
   }
 
   async getAccountBalances(publicKey) {
-    return StellarErrorHandler.wrap(async () => {
-      const account = await this.service._executeWithRetry(
-        () => this.service.server.loadAccount(publicKey),
-        'loadAccountForBalances'
-      );
-      return account.balances;
-    }, 'getAccountBalances');
-  }
-
-  async getAccountInfo(publicKey) {
-    try {
-      const account = await this.service._executeWithRetry(
-        () => this.service.server.loadAccount(publicKey),
-        'getAccountInfo'
-      );
-      const nativeBalance = account.balances.find(b => b.asset_type === 'native');
-      return { balance: nativeBalance ? nativeBalance.balance : '0' };
-    } catch (error) {
-      const status = error && error.response && error.response.status;
-      if (status === 404) {
-        return { notFound: true };
-      }
-      log.warn('STELLAR_SERVICE', 'getAccountInfo failed with non-404 error', {
-        publicKey,
-        status,
-        error: error.message,
-      });
-      return { error: true };
-    }
+    const account = await this.loadAccount(publicKey);
+    return account.balances;
   }
 
   async setInflationDestination(sourceSecret, destinationPublicKey) {
-    if (!StellarSdk.StrKey.isValidEd25519PublicKey(destinationPublicKey)) {
-      throw new ValidationError(
-        `destination must be a valid Stellar public key (56-character Base32 string starting with G); received: ${destinationPublicKey}`
-      );
-    }
+    const sourceKeypair = StellarSdk.Keypair.fromSecret(sourceSecret);
+    const account = await this.loadAccount(sourceKeypair.publicKey());
 
-    return StellarErrorHandler.wrap(async () => {
-      const sourceKeypair = StellarSdk.Keypair.fromSecret(sourceSecret);
-      const sourceAccount = await this.service._executeWithRetry(
-        () => this.service.server.loadAccount(sourceKeypair.publicKey()),
-        'loadAccountForSetInflationDestination'
-      );
+    const transaction = new StellarSdk.TransactionBuilder(account, {
+      fee: this.stellarService.baseFee,
+      networkPassphrase: this.stellarService.networkPassphrase,
+    })
+      .addOperation(
+        StellarSdk.Operation.setOptions({
+          inflationDest: destinationPublicKey,
+        })
+      )
+      .setTimeout(30)
+      .build();
 
-      const transaction = new StellarSdk.TransactionBuilder(sourceAccount, {
-        fee: this.service.baseFee,
-        networkPassphrase: this.service.networkPassphrase,
-      })
-        .addOperation(StellarSdk.Operation.setOptions({ inflationDest: destinationPublicKey }))
-        .setTimeout(30)
-        .build();
+    transaction.sign(sourceKeypair);
 
-      transaction.sign(sourceKeypair);
-
-      const result = await this.service._submitTransactionWithNetworkSafety(transaction);
-
-      log.info('STELLAR_SERVICE', 'Inflation destination set', {
-        source: sourceKeypair.publicKey(),
-        inflationDest: destinationPublicKey,
-        hash: result.hash,
-      });
-
-      return { hash: result.hash, ledger: result.ledger };
-    }, 'setInflationDestination');
+    const result = await this.stellarService._submitTransactionWithNetworkSafety(transaction);
+    return { hash: result.hash, ledger: result.ledger };
   }
 
   async getInflationDestination(publicKey) {
-    try {
-      const account = await this.service._executeWithRetry(
-        () => this.service.server.loadAccount(publicKey),
-        'loadAccountForInflationDestination'
-      );
-      return account.inflation_destination || null;
-    } catch (error) {
-      log.warn('STELLAR_SERVICE', 'Failed to fetch inflation destination, returning null', {
-        publicKey,
-        error: error.message,
-      });
-      return null;
-    }
+    const account = await this.loadAccount(publicKey);
+    return account.inflation_destination || null;
   }
 
-  async setAccountData(secret, key, value) {
-    return StellarErrorHandler.wrap(async () => {
-      const keypair = StellarSdk.Keypair.fromSecret(secret);
-      const account = await this.service._executeWithRetry(
-        () => this.service.server.loadAccount(keypair.publicKey()),
-        'loadAccountForManageData'
-      );
+  async setHomeDomain(sourceSecret, homeDomain) {
+    validateHomeDomain(homeDomain, { allowEmpty: true });
 
-      const transaction = new StellarSdk.TransactionBuilder(account, {
-        fee: this.service.baseFee,
-        networkPassphrase: this.service.networkPassphrase,
-      })
-        .addOperation(StellarSdk.Operation.manageData({
-          name: key,
-          value: value,
-        }))
-        .setTimeout(30)
-        .build();
+    const sourceKeypair = StellarSdk.Keypair.fromSecret(sourceSecret);
+    const account = await this.loadAccount(sourceKeypair.publicKey());
+    const transaction = new StellarSdk.TransactionBuilder(account, {
+      fee: this.stellarService.baseFee,
+      networkPassphrase: this.stellarService.networkPassphrase,
+    })
+      .addOperation(StellarSdk.Operation.setOptions({ homeDomain }))
+      .setTimeout(30)
+      .build();
 
-      transaction.sign(keypair);
-      const result = await this.service._submitTransactionWithNetworkSafety(transaction);
-      return {
-        hash: result.hash,
-        ledger: result.ledger,
-      };
-    }, 'setAccountData');
-  }
-
-  async setOptions(secret, options = {}) {
-    return StellarErrorHandler.wrap(async () => {
-      const keypair = StellarSdk.Keypair.fromSecret(secret);
-      const account = await this.service._executeWithRetry(
-        () => this.service.server.loadAccount(keypair.publicKey()),
-        'loadAccountForSetOptions'
-      );
-
-      const AUTH_IMMUTABLE = StellarSdk.AuthImmutableFlag;
-      if (options.clearFlags !== undefined) {
-        const flags = Number(options.clearFlags);
-        // eslint-disable-next-line no-bitwise
-        if ((flags & AUTH_IMMUTABLE) !== 0) {
-          throw new ValidationError('AUTH_IMMUTABLE flag cannot be cleared once set');
-        }
-      }
-
-      const transaction = new StellarSdk.TransactionBuilder(account, {
-        fee: this.service.baseFee,
-        networkPassphrase: this.service.networkPassphrase,
-      })
-        .addOperation(StellarSdk.Operation.setOptions(options))
-        .setTimeout(30)
-        .build();
-
-      transaction.sign(keypair);
-      const result = await this.service._submitTransactionWithNetworkSafety(transaction);
-      return { hash: result.hash, ledger: result.ledger };
-    }, 'setOptions');
-  }
-
-  async deleteAccountData(secret, key) {
-    return this.setAccountData(secret, key, null);
-  }
-
-  isValidAddress(address) {
-    return StellarSdk.StrKey.isValidEd25519PublicKey(address);
+    transaction.sign(sourceKeypair);
+    const result = await this.stellarService._submitTransactionWithNetworkSafety(transaction);
+    return { hash: result.hash, ledger: result.ledger };
   }
 
   async getHomeDomain(publicKey) {
+    const account = await this.loadAccount(publicKey);
+    return account.home_domain || null;
+  }
+
+  /**
+   * Add (or update the weight of) a signer on an account.
+   * Used for multi-sig setups and social-recovery signer swaps (#1552).
+   */
+  async addSigner(masterSecret, signerPublicKey, weight = 1) {
+    const sourceKeypair = StellarSdk.Keypair.fromSecret(masterSecret);
+    const account = await this.loadAccount(sourceKeypair.publicKey());
+
+    const transaction = new StellarSdk.TransactionBuilder(account, {
+      fee: this.stellarService.baseFee,
+      networkPassphrase: this.stellarService.networkPassphrase,
+    })
+      .addOperation(
+        StellarSdk.Operation.setOptions({
+          signer: { ed25519PublicKey: signerPublicKey, weight },
+        })
+      )
+      .setTimeout(30)
+      .build();
+
+    transaction.sign(sourceKeypair);
+    const result = await this.stellarService._submitTransactionWithNetworkSafety(transaction);
+    return { hash: result.hash, ledger: result.ledger, signerPublicKey, weight };
+  }
+
+  /**
+   * Remove a signer from an account (weight 0).
+   */
+  async removeSigner(masterSecret, signerPublicKey) {
+    return this.addSigner(masterSecret, signerPublicKey, 0);
+  }
+
+  isValidAddress(address) {
     try {
-      const account = await this.service._executeWithRetry(
-        () => this.service.server.loadAccount(publicKey),
-        'loadAccountForHomeDomain'
-      );
-      return account.home_domain || null;
-    } catch (error) {
-      return null;
+      StellarSdk.StrKey.decodeEd25519PublicKey(address);
+      return true;
+    } catch {
+      return false;
     }
-  }
-
-  async setHomeDomain(sourceSecret, domain) {
-    const https = require('https');
-
-    if (!domain || typeof domain !== 'string') {
-      throw new ValidationError('domain must be a non-empty string');
-    }
-    if (domain.length > 32) {
-      throw new ValidationError('domain must be 32 characters or fewer per Stellar spec');
-    }
-    // eslint-disable-next-line security/detect-unsafe-regex
-    if (!/^[a-zA-Z0-9]([a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?(\.[a-zA-Z0-9]([a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?)*$/.test(domain)) {
-      throw new ValidationError('domain must be a valid hostname with no protocol or path');
-    }
-
-    await new Promise((resolve, reject) => {
-      const url = `https://${domain}/.well-known/stellar.toml`;
-      const req = https.get(url, { timeout: 5000 }, (res) => {
-        if (res.statusCode >= 200 && res.statusCode < 300) {
-          res.resume();
-          resolve();
-        } else {
-          res.resume();
-          reject(new ValidationError(
-            `stellar.toml verification failed: https://${domain}/.well-known/stellar.toml returned HTTP ${res.statusCode}`
-          ));
-        }
-      });
-      req.on('timeout', () => {
-        req.destroy();
-        reject(new ValidationError(
-          `stellar.toml verification failed: request to https://${domain}/.well-known/stellar.toml timed out after 5 seconds`
-        ));
-      });
-      req.on('error', (err) => {
-        reject(new ValidationError(
-          `stellar.toml verification failed: could not reach https://${domain}/.well-known/stellar.toml — ${err.message}`
-        ));
-      });
-    });
-
-    return StellarErrorHandler.wrap(async () => {
-      const sourceKeypair = StellarSdk.Keypair.fromSecret(sourceSecret);
-      const sourceAccount = await this.service._executeWithRetry(
-        () => this.service.server.loadAccount(sourceKeypair.publicKey()),
-        'loadAccountForSetHomeDomain'
-      );
-
-      const transaction = new StellarSdk.TransactionBuilder(sourceAccount, {
-        fee: this.service.baseFee,
-        networkPassphrase: this.service.networkPassphrase,
-      })
-        .addOperation(StellarSdk.Operation.setOptions({ homeDomain: domain }))
-        .setTimeout(30)
-        .build();
-
-      transaction.sign(sourceKeypair);
-
-      const result = await this.service._submitTransactionWithNetworkSafety(transaction);
-
-      log.info('STELLAR_SERVICE', 'Home domain set', {
-        source: sourceKeypair.publicKey(),
-        homeDomain: domain,
-        hash: result.hash,
-      });
-
-      return { hash: result.hash, ledger: result.ledger };
-    }, 'setHomeDomain');
-  }
-
-  async getSigners(publicKey) {
-    return StellarErrorHandler.wrap(async () => {
-      const account = await this.service._executeWithRetry(
-        () => this.service.server.loadAccount(publicKey),
-        'loadAccountForSigners'
-      );
-
-      return account.signers.map(signer => ({
-        publicKey: signer.key,
-        weight: signer.weight,
-        type: signer.type
-      }));
-    }, 'getSigners');
-  }
-
-  async addSigner(masterSecret, signerPublic, weight = 1) {
-    return StellarErrorHandler.wrap(async () => {
-      if (!signerPublic || typeof signerPublic !== 'string') {
-        throw new ValidationError('Signer public key is required');
-      }
-
-      if (typeof weight !== 'number' || weight < 0 || weight > 255) {
-        throw new ValidationError('Weight must be a number between 0 and 255');
-      }
-
-      const masterKeypair = StellarSdk.Keypair.fromSecret(masterSecret);
-      const masterPublic = masterKeypair.publicKey();
-
-      if (masterPublic === signerPublic) {
-        throw new ValidationError('Cannot add master key as a signer');
-      }
-
-      const account = await this.service._executeWithRetry(
-        () => this.service.server.loadAccount(masterPublic),
-        'loadAccountForAddSigner'
-      );
-
-      const transaction = new StellarSdk.TransactionBuilder(account, {
-        fee: this.service.baseFee,
-        networkPassphrase: this.service.networkPassphrase,
-      })
-        .addOperation(StellarSdk.Operation.setOptions({
-          signer: {
-            ed25519PublicKey: signerPublic,
-            weight: weight
-          }
-        }))
-        .setTimeout(30)
-        .build();
-
-      transaction.sign(masterKeypair);
-      const result = await this.service._submitTransactionWithNetworkSafety(transaction);
-
-      log.info('STELLAR_SERVICE', 'Signer added to account', {
-        master: masterPublic,
-        signer: signerPublic,
-        weight,
-        hash: result.hash
-      });
-
-      return {
-        hash: result.hash,
-        ledger: result.ledger,
-        signer: signerPublic,
-        weight
-      };
-    }, 'addSigner');
-  }
-
-  async removeSigner(masterSecret, signerPublic) {
-    return StellarErrorHandler.wrap(async () => {
-      if (!signerPublic || typeof signerPublic !== 'string') {
-        throw new ValidationError('Signer public key is required');
-      }
-
-      const masterKeypair = StellarSdk.Keypair.fromSecret(masterSecret);
-      const masterPublic = masterKeypair.publicKey();
-
-      if (masterPublic === signerPublic) {
-        throw new ValidationError('Cannot remove master key as a signer');
-      }
-
-      const account = await this.service._executeWithRetry(
-        () => this.service.server.loadAccount(masterPublic),
-        'loadAccountForRemoveSigner'
-      );
-
-      const signerExists = account.signers.some(s => s.key === signerPublic);
-      if (!signerExists) {
-        throw new ValidationError('Signer not found on account');
-      }
-
-      const currentSigners = account.signers;
-      const threshold = account.thresholds;
-      
-      const remainingSigners = currentSigners.filter(s => s.key !== signerPublic);
-      const totalWeight = remainingSigners.reduce((sum, s) => sum + s.weight, 0);
-      
-      if (totalWeight < threshold.low) {
-        throw new ValidationError(
-          'Cannot remove signer: account would be locked (total weight would be below low threshold)'
-        );
-      }
-
-      const transaction = new StellarSdk.TransactionBuilder(account, {
-        fee: this.service.baseFee,
-        networkPassphrase: this.service.networkPassphrase,
-      })
-        .addOperation(StellarSdk.Operation.setOptions({
-          signer: {
-            ed25519PublicKey: signerPublic,
-            weight: 0
-          }
-        }))
-        .setTimeout(30)
-        .build();
-
-      transaction.sign(masterKeypair);
-      const result = await this.service._submitTransactionWithNetworkSafety(transaction);
-
-      log.info('STELLAR_SERVICE', 'Signer removed from account', {
-        master: masterPublic,
-        signer: signerPublic,
-        hash: result.hash
-      });
-
-      return {
-        hash: result.hash,
-        ledger: result.ledger,
-        signer: signerPublic
-      };
-    }, 'removeSigner');
-  }
-
-  async updateSignerWeight(masterSecret, signerPublic, newWeight) {
-    return StellarErrorHandler.wrap(async () => {
-      if (!signerPublic || typeof signerPublic !== 'string') {
-        throw new ValidationError('Signer public key is required');
-      }
-
-      if (typeof newWeight !== 'number' || newWeight < 0 || newWeight > 255) {
-        throw new ValidationError('Weight must be a number between 0 and 255');
-      }
-
-      const masterKeypair = StellarSdk.Keypair.fromSecret(masterSecret);
-      const masterPublic = masterKeypair.publicKey();
-
-      const account = await this.service._executeWithRetry(
-        () => this.service.server.loadAccount(masterPublic),
-        'loadAccountForUpdateSigner'
-      );
-
-      const signerExists = account.signers.some(s => s.key === signerPublic);
-      if (!signerExists) {
-        throw new ValidationError('Signer not found on account');
-      }
-
-      const currentSigners = account.signers;
-      const threshold = account.thresholds;
-      
-      const updatedSigners = currentSigners.map(s =>
-        s.key === signerPublic ? { ...s, weight: newWeight } : s
-      );
-      const totalWeight = updatedSigners.reduce((sum, s) => sum + s.weight, 0);
-      
-      if (totalWeight < threshold.low) {
-        throw new ValidationError(
-          'Cannot update signer weight: account would be locked (total weight would be below low threshold)'
-        );
-      }
-
-      const transaction = new StellarSdk.TransactionBuilder(account, {
-        fee: this.service.baseFee,
-        networkPassphrase: this.service.networkPassphrase,
-      })
-        .addOperation(StellarSdk.Operation.setOptions({
-          signer: {
-            ed25519PublicKey: signerPublic,
-            weight: newWeight
-          }
-        }))
-        .setTimeout(30)
-        .build();
-
-      transaction.sign(masterKeypair);
-      const result = await this.service._submitTransactionWithNetworkSafety(transaction);
-
-      log.info('STELLAR_SERVICE', 'Signer weight updated', {
-        master: masterPublic,
-        signer: signerPublic,
-        newWeight,
-        hash: result.hash
-      });
-
-      return {
-        hash: result.hash,
-        ledger: result.ledger,
-        signer: signerPublic,
-        weight: newWeight
-      };
-    }, 'updateSignerWeight');
-  }
-
-  async setThresholds(sourceSecret, low, medium, high) {
-    return StellarErrorHandler.wrap(async () => {
-      for (const [name, val] of [['low', low], ['medium', medium], ['high', high]]) {
-        if (!Number.isInteger(val) || val < 0 || val > 255) {
-          throw new ValidationError(`${name} threshold must be an integer between 0 and 255`);
-        }
-      }
-
-      const keypair = StellarSdk.Keypair.fromSecret(sourceSecret);
-      const account = await this.service._executeWithRetry(
-        () => this.service.server.loadAccount(keypair.publicKey()),
-        'loadAccountForSetThresholds'
-      );
-
-      const transaction = new StellarSdk.TransactionBuilder(account, {
-        fee: this.service.baseFee,
-        networkPassphrase: this.service.networkPassphrase,
-      })
-        .addOperation(StellarSdk.Operation.setOptions({ lowThreshold: low, medThreshold: medium, highThreshold: high }))
-        .setTimeout(30)
-        .build();
-
-      transaction.sign(keypair);
-      const result = await this.service._submitTransactionWithNetworkSafety(transaction);
-
-      log.info('STELLAR_SERVICE', 'Thresholds set', { account: keypair.publicKey(), low, medium, high, hash: result.hash });
-
-      return { hash: result.hash, ledger: result.ledger, thresholds: { low, medium, high } };
-    }, 'setThresholds');
-  }
-
-  async getThresholds(publicKey) {
-    return StellarErrorHandler.wrap(async () => {
-      const account = await this.loadAccount(publicKey);
-      return account.thresholds;
-    }, 'getThresholds');
-  }
-
-  async setDataEntry(sourceSecret, key, value) {
-    return StellarErrorHandler.wrap(async () => {
-      const keypair = StellarSdk.Keypair.fromSecret(sourceSecret);
-      const account = await this.service._executeWithRetry(
-        () => this.service.server.loadAccount(keypair.publicKey()),
-        'loadAccountForDataEntry'
-      );
-
-      const tx = new StellarSdk.TransactionBuilder(account, {
-        fee: this.service.baseFee,
-        networkPassphrase: this.service.networkPassphrase,
-      })
-        .addOperation(StellarSdk.Operation.manageData({ name: key, value }))
-        .setTimeout(30)
-        .build();
-
-      tx.sign(keypair);
-      const result = await this.service._executeWithRetry(
-        () => this.service.server.submitTransaction(tx),
-        'submitDataEntry'
-      );
-
-      return { hash: result.hash, ledger: result.ledger };
-    }, 'setDataEntry');
-  }
-
-  async deleteDataEntry(sourceSecret, key) {
-    return this.setDataEntry(sourceSecret, key, null);
-  }
-
-  async getDataEntries(publicKey) {
-    return StellarErrorHandler.wrap(async () => {
-      const account = await this.service._executeWithRetry(
-        () => this.service.server.loadAccount(publicKey),
-        'loadAccountForDataEntries'
-      );
-
-      const entries = {};
-      for (const [k, v] of Object.entries(account.data_attr || {})) {
-        entries[k] = Buffer.from(v, 'base64').toString('utf8');
-      }
-      return entries;
-    }, 'getDataEntries');
-  }
-
-  async mergeAccount(sourceSecret, destinationPublic) {
-    return StellarErrorHandler.wrap(async () => {
-      const sourceKeypair = StellarSdk.Keypair.fromSecret(sourceSecret);
-      const sourcePublic = sourceKeypair.publicKey();
-
-      if (sourcePublic === destinationPublic) {
-        throw new ValidationError('Source and destination accounts cannot be the same');
-      }
-
-      const sourceAccount = await this.service._executeWithRetry(() =>
-        this.service.server.loadAccount(sourcePublic)
-      );
-
-      await this.service._executeWithRetry(() =>
-        this.service.server.loadAccount(destinationPublic)
-      );
-
-      const nativeBal = sourceAccount.balances.find(b => b.asset_type === 'native');
-      const mergedAmount = nativeBal ? nativeBal.balance : '0';
-
-      const transaction = new StellarSdk.TransactionBuilder(sourceAccount, {
-        fee: this.service.baseFee,
-        networkPassphrase: this.service.networkPassphrase,
-      })
-        .addOperation(
-          StellarSdk.Operation.accountMerge({ destination: destinationPublic })
-        )
-        .setTimeout(30)
-        .build();
-
-      transaction.sign(sourceKeypair);
-
-      const result = await this.service._submitTransactionWithNetworkSafety(transaction);
-
-      log.info('STELLAR_SERVICE', 'Account merged', {
-        source: sourcePublic,
-        destination: destinationPublic,
-        mergedAmount,
-        hash: result.hash,
-      });
-
-      return { hash: result.hash, ledger: result.ledger, mergedAmount };
-    }, 'mergeAccount');
-  }
-
-  async validateMergeEligibility(publicKey) {
-    return StellarErrorHandler.wrap(async () => {
-      if (!publicKey || typeof publicKey !== 'string') {
-        throw new ValidationError('Invalid public key');
-      }
-
-      const account = await this.service._executeWithRetry(() =>
-        this.service.server.loadAccount(publicKey)
-      );
-
-      const blockers = [];
-
-      for (const balance of account.balances) {
-        if (balance.asset_type !== 'native') {
-          const bal = parseFloat(balance.balance);
-          if (bal > 0) {
-            blockers.push({
-              type: 'non_zero_trustline',
-              detail: `Non-zero trustline: ${balance.asset_code || balance.asset_type} (balance: ${balance.balance})`
-            });
-          }
-        }
-      }
-
-      try {
-        const offersPage = await this.service._executeWithRetry(() =>
-          this.service.server.offers().forAccount(publicKey).limit(1).call()
-        );
-        if (offersPage.records && offersPage.records.length > 0) {
-          blockers.push({ type: 'open_offers', detail: 'Account has open DEX offers' });
-        }
-      } catch (_) { /* best-effort */ }
-
-      const dataEntries = Object.keys(account.data_attr || account.data || {});
-      if (dataEntries.length > 0) {
-        blockers.push({
-          type: 'data_entries',
-          detail: `Account has ${dataEntries.length} data entr${dataEntries.length === 1 ? 'y' : 'ies'}`
-        });
-      }
-
-      return { eligible: blockers.length === 0, blockers };
-    }, 'validateMergeEligibility');
   }
 
   async bumpSequence(secret, bumpTo) {
-    return StellarErrorHandler.wrap(async () => {
-      const keypair = StellarSdk.Keypair.fromSecret(secret);
-      const account = await withTimeout(
-        this.service.server.loadAccount(keypair.publicKey()),
-        this.service.timeouts.api,
-        'loadAccount timed out'
-      );
+    const keypair = StellarSdk.Keypair.fromSecret(secret);
+    const account = await this.loadAccount(keypair.publicKey());
 
-      const tx = new StellarSdk.TransactionBuilder(account, {
-        fee: this.service.baseFee,
-        networkPassphrase: this.service.networkPassphrase,
-      })
-        .addOperation(StellarSdk.Operation.bumpSequence({ bumpTo: String(bumpTo) }))
-        .setTimeout(30)
-        .build();
+    const transaction = new StellarSdk.TransactionBuilder(account, {
+      fee: this.stellarService.baseFee,
+      networkPassphrase: this.stellarService.networkPassphrase,
+    })
+      .addOperation(
+        StellarSdk.Operation.bumpSequence({
+          bumpTo: bumpTo.toString(),
+        })
+      )
+      .setTimeout(30)
+      .build();
 
-      tx.sign(keypair);
+    transaction.sign(keypair);
 
-      const result = await this.service._submitTransactionWithNetworkSafety(tx);
-      return {
-        hash: result.hash,
-        ledger: result.ledger,
-        newSequence: String(bumpTo),
-      };
-    }, 'bumpSequence');
+    const result = await this.stellarService._submitTransactionWithNetworkSafety(transaction);
+    return { hash: result.hash, ledger: result.ledger };
   }
 
-  async createSponsoredAccount(sponsorSecret, newAccountPublicKey) {
-    return this.sponsorAccount(sponsorSecret, newAccountPublicKey);
+  async mergeAccount(sourceSecret, destinationPublic) {
+    const sourceKeypair = StellarSdk.Keypair.fromSecret(sourceSecret);
+    const account = await this.loadAccount(sourceKeypair.publicKey());
+
+    const transaction = new StellarSdk.TransactionBuilder(account, {
+      fee: this.stellarService.baseFee,
+      networkPassphrase: this.stellarService.networkPassphrase,
+    })
+      .addOperation(
+        StellarSdk.Operation.accountMerge({
+          destination: destinationPublic,
+        })
+      )
+      .setTimeout(30)
+      .build();
+
+    transaction.sign(sourceKeypair);
+
+    const result = await this.stellarService._submitTransactionWithNetworkSafety(transaction);
+    return { hash: result.hash, ledger: result.ledger };
   }
 
-  async revokeSponsoredAccount(sponsorSecret, targetPublicKey) {
-    return this.revokeSponsorship(sponsorSecret, targetPublicKey);
-  }
+  async validateMergeEligibility(publicKey) {
+    const account = await this.loadAccount(publicKey);
 
-  async sponsorAccount(sponsorSecret, newAccountPublicKey) {
-    return StellarErrorHandler.wrap(async () => {
-      const sponsorKeypair = StellarSdk.Keypair.fromSecret(sponsorSecret);
-      const sponsorPublic = sponsorKeypair.publicKey();
-      const account = await this.service.server.loadAccount(sponsorPublic);
+    const issues = [];
 
-      const transaction = new StellarSdk.TransactionBuilder(account, {
-        fee: this.service.baseFee,
-        networkPassphrase: this.service.networkPassphrase,
-      })
-        .addOperation(StellarSdk.Operation.beginSponsoringFutureReserves({
-          sponsoredId: newAccountPublicKey,
-        }))
-        .addOperation(StellarSdk.Operation.createAccount({
-          destination: newAccountPublicKey,
-          startingBalance: '0',
-          source: sponsorPublic,
-        }))
-        .addOperation(StellarSdk.Operation.endSponsoringFutureReserves({
-          source: newAccountPublicKey,
-        }))
-        .setTimeout(30)
-        .build();
-
-      const newKeypair = StellarSdk.Keypair.fromPublicKey(newAccountPublicKey);
-      transaction.sign(sponsorKeypair, newKeypair);
-
-      const result = await this.service.server.submitTransaction(transaction);
-      return { transactionId: result.hash, ledger: result.ledger, sponsored: true };
-    }, 'sponsorAccount');
-  }
-
-  async revokeSponsorship(sponsorSecret, targetPublicKey, entryType = 'account') {
-    return StellarErrorHandler.wrap(async () => {
-      const sponsorKeypair = StellarSdk.Keypair.fromSecret(sponsorSecret);
-      const account = await this.service.server.loadAccount(sponsorKeypair.publicKey());
-
-      const op = StellarSdk.Operation.revokeSponsorship({
-        type: entryType,
-        account: targetPublicKey,
+    if (account.subentry_count > 0) {
+      issues.push({
+        field: 'subentries',
+        value: account.subentry_count,
+        message: 'Account has active subentries (trustlines, offers, signers, or data entries)',
       });
+    }
 
-      const transaction = new StellarSdk.TransactionBuilder(account, {
-        fee: this.service.baseFee,
-        networkPassphrase: this.service.networkPassphrase,
-      })
-        .addOperation(op)
-        .setTimeout(30)
-        .build();
+    if (account.num_sponsoring > 0) {
+      issues.push({
+        field: 'sponsoring',
+        value: account.num_sponsoring,
+        message: 'Account is sponsoring other accounts or reserves',
+      });
+    }
 
-      transaction.sign(sponsorKeypair);
+    if (account.num_sponsored > 0) {
+      issues.push({
+        field: 'sponsored',
+        value: account.num_sponsored,
+        message: 'Account has sponsored reserves',
+      });
+    }
 
-      const result = await this.service.server.submitTransaction(transaction);
-      return { transactionId: result.hash, ledger: result.ledger, revoked: true };
-    }, 'revokeSponsorship');
+    return {
+      eligible: issues.length === 0,
+      issues,
+      account: {
+        id: account.id,
+        subentry_count: account.subentry_count,
+        num_sponsoring: account.num_sponsoring,
+        num_sponsored: account.num_sponsored,
+      },
+    };
   }
 
-  async getSponsorshipStatus(publicKey) {
-    const accountData = await this.service.server.loadAccount(publicKey);
-    const sponsoredBy = accountData.sponsor || null;
-    return { sponsored: !!sponsoredBy, sponsoredBy };
+  /**
+   * Set a data entry on a Stellar account using ManageDataOperation.
+   * @param {string} sourceSecret - Secret key of the account
+   * @param {string} key - Data entry key (max 64 bytes)
+   * @param {string|Buffer} value - Data entry value (max 64 bytes)
+   * @returns {Promise<{hash: string, ledger: number}>}
+   */
+  async setAccountData(sourceSecret, key, value) {
+    if (!key || typeof key !== 'string') {
+      throw new ValidationError('key is required and must be a string');
+    }
+    if (Buffer.byteLength(key, 'utf8') > 64) {
+      throw new ValidationError('key must be 64 bytes or less');
+    }
+    if (value !== null && value !== undefined) {
+      const valueBuffer = Buffer.isBuffer(value) ? value : Buffer.from(value, 'utf8');
+      if (valueBuffer.length > 64) {
+        throw new ValidationError('value must be 64 bytes or less');
+      }
+    }
+
+    const sourceKeypair = StellarSdk.Keypair.fromSecret(sourceSecret);
+    const account = await this.loadAccount(sourceKeypair.publicKey());
+
+    const transaction = new StellarSdk.TransactionBuilder(account, {
+      fee: this.stellarService.baseFee,
+      networkPassphrase: this.stellarService.networkPassphrase,
+    })
+      .addOperation(
+        StellarSdk.Operation.manageData({
+          name: key,
+          value: value,
+        })
+      )
+      .setTimeout(30)
+      .build();
+
+    transaction.sign(sourceKeypair);
+
+    const result = await this.stellarService._submitTransactionWithNetworkSafety(transaction);
+    log.info('STELLAR_ACCOUNTS', 'Account data entry set', {
+      publicKey: sourceKeypair.publicKey(),
+      key,
+      hash: result.hash,
+    });
+
+    return { hash: result.hash, ledger: result.ledger };
+  }
+
+  /**
+   * Get all data entries for a Stellar account.
+   * @param {string} publicKey - Account public key
+   * @returns {Promise<Object>} Map of key-value pairs
+   */
+  async getAccountData(publicKey) {
+    const account = await this.loadAccount(publicKey);
+    
+    // Horizon returns data entries in the account.data field as base64-encoded values
+    const dataEntries = {};
+    if (account.data_attr) {
+      for (const [key, base64Value] of Object.entries(account.data_attr)) {
+        dataEntries[key] = Buffer.from(base64Value, 'base64').toString('utf8');
+      }
+    }
+
+    return dataEntries;
+  }
+
+  /**
+   * Delete a data entry from a Stellar account by setting its value to null.
+   * @param {string} sourceSecret - Secret key of the account
+   * @param {string} key - Data entry key to delete
+   * @returns {Promise<{hash: string, ledger: number}>}
+   */
+  async deleteAccountData(sourceSecret, key) {
+    if (!key || typeof key !== 'string') {
+      throw new ValidationError('key is required and must be a string');
+    }
+
+    const sourceKeypair = StellarSdk.Keypair.fromSecret(sourceSecret);
+    const account = await this.loadAccount(sourceKeypair.publicKey());
+
+    const transaction = new StellarSdk.TransactionBuilder(account, {
+      fee: this.stellarService.baseFee,
+      networkPassphrase: this.stellarService.networkPassphrase,
+    })
+      .addOperation(
+        StellarSdk.Operation.manageData({
+          name: key,
+          value: null, // Setting to null removes the entry
+        })
+      )
+      .setTimeout(30)
+      .build();
+
+    transaction.sign(sourceKeypair);
+
+    const result = await this.stellarService._submitTransactionWithNetworkSafety(transaction);
+    log.info('STELLAR_ACCOUNTS', 'Account data entry deleted', {
+      publicKey: sourceKeypair.publicKey(),
+      key,
+      hash: result.hash,
+    });
+
+    return { hash: result.hash, ledger: result.ledger };
+  }
+
+  /**
+   * Calculate minimum XLM reserve for an account based on subentries.
+   * Base reserve: 1 XLM (as of 2023, was 0.5 XLM previously)
+   * Per subentry: 0.5 XLM
+   * @param {number} subentryCount - Number of trustlines, offers, signers, data entries
+   * @returns {number} Minimum reserve in XLM
+   */
+  calculateMinimumReserve(subentryCount) {
+    const BASE_RESERVE = 1; // XLM
+    const SUBENTRY_RESERVE = 0.5; // XLM per subentry
+    return BASE_RESERVE + (subentryCount * SUBENTRY_RESERVE);
+  }
+
+  /**
+   * Compute the spendable native balance of an account in stroops.
+   *
+   * available = balance - minimumReserve - sellingLiabilities - fee
+   *
+   * All arithmetic is performed on integer stroops (BigInt) to avoid the
+   * floating-point rounding errors that previously caused insufficient-balance
+   * donations to slip past the early check and fail later at Horizon.
+   *
+   * @param {Object} account - Horizon account record (from loadAccount)
+   * @param {Object} [options]
+   * @param {number|string|bigint} [options.feeStroops=100] - Transaction fee in stroops
+   * @param {number} [options.baseReserveStroops] - Base reserve in stroops (defaults to 5000000)
+   * @returns {{availableStroops: bigint, balanceStroops: bigint, minimumReserveStroops: bigint, sellingLiabilitiesStroops: bigint, feeStroops: bigint, subentryCount: number}}
+   */
+  computeAvailableBalanceStroops(account, options = {}) {
+    const STROOPS_PER_XLM = 10000000n;
+    const DEFAULT_BASE_RESERVE_STROOPS = 5000000n; // 0.5 XLM
+
+    const toStroops = (value) => {
+      if (value === null || value === undefined || value === '') return 0n;
+      if (typeof value === 'bigint') return value;
+      if (typeof value === 'number') {
+        if (!Number.isFinite(value)) return 0n;
+        return BigInt(Math.round(value * Number(STROOPS_PER_XLM)));
+      }
+      const str = String(value).trim();
+      if (!str) return 0n;
+      const negative = str.startsWith('-');
+      const unsigned = negative ? str.slice(1) : str;
+      const [wholePart, fracPartRaw = ''] = unsigned.split('.');
+      const fracPart = (fracPartRaw + '0000000').slice(0, 7);
+      const stroops = BigInt(wholePart || '0') * STROOPS_PER_XLM + BigInt(fracPart || '0');
+      return negative ? -stroops : stroops;
+    };
+
+    const nativeBalance = (account.balances || []).find(b => b.asset_type === 'native');
+    const balanceStroops = toStroops(nativeBalance ? nativeBalance.balance : '0');
+    const sellingLiabilitiesStroops = toStroops(
+      nativeBalance ? nativeBalance.selling_liabilities : '0'
+    );
+
+    const subentryCount = Number(account.subentry_count || 0);
+    const baseReserveStroops = options.baseReserveStroops !== undefined
+      ? toStroops(options.baseReserveStroops)
+      : DEFAULT_BASE_RESERVE_STROOPS;
+    // Minimum reserve = base reserve * (2 + subentries)
+    const minimumReserveStroops = baseReserveStroops * BigInt(2 + subentryCount);
+
+    const feeStroops = options.feeStroops !== undefined
+      ? toStroops(options.feeStroops)
+      : 100n;
+
+    const availableStroops =
+      balanceStroops - minimumReserveStroops - sellingLiabilitiesStroops - feeStroops;
+
+    return {
+      availableStroops,
+      balanceStroops,
+      minimumReserveStroops,
+      sellingLiabilitiesStroops,
+      feeStroops,
+      subentryCount,
+    };
+  }
+
+  /**
+   * Check if an account has sufficient balance after a donation to maintain minimum reserve.
+   * @param {string} publicKey - Donor's public key
+   * @param {number} donationAmount - Donation amount in XLM
+   * @param {number} feeStroops - Transaction fee in stroops (default 100 stroops = 0.00001 XLM)
+   * @returns {Promise<{sufficient: boolean, currentBalance: number, minimumReserve: number, maxSafeDonation: number}>}
+   */
+  async checkDonationReserve(publicKey, donationAmount, feeStroops = 100) {
+    const account = await this.loadAccount(publicKey);
+    
+    const nativeBalance = account.balances.find(b => b.asset_type === 'native');
+    const currentBalance = nativeBalance ? parseFloat(nativeBalance.balance) : 0;
+    
+    const subentryCount = account.subentry_count || 0;
+    const minimumReserve = this.calculateMinimumReserve(subentryCount);
+    
+    const feeInXlm = feeStroops / 10000000; // Convert stroops to XLM
+    const remainingBalance = currentBalance - donationAmount - feeInXlm;
+    
+    const sufficient = remainingBalance >= minimumReserve;
+    const maxSafeDonation = Math.max(0, currentBalance - minimumReserve - feeInXlm);
+
+    return {
+      sufficient,
+      currentBalance,
+      minimumReserve,
+      remainingBalance,
+      maxSafeDonation,
+      subentryCount,
+      feeInXlm,
+    };
   }
 }
 
