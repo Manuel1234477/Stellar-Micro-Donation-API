@@ -68,6 +68,7 @@ describe('bootstrap route table snapshot (#1780)', () => {
       '/admin/pledges',
       '/admin/disputes',
       '/admin/geo-rules',
+      '/admin/federation',
       '/admin/payment-channels',
       '/admin/system-info',
       '/admin/feature-flags',
