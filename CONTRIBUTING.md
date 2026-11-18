@@ -228,10 +228,25 @@ npm test                           # full suite passes
 npm run check-coverage             # coverage ≥ 80%
 npm run openapi:check              # spec is up to date
 npm run migrate:status             # no pending unapplied migrations
+npm run check:parse                # every src/ and scripts/ file parses
 node scripts/check-test-naming.js  # no new legacy-named test files
 ```
 
 CI enforces all of the above and will block merge if any step fails.
+
+### Required status checks
+
+A PR can merge to `main` only when these CI jobs pass (`.github/workflows/ci.yml`):
+
+| Check | Job | What it guards |
+|-------|-----|----------------|
+| Lint | `lint` | ESLint, migration ID check, example validation |
+| Parse | `parse` | `npm run check:parse`: no file in `src/` or `scripts/` fails to parse |
+| Tests | `test` | Full suite with coverage on Node 20.x and 22.x |
+| Smoke | `smoke` | `npm run test:smoke` in mock mode |
+| Onboarding | `onboarding` | Fresh install, migrate, boot, `/health`, `scripts/validate-onboarding.sh` |
+
+Branch protection on `main` that requires these checks, and requires branches to be up to date before merging, is set by a repository admin. See issue #1978.
 
 When the PR is ready:
 - Reference the issue with `Closes #<number>` in the PR description.

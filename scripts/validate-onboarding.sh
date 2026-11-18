@@ -50,7 +50,7 @@ for d in src/routes src/services src/middleware src/utils src/config tests; do
 done
 
 echo "npm scripts named in CONTRIBUTING.md"
-for s in test test:coverage lint validate-env init-db generate-key keys:list keys:create validate:rbac migrate:check; do
+for s in test test:coverage lint validate-env init-db generate-key keys:list keys:create validate:rbac check:parse migrate:check; do
   check "npm run $s is defined" has_npm_script "$s"
 done
 

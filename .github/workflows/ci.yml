@@ -73,6 +73,18 @@ jobs:
           API_KEYS: smoke-test-key
           ENCRYPTION_KEY: test_encryption_key_fixed_32bytes_hex_value_here_00
 
+  # Parse guard (#1978): a file with a syntax error in src/ or scripts/ cannot merge.
+  parse:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+      - run: npm ci
+      - run: npm run check:parse
+
   # Contributor onboarding (#1977): mirrors the steps in CONTRIBUTING.md on a
   # fresh runner — install, migrate, boot in mock mode, call /health, then run
   # scripts/validate-onboarding.sh against the live server.
