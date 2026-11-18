@@ -152,11 +152,11 @@ All tests use an isolated in-memory SQLite database — no cleanup needed betwee
 ## Next Steps
 
 - [API Reference](./api-reference.md) — all endpoints with request/response examples
-- [API Examples](./API_EXAMPLES.md) — copy-paste curl commands for every flow
+- [API Examples](./api-examples.md) — copy-paste curl commands for every flow
 - [Authentication Guide](./authentication.md) — API key setup and RBAC
-- [Architecture Overview](./architecture/ARCHITECTURE.md) — how the system fits together
-- [SEP Compliance](./SEP_COMPLIANCE.md) — SEP-10 web auth and federation
-- [Database Schema](./DATABASE_SCHEMA.md) — ER diagram and per-table column reference
+- [Architecture Overview](./architecture/architecture.md) — how the system fits together
+- [SEP Compliance](./sep-compliance.md) — SEP-10 web auth and federation
+- [Database Schema](./database-schema.md) — ER diagram and per-table column reference
 - [Stellar Concepts](./stellar-concepts.md) — blockchain background for new contributors
 - [Deployment Guide](./deployment.md) — Docker, bare metal, and cloud
 
@@ -175,4 +175,4 @@ All tests use an isolated in-memory SQLite database — no cleanup needed betwee
 | Dependency issues | `rm -rf node_modules && npm install` |
 | `npm start` exits immediately | Run `npm run validate-env` to see which variables are missing |
 
-For a comprehensive troubleshooting guide, see [docs/DEVELOPER_TROUBLESHOOTING_GUIDE.md](./DEVELOPER_TROUBLESHOOTING_GUIDE.md).
+For a comprehensive troubleshooting guide, see [docs/developer-troubleshooting-guide.md](./developer-troubleshooting-guide.md).

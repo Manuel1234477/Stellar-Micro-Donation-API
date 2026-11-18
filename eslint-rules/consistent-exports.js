@@ -3,7 +3,7 @@
 /**
  * ESLint rule: consistent-exports
  *
- * Enforces the module export patterns described in docs/EXPORT_CONVENTIONS.md:
+ * Enforces the module export patterns described in docs/export-conventions.md:
  * - All modules: do not mix `module.exports = ...` with `exports.x = ...`
  * - Services: export the class/instance or a service object directly; do not
  *   wrap a single class in an object literal (`module.exports = { Foo }`)
@@ -21,26 +21,26 @@ module.exports = {
     type: 'suggestion',
     docs: {
       description: 'Enforce consistent export patterns by module type',
-      url: 'docs/EXPORT_CONVENTIONS.md',
+      url: 'docs/export-conventions.md',
     },
     messages: {
       mixedExports:
         'Do not mix `module.exports = ...` with `exports.x = ...` in the same module. ' +
-        'See docs/EXPORT_CONVENTIONS.md',
+        'See docs/export-conventions.md',
       inconsistentService:
         'Service modules should export a single class directly, not wrapped in an object literal. ' +
-        'Change: module.exports = {{name}}; See docs/EXPORT_CONVENTIONS.md',
+        'Change: module.exports = {{name}}; See docs/export-conventions.md',
       inconsistentUtil:
         'Utility modules should export named functions in an object, or a singleton/class/function directly. ' +
-        'See docs/EXPORT_CONVENTIONS.md',
+        'See docs/export-conventions.md',
       inconsistentRoute:
         'Route modules should export a router directly, or an object that includes `router`. ' +
-        'See docs/EXPORT_CONVENTIONS.md',
+        'See docs/export-conventions.md',
       inconsistentMigration:
         'Migration modules should use named exports (exports.name, exports.up, exports.down). ' +
-        'See docs/EXPORT_CONVENTIONS.md',
+        'See docs/export-conventions.md',
       missingMigrationExport:
-        'Migration modules must export `{{name}}` (exports.{{name}} = ...). See docs/EXPORT_CONVENTIONS.md',
+        'Migration modules must export `{{name}}` (exports.{{name}} = ...). See docs/export-conventions.md',
     },
     schema: [],
   },

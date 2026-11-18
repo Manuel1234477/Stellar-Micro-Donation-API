@@ -59,7 +59,7 @@ describe('Issue #1753 – Hash API keys with peppered HMAC', () => {
   });
 
   it('API key security documentation should exist', () => {
-    const docsPath = path.join(__dirname, '../docs/API_KEY_ROTATION.md');
+    const docsPath = path.join(__dirname, '../docs/api-key-rotation.md');
     if (fs.existsSync(docsPath)) {
       const content = fs.readFileSync(docsPath, 'utf8');
       expect(typeof content).toBe('string');

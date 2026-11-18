@@ -37,6 +37,8 @@ npm run init-db
 npm start
 ```
 
+For auto-reload while you edit code, run `npm run dev` instead of `npm start`.
+
 Verify the server is running. The versioned health endpoint is `/api/v1/health`:
 
 ```bash
@@ -60,17 +62,19 @@ The step-by-step guide, including troubleshooting, is in [docs/quickstart.md](do
 
 ## Configuration
 
-Settings are read from `.env` in the project root. The variables below are the ones most setups need. The full reference, with defaults and validation rules, is in [docs/CONFIGURATION.md](docs/CONFIGURATION.md).
+Settings are read from `.env` in the project root. The variables below are the ones most setups need. The full reference, with defaults and validation rules, is in [docs/configuration.md](docs/configuration.md).
 
 | Variable | Required | Description |
 |----------|----------|-------------|
 | `PORT` | No (`3000`) | HTTP port, 1–65535 |
-| `API_KEYS` | Yes, unless you use database-backed keys | Comma-separated legacy keys. Rejected after `LEGACY_API_KEYS_DISABLED_AFTER` (default `2026-12-31`); see [docs/MIGRATION_LEGACY_API_KEYS.md](docs/MIGRATION_LEGACY_API_KEYS.md) |
+| `API_KEYS` | Yes, unless you use database-backed keys | Comma-separated legacy keys. Rejected after `LEGACY_API_KEYS_DISABLED_AFTER` (default `2026-12-31`); see [docs/migration-legacy-api-keys.md](docs/migration-legacy-api-keys.md) |
 | `ENCRYPTION_KEY` | Yes in production | 64 hex characters. Generate with `npm run generate-key`. Changing it makes previously encrypted data unreadable |
 | `STELLAR_NETWORK` | No (`testnet`) | `testnet`, `mainnet`, or `futurenet` |
 | `MOCK_STELLAR` | No (`false`) | `true` disables all outbound Stellar calls. Use it for local development and CI |
 | `HORIZON_URL` | No | Overrides the Horizon endpoint for the selected network |
 | `DB_PATH` | No (`./data/stellar_donations.db`) | Location of the SQLite database file |
+
+SQLite is a single-writer store. Run one API replica per database file. Do not share the database file across instances or place it on NFS or another network filesystem. Multi-instance and production topology guidance is in [docs/deployment.md](docs/deployment.md).
 
 Check your configuration before starting:
 
@@ -80,7 +84,7 @@ npm run validate-env
 
 ## API
 
-All endpoints are versioned under `/api/v1`. Authenticate every request with the `X-API-Key` header. Use `npm run keys:create` to create database-backed keys and `npm run keys:list` to list them. For roles and permissions, see [docs/authentication.md](docs/authentication.md) and [docs/PERMISSIONS.md](docs/PERMISSIONS.md).
+All endpoints are versioned under `/api/v1`. Authenticate every request with the `X-API-Key` header. Use `npm run keys:create` to create database-backed keys and `npm run keys:list` to list them. For roles and permissions, see [docs/authentication.md](docs/authentication.md) and [docs/permissions.md](docs/permissions.md).
 
 | Area | Endpoints |
 |------|-----------|
@@ -93,7 +97,7 @@ All endpoints are versioned under `/api/v1`. Authenticate every request with the
 
 - Endpoint reference with request and response shapes: [docs/api-reference.md](docs/api-reference.md)
 - Machine-readable OpenAPI spec: [docs/openapi.json](docs/openapi.json)
-- Copy-paste examples: [docs/API_EXAMPLES.md](docs/API_EXAMPLES.md) and [examples/API_CURL_EXAMPLES.md](examples/API_CURL_EXAMPLES.md)
+- Copy-paste examples: [docs/api-examples.md](docs/api-examples.md) and [examples/API_CURL_EXAMPLES.md](examples/API_CURL_EXAMPLES.md)
 - Postman collection: [examples/Stellar-Micro-Donation-API.postman_collection.json](examples/Stellar-Micro-Donation-API.postman_collection.json)
 
 ## Development
@@ -122,18 +126,18 @@ examples/   Curl examples and the Postman collection
 monitoring/ Prometheus alert rules and Grafana dashboards
 ```
 
-For coverage and test conventions, see [docs/COVERAGE_GUIDE.md](docs/COVERAGE_GUIDE.md). For CI, see [docs/CI_PIPELINE.md](docs/CI_PIPELINE.md). For load tests, run `npm run test:load` and see [docs/LOAD_TESTING.md](docs/LOAD_TESTING.md).
+For coverage and test conventions, see [docs/coverage-guide.md](docs/coverage-guide.md). For CI, see [docs/ci-pipeline.md](docs/ci-pipeline.md). For load tests, run `npm run test:load` and see [docs/load-testing.md](docs/load-testing.md).
 
 ## Documentation
 
 The full documentation index is at [docs/README.md](docs/README.md). Frequently used guides:
 
 - [Quickstart](docs/quickstart.md): first run, end to end
-- [Configuration](docs/CONFIGURATION.md): every environment variable
-- [Architecture](docs/architecture/ARCHITECTURE.md): components and data flow
-- [Deployment](docs/deployment.md) and [Production deployment](docs/PRODUCTION_DEPLOYMENT.md)
-- [Troubleshooting](docs/DEVELOPER_TROUBLESHOOTING_GUIDE.md) and [quick reference](docs/TROUBLESHOOTING_QUICK_REFERENCE.md)
-- [API key rotation](docs/API_KEY_ROTATION.md)
+- [Configuration](docs/configuration.md): every environment variable
+- [Architecture](docs/architecture/architecture.md): components and data flow
+- [Deployment](docs/deployment.md) and [Production deployment](docs/production-deployment.md)
+- [Troubleshooting](docs/developer-troubleshooting-guide.md) and [quick reference](docs/troubleshooting-quick-reference.md)
+- [API key rotation](docs/api-key-rotation.md)
 - [Stellar concepts](docs/stellar-concepts.md) for contributors new to Stellar
 
 ## Contributing

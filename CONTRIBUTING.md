@@ -79,7 +79,7 @@ state between runs. See [Test Isolation Guide](docs/TEST_ISOLATION.md) for detai
 
 ## 3. Test Naming Convention
 
-See **[docs/TEST_NAMING_CONVENTION.md](docs/TEST_NAMING_CONVENTION.md)** for the full
+See **[docs/test-naming-convention.md](docs/test-naming-convention.md)** for the full
 convention and migration plan. The short version:
 
 - Name your test file after the **module it exercises**, not the issue or feature
@@ -276,7 +276,7 @@ from `main` after CI is green.
 - **Patch**: bug fixes, security patches — as needed
 - **Minor**: new features, backward-compatible — monthly or as features land
 - **Major**: breaking changes — planned and announced via `Sunset`/`Deprecation`
-  headers (see `docs/VERSIONING_STRATEGY.md`)
+  headers (see `docs/versioning-strategy.md`)
 
 ### Automated Flow (Future)
 
@@ -328,8 +328,8 @@ When working on a feature, these docs will save you time:
 | Topic | Document |
 |-------|----------|
 | Quickstart (fresh clone → first request) | [docs/quickstart.md](docs/quickstart.md) |
-| Database schema & ER diagram | [docs/DATABASE_SCHEMA.md](docs/DATABASE_SCHEMA.md) |
-| SEP-10 web auth & federation | [docs/SEP_COMPLIANCE.md](docs/SEP_COMPLIANCE.md) |
-| API endpoint examples | [docs/API_EXAMPLES.md](docs/API_EXAMPLES.md) |
-| Architecture overview | [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) |
-| Troubleshooting | [docs/DEVELOPER_TROUBLESHOOTING_GUIDE.md](docs/DEVELOPER_TROUBLESHOOTING_GUIDE.md) |
+| Database schema & ER diagram | [docs/database-schema.md](docs/database-schema.md) |
+| SEP-10 web auth & federation | [docs/sep-compliance.md](docs/sep-compliance.md) |
+| API endpoint examples | [docs/api-examples.md](docs/api-examples.md) |
+| Architecture overview | [docs/architecture.md](docs/architecture.md) |
+| Troubleshooting | [docs/developer-troubleshooting-guide.md](docs/developer-troubleshooting-guide.md) |

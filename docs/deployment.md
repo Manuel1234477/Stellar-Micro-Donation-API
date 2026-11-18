@@ -118,7 +118,7 @@ Use the Dockerfile above. Pass environment variables via the platform's secrets/
 - [ ] Log aggregation set up
 - [ ] Rate limiting reviewed for expected traffic
 
-See [Pre-Deployment Checklist](./guides/PRE_DEPLOYMENT_CHECKLIST.md) for the full verification list.
+See [Pre-Deployment Checklist](./guides/pre-deployment-checklist.md) for the full verification list.
 
 ---
 
@@ -175,5 +175,5 @@ kubectl -n <namespace> get statefulset,pods,pvc,svc,pdb -l app.kubernetes.io/nam
 kubectl -n <namespace> rollout status statefulset/stellar-micro-donation-api
 ```
 
-See [Kubernetes probes](KUBERNETES_PROBES.md) for liveness/readiness behavior and
+See [Kubernetes probes](kubernetes-probes.md) for liveness/readiness behavior and
 failure handling.

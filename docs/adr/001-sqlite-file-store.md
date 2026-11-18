@@ -59,4 +59,4 @@ numbered migration files in `src/migrations/`.
 
 ---
 
-*See also: `src/utils/database.js`, `src/migrations/`, `docs/CONFIGURATION.md#5-database`*
+*See also: `src/utils/database.js`, `src/migrations/`, `docs/configuration.md#5-database`*

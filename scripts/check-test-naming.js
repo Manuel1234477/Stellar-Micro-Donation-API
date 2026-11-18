@@ -6,7 +6,7 @@
  *
  * Scans the tests/ directory for files that match legacy issue-slug naming
  * patterns.  Used as a lightweight CI gate so no new legacy-named files land
- * while the gradual migration (see docs/TEST_NAMING_CONVENTION.md) is in
+ * while the gradual migration (see docs/test-naming-convention.md) is in
  * progress.
  *
  * Behaviour
@@ -126,7 +126,7 @@ if (legacyFiles.length > 0) {
 if (newViolations.length > 0) {
   console.error(
     `\n❌  ${newViolations.length} new legacy-named file(s) found.\n` +
-    '   Please follow the naming convention in docs/TEST_NAMING_CONVENTION.md:\n' +
+    '   Please follow the naming convention in docs/test-naming-convention.md:\n' +
     '   name your test file after the module it covers, not the issue it fixes.\n'
   );
 }
@@ -137,7 +137,7 @@ if (newViolations.length > 0 || rootViolations.length > 0) {
 
 console.log(
   `\n⚠️   ${legacyFiles.length} known-legacy file(s) above are scheduled for migration.\n` +
-  '   See docs/TEST_NAMING_CONVENTION.md for the migration plan.\n' +
+  '   See docs/test-naming-convention.md for the migration plan.\n' +
   '   No new violations were introduced — build passes.\n'
 );
 process.exit(0);

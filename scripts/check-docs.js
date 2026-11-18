@@ -86,9 +86,7 @@ function checkUnversioned(file, content) {
 function main() {
   const readme = path.join(ROOT, 'README.md');
   const quickstart = path.join(ROOT, 'docs', 'quickstart.md');
-  // Link checking is currently limited to the README and quickstart; widen to
-  // walkMarkdown(docs/) once the rest of docs/ has no broken links.
-  const markdownFiles = [readme, quickstart];
+  const markdownFiles = [readme, ...walkMarkdown(path.join(ROOT, 'docs'))];
 
   for (const file of markdownFiles) {
     checkLinks(file, fs.readFileSync(file, 'utf8'));

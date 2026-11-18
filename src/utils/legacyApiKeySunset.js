@@ -9,7 +9,7 @@
  * LEGACY_API_KEYS_DISABLED_AFTER (YYYY-MM-DD, UTC). Once the date has passed
  * (inclusive of that whole day), legacy keys are rejected with 401.
  *
- * See docs/MIGRATION_LEGACY_API_KEYS.md for the migration procedure.
+ * See docs/migration-legacy-api-keys.md for the migration procedure.
  */
 
 const DEFAULT_SUNSET_DATE = '2026-12-31';

@@ -174,7 +174,7 @@ if %SCAN_EXIT_CODE% equ 0 (
         echo   1. Review the findings above
         echo   2. Update base image or dependencies
         echo   3. If unfixable, add to .trivyignore with justification
-        echo   4. See docs\CONTAINER_SECURITY.md for guidance
+        echo   4. See docs\container-security.md for guidance
     ) else (
         echo Vulnerabilities found
         echo.

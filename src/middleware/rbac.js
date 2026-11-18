@@ -435,7 +435,7 @@ const attachUserRole = () => {
                 success: false,
                 error: {
                   code: 'LEGACY_API_KEY_DISABLED',
-                  message: `Legacy API keys were disabled on ${getLegacyKeySunsetDate()}. Create a database-backed key with "npm run keys:create". See docs/MIGRATION_LEGACY_API_KEYS.md`,
+                  message: `Legacy API keys were disabled on ${getLegacyKeySunsetDate()}. Create a database-backed key with "npm run keys:create". See docs/migration-legacy-api-keys.md`,
                   requestId: req.id,
                 },
               });
@@ -448,7 +448,7 @@ const attachUserRole = () => {
             const rlHeaders = buildRateLimitHeaders(rlResult.limit, rlResult.remaining, Math.ceil(rlResult.resetAt / 1000));
             res.set(rlHeaders);
             res.set('X-API-Key-Legacy', 'true');
-            res.set('Warning', `299 - "Legacy API key in use. Migrate to database-backed keys before ${getLegacyKeySunsetDate()}. See docs/MIGRATION_LEGACY_API_KEYS.md"`);
+            res.set('Warning', `299 - "Legacy API key in use. Migrate to database-backed keys before ${getLegacyKeySunsetDate()}. See docs/migration-legacy-api-keys.md"`);
 
             if (!rlResult.allowed && process.env.NODE_ENV !== 'test') {
               res.set('Retry-After', String(Math.ceil((rlResult.resetAt - Date.now()) / 1000)));

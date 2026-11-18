@@ -63,7 +63,7 @@ jobs:
       # KNOWN_FLOAT_MONEY baseline in the script.
       - run: npm run check:no-float-money
       - run: npm run check:declared-deps
-      # docs/TEST_NAMING_CONVENTION.md: no new issue-numbered test files.
+      # docs/test-naming-convention.md: no new issue-numbered test files.
       - run: npm run check:test-naming
       # Suites must not leak env/global state or share fixtures across workers.
       - run: npm run check:isolation
@@ -86,7 +86,7 @@ jobs:
         continue-on-error: true
 
   # Quarantined suites (tests/quarantine.js) run separately with retries and do
-  # not block merge. See docs/testing/FLAKY_TEST_POLICY.md. Refs #1787.
+  # not block merge. See docs/testing/flaky-test-policy.md. Refs #1787.
   quarantine:
     runs-on: ubuntu-latest
     continue-on-error: true

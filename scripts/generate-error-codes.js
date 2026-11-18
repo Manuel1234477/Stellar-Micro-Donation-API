@@ -2,7 +2,7 @@
 /**
  * scripts/generate-error-codes.js
  *
- * Generates docs/ERROR_CODES.md from the single source of truth in
+ * Generates docs/error-codes.md from the single source of truth in
  * src/utils/errors.js.  Run manually or via `npm run docs:error-codes`.
  *
  * Usage:
@@ -362,6 +362,6 @@ md += EXAMPLES;
 md += `\n---\n\n*Source: [\`src/utils/errors.js\`](../src/utils/errors.js)*\n`;
 
 // ── Write output ──────────────────────────────────────────────────────────────
-const outPath = path.resolve(__dirname, '../docs/ERROR_CODES.md');
+const outPath = path.resolve(__dirname, '../docs/error-codes.md');
 fs.writeFileSync(outPath, md, 'utf8');
 console.log(`✓ Generated ${outPath}`);

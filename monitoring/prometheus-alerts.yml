@@ -67,7 +67,7 @@ groups:
             1. Check API logs for error patterns: grep ERROR /var/log/api.log
             2. Review recent deployments: git log --oneline -10
             3. Check database connection pool: curl /health/ready
-            4. See runbook: docs/RUNBOOKS.md#api-availability
+            4. See runbook: docs/runbooks.md#api-availability
 
       - alert: APIErrorRateAboveSLO
         expr: |
@@ -89,7 +89,7 @@ groups:
             2. Review database query performance
             3. Check external service connectivity (Horizon)
 
-            Runbook: docs/RUNBOOKS.md#api-error-rate
+            Runbook: docs/runbooks.md#api-error-rate
 
       # ─── API Latency SLO ──────────────────────────────────────────────────────
 
@@ -116,7 +116,7 @@ groups:
             3. Check memory usage: curl /health/live | jq .memory
             4. Review recent code changes
 
-            Runbook: docs/RUNBOOKS.md#api-latency
+            Runbook: docs/runbooks.md#api-latency
 
       - alert: APIP99LatencyAboveSLO
         expr: |
@@ -141,7 +141,7 @@ groups:
             3. Garbage collection pauses
             4. Disk I/O bottleneck
 
-            Runbook: docs/RUNBOOKS.md#api-latency
+            Runbook: docs/runbooks.md#api-latency
 
       # ─── Scheduler Health SLO ─────────────────────────────────────────────────
       #
@@ -177,7 +177,7 @@ groups:
             2. Check Stellar network connectivity
             3. Check database pool health
 
-            Runbook: docs/RUNBOOKS.md#scheduler-lag
+            Runbook: docs/runbooks.md#scheduler-lag
 
       - alert: SchedulerSkipRateCritical
         expr: |
@@ -200,7 +200,7 @@ groups:
             4. Review last 100 log entries: tail -100 /var/log/api.log
             5. If hung: restart the scheduler process
 
-            Runbook: docs/RUNBOOKS.md#scheduler-lag-critical
+            Runbook: docs/runbooks.md#scheduler-lag-critical
 
       # ─── Recurring Donation Execution SLO ────────────────────────────────────
 
@@ -231,7 +231,7 @@ groups:
             3. Check account balance: curl /api/v1/account
             4. Verify Horizon API connectivity
 
-            Runbook: docs/RUNBOOKS.md#recurring-donation-failure
+            Runbook: docs/runbooks.md#recurring-donation-failure
 
       - alert: RecurringDonationSuspensionRateHigh
         expr: |
@@ -253,7 +253,7 @@ groups:
             2. Review suspension logs: grep "RECURRING_DONATION.*suspended" /var/log/api.log
             3. Confirm donor accounts have sufficient balance
 
-            Runbook: docs/RUNBOOKS.md#recurring-donation-failure
+            Runbook: docs/runbooks.md#recurring-donation-failure
 
       # ─── Horizon Connection Pool SLO ──────────────────────────────────────────
       #
@@ -286,7 +286,7 @@ groups:
             2. Verify network connectivity: curl https://horizon.stellar.org
             3. Check rate limit headers in logs
 
-            Runbook: docs/RUNBOOKS.md#horizon-connectivity
+            Runbook: docs/runbooks.md#horizon-connectivity
 
       - alert: HorizonPoolExhausted
         expr: |
@@ -309,7 +309,7 @@ groups:
             3. Check application logs for HORIZON errors
             4. Consider enabling MOCK_STELLAR=true to accept submissions without network calls
 
-            Runbook: docs/RUNBOOKS.md#horizon-connectivity
+            Runbook: docs/runbooks.md#horizon-connectivity
 
       - alert: HorizonPoolCooldownRateHigh
         expr: |
@@ -331,7 +331,7 @@ groups:
             2. Verify network connectivity: curl https://horizon.stellar.org
             3. Check rate limit headers in logs
 
-            Runbook: docs/RUNBOOKS.md#horizon-connectivity
+            Runbook: docs/runbooks.md#horizon-connectivity
 
       # ─── Transaction Sync Scheduler SLO ───────────────────────────────────────
       #
@@ -361,7 +361,7 @@ groups:
             2. Review database query performance
             3. Check scheduler logs
 
-            Runbook: docs/RUNBOOKS.md#transaction-sync-lag
+            Runbook: docs/runbooks.md#transaction-sync-lag
 
       # ─── Application Startup & Health ────────────────────────────────────────
 
@@ -386,7 +386,7 @@ groups:
             3. Check logs for startup errors
             4. Restart application if crashed
 
-            Runbook: docs/RUNBOOKS.md#application-down
+            Runbook: docs/runbooks.md#application-down
 
       # ─── General Node.js Health ──────────────────────────────────────────────
 
@@ -416,7 +416,7 @@ groups:
             2. Check for recent deployments
             3. Restart application if needed
 
-            Runbook: docs/RUNBOOKS.md#high-memory
+            Runbook: docs/runbooks.md#high-memory
 
       - alert: HighEventLoopLag
         expr: |
@@ -435,4 +435,4 @@ groups:
 
             This will impact request latency.
 
-            Runbook: docs/RUNBOOKS.md#event-loop-lag
+            Runbook: docs/runbooks.md#event-loop-lag

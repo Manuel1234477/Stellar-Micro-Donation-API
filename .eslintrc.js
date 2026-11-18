@@ -53,7 +53,7 @@ const GRANDFATHERED_LARGE_FILES = [
 /**
  * Files grandfathered from local/consistent-exports. Each one predates the rule
  * and changing its export shape means updating every consumer, so they are being
- * migrated one PR at a time (see docs/EXPORT_CONVENTIONS.md). The rule stays an
+ * migrated one PR at a time (see docs/export-conventions.md). The rule stays an
  * error for every other file. Remove entries as files are migrated; never add.
  * Issue tracking: #1789.
  */

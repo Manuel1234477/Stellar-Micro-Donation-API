@@ -63,7 +63,7 @@ GET /api/v1/donations?limit=50&cursor=<next_cursor>&snapshotAt=2026-03-26T05:00:
 GET /api/v1/donations?limit=50&snapshotAt=2026-03-26T05:30:00Z
 ```
 
-**For more details, see [Cursor Pagination Stability](./PAGINATION_CURSOR_STABILITY.md).**
+**For more details, see [Cursor Pagination Stability](./cursor-pagination-guide.md).**
 
 ---
 
@@ -391,7 +391,7 @@ Errors use this envelope:
 }
 ```
 
-`error.code` is a stable machine-readable value. The full list is in [ERROR_CODES.md](./ERROR_CODES.md). `details` is present on validation failures (see below).
+`error.code` is a stable machine-readable value. The full list is in [error-codes.md](./error-codes.md). `details` is present on validation failures (see below).
 
 ### Validation errors
 
@@ -439,4 +439,4 @@ Request bodies that fail schema validation return HTTP 422. Each entry in `error
 | 429 | Rate limit exceeded |
 | 500 | Internal server error |
 
-For full request/response examples, see [API Examples](./API_EXAMPLES.md).
+For full request/response examples, see [API Examples](./api-examples.md).
