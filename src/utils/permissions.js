@@ -31,6 +31,9 @@ const PERMISSIONS = {
   STATS_READ: 'stats:read',
   STATS_ADMIN: 'stats:admin',
 
+  // Observability permissions (#1982): scrape-only access to /metrics
+  METRICS_READ: 'metrics:read',
+
   // Transaction permissions
   TRANSACTIONS_READ: 'transactions:read',
   TRANSACTIONS_SYNC: 'transactions:sync',
@@ -50,6 +53,7 @@ const ROLES = {
   ADMIN: 'admin',
   USER: 'user',
   SIGNER: 'signer',
+  METRICS: 'metrics',
   GUEST: 'guest'
 };
 

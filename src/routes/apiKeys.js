@@ -31,7 +31,7 @@ const apiKeyCreateSchema = validateSchema({
   body: {
     fields: {
       name: { type: 'string', required: true, trim: true, minLength: 1, maxLength: 255 },
-      role: { type: 'string', required: false, enum: ['admin', 'user', 'signer', 'guest'] },
+      role: { type: 'string', required: false, enum: ['admin', 'user', 'signer', 'metrics', 'guest'] },
       expiresInDays: { type: 'integer', required: false, min: 1 },
       metadata: { type: 'object', required: false, nullable: true },
       rateLimit: { type: 'integer', required: false, min: 1 },
@@ -46,7 +46,7 @@ const apiKeyListQuerySchema = validateSchema({
   query: {
     fields: {
       status: { type: 'string', required: false, enum: Object.values(API_KEY_STATUS) },
-      role: { type: 'string', required: false, enum: ['admin', 'user', 'signer', 'guest'] },
+      role: { type: 'string', required: false, enum: ['admin', 'user', 'signer', 'metrics', 'guest'] },
     },
   },
 });
