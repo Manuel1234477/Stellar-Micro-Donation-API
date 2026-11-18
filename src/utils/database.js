@@ -21,6 +21,11 @@ const sqlite3 = require('sqlite3').verbose();
 const { DatabaseError, DuplicateError } = require('./errors');
 const { withTimeout, TIMEOUT_DEFAULTS, TimeoutError } = require('./timeoutHandler');
 const log = require('./log');
+const sqliteWriter = require('./sqliteWriter');
+
+// The single writer connection (Issue #1959). Opened lazily by getWriterConnection().
+let writerConnection = null;
+let writerOpening = null;
 
 // ─── OpenTelemetry helpers ────────────────────────────────────────────────────
 
@@ -497,6 +502,15 @@ class Database {
         });
       });
 
+      // #1959: pooled connections are read-only; writes go through the single writer
+      // connection. A misrouted write fails loudly instead of racing for the lock.
+      await new Promise((resolve, reject) => {
+        db.run('PRAGMA query_only=ON', (err) => {
+          if (err) reject(new DatabaseError('Failed to set read-only mode on pooled connection', err));
+          else resolve();
+        });
+      });
+
       // #1155: enforce FK constraints on every connection (SQLite resets per connection)
       await new Promise((resolve, reject) => {
         db.run('PRAGMA foreign_keys=ON', (err) => {
@@ -751,6 +765,84 @@ class Database {
   }
 
   /**
+   * Open the single writer connection (lazily, once). It is outside the read pool
+   * and is the only connection that performs writes (Issue #1959).
+   *
+   * @returns {Promise<Object>} sqlite3 Database handle.
+   */
+  static async getWriterConnection() {
+    if (writerConnection) return writerConnection;
+    if (!writerOpening) {
+      writerOpening = (async () => {
+        const db = await withTimeout(
+          new Promise((resolve, reject) => {
+            const connection = new sqlite3.Database(DB_PATH, (err) => {
+              if (err) reject(new DatabaseError('Failed to open writer connection', err));
+              else resolve(connection);
+            });
+          }),
+          TIMEOUT_DEFAULTS.DATABASE,
+          'database_writer_connection',
+        );
+        if (typeof db.configure === 'function') {
+          db.configure('busyTimeout', TIMEOUT_DEFAULTS.DATABASE);
+        }
+        await new Promise((resolve, reject) => {
+          db.run('PRAGMA journal_mode=WAL', (err) => (err ? reject(new DatabaseError('Failed to enable WAL journal mode', err)) : resolve()));
+        });
+        await new Promise((resolve, reject) => {
+          db.run('PRAGMA foreign_keys=ON', (err) => (err ? reject(new DatabaseError('Failed to enable foreign key enforcement', err)) : resolve()));
+        });
+        writerConnection = db;
+        return db;
+      })().finally(() => { writerOpening = null; });
+    }
+    return writerOpening;
+  }
+
+  /**
+   * Take the single-writer slot and return the writer connection.
+   * Callers must call release() exactly once.
+   *
+   * @returns {Promise<{db: Object, release: function(): Promise<void>}>}
+   */
+  static async acquireWriteLease() {
+    const slot = await sqliteWriter.writerQueue.acquire();
+    try {
+      const db = await this.getWriterConnection();
+      return {
+        db,
+        writer: true,
+        release: async () => slot.release(),
+      };
+    } catch (err) {
+      slot.release();
+      throw err;
+    }
+  }
+
+  /**
+   * Choose the connection for one statement:
+   *  - inside a runTransaction() callback: the transaction's own connection
+   *    (no queueing, so nested calls cannot deadlock on the writer slot);
+   *  - a write statement: the writer connection, serialised by the writer queue;
+   *  - anything else: a pooled read connection.
+   *
+   * @param {string} sql
+   * @returns {Promise<{db: Object, release: function(*): Promise<void>|void}>}
+   */
+  static async acquireLeaseFor(sql) {
+    const current = sqliteWriter.currentTransaction();
+    if (current) {
+      return { db: current.db, release: async () => {} };
+    }
+    if (sqliteWriter.isWriteStatement(sql)) {
+      return this.acquireWriteLease();
+    }
+    return this.acquireConnection();
+  }
+
+  /**
    * Return a leased connection to the pool or retire it safely.
    *
    * @param {Object} connection - Internal connection record.
@@ -809,7 +901,8 @@ class Database {
   static async execute(method, sql, params, failureMessage) {
     // Acquire the connection BEFORE starting the span so that connection
     // acquisition time is tracked separately, not included in query duration.
-    const lease = await this.acquireConnection();
+    // Writes take the single writer slot; reads use the pool (Issue #1959).
+    const lease = await this.acquireLeaseFor(sql);
 
     const operation = _parseSqlOperation(sql);
     const { withSpan } = _getTracing();
@@ -890,6 +983,11 @@ class Database {
         } catch (error) {
           if (error instanceof TimeoutError) {
             timedOut = true;
+            // A hung write must not hold the writer slot for everyone else. Free it now;
+            // the late callback's release() is then a no-op (Issue #1959).
+            if (lease.writer) {
+              lease.release().catch(() => {});
+            }
             const durationMs = Number(process.hrtime.bigint() - startTimeNs) / 1e6;
             if (!completed) {
               Database.recordQueryExecution({
@@ -971,7 +1069,7 @@ class Database {
    * @returns {Promise<void>}
    */
   static async exec(sql) {
-    const lease = await this.acquireConnection();
+    const lease = await this.acquireLeaseFor(sql);
     try {
       await new Promise((resolve, reject) => {
         lease.db.exec(sql, (err) => (err ? reject(err) : resolve()));
@@ -1025,7 +1123,18 @@ class Database {
    */
   static async runTransaction(callback) {
     await this.ensureInitialized();
-    const lease = await this.acquireConnection();
+
+    // Already inside a transaction on this async flow: join it. Taking the writer
+    // slot again here would wait on the lock the outer transaction is holding.
+    const current = sqliteWriter.currentTransaction();
+    if (current) {
+      return callback(this._makeTxHelpers(current.db));
+    }
+
+    // Every write transaction runs on the single writer connection (Issue #1959).
+    // BEGIN IMMEDIATE takes the SQLite write lock up front, so the transaction
+    // never fails midway with SQLITE_BUSY on upgrade.
+    const lease = await this.acquireWriteLease();
     const db = lease.db;
 
     const runOnConn = (sql, params = []) => new Promise((resolve, reject) => {
@@ -1053,7 +1162,9 @@ class Database {
 
     try {
       await runOnConn('BEGIN IMMEDIATE');
-      const result = await callback(tx);
+      // Statements issued through the global Database.* API from inside the callback
+      // run on this same connection (see acquireLeaseFor).
+      const result = await sqliteWriter.runInTransaction({ db }, () => callback(tx));
       await runOnConn('COMMIT');
       return result;
     } catch (err) {
@@ -1062,6 +1173,46 @@ class Database {
     } finally {
       await lease.release().catch(() => {});
     }
+  }
+
+  /**
+   * Build the run/get/all helpers that are bound to one specific connection.
+   * Used for transactions joined from inside another transaction.
+   *
+   * @param {Object} db - sqlite3 Database handle.
+   * @returns {{run: Function, get: Function, all: Function}}
+   */
+  static _makeTxHelpers(db) {
+    return {
+      run: (sql, params = []) => new Promise((resolve, reject) => {
+        db.run(sql, params, function(err) {
+          if (err) return reject(Database.mapDatabaseError(err, 'Transaction operation failed'));
+          resolve({ id: this.lastID, changes: this.changes });
+        });
+      }),
+      get: (sql, params = []) => new Promise((resolve, reject) => {
+        db.get(sql, params, (err, row) => {
+          if (err) return reject(Database.mapDatabaseError(err, 'Transaction query failed'));
+          resolve(row);
+        });
+      }),
+      all: (sql, params = []) => new Promise((resolve, reject) => {
+        db.all(sql, params, (err, rows) => {
+          if (err) return reject(Database.mapDatabaseError(err, 'Transaction query failed'));
+          resolve(rows);
+        });
+      }),
+    };
+  }
+
+  /**
+   * Writer-queue and writer-connection statistics for health checks and metrics.
+   *
+   * @returns {{queueDepth: number, maxQueueDepth: number, acquisitions: number,
+   *            avgWaitMs: number, maxWaitMs: number, connected: boolean}}
+   */
+  static getWriterMetrics() {
+    return { ...sqliteWriter.getWriterStats(), connected: writerConnection !== null };
   }
 
   /**
@@ -1285,6 +1436,21 @@ class Database {
         });
       }
     }));
+
+    // Close the single writer connection too (Issue #1959). Pending writes already
+    // hold the writer slot, so they finish before the handle is closed.
+    if (writerConnection) {
+      const writer = writerConnection;
+      writerConnection = null;
+      await new Promise((resolve) => {
+        writer.close((err) => {
+          if (err) {
+            log.warn('DATABASE', 'Failed to close writer connection during shutdown', { error: err.message });
+          }
+          resolve();
+        });
+      });
+    }
 
     state.initialized = false;
     state.initializing = null;
