@@ -8,7 +8,9 @@
 
 const Database = require('../utils/database');
 
-async function up() {
+exports.name = '005_donation_exports';
+
+exports.up = async () => {
   await Database.run(`
     CREATE TABLE IF NOT EXISTS donation_exports (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -33,11 +35,9 @@ async function up() {
   `);
 
   console.log('✓ Migration 004: donation_exports table created');
-}
+};
 
-async function down() {
+exports.down = async () => {
   await Database.run('DROP TABLE IF EXISTS donation_exports');
   console.log('✓ Migration 004: donation_exports table dropped');
-}
-
-module.exports = { name: '005_donation_exports', up, down };
+};

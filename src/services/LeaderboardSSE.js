@@ -133,10 +133,28 @@ function broadcastAll() {
  * Should be called at server startup.
  */
 function initLeaderboardSSE() {
+  donationEvents.registerHook(donationEvents.EVENTS.CREATED, (payload) => {
+    handleDonationCreated(payload);
+  });
   donationEvents.registerHook(donationEvents.EVENTS.CONFIRMED, (payload) => {
     handleDonationConfirmed(payload);
   });
-  log.info('LEADERBOARD_SSE', 'Initialized - listening for confirmed donations');
+  log.info('LEADERBOARD_SSE', 'Initialized - listening for created and confirmed donations');
+}
+
+/**
+ * Handle donation creation event.
+ * Invalidates cache and broadcasts updated leaderboards for all windows.
+ *
+ * @param {Object} payload - Donation event payload
+ */
+function handleDonationCreated(payload) {
+  log.info('LEADERBOARD_SSE', 'Donation created, invalidating leaderboard cache', {
+    transactionId: payload?.transactionId || payload?.id,
+    donor: payload?.donor,
+  });
+  StatsService.invalidateLeaderboardCache(payload?.donor);
+  broadcastAll();
 }
 
 /**
@@ -147,9 +165,10 @@ function initLeaderboardSSE() {
  */
 function handleDonationConfirmed(payload) {
   log.info('LEADERBOARD_SSE', 'Donation confirmed, invalidating leaderboard cache', {
-    transactionId: payload.transactionId || payload.id,
+    transactionId: payload?.transactionId || payload?.id,
+    donor: payload?.donor,
   });
-  StatsService.invalidateLeaderboardCache();
+  StatsService.invalidateLeaderboardCache(payload?.donor);
   broadcastAll();
 }
 
@@ -177,6 +196,7 @@ function getConnectionStats() {
 
 module.exports = {
   initLeaderboardSSE,
+  handleDonationCreated,
   handleDonationConfirmed,
   addLeaderboardClient,
   getConnectionStats,

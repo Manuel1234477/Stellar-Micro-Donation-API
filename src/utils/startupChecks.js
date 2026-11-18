@@ -15,24 +15,65 @@
 const Database = require('./database');
 const fs = require('fs');
 const path = require('path');
+const { isValidStellarSecretKey } = require('./validators');
+const { getLegacyKeySunsetDate } = require('./legacyApiKeySunset');
+const { findMissingSigningSecrets, isStrictEnvironment } = require('./signingSecrets');
 
 const STELLAR_TIMEOUT_MS = 5000;
 
 const results = [];
 
+/** True when run as `node src/utils/startupChecks.js` (npm run validate-env). */
+const RUN_AS_CLI = require.main === module;
+
+/**
+ * Print a check result. The CLI writes plain lines to the terminal; inside the
+ * server the same lines go through the structured logger so they are masked and
+ * correlated like every other log line (#1783).
+ */
+function print(level, message) {
+  if (RUN_AS_CLI) {
+    // eslint-disable-next-line no-console
+    const write = level === 'error' ? console.error : level === 'warn' ? console.warn : console.log;
+    write(message);
+    return;
+  }
+  const text = message.trim();
+  if (text) require('./log')[level]('STARTUP_CHECKS', text);
+}
+
 function pass(name, detail) {
   results.push({ name, status: 'pass', detail });
-  console.log(`  ✔ ${name}${detail ? ': ' + detail : ''}`);
+  print('info', `  ✔ ${name}${detail ? ': ' + detail : ''}`);
 }
 
 function warn(name, detail) {
   results.push({ name, status: 'warn', detail });
-  console.warn(`  ⚠ ${name}${detail ? ': ' + detail : ''}`);
+  print('warn', `  ⚠ ${name}${detail ? ': ' + detail : ''}`);
 }
 
 function fail(name, detail) {
   results.push({ name, status: 'fail', detail });
-  console.error(`  ✖ ${name}${detail ? ': ' + detail : ''}`);
+  print('error', `  ✖ ${name}${detail ? ': ' + detail : ''}`);
+}
+
+/**
+ * Signing secrets must be configured explicitly in production and staging (#1872).
+ * Development and test fall back to a random per-process secret, so this only fails
+ * when a strict environment would otherwise start with a missing signing secret.
+ * @returns {boolean} True when every required signing secret is present
+ */
+function checkSigningSecrets() {
+  const missing = findMissingSigningSecrets([
+    { name: 'EXPORT_SIGNING_SECRET', envVarNames: ['EXPORT_SIGNING_SECRET', 'ENCRYPTION_SECRET'] },
+    { name: 'JWT_SIGNING_SECRET', envVarNames: ['JWT_SIGNING_SECRET'] },
+  ]);
+  if (!isStrictEnvironment() || missing.length === 0) {
+    pass('Signing secrets', 'all configured');
+    return true;
+  }
+  fail('Signing secrets', `required in ${process.env.NODE_ENV}: ${missing.join(', ')}`);
+  return false;
 }
 
 /** Patterns that indicate a placeholder / example ENCRYPTION_KEY */
@@ -51,8 +92,23 @@ const PLACEHOLDER_KEY_PATTERNS = [
 
 /** Check 1 — ENCRYPTION_KEY is set, non-placeholder, and has sufficient length */
 function checkEncryptionKey() {
+  const kmsConfigured = !!(process.env.KMS_KEY_ID || process.env.KMS_PROVIDER);
   const key = process.env.ENCRYPTION_KEY;
+  const wrappedKey = process.env.ENCRYPTED_ENCRYPTION_KEY;
   const isProduction = (process.env.NODE_ENV || '').toLowerCase() === 'production';
+
+  if (kmsConfigured) {
+    if (!process.env.KMS_KEY_ID || !process.env.KMS_KEY_ID.trim()) {
+      fail('KMS_KEY_ID', 'required when KMS encryption is enabled');
+      return false;
+    }
+    if (!wrappedKey || !wrappedKey.trim()) {
+      fail('ENCRYPTED_ENCRYPTION_KEY', 'required when KMS_KEY_ID is configured. Generate a wrapped key using the KMS provisioning script.');
+      return false;
+    }
+    pass('KMS_KEY_ID', 'configured for envelope encryption');
+    return true;
+  }
 
   if (!key || !key.trim()) {
     fail('ENCRYPTION_KEY', 'required but not set — run `npm run generate-key`');
@@ -91,14 +147,11 @@ function checkApiKeys() {
   const raw = process.env.API_KEYS;
   const isProduction = (process.env.NODE_ENV || '').toLowerCase() === 'production';
 
-  if (!raw || !raw.trim()) {
-    fail('API_KEYS', 'not set — no requests will be authenticated');
-    return false;
-  }
-  const keys = raw.split(',').map(k => k.trim()).filter(Boolean);
+  // Legacy keys are optional: database-backed keys (npm run keys:create) are the supported path.
+  const keys = (raw || '').split(',').map(k => k.trim()).filter(Boolean);
   if (keys.length === 0) {
-    fail('API_KEYS', 'set but contains no valid keys');
-    return false;
+    pass('API_KEYS', 'not set — authentication uses database-backed keys only');
+    return true;
   }
 
   if (isProduction) {
@@ -119,8 +172,8 @@ function checkApiKeys() {
       'API_KEYS (legacy)',
       `${keys.length} legacy key(s) detected in production. ` +
       'Legacy keys bypass quota tracking and cannot be revoked without a restart. ' +
-      'Migrate to database-backed keys before 2026-12-31. ' +
-      'See docs/MIGRATION_LEGACY_API_KEYS.md'
+      `Legacy keys are rejected after ${getLegacyKeySunsetDate()}. ` +
+      'Migrate to database-backed keys. See docs/MIGRATION_LEGACY_API_KEYS.md'
     );
   } else {
     pass('API_KEYS', `${keys.length} legacy key(s) configured (non-production)`);
@@ -146,7 +199,6 @@ async function checkDatabaseDiagnostics() {
     const pragmas = await Database.getDiagnosticPragmas();
 
     const journalMode = (pragmas.journalMode || 'UNKNOWN').toUpperCase();
-    const synchronous = (pragmas.synchronous || 'UNKNOWN').toString();
 
     if (journalMode === 'WAL') {
       pass('Database WAL mode', 'enabled (concurrent reads during writes)');
@@ -357,7 +409,7 @@ async function checkStellarNetwork() {
     await Promise.race([
       stellarService.server.root(),
       new Promise((_, reject) =>
-        setTimeout(() => reject(new Error(`timed out after ${STELLAR_TIMEOUT_MS}ms`)), STELLAR_TIMEOUT_MS)
+        setTimeout(() => reject(new Error(`timed out after ${STELLAR_TIMEOUT_MS}ms`)), STELLAR_TIMEOUT_MS) // eslint-disable-line local/no-bare-timers -- awaited delay; must not be cancelled by clearAll()
       ),
     ]);
 
@@ -450,6 +502,7 @@ function checkDbPath() {
 
 /** Stellar signing key env vars — validated for format when present (#1234) */
 const STELLAR_SIGNING_KEY_VARS = [
+  'SEP10_SIGNING_KEY',
   'SERVICE_SECRET_KEY',
   'SERVICE_SIGNING_KEY',
   'STELLAR_SECRET',
@@ -458,7 +511,6 @@ const STELLAR_SIGNING_KEY_VARS = [
 
 /** Check — presence/validity of Stellar signing keys (#1234) */
 function checkStellarSigningKeys() {
-  const { isValidStellarSecretKey } = require('./validators');
   const isProduction = (process.env.NODE_ENV || '').toLowerCase() === 'production';
   const isMock = process.env.MOCK_STELLAR === 'true' || process.env.USE_MOCK_STELLAR === 'true';
   let allOk = true;
@@ -481,6 +533,16 @@ function checkStellarSigningKeys() {
       continue;
     }
     pass(name, 'valid Stellar secret key format');
+  }
+
+  // SEP-10 challenges are signed with SEP10_SIGNING_KEY, or the funded service key as a legacy fallback (#1888)
+  if (!(process.env.SEP10_SIGNING_KEY || '').trim() && isProduction && !isMock &&
+      (process.env.STELLAR_SECRET || process.env.SERVICE_SECRET_KEY)) {
+    warn(
+      'SEP10_SIGNING_KEY',
+      'not set — SEP-10 challenges are signed with the funded service key. ' +
+      'Set a dedicated, unfunded SEP10_SIGNING_KEY.'
+    );
   }
 
   return allOk;
@@ -649,6 +711,162 @@ function checkCoRequiredFlags() {
   return allOk;
 }
 
+/** Check — Mainnet deployment guard in production (#1597) */
+function checkMainnetProductionGuard() {
+  const isProduction = (process.env.NODE_ENV || '').toLowerCase() === 'production';
+  if (!isProduction) {
+    return true;
+  }
+
+  const allowOverride = process.env.ALLOW_TESTNET_IN_PRODUCTION === 'true';
+  const network = (process.env.STELLAR_NETWORK || process.env.STELLAR_ENVIRONMENT || 'testnet').toLowerCase();
+  const isMock = process.env.MOCK_STELLAR === 'true' || process.env.USE_MOCK_STELLAR === 'true';
+
+  if (network !== 'mainnet' || isMock) {
+    if (allowOverride) {
+      warn(
+        'Mainnet guard',
+        'ALLOW_TESTNET_IN_PRODUCTION=true override active: testnet or mock mode permitted in NODE_ENV=production'
+      );
+      return true;
+    }
+
+    fail(
+      'Mainnet guard',
+      'PRODUCTION SAFETY: testnet or mock mode is not allowed in NODE_ENV=production.'
+    );
+    return false;
+  }
+
+  pass('Mainnet guard', 'mainnet active and mock mode disabled in production');
+  return true;
+}
+
+
+/**
+ * Check — SMTP configuration when email notifications are enabled (#1975).
+ *
+ * When SMTP_HOST is set the operator intends to send email (webhook failure
+ * alerts, API-key expiry warnings, export-ready notifications).  We validate
+ * that the minimum required companion variables are also present and,
+ * optionally, that the SMTP server is reachable (transporter.verify()).
+ *
+ * @returns {Promise<boolean>}
+ */
+async function checkSmtpConfig() {
+  const host = (process.env.SMTP_HOST || '').trim();
+
+  if (!host) {
+    pass('SMTP', 'not configured — email notifications are disabled');
+    return true;
+  }
+
+  let allOk = true;
+
+  const port = parseInt(process.env.SMTP_PORT || '587', 10);
+  if (isNaN(port) || port < 1 || port > 65535) {
+    fail('SMTP_PORT', `must be an integer between 1 and 65535 — got "${process.env.SMTP_PORT}"`);
+    allOk = false;
+  }
+
+  if (!(process.env.SMTP_FROM || '').trim()) {
+    fail('SMTP_FROM', 'required when SMTP_HOST is set — outbound emails need a sender address');
+    allOk = false;
+  }
+
+  if ((process.env.SMTP_USER || '').trim() && !(process.env.SMTP_PASSWORD || process.env.SMTP_PASS || '').trim()) {
+    fail('SMTP_PASSWORD', 'required when SMTP_USER is set — SMTP authentication is incomplete');
+    allOk = false;
+  }
+
+  if (!allOk) return false;
+
+  try {
+    const nodemailer = require('nodemailer');
+    const transporter = nodemailer.createTransport({
+      host,
+      port,
+      secure: process.env.SMTP_SECURE === 'true',
+      auth: process.env.SMTP_USER ? {
+        user: process.env.SMTP_USER,
+        pass: process.env.SMTP_PASSWORD || process.env.SMTP_PASS,
+      } : undefined,
+    });
+
+    await Promise.race([
+      transporter.verify(),
+      new Promise((_, reject) =>
+        setTimeout(() => reject(new Error('timed out after 5000ms')), 5000) // eslint-disable-line local/no-bare-timers -- awaited delay
+      ),
+    ]);
+
+    pass('SMTP', `connection verified (${host}:${port})`);
+  } catch (err) {
+    warn('SMTP', `SMTP_HOST is set but connection verification failed: ${err.message} — email delivery may fail at runtime`);
+  }
+
+  return allOk;
+}
+
+/**
+ * Check — Geo-blocking database presence and strict-mode behaviour (#1533, #1806)
+ *
+ * GEO_STRICT_MODE controls what happens when the MaxMind database is missing:
+ *   - true  (default): fail startup — geo-blocking is a compliance control and
+ *                      must not silently fail open.
+ *   - false:           warn and continue; geo-blocking is inactive (fail open).
+ *
+ * The missing-database warning is emitted through the GEO_BLOCK logger so it
+ * matches the runtime middleware log and is easy to alert on.
+ */
+function checkGeoBlocking() {
+  const strictMode = process.env.GEO_STRICT_MODE !== 'false';
+  const rawBlocked = process.env.GEO_BLOCKED_COUNTRIES;
+  const blockedCountries = rawBlocked ? rawBlocked.split(',').map(s => s.trim()).filter(Boolean) : [];
+  const dbPath = process.env.MAXMIND_DB_PATH || path.join(__dirname, '../../data/GeoLite2-Country.mmdb');
+  const dbExists = fs.existsSync(dbPath);
+
+  const log = require('./log');
+  const logMissingDb = () => {
+    log.warn('GEO_BLOCK', 'MaxMind database not found', {
+      dbPath,
+      strictMode,
+      blockedCountries: blockedCountries.length,
+      behaviour: strictMode ? 'fail-closed (startup aborted)' : 'fail-open (geo-blocking inactive)',
+    });
+  };
+
+  if (blockedCountries.length === 0) {
+    pass('Geo-blocking', 'no country restrictions configured');
+    return true;
+  }
+
+  if (!dbExists) {
+    logMissingDb();
+    if (strictMode) {
+      fail(
+        'Geo-blocking',
+        `GEO_BLOCKED_COUNTRIES is configured but MaxMind database not found at "${dbPath}" ` +
+        'with GEO_STRICT_MODE=true — set MAXMIND_DB_PATH to a valid database or set GEO_STRICT_MODE=false to fail open'
+      );
+      return false;
+    }
+    warn(
+      'Geo-blocking',
+      `GEO_BLOCKED_COUNTRIES is configured but MaxMind database not found at "${dbPath}" ` +
+      '(GEO_STRICT_MODE=false; geo-blocking inactive — requests from blocked countries are NOT filtered)'
+    );
+    return true;
+  }
+
+  pass(
+    'Geo-blocking',
+    `MaxMind database found at "${dbPath}", blocking ${blockedCountries.length} country/countries ` +
+    `(GEO_STRICT_MODE=${strictMode})`
+  );
+  return true;
+}
+
 /**
  * Non-blocking DB integrity check run at startup.
  * Logs result at INFO level, or ERROR if corruption is detected.
@@ -690,18 +908,19 @@ async function runDbIntegrityCheck() {
  * @returns {Promise<{passed: boolean, results: Array}>}
  */
 async function run({ exitOnFailure = false } = {}) {
-  console.log('\nRunning startup checks…\n');
+  print('info', '\nRunning startup checks…\n');
 
   // CORS safety check runs first — a production misconfiguration is a hard failure
   const corsOk = checkCorsConfig();
   if (!corsOk && exitOnFailure) {
-    console.error('\nStartup checks FAILED ✖ (CORS misconfiguration in production)\n');
+    print('error', '\nStartup checks FAILED ✖ (CORS misconfiguration in production)\n');
     process.exit(1);
   }
 
   const criticalResults = [
     corsOk,
     checkEncryptionKey(),
+    checkSigningSecrets(),      // #1872
     checkApiKeys(),
     checkSecretStrength(),      // #1117
     checkUnsafeFlags(),         // #1116
@@ -710,6 +929,9 @@ async function run({ exitOnFailure = false } = {}) {
     checkStellarSigningKeys(),  // #1234
     checkNumericRanges(),       // #1234
     checkCoRequiredFlags(),     // #1234
+    checkMainnetProductionGuard(), // #1597
+    checkGeoBlocking(),         // #1533
+    await checkSmtpConfig(),    // #1975
     await checkDatabase(),
     await checkDatabaseDiagnostics(), // #1483
     await checkStellarNetwork(),
@@ -720,7 +942,7 @@ async function run({ exitOnFailure = false } = {}) {
 
   const passed = criticalResults.every(Boolean);
 
-  console.log(`\nStartup checks ${passed ? 'passed ✔' : 'FAILED ✖'}\n`);
+  print(passed ? 'info' : 'error', `\nStartup checks ${passed ? 'passed ✔' : 'FAILED ✖'}\n`);
 
   if (!passed && exitOnFailure) {
     process.exit(1);
@@ -729,14 +951,14 @@ async function run({ exitOnFailure = false } = {}) {
   return { passed, results };
 }
 
-module.exports = { run, results };
+module.exports = { run, results, checkMainnetProductionGuard, checkGeoBlocking, checkSmtpConfig };
 
 // Allow running directly: `node src/utils/startupChecks.js`
 if (require.main === module) {
   // Load .env when run standalone
   require('dotenv').config({ path: require('path').join(__dirname, '../../.env') });
   run({ exitOnFailure: true }).catch((err) => {
-    console.error('Startup checks threw an unexpected error:', err.message);
+    print('error', `Startup checks threw an unexpected error: ${err.message}`);
     process.exit(1);
   });
 }

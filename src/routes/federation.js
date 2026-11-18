@@ -16,20 +16,45 @@
 'use strict';
 
 const express = require('express');
+const StellarSdk = require('stellar-sdk');
 const router = express.Router();
 const log = require('../utils/log');
 const config = require('../config');
+const { resolveSep10SigningSecret } = require('../utils/sep10SigningKey');
+const Database = require('../utils/database');
 
 /**
- * In-memory federation registry: name (lowercase) → { account_id, memo_type?, memo? }
- * Populated via FEDERATION_RECORDS env var (JSON) or programmatically.
- *
- * Env var format (example): FEDERATION_RECORDS with JSON value
- * eslint-disable-next-line no-secrets/no-secrets
+ * Seed federation records from FEDERATION_RECORDS env var into the database.
+ * Each record is inserted with INSERT OR IGNORE so existing entries are preserved.
+ * Exported so tests can call it after seeding the in-memory env.
  */
-const federationRegistry = new Map();
+async function seedFederationRecordsFromEnv() {
+  try {
+    const raw = process.env.FEDERATION_RECORDS;
+    if (!raw) return;
+    const parsed = JSON.parse(raw);
+    for (const [name, value] of Object.entries(parsed)) {
+      const entry = typeof value === 'string' ? { account_id: value } : value;
+      await Database.run(
+        `INSERT OR IGNORE INTO federation_records (name, account_id, memo_type, memo)
+         VALUES (?, ?, ?, ?)`,
+        [
+          name.toLowerCase(),
+          entry.account_id,
+          entry.memo_type || null,
+          entry.memo || null,
+        ]
+      );
+    }
+  } catch (_) { /* invalid JSON or DB not ready — ignore */ }
+}
 
-// Seed from environment variable if provided
+// Seed on module load (best-effort; errors are swallowed)
+seedFederationRecordsFromEnv().catch(() => {});
+
+// Keep a backward-compatible in-memory Map for modules that import federationRegistry directly.
+// It is populated from the env var for compatibility but the GET /federation route reads from the DB.
+const federationRegistry = new Map();
 try {
   const raw = process.env.FEDERATION_RECORDS;
   if (raw) {
@@ -42,22 +67,80 @@ try {
 } catch (_) { /* invalid JSON — ignore */ }
 
 /**
+ * Renders the stellar.toml body. Pure function of its inputs so it can be cached.
+ * @param {{ domain: string, scheme: string, host: string, signingPublicKey: string|null }} input
+ * @returns {string}
+ */
+function renderStellarToml({ domain, scheme, host, signingPublicKey }) {
+  const federationUrl = `${scheme}://${domain}/federation`;
+  // Prefer the configured public URL so a proxy's Host header cannot change the advertised endpoint
+  const publicBase = (process.env.API_BASE_URL || `${scheme}://${host}`).replace(/\/+$/, '');
+  const webAuthEndpoint = `${publicBase}/auth`;
+
+  const lines = [
+    `# Stellar TOML for ${domain}`,
+    'VERSION="1.0.0"',
+    `NETWORK_PASSPHRASE="${config.stellar.environment.networkPassphrase}"`,
+    `FEDERATION_SERVER="${federationUrl}"`,
+    `WEB_AUTH_ENDPOINT="${webAuthEndpoint}"`,
+    // AUTH_SERVER is the pre-SEP-10 name, kept for clients that have not migrated
+    `AUTH_SERVER="${webAuthEndpoint}"`,
+  ];
+
+  if (signingPublicKey) {
+    lines.push(`SIGNING_KEY="${signingPublicKey}"`);
+  }
+
+  return lines.join('\n');
+}
+
+let cachedToml = null;
+
+/**
+ * Returns the public key of the configured SEP-10 signing secret, or null when
+ * none is configured or the value is invalid. Invalid values are logged, never thrown,
+ * and startup checks reject them.
+ * @returns {string|null}
+ */
+function getSep10SigningPublicKey() {
+  const { secret, dedicated } = resolveSep10SigningSecret();
+  if (!secret) {
+    log.debug('FEDERATION', 'No SEP-10 signing key configured; omitting SIGNING_KEY from stellar.toml');
+    return null;
+  }
+  try {
+    return StellarSdk.Keypair.fromSecret(secret).publicKey();
+  } catch (err) {
+    log.warn('FEDERATION', 'Invalid SEP-10 signing key; omitting SIGNING_KEY from stellar.toml', {
+      source: dedicated ? 'SEP10_SIGNING_KEY' : 'STELLAR_SECRET/SERVICE_SECRET_KEY',
+      error: err.message,
+    });
+    return null;
+  }
+}
+
+/**
  * GET /.well-known/stellar.toml
- * Advertises this server as a federation server.
+ * Advertises this server as a federation server (SEP-0002) and its SEP-0010
+ * web auth endpoint. This is the only handler for this path (issue #1779).
  * CORS must be open (*) per the Stellar protocol spec.
+ *
+ * The body is rebuilt only when its inputs change (issue #1888).
  */
 router.get('/.well-known/stellar.toml', (req, res) => {
   const domain = process.env.FEDERATION_DOMAIN || req.hostname || 'localhost';
-  const protocol = process.env.NODE_ENV === 'production' ? 'https' : req.protocol;
-  const federationUrl = `${protocol}://${domain}/federation`;
+  const scheme = process.env.NODE_ENV === 'production' ? 'https' : req.protocol;
+  const host = req.get('host') || 'localhost';
+  const signingPublicKey = getSep10SigningPublicKey();
+
+  const cacheKey = [domain, scheme, host, process.env.API_BASE_URL || '', signingPublicKey || ''].join('|');
+  if (!cachedToml || cachedToml.key !== cacheKey) {
+    cachedToml = { key: cacheKey, body: renderStellarToml({ domain, scheme, host, signingPublicKey }) };
+  }
 
   res.set('Content-Type', 'text/plain; charset=utf-8');
   res.set('Access-Control-Allow-Origin', '*');
-  res.send([
-    `# Stellar TOML for ${domain}`,
-    `FEDERATION_SERVER="${federationUrl}"`,
-    `NETWORK_PASSPHRASE="${config.stellar.environment.networkPassphrase}"`,
-  ].join('\n'));
+  res.send(cachedToml.body);
 });
 
 /**
@@ -69,7 +152,7 @@ router.get('/.well-known/stellar.toml', (req, res) => {
  *   q    - federation address (name*domain) or account ID
  *   type - "name" | "id" (only "name" is implemented)
  */
-router.get('/federation', (req, res) => {
+router.get('/federation', async (req, res) => {
   const { q, type } = req.query;
 
   if (!q || !type) {
@@ -79,10 +162,9 @@ router.get('/federation', (req, res) => {
   }
 
   if (type !== 'name') {
-    // 400: the client sent an unsupported value for the 'type' parameter.
-    // 501 would imply the server never intends to handle it; 400 is correct
-    // because the fault is the client providing an unknown lookup type.
-    return res.status(400).json({
+    // The server understands the federation endpoint but does not implement
+    // this lookup type, so report the protocol's 501 Not Implemented status.
+    return res.status(501).json({
       detail: `Unsupported federation lookup type "${type}". Only "name" is supported.`,
     });
   }
@@ -94,7 +176,10 @@ router.get('/federation', (req, res) => {
   }
 
   const name = q.slice(0, atIndex).toLowerCase();
-  const entry = federationRegistry.get(name);
+  const entry = await Database.get(
+    'SELECT account_id, memo_type, memo FROM federation_records WHERE name = ?',
+    [name]
+  );
 
   if (!entry) {
     log.debug('FEDERATION_SERVER', 'Address not found', { q });
@@ -114,4 +199,4 @@ router.get('/federation', (req, res) => {
   return res.json(response);
 });
 
-module.exports = { router, federationRegistry };
+module.exports = { router, federationRegistry, renderStellarToml };

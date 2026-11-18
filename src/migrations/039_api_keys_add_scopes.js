@@ -22,13 +22,11 @@
 exports.name = '039_api_keys_add_scopes';
 
 exports.up = async (db) => {
-  // Check the schema rather than relying on the SQLite error text: the database
-  // wrapper replaces driver messages with a generic "Database operation failed",
-  // so a "duplicate column" match on the error would never fire.
+  // Check the schema instead of matching the error text: the database wrapper
+  // replaces SQLite's "duplicate column" message, so a text match never fires.
   const columns = await db.all('PRAGMA table_info(api_keys)');
-  if (!columns.some(c => c.name === 'scopes')) {
-    await db.run(`ALTER TABLE api_keys ADD COLUMN scopes TEXT`);
-  }
+  if (columns.some((c) => c.name === 'scopes')) return;
+  await db.run(`ALTER TABLE api_keys ADD COLUMN scopes TEXT`);
 };
 
 exports.down = async (db) => {

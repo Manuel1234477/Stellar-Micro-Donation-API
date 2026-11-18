@@ -14,7 +14,7 @@
 
 'use strict';
 
-const StellarSdk = require('stellar-sdk');
+const StellarSdk = require('@stellar/stellar-sdk');
 const path = require('path');
 const StellarService = require('../../../src/services/StellarService');
 const Database = require('../../../src/utils/database');
@@ -23,6 +23,33 @@ const { withRetry, waitUntil } = require('./retry');
 
 const TESTNET_HORIZON_URL = 'https://horizon-testnet.stellar.org';
 const TESTNET_NETWORK = 'testnet';
+
+/**
+ * Error codes/messages that indicate an account no longer exists on testnet.
+ * Horizon returns 404 (not_found) when an account is absent, which typically
+ * means testnet was reset between runs.
+ */
+const ACCOUNT_NOT_FOUND_PATTERNS = [
+  /not\s*found/i,
+  /does\s*not\s*exist/i,
+  /account\s*not\s*found/i,
+  /404/,
+];
+
+/**
+ * Determine whether an error indicates the account is missing from testnet
+ * (e.g. after a testnet reset).
+ *
+ * @param {Error|{ response?: { status?: number }, message?: string }} err
+ * @returns {boolean}
+ */
+function isAccountNotFoundError(err) {
+  if (!err) return false;
+  if (err.response && err.response.status === 404) return true;
+  if (err.status === 404) return true;
+  const message = String(err.message || err);
+  return ACCOUNT_NOT_FOUND_PATTERNS.some((re) => re.test(message));
+}
 
 /**
  * Create a StellarService instance configured for the Stellar testnet.
@@ -91,6 +118,38 @@ async function createFundedAccount(service) {
 }
 
 /**
+ * Ensure an account still exists on testnet, re-funding it if testnet was reset.
+ *
+ * Testnet is reset periodically, which wipes all accounts. This helper detects
+ * the resulting "account not found" condition and re-funds the account via
+ * Friendbot so the test can continue. If re-funding fails, the error is
+ * re-thrown so the caller can skip the test.
+ *
+ * @param {StellarService} service   - Testnet StellarService instance
+ * @param {string}         publicKey - Account to verify
+ * @returns {Promise<{ reset: boolean, refunded: boolean }>}
+ * @throws {Error} If the account is missing and cannot be re-funded
+ */
+async function ensureAccountExists(service, publicKey) {
+  try {
+    await service.getBalance(publicKey);
+    return { reset: false, refunded: false };
+  } catch (err) {
+    if (!isAccountNotFoundError(err)) {
+      throw err;
+    }
+    // eslint-disable-next-line no-console
+    console.warn(
+      `[e2e/testnet] Account ${publicKey.slice(0, 8)}… not found — ` +
+      'assuming testnet reset, re-funding via Friendbot'
+    );
+    await fundAccount(publicKey, service);
+    await waitForBalance(service, publicKey, '1');
+    return { reset: true, refunded: true };
+  }
+}
+
+/**
  * Poll Horizon until the account's XLM balance is at least minBalance.
  *
  * Useful after Friendbot calls to ensure the account is fully on-chain before
@@ -118,6 +177,56 @@ async function waitForBalance(service, publicKey, minBalance = '1') {
       description: `balance ≥ ${minBalance} XLM for ${publicKey.slice(0, 8)}…`,
     }
   );
+}
+
+/**
+ * Poll Horizon until a transaction is confirmed (or fails) with a bounded timeout.
+ *
+ * Used to verify the money path on-chain after submitting a donation or refund.
+ * A transaction that Horizon reports as failed causes this helper to throw.
+ *
+ * @param {StellarService} service       - Testnet StellarService instance
+ * @param {string}         transactionHash - Hash of the submitted transaction
+ * @param {object}         [options]
+ * @param {number}         [options.maxAttempts=15] - Poll attempts before timing out
+ * @param {number}         [options.intervalMs=3000] - Delay between polls
+ * @returns {Promise<object>} The confirmed transaction record from Horizon
+ * @throws {Error} If the transaction is not confirmed within the timeout or fails
+ */
+async function waitForTransaction(service, transactionHash, options = {}) {
+  const { maxAttempts = 15, intervalMs = 3000 } = options;
+  let confirmed = null;
+
+  await waitUntil(
+    async () => {
+      try {
+        const tx = await service.getTransaction(transactionHash);
+        if (tx && tx.successful === false) {
+          throw new Error(
+            `Transaction ${transactionHash.slice(0, 8)}… failed on-chain`
+          );
+        }
+        if (tx && tx.successful === true) {
+          confirmed = tx;
+          return true;
+        }
+        return false;
+      } catch (err) {
+        // Re-throw on-chain failures; treat "not found yet" as pending.
+        if (/failed on-chain/i.test(err.message)) {
+          throw err;
+        }
+        return false;
+      }
+    },
+    {
+      maxAttempts,
+      intervalMs,
+      description: `confirmation of tx ${transactionHash.slice(0, 8)}…`,
+    }
+  );
+
+  return confirmed;
 }
 
 /**
@@ -156,11 +265,14 @@ async function createFundedUser(service) {
 module.exports = {
   TESTNET_HORIZON_URL,
   TESTNET_NETWORK,
+  isAccountNotFoundError,
   createTestnetService,
   generateKeypair,
   fundAccount,
   createFundedAccount,
+  ensureAccountExists,
   waitForBalance,
+  waitForTransaction,
   seedUser,
   createFundedUser,
 };

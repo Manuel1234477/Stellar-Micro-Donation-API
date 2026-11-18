@@ -178,6 +178,39 @@ describe('HealthCheckService', () => {
       const result = await HealthCheckService.getFullHealth(healthyMockService, networkSvc);
       expect(result.dependencies).toHaveProperty('network');
     });
+
+    // Issue #1567 — the active price source must be visible on GET /health
+    describe('price source reporting', () => {
+      const priceOracle = require('../../src/services/PriceOracleService');
+      let sourceSpy;
+
+      afterEach(() => {
+        if (sourceSpy) sourceSpy.mockRestore();
+      });
+
+      it('reports the active price source', async () => {
+        sourceSpy = jest.spyOn(priceOracle, 'getPriceSourceStatus').mockReturnValue({
+          source: priceOracle.PRICE_SOURCES.STELLAR_DEX,
+          cached: true,
+          stale: false,
+        });
+
+        const result = await HealthCheckService.getFullHealth(healthyMockService);
+
+        expect(result.priceOracle.source).toBe('stellar_dex');
+      });
+
+      it('reports an unknown price source rather than failing the health check', async () => {
+        sourceSpy = jest.spyOn(priceOracle, 'getPriceSourceStatus').mockImplementation(() => {
+          throw new Error('oracle exploded');
+        });
+
+        const result = await HealthCheckService.getFullHealth(healthyMockService);
+
+        expect(result.status).toBe('healthy');
+        expect(result.priceOracle.source).toBe('unknown');
+      });
+    });
   });
 
   // ── getReadiness ───────────────────────────────────────────────────────────

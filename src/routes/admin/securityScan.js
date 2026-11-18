@@ -24,8 +24,9 @@ const { checkPermission } = require('../../middleware/rbac');
 const { PERMISSIONS } = require('../../utils/permissions');
 const { runAllScans } = require('../../scripts/security-scan');
 const asyncHandler = require('../../utils/asyncHandler');
+const Database = require('../../utils/database');
 
-// ─── In-memory job store ──────────────────────────────────────────────────────
+// ─── Job store (SQLite-backed) ─────────────────────────────────────────────────
 
 /**
  * @typedef {Object} ScanJob
@@ -38,25 +39,20 @@ const asyncHandler = require('../../utils/asyncHandler');
  * @property {number}   expiresAt   — Unix ms timestamp after which the record may be purged
  */
 
-/** @type {Map<string, ScanJob>} */
-const jobs = new Map();
-
 /** True while a scan is actively running. */
 let scanInProgress = false;
 
 const JOB_TTL_MS = 7 * 24 * 60 * 60 * 1000; // 7 days
 
 /**
- * Remove expired jobs from the in-memory store.
+ * Remove expired jobs from the database.
  * Called lazily on each GET request to avoid a background timer in tests.
  */
-function purgeExpiredJobs() {
-  const now = Date.now();
-  for (const [id, job] of jobs.entries()) {
-    if (job.expiresAt <= now) {
-      jobs.delete(id);
-    }
-  }
+async function purgeExpiredJobs() {
+  await Database.run(
+    'DELETE FROM security_scan_jobs WHERE expires_at <= ?',
+    [Date.now()]
+  );
 }
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
@@ -156,35 +152,35 @@ router.post(
 
     const jobId = `scan-${uuidv4()}`;
     const startedAt = new Date().toISOString();
+    const expiresAt = Date.now() + JOB_TTL_MS;
 
-    /** @type {ScanJob} */
-    const job = {
-      jobId,
-      status: 'running',
-      findings: [],
-      summary: { high: 0, medium: 0, low: 0 },
-      scannedAt: null,
-      startedAt,
-      expiresAt: Date.now() + JOB_TTL_MS,
-    };
+    await Database.run(
+      `INSERT INTO security_scan_jobs (job_id, status, findings, summary, started_at, scanned_at, expires_at)
+       VALUES (?, 'running', '[]', '{"high":0,"medium":0,"low":0}', ?, NULL, ?)`,
+      [jobId, startedAt, expiresAt]
+    );
 
-    jobs.set(jobId, job);
     scanInProgress = true;
 
     // Run the scan asynchronously — do not await
     runAllScans()
-      .then((scanResult) => {
+      .then(async (scanResult) => {
         const { findings, summary } = buildFindings(scanResult);
-        job.status = 'completed';
-        job.findings = findings;
-        job.summary = summary;
-        job.scannedAt = new Date().toISOString();
-        // Extend TTL from completion time
-        job.expiresAt = Date.now() + JOB_TTL_MS;
+        await Database.run(
+          `UPDATE security_scan_jobs
+           SET status = 'completed', findings = ?, summary = ?, scanned_at = ?, expires_at = ?
+           WHERE job_id = ?`,
+          [
+            JSON.stringify(findings),
+            JSON.stringify(summary),
+            new Date().toISOString(),
+            Date.now() + JOB_TTL_MS,
+            jobId,
+          ]
+        );
       })
-      .catch((err) => {
-        job.status = 'failed';
-        job.findings = [
+      .catch(async (err) => {
+        const findings = [
           {
             severity: 'HIGH',
             file: 'src/scripts/security-scan.js',
@@ -192,9 +188,18 @@ router.post(
             description: `Scan execution error: ${err.message}`,
           },
         ];
-        job.summary = { high: 1, medium: 0, low: 0 };
-        job.scannedAt = new Date().toISOString();
-        job.expiresAt = Date.now() + JOB_TTL_MS;
+        await Database.run(
+          `UPDATE security_scan_jobs
+           SET status = 'failed', findings = ?, summary = ?, scanned_at = ?, expires_at = ?
+           WHERE job_id = ?`,
+          [
+            JSON.stringify(findings),
+            JSON.stringify({ high: 1, medium: 0, low: 0 }),
+            new Date().toISOString(),
+            Date.now() + JOB_TTL_MS,
+            jobId,
+          ]
+        );
       })
       .finally(() => {
         scanInProgress = false;
@@ -217,12 +222,16 @@ router.get(
   '/:jobId',
   checkPermission(PERMISSIONS.ADMIN_ALL),
   asyncHandler(async (req, res) => {
-    purgeExpiredJobs();
+    await purgeExpiredJobs();
 
     const { jobId } = req.params;
-    const job = jobs.get(jobId);
+    const row = await Database.get(
+      `SELECT job_id, status, findings, summary, scanned_at, started_at
+       FROM security_scan_jobs WHERE job_id = ?`,
+      [jobId]
+    );
 
-    if (!job) {
+    if (!row) {
       return res.status(404).json({
         success: false,
         error: {
@@ -235,12 +244,12 @@ router.get(
     return res.json({
       success: true,
       data: {
-        jobId: job.jobId,
-        status: job.status,
-        findings: job.findings,
-        summary: job.summary,
-        scannedAt: job.scannedAt,
-        startedAt: job.startedAt,
+        jobId: row.job_id,
+        status: row.status,
+        findings: JSON.parse(row.findings || '[]'),
+        summary: JSON.parse(row.summary || '{"high":0,"medium":0,"low":0}'),
+        scannedAt: row.scanned_at,
+        startedAt: row.started_at,
       },
     });
   }),
@@ -249,7 +258,6 @@ router.get(
 // ─── Exports (also expose internals for testing) ──────────────────────────────
 
 module.exports = router;
-module.exports._jobs = jobs;
 module.exports._getScanInProgress = () => scanInProgress;
 module.exports._setScanInProgress = (v) => { scanInProgress = v; };
 module.exports._buildFindings = buildFindings;

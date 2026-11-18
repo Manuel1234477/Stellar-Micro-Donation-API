@@ -32,7 +32,7 @@ const mockServerBuilder = {
   call: jest.fn(),
 };
 
-jest.mock('stellar-sdk', () => ({
+jest.mock('@stellar/stellar-sdk', () => ({
   Horizon: {
     Server: jest.fn().mockImplementation(() => mockServerBuilder),
   },

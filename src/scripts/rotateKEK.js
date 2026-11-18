@@ -26,34 +26,25 @@
 
 require('dotenv').config();
 
-const path = require('path');
 const crypto = require('crypto');
 const Database = require('../utils/database');
+const { getCacheTtlMs: getRotationLockCacheTtlMs } = require('../middleware/rotationLock');
 
-const ALGORITHM = 'aes-256-gcm';
-const IV_LENGTH = 12;
+const cryptoCore = require('../utils/crypto');
 const LOG_INTERVAL = 100;
 
 function deriveKEK(rawKey) {
   if (!rawKey) throw new Error('Key must not be empty');
-  return crypto.createHash('sha256').update(rawKey).digest();
+  return cryptoCore.deriveKey(rawKey);
 }
 
+// Same "iv:ct:tag" format as the local KMS provider (src/utils/kms.js)
 function encryptDEK(dek, kek) {
-  const iv = crypto.randomBytes(IV_LENGTH);
-  const cipher = crypto.createCipheriv(ALGORITHM, kek, iv);
-  const ct = Buffer.concat([cipher.update(dek), cipher.final()]);
-  const tag = cipher.getAuthTag();
-  return `${iv.toString('hex')}:${ct.toString('hex')}:${tag.toString('hex')}`;
+  return cryptoCore.formatLegacy(cryptoCore.seal(kek, dek));
 }
 
 function decryptDEK(encryptedDEK, kek) {
-  const parts = encryptedDEK.split(':');
-  if (parts.length !== 3) throw new Error('Invalid encrypted DEK format');
-  const [ivHex, ctHex, tagHex] = parts;
-  const decipher = crypto.createDecipheriv(ALGORITHM, kek, Buffer.from(ivHex, 'hex'));
-  decipher.setAuthTag(Buffer.from(tagHex, 'hex'));
-  return Buffer.concat([decipher.update(Buffer.from(ctHex, 'hex')), decipher.final()]);
+  return cryptoCore.open(kek, cryptoCore.parseLegacy(encryptedDEK, 'Invalid encrypted DEK format'));
 }
 
 async function rotate({ oldKey, newKey, verifyOnly }) {
@@ -110,6 +101,13 @@ async function rotate({ oldKey, newKey, verifyOnly }) {
       ['in_progress', new Date().toISOString(), new Date().toISOString(), 'memoEncryption']
     );
 
+    // API instances cache the lock status for up to one TTL; wait it out so
+    // every instance is rejecting donation writes before memos are rewritten.
+    const lockPropagationMs = getRotationLockCacheTtlMs();
+    if (lockPropagationMs > 0) {
+      console.log(`Waiting ${lockPropagationMs}ms for API instances to observe the rotation lock...`);
+      await new Promise((resolve) => setTimeout(resolve, lockPropagationMs)); // eslint-disable-line local/no-bare-timers
+    }
     console.log('✓ Rotation lock acquired; API donations now return 503.');
 
     // Perform all re-encryption inside a single database transaction

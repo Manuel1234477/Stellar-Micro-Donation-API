@@ -15,6 +15,7 @@
 const crypto = require('crypto');
 const axios = require('axios');
 const log = require('../utils/log');
+const { toStroops } = require('../utils/money');
 
 class AccountMonitorService {
   /**
@@ -188,8 +189,8 @@ class AccountMonitorService {
     }
 
     if (monitor.conditions.includes('large_transaction')) {
-      const amt = parseFloat(tx.amount);
-      if (!isNaN(amt) && amt >= monitor.amountThreshold) {
+      const amountStroops = toStroops(String(tx.amount));
+      if (amountStroops >= toStroops(String(monitor.amountThreshold))) {
         alerts.push({ condition: 'large_transaction', tx, threshold: monitor.amountThreshold });
       }
     }
@@ -197,7 +198,7 @@ class AccountMonitorService {
     if (monitor.conditions.includes('low_balance')) {
       try {
         const { balance } = await this._stellar.getBalance(monitor.accountId);
-        if (parseFloat(balance) < monitor.balanceThreshold) {
+        if (toStroops(String(balance)) < toStroops(String(monitor.balanceThreshold))) {
           alerts.push({ condition: 'low_balance', balance, threshold: monitor.balanceThreshold });
         }
       } catch (_) { /* account may not exist */ }

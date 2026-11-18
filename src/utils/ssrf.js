@@ -1,7 +1,7 @@
 'use strict';
 
 /**
- * SSRF Protection Utility — Issue #1119
+ * SSRF Protection Utility — Issue #1119 / #1529
  *
  * Validates outbound URLs before any HTTP request to prevent Server-Side
  * Request Forgery attacks. Blocks private/loopback/link-local/metadata ranges,
@@ -11,6 +11,18 @@
 const dns = require('dns').promises;
 const { URL } = require('url');
 const net = require('net');
+const log = require('./log');
+
+class SsrfError extends Error {
+  constructor(message) {
+    super(message);
+    this.name = 'SsrfError';
+    this.code = 'SSRF_BLOCKED';
+    this.errorCode = 'SSRF_BLOCKED';
+    this.status = 400;
+    this.statusCode = 400;
+  }
+}
 
 /** Blocked IPv4 CIDR ranges as [network_int, mask_int] pairs */
 const BLOCKED_IPV4_CIDRS = [
@@ -45,15 +57,56 @@ function isBlockedIPv4(ip) {
 function isBlockedIPv6(ip) {
   // Normalize and check common blocked IPv6 ranges
   const normalized = ip.toLowerCase().replace(/^\[|\]$/g, '');
-  return (
+  if (
     normalized === '::1' ||                        // loopback
+    normalized === '::' ||                         // unspecified
     normalized.startsWith('fc') ||                 // ULA fc00::/7
     normalized.startsWith('fd') ||                 // ULA fd00::/8
-    normalized.startsWith('fe80') ||               // link-local
-    normalized.startsWith('::ffff:') ||            // IPv4-mapped — checked separately
-    normalized === '::' ||                         // unspecified
-    normalized.startsWith('ff')                    // multicast
-  );
+    normalized.startsWith('fe8') ||                // link-local fe80::/10
+    normalized.startsWith('fe9') ||
+    normalized.startsWith('fea') ||
+    normalized.startsWith('feb') ||
+    normalized.startsWith('ff') ||                 // multicast ff00::/8
+    normalized.startsWith('2001:db8:') ||          // documentation
+    normalized.startsWith('2001:10:') ||           // ORCHID
+    normalized.startsWith('64:ff9b:')              // IPv4/IPv6 translation
+  ) {
+    return true;
+  }
+
+  if (normalized.startsWith('::ffff:')) {
+    const ipv4Part = normalized.slice(7);
+    if (net.isIPv4(ipv4Part)) {
+      return isBlockedIPv4(ipv4Part);
+    }
+  }
+
+  return false;
+}
+
+/**
+ * Log SSRF block event
+ */
+function logSsrfBlocked(target, reason) {
+  log.warn('SECURITY', 'SSRF blocked outbound request', {
+    target,
+    reason,
+    timestamp: new Date().toISOString(),
+  });
+
+  try {
+    const AuditLogService = require('../services/AuditLogService');
+    AuditLogService.log({
+      category: AuditLogService.CATEGORY.ABUSE_DETECTION,
+      action: 'SSRF_BLOCKED',
+      severity: AuditLogService.SEVERITY.HIGH,
+      result: 'FAILURE',
+      details: { target, reason },
+      reason,
+    }).catch(() => {});
+  } catch (_) {
+    // AuditLogService may not be available in all contexts
+  }
 }
 
 /**
@@ -65,13 +118,17 @@ async function assertSafeHost(hostname) {
   // If already a literal IP, check directly without DNS
   if (net.isIPv4(hostname)) {
     if (isBlockedIPv4(hostname)) {
-      throw new Error(`SSRF: blocked IPv4 address: ${hostname}`);
+      const msg = `SSRF: blocked IPv4 address: ${hostname}`;
+      logSsrfBlocked(hostname, msg);
+      throw new SsrfError(msg);
     }
     return;
   }
   if (net.isIPv6(hostname)) {
     if (isBlockedIPv6(hostname)) {
-      throw new Error(`SSRF: blocked IPv6 address: ${hostname}`);
+      const msg = `SSRF: blocked IPv6 address: ${hostname}`;
+      logSsrfBlocked(hostname, msg);
+      throw new SsrfError(msg);
     }
     return;
   }
@@ -81,15 +138,21 @@ async function assertSafeHost(hostname) {
   try {
     addresses = await dns.lookup(hostname, { all: true });
   } catch (err) {
-    throw new Error(`SSRF: DNS resolution failed for ${hostname}: ${err.message}`);
+    const msg = `SSRF: DNS resolution failed for ${hostname}: ${err.message}`;
+    logSsrfBlocked(hostname, msg);
+    throw new SsrfError(msg);
   }
 
   for (const { address, family } of addresses) {
     if (family === 4 && isBlockedIPv4(address)) {
-      throw new Error(`SSRF: hostname ${hostname} resolves to blocked IPv4 ${address}`);
+      const msg = `SSRF: hostname ${hostname} resolves to blocked IPv4 ${address}`;
+      logSsrfBlocked(hostname, msg);
+      throw new SsrfError(msg);
     }
     if (family === 6 && isBlockedIPv6(address)) {
-      throw new Error(`SSRF: hostname ${hostname} resolves to blocked IPv6 ${address}`);
+      const msg = `SSRF: hostname ${hostname} resolves to blocked IPv6 ${address}`;
+      logSsrfBlocked(hostname, msg);
+      throw new SsrfError(msg);
     }
   }
 }
@@ -104,18 +167,26 @@ async function assertSafeHost(hostname) {
  *
  * @param {string} urlStr - The target URL string
  * @returns {Promise<URL>} The parsed URL if safe
- * @throws {Error} If the URL is unsafe
+ * @throws {SsrfError} If the URL is unsafe
  */
 async function assertSafeOutboundUrl(urlStr) {
   let parsed;
   try {
     parsed = new URL(urlStr);
   } catch {
-    throw new Error(`SSRF: invalid URL: ${urlStr}`);
+    const msg = `SSRF: invalid URL: ${urlStr}`;
+    logSsrfBlocked(urlStr, msg);
+    throw new SsrfError(msg);
   }
 
   if (parsed.protocol !== 'https:') {
-    throw new Error(`SSRF: only HTTPS is allowed, got ${parsed.protocol} in ${urlStr}`);
+    const isLocalhost = parsed.hostname === 'localhost' || parsed.hostname === '127.0.0.1';
+    const isDev = process.env.NODE_ENV !== 'production';
+    if (!(isLocalhost && isDev)) {
+      const msg = `SSRF: only HTTPS is allowed, got ${parsed.protocol} in ${urlStr}`;
+      logSsrfBlocked(urlStr, msg);
+      throw new SsrfError(msg);
+    }
   }
 
   await assertSafeHost(parsed.hostname);
@@ -123,4 +194,10 @@ async function assertSafeOutboundUrl(urlStr) {
   return parsed;
 }
 
-module.exports = { assertSafeOutboundUrl, assertSafeHost, isBlockedIPv4, isBlockedIPv6 };
+module.exports = {
+  assertSafeOutboundUrl,
+  assertSafeHost,
+  isBlockedIPv4,
+  isBlockedIPv6,
+  SsrfError,
+};

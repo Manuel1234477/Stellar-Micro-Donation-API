@@ -1,6 +1,7 @@
 const crypto = require('crypto');
 const { ValidationError, NotFoundError, BusinessLogicError, ERROR_CODES } = require('../../utils/errors');
 const log = require('../../utils/log');
+const { validateHomeDomain } = require('../../utils/homeDomain');
 
 const NATIVE_ASSET = { type: 'native', code: 'XLM', issuer: null };
 
@@ -241,17 +242,7 @@ class MockAccounts {
   }
 
   async setHomeDomain(sourceSecret, domain) {
-    if (!domain || typeof domain !== 'string') {
-      throw new ValidationError('domain must be a non-empty string');
-    }
-    if (domain.length > 32) {
-      throw new ValidationError('domain must be 32 characters or fewer per Stellar spec');
-    }
-    // Input is already length-capped to <=32 chars above.
-    // eslint-disable-next-line security/detect-unsafe-regex
-    if (!/^[a-zA-Z0-9]([a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?(\.[a-zA-Z0-9]([a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?)*$/.test(domain)) {
-      throw new ValidationError('domain must be a valid hostname with no protocol or path');
-    }
+    validateHomeDomain(domain, { allowEmpty: true });
 
     const wallet = this.service._findWalletBySecret(sourceSecret);
     if (!wallet) throw new ValidationError('Invalid secret key');

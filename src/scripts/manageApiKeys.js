@@ -26,6 +26,12 @@ const commands = {
       ? args['allowed-ips'].split(',').map(ip => ip.trim()).filter(ip => ip)
       : null;
 
+    // --scopes accepts a comma-separated list of resource:action strings,
+    // e.g. "donations:read,stats:read"
+    const scopes = args.scopes
+      ? args.scopes.split(',').map(s => s.trim()).filter(s => s)
+      : [];
+
     if (!name) {
       console.error('Error: --name is required');
       process.exit(1);
@@ -36,6 +42,17 @@ const commands = {
       process.exit(1);
     }
 
+    // Validate scopes if provided
+    if (scopes.length > 0) {
+      const { validateScopes } = require('../utils/scopeValidator');
+      const validation = validateScopes(scopes);
+      if (!validation.valid) {
+        console.error('Error: Invalid --scopes value(s):');
+        validation.errors.forEach(e => console.error('  -', e));
+        process.exit(1);
+      }
+    }
+
     const keyInfo = await apiKeysModel.createApiKey({
       name,
       role,
@@ -43,6 +60,7 @@ const commands = {
       createdBy: 'cli',
       metadata: { createdVia: 'cli' },
       allowedIps,
+      scopes,
     });
 
     console.log('\n✓ API Key created successfully!\n');
@@ -51,6 +69,11 @@ const commands = {
     console.log('Prefix:', keyInfo.keyPrefix);
     console.log('Name:', keyInfo.name);
     console.log('Role:', keyInfo.role);
+    if (keyInfo.scopes && keyInfo.scopes.length > 0) {
+      console.log('Scopes:', keyInfo.scopes.join(', '));
+    } else {
+      console.log('Scopes: (none — full role permissions apply)');
+    }
     console.log('Status:', keyInfo.status);
     console.log('Created:', new Date(keyInfo.createdAt).toISOString());
     if (keyInfo.expiresAt) {
@@ -81,6 +104,9 @@ const commands = {
       console.log(`  Prefix: ${key.key_prefix}`);
       console.log(`  Name: ${key.name || 'N/A'}`);
       console.log(`  Role: ${key.role}`);
+      if (key.scopes && key.scopes.length > 0) {
+        console.log(`  Scopes: ${key.scopes.join(', ')}`);
+      }
       console.log(`  Status: ${key.status}`);
       console.log(`  Created: ${new Date(key.created_at).toISOString()}`);
       if (key.expires_at) {
@@ -158,6 +184,10 @@ Commands:
     --expires <number>    Expiration in days (optional)
     --allowed-ips <ips>   Comma-separated IP addresses/CIDR ranges (optional)
                           Example: "192.168.1.0/24,10.0.0.1"
+    --scopes <scopes>     Comma-separated fine-grained permission scopes (optional)
+                          Restricts the key to a subset of its role's permissions.
+                          Format: resource:action  (e.g. "donations:read,stats:read")
+                          Omit to grant full role permissions.
 
   list        List all API keys
     --status <string>     Filter by status: active, deprecated, revoked
@@ -177,6 +207,7 @@ Commands:
 Examples:
   node src/scripts/manageApiKeys.js create --name "Production API" --role admin --expires 365
   node src/scripts/manageApiKeys.js create --name "Office API" --role user --allowed-ips "192.168.1.0/24,10.0.0.1"
+  node src/scripts/manageApiKeys.js create --name "Analytics" --role user --scopes "donations:read,stats:read"
   node src/scripts/manageApiKeys.js list --status active
   node src/scripts/manageApiKeys.js deprecate --id 1
   node src/scripts/manageApiKeys.js revoke --id 2

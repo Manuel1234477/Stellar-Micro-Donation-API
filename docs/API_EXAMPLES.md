@@ -394,7 +394,7 @@ curl -X PATCH http://localhost:3000/donations/1/status \
   "success": false,
   "error": {
     "code": "VALIDATION_ERROR",
-    "message": "Invalid status. Must be one of: pending, submitted, confirmed, failed"
+    "message": "Invalid status. Must be one of: pending, queued, submitted, pending_confirmation, confirmed, failed, expired"
   }
 }
 ```

@@ -4,6 +4,8 @@ process.env.API_KEYS = 'test-key-1,test-key-2,test-key,admin-test-key';
 process.env.NODE_ENV = 'test';
 // Fixed test key — must be set before any module that imports securityConfig is loaded
 process.env.ENCRYPTION_KEY = process.env.ENCRYPTION_KEY || 'test_encryption_key_fixed_32bytes_hex_value_here_00';
+process.env.EXPORT_SIGNING_SECRET = process.env.EXPORT_SIGNING_SECRET || 'test_export_signing_secret_fixed_value_0123456789';
+process.env.JWT_SIGNING_SECRET = process.env.JWT_SIGNING_SECRET || 'test_jwt_signing_secret_fixed_value_0123456789abcdef';
 
 // ─── Guard: block accidental access to the shared data/ directory ─────────────
 // Any test that reads or writes a path under <repo>/data/ without going through
@@ -87,37 +89,31 @@ try {
 try {
   const abuseDetectionService = require('../src/services/AbuseDetectionService');
   abuseDetectionService.blockedIps = [];
-  abuseDetectionService.suspiciousCounts = new Map();
+  abuseDetectionService.trackedIPs = new Set();
+  abuseDetectionService.failureTracking = new Set();
+  abuseDetectionService.suspiciousIPs = new Set();
 } catch (_) {}
 
-// 3. Abuse detector (observability) — request/failure counts persist
-try {
-  const abuseDetector = require('../src/utils/abuseDetector');
-  abuseDetector.requestCounts = new Map();
-  abuseDetector.failureCounts = new Map();
-  abuseDetector.suspiciousIPs = new Set();
-} catch (_) {}
-
-// 4. Replay detection store — nonce/request-id store persists
+// 3. Replay detection store — nonce/request-id store persists
 try {
   const { defaultStore } = require('../src/utils/nonceStore');
   if (defaultStore && typeof defaultStore.clear === 'function') defaultStore.clear();
 } catch (_) {}
 
-// 5. Deduplication middleware cache — content-hash cache persists
+// 4. Deduplication middleware cache — content-hash cache persists
 try {
   const dedup = require('../src/middleware/deduplication');
   if (dedup && typeof dedup.clearCache === 'function') dedup.clearCache();
 } catch (_) {}
 
-// 6. Idempotency store — in-memory request record persists across files
+// 5. Idempotency store — in-memory request record persists across files
 try {
   const idempotency = require('../src/middleware/idempotency');
   if (idempotency && typeof idempotency.clearStore === 'function') idempotency.clearStore();
   else if (idempotency && idempotency.store instanceof Map) idempotency.store.clear();
 } catch (_) {}
 
-// 7. Feature-flag cache — evaluated flags are cached module-level
+// 6. Feature-flag cache — evaluated flags are cached module-level
 try {
   const featureFlags = require('../src/utils/featureFlags');
   if (featureFlags && typeof featureFlags.resetCache === 'function') featureFlags.resetCache();

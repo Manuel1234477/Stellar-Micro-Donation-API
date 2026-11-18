@@ -1,9 +1,9 @@
 
 const crypto = require('crypto');
 const StellarServiceInterface = require('./interfaces/StellarServiceInterface');
-const { ValidationError, NotFoundError, BusinessLogicError, ERROR_CODES } = require('../utils/errors');
+const { ValidationError, BusinessLogicError, ERROR_CODES } = require('../utils/errors');
 const log = require('../utils/log');
-const { getAssetKey, isSameAsset, serializeAsset } = require('../utils/stellarAsset');
+const { getAssetKey, isSameAsset } = require('../utils/stellarAsset');
 
 // Import decomposed modules
 const MockAccounts = require('./mock/accounts');
@@ -14,7 +14,6 @@ const MockFees = require('./mock/fees');
 const MockOffers = require('./mock/offers');
 const MockPayments = require('./mock/payments');
 
-const NATIVE_ASSET = { type: 'native', code: 'XLM', issuer: null };
 
 class MockStellarService extends StellarServiceInterface {
   constructor(config = {}) {
@@ -40,6 +39,9 @@ class MockStellarService extends StellarServiceInterface {
     // Mock system time for testing time-bound transactions
     // Can be overridden via setMockSystemTime() for testing clock-based failures
     this.mockSystemTime = null;
+
+    // Controls the outcome of simulateTransaction() — see setSimulationOutcome()
+    this.simulationOutcome = 'success';
     
     this.failureSimulation = {
       enabled: false,
@@ -77,6 +79,15 @@ class MockStellarService extends StellarServiceInterface {
 
   setMaxConsecutiveFailures(max) {
     this.failureSimulation.maxConsecutiveFailures = max;
+  }
+
+  /**
+   * Controls the outcome returned by simulateTransaction() for test/demo purposes.
+   * One of: 'success' (default), 'insufficient_balance', 'bad_sequence', 'error'.
+   */
+  setSimulationOutcome(outcome) {
+    this.simulationOutcome = outcome;
+    log.info('MOCK_STELLAR_SERVICE', 'Simulation outcome set', { outcome });
   }
 
   setMockSystemTime(unixTimestamp) {
@@ -226,6 +237,65 @@ class MockStellarService extends StellarServiceInterface {
 
     this._setWalletAssetBalance(sourceWallet, asset, sourceBalance - amountNum);
     this._setWalletAssetBalance(destWallet, asset, destBalance + amountNum);
+  }
+
+  /**
+   * Snapshot the mutable state touched by a payment/donation so that a
+   * failure occurring after validation (e.g. a simulated network error)
+   * can be rolled back, leaving balances and transaction history equal to
+   * the pre-operation state.
+   */
+  _snapshotPaymentState(wallets) {
+    const walletSnapshots = [];
+    for (const wallet of wallets) {
+      if (!wallet) continue;
+      walletSnapshots.push({
+        wallet,
+        balance: wallet.balance,
+        assetBalances: wallet.assetBalances
+          ? { ...wallet.assetBalances }
+          : undefined,
+      });
+    }
+
+    const transactionSnapshots = new Map();
+    for (const [key, list] of this.transactions.entries()) {
+      transactionSnapshots.set(key, list.slice());
+    }
+
+    return { walletSnapshots, transactionSnapshots };
+  }
+
+  _restorePaymentState(snapshot) {
+    if (!snapshot) return;
+    for (const entry of snapshot.walletSnapshots) {
+      entry.wallet.balance = entry.balance;
+      if (entry.assetBalances === undefined) {
+        delete entry.wallet.assetBalances;
+      } else {
+        entry.wallet.assetBalances = { ...entry.assetBalances };
+      }
+    }
+
+    this.transactions.clear();
+    for (const [key, list] of snapshot.transactionSnapshots.entries()) {
+      this.transactions.set(key, list.slice());
+    }
+  }
+
+  /**
+   * Run a state-mutating operation atomically: if the operation throws
+   * (including simulated network failures), all wallet balances and
+   * transaction history are restored to their pre-operation values.
+   */
+  async _runAtomically(wallets, operation) {
+    const snapshot = this._snapshotPaymentState(wallets);
+    try {
+      return await operation();
+    } catch (error) {
+      this._restorePaymentState(snapshot);
+      throw error;
+    }
   }
 
   _storeTransaction(transaction) {
@@ -509,9 +579,22 @@ class MockStellarService extends StellarServiceInterface {
   // === Delegate to modules ===
   // Accounts module methods
   async createWallet() { return this.accounts.createWallet(); }
+  getSecretForPublicKey(publicKey) {
+    for (const wallet of this.wallets.values()) {
+      if (wallet.publicKey === publicKey) {
+        return wallet.secretKey;
+      }
+    }
+    return null;
+  }
   async getBalance(publicKey) { return this.accounts.getBalance(publicKey); }
   async fundTestnetWallet(publicKey) { return this.accounts.fundTestnetWallet(publicKey); }
   async fundWithFriendbot(publicKey) { return this.accounts.fundWithFriendbot(publicKey); }
+  async createSponsoredAccount(sponsorSecret, publicKey) { return this.accounts.createSponsoredAccount(sponsorSecret, publicKey); }
+  async sponsorAccount(sponsorSecret, publicKey) { return this.accounts.sponsorAccount(sponsorSecret, publicKey); }
+  async revokeSponsoredAccount(sponsorSecret, publicKey) { return this.accounts.revokeSponsoredAccount(sponsorSecret, publicKey); }
+  async revokeSponsorship(sponsorSecret, publicKey, entryType) { return this.accounts.revokeSponsorship(sponsorSecret, publicKey, entryType); }
+  async getSponsorshipStatus(publicKey) { return this.accounts.getSponsorshipStatus(publicKey); }
   async isAccountFunded(publicKey) { return this.accounts.isAccountFunded(publicKey); }
   async loadAccount(address) { return this.accounts.loadAccount(address); }
   async getAccountSequence(address) { return this.accounts.getAccountSequence(address); }
@@ -521,6 +604,12 @@ class MockStellarService extends StellarServiceInterface {
   }
   async getInflationDestination(publicKey) { 
     return this.accounts.getInflationDestination(publicKey); 
+  }
+  async setHomeDomain(sourceSecret, homeDomain) {
+    return this.accounts.setHomeDomain(sourceSecret, homeDomain);
+  }
+  async getHomeDomain(publicKey) {
+    return this.accounts.getHomeDomain(publicKey);
   }
   isValidAddress(address) { return this.accounts.isValidAddress(address); }
 
@@ -556,6 +645,9 @@ class MockStellarService extends StellarServiceInterface {
   async sendPayment(sourcePublicKey, destinationPublic, amount, memo = '') { 
     return this.payments.sendPayment(sourcePublicKey, destinationPublic, amount, memo); 
   }
+  async openChannel(sourceSecret, recipientPublicKey, depositAmount) { return this.channels.openChannel(sourceSecret, recipientPublicKey, depositAmount); }
+  async updateChannel(channelId, newAmount) { return this.channels.updateChannel(channelId, newAmount); }
+  async closeChannel(channelId, escrowSecret, recipientPublicKey, amount) { return this.channels.closeChannel(channelId, escrowSecret, recipientPublicKey, amount); }
   async pathPaymentStrictSend(sourceSecret, sendAsset, sendAmount, destPublicKey, destAsset, minDestAmount, options = {}) { 
     return this.payments.pathPaymentStrictSend(sourceSecret, sendAsset, sendAmount, destPublicKey, destAsset, minDestAmount, options); 
   }
@@ -578,11 +670,44 @@ class MockStellarService extends StellarServiceInterface {
     return this.fees.buildAndSubmitFeeBumpTransaction(envelopeXdr, newFeeStroops, feeSourceSecret); 
   }
   async bumpSequence(secret, bumpTo) { return this.accounts.bumpSequence(secret, bumpTo); }
-  async mergeAccount(sourceSecret, destinationPublic) { 
-    return this.accounts.mergeAccount(sourceSecret, destinationPublic); 
+  async mergeAccount(sourceSecret, destinationPublic) {
+    return this.accounts.mergeAccount(sourceSecret, destinationPublic);
   }
-  async validateMergeEligibility(publicKey) { 
-    return this.accounts.validateMergeEligibility(publicKey); 
+  async validateMergeEligibility(publicKey) {
+    return this.accounts.validateMergeEligibility(publicKey);
+  }
+  async addSigner(masterSecret, signerPublicKey, weight = 1) {
+    return this.accounts.addSigner(masterSecret, signerPublicKey, weight);
+  }
+  async removeSigner(masterSecret, signerPublicKey) {
+    return this.accounts.removeSigner(masterSecret, signerPublicKey);
+  }
+
+  // Assets / trustlines
+  async addTrustline(accountSecretOrPublicKey, assetCodeOrAsset, issuerPublic, limit = null) {
+    return this.assets.addTrustline(accountSecretOrPublicKey, assetCodeOrAsset, issuerPublic, limit);
+  }
+  async removeTrustline(accountSecretOrPublicKey, assetCodeOrAsset, issuerPublic) {
+    return this.assets.removeTrustline(accountSecretOrPublicKey, assetCodeOrAsset, issuerPublic);
+  }
+  async getTrustlines(publicKey) { return this.assets.getTrustlines(publicKey); }
+  getTrustline(accountPublic, assetCode, issuerPublic) {
+    return this.assets.getTrustline(accountPublic, assetCode, issuerPublic);
+  }
+  async issueAsset(issuerSecret, assetCode, amount, recipientPublic) {
+    return this.assets.issueAsset(issuerSecret, assetCode, amount, recipientPublic);
+  }
+  async burnAsset(holderSecret, assetCode, issuerPublic, amount) {
+    return this.assets.burnAsset(holderSecret, assetCode, issuerPublic, amount);
+  }
+  async clawback(issuerSecret, from, assetCode, amount) {
+    return this.assets.clawback(issuerSecret, from, assetCode, amount);
+  }
+  async distributeAsset(distributorSecret, assetCode, issuerPublicKey, recipientPublicKey, amount) {
+    return this.assets.distributeAsset(distributorSecret, assetCode, issuerPublicKey, recipientPublicKey, amount);
+  }
+  getAssetHolders(assetCode, issuerPublic) {
+    return this.assets.getAssetHolders(assetCode, issuerPublic);
   }
 }
 

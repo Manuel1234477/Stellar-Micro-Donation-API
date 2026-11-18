@@ -11,6 +11,7 @@
 
 const request = require('supertest');
 const express = require('express');
+const { REPO_ROOT } = require('../helpers/paths');
 
 // ─── Mock dependencies before requiring the router ───────────────────────────
 
@@ -294,7 +295,7 @@ describe('POST /wallets/:id/bump-sequence — admin auth required', () => {
     const fs = require('fs');
     const path = require('path');
     const routerSrc = fs.readFileSync(
-      path.join(__dirname, '../src/routes/wallet.js'),
+      path.join(REPO_ROOT, 'src/routes/wallet.js'),
       'utf8'
     );
 

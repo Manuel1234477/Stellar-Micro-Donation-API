@@ -20,7 +20,7 @@
  * All tests use only in-process mocks — no live Stellar network calls, no real DB.
  */
 
-const StellarSdk = require('stellar-sdk');
+const StellarSdk = require('@stellar/stellar-sdk');
 const SEP10Service = require('../../src/services/SEP10Service');
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
@@ -158,97 +158,45 @@ describe('SEP10Service — challenge generation', () => {
   });
 });
 
-describe('SEP10Service — memo validation', () => {
-  let service, serverKeypair, clientKp;
+describe('SEP10Service — time bound validation', () => {
+  let service, serverKeypair, clientKp, serverAccount;
 
   beforeEach(() => {
     ({ service, serverKeypair } = makeService());
     clientKp = StellarSdk.Keypair.random();
+    serverAccount = new StellarSdk.Account(serverKeypair.publicKey(), '0');
   });
 
-  it('rejects a transaction with no memo', async () => {
-    const { tx } = await generateChallenge(service, clientKp);
-    // Rebuild without memo by forging a new transaction
-    const serverAccount = new StellarSdk.Account(serverKeypair.publicKey(), '100');
-    const noMemoTx = new StellarSdk.TransactionBuilder(serverAccount, {
-      fee: '100', networkPassphrase: NETWORK,
+  it('rejects a transaction with no time bounds', async () => {
+    const noBoundsTx = new StellarSdk.TransactionBuilder(serverAccount, {
+      fee: '100',
+      networkPassphrase: NETWORK,
     })
-      .addOperation(tx.operations[0])
+      .addOperation(StellarSdk.Operation.manageData({ name: 'web_auth_fakeid', value: clientKp.publicKey() }))
       .setTimeout(0)
       .build();
-    noMemoTx.sign(serverKeypair);
-    noMemoTx.sign(clientKp);
-    await expect(service.verifyChallenge(noMemoTx.toXDR()))
-      .rejects.toThrow(/memo/i);
+    noBoundsTx.sign(serverKeypair);
+    noBoundsTx.sign(clientKp);
+    await expect(service.verifyChallenge(noBoundsTx.toXDR()))
+      .rejects.toThrow(/time bounds/i);
   });
 
-  it('rejects a memo with the wrong home domain', async () => {
-    const { tx } = await generateChallenge(service, clientKp);
-    // Replace memo with wrong domain
-    const serverAccount = new StellarSdk.Account(serverKeypair.publicKey(), '100');
-    const wrongDomainTx = new StellarSdk.TransactionBuilder(serverAccount, {
-      fee: '100', networkPassphrase: NETWORK,
-    })
-      .addOperation(tx.operations[0])
-      .addMemo(StellarSdk.Memo.text('wrongdomain auth fakeid 9999999999'))
-      .setTimeout(0)
-      .build();
-    wrongDomainTx.sign(serverKeypair);
-    wrongDomainTx.sign(clientKp);
-    await expect(service.verifyChallenge(wrongDomainTx.toXDR()))
-      .rejects.toThrow(/memo/i);
-  });
-
-  it('rejects a memo that does not have the "auth" keyword', async () => {
-    const { tx } = await generateChallenge(service, clientKp);
-    const serverAccount = new StellarSdk.Account(serverKeypair.publicKey(), '100');
-    const badMemoTx = new StellarSdk.TransactionBuilder(serverAccount, {
-      fee: '100', networkPassphrase: NETWORK,
-    })
-      .addOperation(tx.operations[0])
-      .addMemo(StellarSdk.Memo.text('testdomain.example notauth fakeid 9999999999'))
-      .setTimeout(0)
-      .build();
-    badMemoTx.sign(serverKeypair);
-    badMemoTx.sign(clientKp);
-    await expect(service.verifyChallenge(badMemoTx.toXDR()))
-      .rejects.toThrow(/memo/i);
-  });
-
-  it('rejects a memo with an expired timestamp', async () => {
-    // Use an already-past expiry timestamp
-    const pastSeconds = Math.floor(Date.now() / 1000) - 100;
-    const { tx } = await generateChallenge(service, clientKp);
-    const serverAccount = new StellarSdk.Account(serverKeypair.publicKey(), '100');
+  it('rejects a transaction whose max time bound has passed', async () => {
+    const pastSeconds = Math.floor(Date.now() / 1000) - 60;
     const expiredTx = new StellarSdk.TransactionBuilder(serverAccount, {
-      fee: '100', networkPassphrase: NETWORK,
+      fee: '100',
+      networkPassphrase: NETWORK,
     })
-      .addOperation(tx.operations[0])
-      .addMemo(StellarSdk.Memo.text(`testdomain.example auth fakeid ${pastSeconds}`))
-      .setTimeout(0)
+      .addOperation(StellarSdk.Operation.manageData({ name: 'web_auth_fakeid', value: clientKp.publicKey() }))
+      .setTimebounds(0, pastSeconds)
       .build();
     expiredTx.sign(serverKeypair);
     expiredTx.sign(clientKp);
     await expect(service.verifyChallenge(expiredTx.toXDR()))
       .rejects.toThrow(/expired/i);
   });
-
-  it('rejects a memo with fewer than 4 space-separated parts', async () => {
-    const { tx } = await generateChallenge(service, clientKp);
-    const serverAccount = new StellarSdk.Account(serverKeypair.publicKey(), '100');
-    const shortMemoTx = new StellarSdk.TransactionBuilder(serverAccount, {
-      fee: '100', networkPassphrase: NETWORK,
-    })
-      .addOperation(tx.operations[0])
-      .addMemo(StellarSdk.Memo.text('testdomain.example auth'))
-      .setTimeout(0)
-      .build();
-    shortMemoTx.sign(serverKeypair);
-    shortMemoTx.sign(clientKp);
-    await expect(service.verifyChallenge(shortMemoTx.toXDR()))
-      .rejects.toThrow(/memo/i);
-  });
 });
+
 
 describe('SEP10Service — transaction structure validation', () => {
   let service, serverKeypair, clientKp;
@@ -264,8 +212,7 @@ describe('SEP10Service — transaction structure validation', () => {
     const zeroOpTx = new StellarSdk.TransactionBuilder(serverAccount, {
       fee: '100', networkPassphrase: NETWORK,
     })
-      .addMemo(StellarSdk.Memo.text(`testdomain.example auth fakeid ${futureSeconds}`))
-      .setTimeout(0)
+      .setTimebounds(0, futureSeconds)
       .build();
     zeroOpTx.sign(serverKeypair);
     zeroOpTx.sign(clientKp);
@@ -281,8 +228,7 @@ describe('SEP10Service — transaction structure validation', () => {
       fee: '100', networkPassphrase: NETWORK,
     })
       .addOperation(StellarSdk.Operation.setOptions({}))
-      .addMemo(StellarSdk.Memo.text(`testdomain.example auth fakeid ${futureSeconds}`))
-      .setTimeout(0)
+      .setTimebounds(0, futureSeconds)
       .build();
     wrongOpTx.sign(serverKeypair);
     wrongOpTx.sign(clientKp);
@@ -300,8 +246,7 @@ describe('SEP10Service — transaction structure validation', () => {
         name: 'web_auth_fakeid',
         value: 'not-a-stellar-key',
       }))
-      .addMemo(StellarSdk.Memo.text(`testdomain.example auth fakeid ${futureSeconds}`))
-      .setTimeout(0)
+      .setTimebounds(0, futureSeconds)
       .build();
     badValueTx.sign(serverKeypair);
     badValueTx.sign(clientKp);
@@ -319,8 +264,7 @@ describe('SEP10Service — transaction structure validation', () => {
         name: 'wrong_prefix_fakeid',
         value: clientKp.publicKey(),
       }))
-      .addMemo(StellarSdk.Memo.text(`testdomain.example auth fakeid ${futureSeconds}`))
-      .setTimeout(0)
+      .setTimebounds(0, futureSeconds)
       .build();
     wrongPrefixTx.sign(serverKeypair);
     wrongPrefixTx.sign(clientKp);
@@ -404,8 +348,7 @@ describe('SEP10Service — replay and expiry protection', () => {
         name: 'web_auth_unknownid',
         value: clientKp.publicKey(),
       }))
-      .addMemo(StellarSdk.Memo.text(`testdomain.example auth unknownid ${futureSeconds}`))
-      .setTimeout(0)
+      .setTimebounds(0, futureSeconds)
       .build();
     fakeTx.sign(serverKeypair);
     fakeTx.sign(clientKp);
@@ -442,43 +385,6 @@ describe('SEP10Service — replay and expiry protection', () => {
 
     await expect(service.verifyChallenge(tx.toXDR()))
       .rejects.toThrow(/expired or was not issued/i);
-  });
-});
-
-describe('SEP10Service — metadata mismatch', () => {
-  let service, serverKeypair, clientKp;
-
-  beforeEach(() => {
-    ({ service, serverKeypair } = makeService());
-    clientKp = StellarSdk.Keypair.random();
-  });
-
-  it('rejects when challengeId in memo does not match the operation name', async () => {
-    // Generate a legitimate challenge to get a registered challengeId
-    const xdr = await service.generateChallenge(clientKp.publicKey());
-    const tx = StellarSdk.TransactionBuilder.fromXDR(xdr, NETWORK);
-
-    // Swap the memo to use a different challengeId than the operation name
-    const realOpName = tx.operations[0].name; // e.g. web_auth_<realId>
-    const realId = realOpName.replace('web_auth_', '');
-    const futureSeconds = Math.floor(Date.now() / 1000) + 900;
-
-    const serverAccount = new StellarSdk.Account(serverKeypair.publicKey(), '100');
-    const mismatchTx = new StellarSdk.TransactionBuilder(serverAccount, {
-      fee: '100', networkPassphrase: NETWORK,
-    })
-      .addOperation(StellarSdk.Operation.manageData({
-        name: `web_auth_${realId}`,       // real id in op
-        value: clientKp.publicKey(),
-      }))
-      .addMemo(StellarSdk.Memo.text(`testdomain.example auth differentid ${futureSeconds}`))
-      .setTimeout(0)
-      .build();
-    mismatchTx.sign(serverKeypair);
-    mismatchTx.sign(clientKp);
-
-    await expect(service.verifyChallenge(mismatchTx.toXDR()))
-      .rejects.toThrow(/mismatch/i);
   });
 });
 

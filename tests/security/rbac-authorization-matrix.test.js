@@ -33,13 +33,18 @@
 
 const express = require('express');
 const request = require('supertest');
-const { attachUserRole } = require('../../src/middleware/rbac');
+const { attachUserRole, requireAdmin } = require('../../src/middleware/rbac');
 const createTestTables = require('../helpers/dbBootstrap');
 const Database = require('../../src/utils/database');
 
 // ─── Permission / role sources ─────────────────────────────────────────────────
 const { hasPermission } = require('../../src/models/permissions');
-const { PERMISSION_MATRIX, ROUTE_PERMISSIONS } = require('../../src/config/permissionMatrix');
+const { PERMISSION_MATRIX, ROUTE_PERMISSIONS, getFullRoutePath } = require('../../src/config/permissionMatrix');
+
+/** Normalise a ROUTE_PERMISSIONS entry to the MATRIX_ENTRIES key format (params → '999'). */
+function routeKey(route) {
+  return `${route.method}:${getFullRoutePath(route).replace(/:\w+/g, '999')}`;
+}
 
 // ─── Test API keys (configured in tests/setup.js via process.env.API_KEYS) ────
 //   'admin-test-key'  → role: admin  (starts with 'admin-' → admin role)
@@ -71,6 +76,15 @@ function buildTestApp() {
   app.use('/api/v1/stream',       require('../../src/routes/stream'));
   app.use('/api/v1/transactions', require('../../src/routes/transaction'));
   app.use('/api/v1/api-keys',     require('../../src/routes/apiKeys'));
+  app.use('/admin/geo-rules',     require('../../src/routes/admin/geoRules'));
+  app.use('/admin/geo-blocking',  require('../../src/routes/admin/geoRules').deprecatedRouter);
+  app.use('/admin/backups',       require('../../src/routes/admin/backup'));
+
+  // /abuse-signals and /reconcile are registered inline in
+  // src/bootstrap/routes.js behind rbac.requireAdmin(); mirror that guard here
+  // with stub handlers so the matrix exercises the same authorization gate.
+  app.get('/abuse-signals', requireAdmin(), (_req, res) => res.json({ success: true }));
+  app.post('/reconcile', requireAdmin(), (_req, res) => res.json({ success: true }));
 
   // Unified error handler — propagates status from thrown errors
   app.use((err, _req, res, _next) => {
@@ -309,6 +323,41 @@ const MATRIX_ENTRIES = [
     allowedRoles: ['admin'],
     deniedRoles:  ['user', 'guest', 'noauth'],
   },
+  // ── Unversioned admin / observability routes ─────────────────────────────────
+  ...[
+    ['GET',    '/abuse-signals'],
+    ['POST',   '/reconcile'],
+    // Geo rules canonical routes (#1778)
+    ['GET',    '/admin/geo-rules'],
+    ['POST',   '/admin/geo-rules'],
+    ['PATCH',  '/admin/geo-rules/999'],
+    ['DELETE', '/admin/geo-rules/999'],
+    ['POST',   '/admin/geo-rules/test'],
+    ['GET',    '/admin/geo-rules/active'],
+    ['GET',    '/admin/geo-rules/config'],
+    ['PUT',    '/admin/geo-rules/config'],
+    ['POST',   '/admin/geo-rules/reload-db'],
+    ['DELETE', '/admin/geo-rules/block/999'],
+    ['DELETE', '/admin/geo-rules/allow/999'],
+    // Deprecated /admin/geo-blocking aliases — must stay behind the same guard
+    ['GET',    '/admin/geo-blocking'],
+    ['PUT',    '/admin/geo-blocking'],
+    ['POST',   '/admin/geo-blocking/reload-db'],
+    ['GET',    '/admin/geo-blocking/rules'],
+    ['POST',   '/admin/geo-blocking/block'],
+    ['DELETE', '/admin/geo-blocking/block/999'],
+    ['POST',   '/admin/geo-blocking/allow'],
+    ['DELETE', '/admin/geo-blocking/allow/999'],
+    // Backup routes (#1698): read-only entries so the matrix never creates or
+    // restores a real backup
+    ['GET',    '/admin/backups'],
+    ['GET',    '/admin/backups/status'],
+  ].map(([method, path]) => ({
+    method, path,
+    permission: '*',
+    allowedRoles: ['admin'],
+    deniedRoles:  ['user', 'guest', 'noauth'],
+  })),
 ];
 
 // ─── Pure-logic permission matrix tests ───────────────────────────────────────
@@ -424,10 +473,7 @@ describe('RBAC matrix coverage sentinel', () => {
 
   test('no MATRIX_ENTRIES reference a path removed from ROUTE_PERMISSIONS (stale-entry guard)', () => {
     const knownKeys = new Set([
-      ...ROUTE_PERMISSIONS.map(r => {
-        const norm = `/api/v1${r.path}`.replace(/:[\\w]+/g, '999');
-        return `${r.method}:${norm}`;
-      }),
+      ...ROUTE_PERMISSIONS.map(routeKey),
       // api-key routes are registered inline in routes.js, not ROUTE_PERMISSIONS
       'GET:/api/v1/api-keys',
       'POST:/api/v1/api-keys',
@@ -452,12 +498,7 @@ describe('RBAC matrix coverage sentinel', () => {
   test('every route in ROUTE_PERMISSIONS is covered by MATRIX_ENTRIES (new-route guard)', () => {
     const covered = new Set(MATRIX_ENTRIES.map(e => `${e.method}:${e.path}`));
 
-    const declaredRoutes = new Set(
-      ROUTE_PERMISSIONS.map(r => {
-        const norm = `/api/v1${r.path}`.replace(/:[\\w]+/g, '999');
-        return `${r.method}:${norm}`;
-      })
-    );
+    const declaredRoutes = new Set(ROUTE_PERMISSIONS.map(routeKey));
 
     const knownInline = new Set([
       'GET:/api/v1/api-keys',
@@ -571,7 +612,10 @@ describe('Combined role + scope access control', () => {
     return roleOk;
   }
 
-  // ── admin role — always permitted regardless of scopes (* wildcard) ──────────
+  // ── admin role — role grants '*', but narrowed key scopes still apply ────────
+  // Decision (#1694, docs/PERMISSIONS.md): an admin key issued with explicit
+  // scopes is restricted to those scopes (least privilege). Only an admin key
+  // with no scopes (or with admin:*) gets unrestricted access.
   describe('admin role', () => {
     test('admin with no scopes can access everything', () => {
       expect(isAccessAllowed('admin', [], 'donations:create')).toBe(true);
@@ -579,9 +623,15 @@ describe('Combined role + scope access control', () => {
       expect(isAccessAllowed('admin', [], 'admin:*')).toBe(true);
     });
 
-    test('admin with limited scopes can still access everything (wildcard * bypasses scope check)', () => {
-      expect(isAccessAllowed('admin', ['donations:read'], 'wallets:create')).toBe(true);
-      expect(isAccessAllowed('admin', ['donations:read'], 'transactions:sync')).toBe(true);
+    test('admin with admin:* scope can access everything', () => {
+      expect(isAccessAllowed('admin', ['admin:*'], 'wallets:create')).toBe(true);
+      expect(isAccessAllowed('admin', ['admin:*'], 'transactions:sync')).toBe(true);
+    });
+
+    test('admin with limited scopes is restricted to those scopes (scopes narrow the admin wildcard)', () => {
+      expect(isAccessAllowed('admin', ['donations:read'], 'donations:read')).toBe(true);
+      expect(isAccessAllowed('admin', ['donations:read'], 'wallets:create')).toBe(false);
+      expect(isAccessAllowed('admin', ['donations:read'], 'transactions:sync')).toBe(false);
     });
   });
 
@@ -603,11 +653,15 @@ describe('Combined role + scope access control', () => {
       expect(isAccessAllowed('user', ['stats:read'], 'transactions:read')).toBe(false);
     });
 
-    test('user with wildcard resource scope: all sub-actions permitted', () => {
+    test('user with wildcard resource scope: all sub-actions the role holds are permitted', () => {
       expect(isAccessAllowed('user', ['donations:*'], 'donations:create')).toBe(true);
       expect(isAccessAllowed('user', ['donations:*'], 'donations:read')).toBe(true);
       expect(isAccessAllowed('user', ['donations:*'], 'donations:update')).toBe(true);
-      expect(isAccessAllowed('user', ['donations:*'], 'donations:delete')).toBe(true);
+    });
+
+    test('user with wildcard resource scope cannot exceed role permissions', () => {
+      // The user role does not hold donations:delete; a scope never widens a role.
+      expect(isAccessAllowed('user', ['donations:*'], 'donations:delete')).toBe(false);
     });
 
     test('user with resource wildcard denied for other resources', () => {

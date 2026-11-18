@@ -22,13 +22,29 @@ const { tierMeetsMinimum } = require('../config/permissionMatrix');
 const { verifyAccessToken } = require('../services/JwtService');
 const { hasScope, hasAnyScope, hasAllScopes } = require('../utils/scopeValidator');
 const log = require('../utils/log');
+const { getLegacyKeySunsetDate, isLegacyKeyDisabled } = require('../utils/legacyApiKeySunset');
+const { recordLegacyKeyUsage } = require('../utils/metrics');
+const { allowAuditEvent } = require('../utils/authAuditThrottle');
+
+const LEGACY_AUDIT_WINDOW_MS = 60 * 60 * 1000;
 
 /**
  * Role-Based Access Control (RBAC) Configuration
  * Intent: Handle the transition between legacy environment-based keys and
  * the new database-backed API key system with granular permissions.
+ *
+ * Re-reads process.env.API_KEYS on every call rather than trusting the
+ * config snapshot taken at module load: config is a singleton cached by
+ * require(), so any module that touches it before API_KEYS is set (e.g. a
+ * test file setting the env var after other setup modules have already
+ * pulled in config/index.js) would otherwise see a stale legacy key list.
  */
-const legacyKeys = config.apiKeys.legacy;
+const getLegacyKeys = () => {
+  if (process.env.API_KEYS) {
+    return process.env.API_KEYS.split(',').map((key) => key.trim()).filter(Boolean);
+  }
+  return config.apiKeys.legacy;
+};
 
 /**
  * Single Permission Validator
@@ -409,16 +425,30 @@ const attachUserRole = () => {
             }
           }
           // Priority 3: Legacy Environment variable support
-          else if (legacyKeys.includes(apiKey)) {
+          else if (getLegacyKeys().includes(apiKey)) {
             // Derive a stable, non-reversible ID for rate-limiting without storing the raw key
             const legacyKeyId = 'legacy-' + crypto.createHash('sha256').update(apiKey).digest('hex').slice(0, 16);
+
+            if (isLegacyKeyDisabled()) {
+              log.warn('RBAC', 'Rejected legacy API key after sunset', { keyIdHash: legacyKeyId, sunsetDate: getLegacyKeySunsetDate() });
+              return res.status(401).json({
+                success: false,
+                error: {
+                  code: 'LEGACY_API_KEY_DISABLED',
+                  message: `Legacy API keys were disabled on ${getLegacyKeySunsetDate()}. Create a database-backed key with "npm run keys:create". See docs/MIGRATION_LEGACY_API_KEYS.md`,
+                  requestId: req.id,
+                },
+              });
+            }
+
+            recordLegacyKeyUsage(legacyKeyId);
 
             // Apply the same default rate limit as DB-backed keys
             const rlResult = checkRateLimit(legacyKeyId, DEFAULT_RATE_LIMIT, DEFAULT_WINDOW_SECONDS);
             const rlHeaders = buildRateLimitHeaders(rlResult.limit, rlResult.remaining, Math.ceil(rlResult.resetAt / 1000));
             res.set(rlHeaders);
             res.set('X-API-Key-Legacy', 'true');
-            res.set('Warning', '299 - "Legacy API key in use. Migrate to database-backed keys before 2026-12-31. See docs/MIGRATION_LEGACY_API_KEYS.md"');
+            res.set('Warning', `299 - "Legacy API key in use. Migrate to database-backed keys before ${getLegacyKeySunsetDate()}. See docs/MIGRATION_LEGACY_API_KEYS.md"`);
 
             if (!rlResult.allowed && process.env.NODE_ENV !== 'test') {
               res.set('Retry-After', String(Math.ceil((rlResult.resetAt - Date.now()) / 1000)));
@@ -440,22 +470,24 @@ const attachUserRole = () => {
               isLegacy: true
             };
 
-            // Audit every legacy key usage
-            AuditLogService.log({
-              category: AuditLogService.CATEGORY.AUTHENTICATION,
-              action: AuditLogService.ACTION.LEGACY_KEY_USED,
-              severity: AuditLogService.SEVERITY.HIGH,
-              result: 'SUCCESS',
-              userId: legacyKeyId,
-              requestId: req.id,
-              ipAddress: req.ip,
-              resource: req.path,
-              details: {
-                method: req.method,
-                keyIdHash: legacyKeyId,
-                sunsetDate: '2026-12-31',
-              },
-            }).catch(() => {});
+            // Audit legacy key usage once per key per hour; usage counts are in the metric (issue #1887)
+            if (allowAuditEvent(`legacy:${legacyKeyId}`, LEGACY_AUDIT_WINDOW_MS)) {
+              AuditLogService.log({
+                category: AuditLogService.CATEGORY.AUTHENTICATION,
+                action: AuditLogService.ACTION.LEGACY_KEY_USED,
+                severity: AuditLogService.SEVERITY.LOW,
+                result: 'SUCCESS',
+                userId: legacyKeyId,
+                requestId: req.id,
+                ipAddress: req.ip,
+                resource: req.path,
+                details: {
+                  method: req.method,
+                  keyIdHash: legacyKeyId,
+                  sunsetDate: getLegacyKeySunsetDate(),
+                },
+              }).catch(() => {});
+            }
           }
           // Default: Unauthenticated Guest access
           else {

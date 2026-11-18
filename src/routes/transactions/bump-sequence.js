@@ -79,7 +79,7 @@ router.post('/', requireApiKey, checkPermission(PERMISSIONS.ADMIN), payloadSizeL
     }
 
     const stellarService = getStellarService();
-    const StellarSdk = require('stellar-sdk');
+    const StellarSdk = require('../../services/stellar/sdk.js');
     const keypair = StellarSdk.Keypair.fromSecret(secret);
     const publicKey = keypair.publicKey();
 

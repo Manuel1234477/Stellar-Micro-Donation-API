@@ -1,0 +1,16 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: stellar-micro-donation-api
+  labels:
+    app.kubernetes.io/name: stellar-micro-donation-api
+    app.kubernetes.io/component: api
+spec:
+  selector:
+    app.kubernetes.io/name: stellar-micro-donation-api
+  ports:
+    - name: http
+      port: 3000
+      targetPort: http
+      protocol: TCP
+  type: ClusterIP

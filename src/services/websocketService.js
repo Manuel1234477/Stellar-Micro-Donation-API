@@ -31,6 +31,7 @@ const log = require('../utils/log');
 
 const MAX_WALLETS = parseInt(process.env.WS_MAX_WALLETS || '50', 10);
 const HEARTBEAT_MS = parseInt(process.env.WS_HEARTBEAT_MS || '30000', 10);
+const STREAMS = new Map();
 
 // Map<walletAddress, Set<WebSocket>> — local subscriber routing for this instance
 const subscriptions = new Map();
@@ -74,30 +75,88 @@ function send(ws, obj) {
   }
 }
 
+function normalizeBalancePayload(address, payload = {}) {
+  const balance = payload.balance ?? payload.new_balance ?? payload.value ?? '0';
+  return {
+    type: 'balance_update',
+    event: 'balance_update',
+    address,
+    wallet: address,
+    balance: String(balance),
+    ...(payload.asset ? { asset: payload.asset } : {}),
+  };
+}
+
 function addSub(wallet, ws) {
   if (!subscriptions.has(wallet)) subscriptions.set(wallet, new Set());
   subscriptions.get(wallet).add(ws);
+  if (subscriptions.get(wallet).size === 1) {
+    ensureBalanceStream(wallet);
+  }
 }
 
 function removeSub(wallet, ws) {
   const set = subscriptions.get(wallet);
   if (!set) return;
   set.delete(ws);
-  if (set.size === 0) subscriptions.delete(wallet);
+  if (set.size === 0) {
+    subscriptions.delete(wallet);
+    stopBalanceStream(wallet);
+  }
 }
 
 function removeAllSubs(ws) {
   for (const [wallet, set] of subscriptions) {
     set.delete(ws);
-    if (set.size === 0) subscriptions.delete(wallet);
+    if (set.size === 0) {
+      subscriptions.delete(wallet);
+      stopBalanceStream(wallet);
+    }
   }
+}
+
+function ensureBalanceStream(address) {
+  if (STREAMS.has(address)) return;
+
+  let closeStream = () => {};
+  try {
+    const { serviceContainer } = require('../config/serviceContainer');
+    const stellar = serviceContainer?.getStellarService ? serviceContainer.getStellarService() : null;
+    const horizon = stellar && stellar.server ? stellar.server : null;
+    if (horizon && typeof horizon.accounts === 'function') {
+      closeStream = horizon.accounts().accountId(address).stream({
+        onmessage: (account) => {
+          const native = Array.isArray(account?.balances)
+            ? account.balances.find((balance) => balance.asset_type === 'native')
+            : null;
+          if (native && native.balance !== undefined) {
+            broadcast(address, { balance: String(native.balance), asset: 'XLM' });
+          }
+        },
+        onerror: (error) => {
+          log.warn('WS', 'Balance stream error for address', { address, error: error.message || String(error) });
+        },
+      });
+    }
+  } catch (error) {
+    log.warn('WS', 'Unable to attach Horizon balance stream', { address, error: error.message });
+  }
+
+  STREAMS.set(address, { closeStream });
+}
+
+function stopBalanceStream(address) {
+  const entry = STREAMS.get(address);
+  if (!entry) return;
+  try { entry.closeStream(); } catch (error) { log.warn('WS', 'Failed to close Horizon balance stream', { address, error: error.message }); }
+  STREAMS.delete(address);
 }
 
 // Send a balance_update event to all local WS clients subscribed to wallet
 function _broadcastLocal(wallet, payload) {
   const set = subscriptions.get(wallet);
   if (!set) return;
-  const msg = JSON.stringify({ event: 'balance_update', wallet, ...payload });
+  const msg = JSON.stringify(normalizeBalancePayload(wallet, payload));
   for (const ws of set) {
     if (ws.readyState === ws.constructor.OPEN) ws.send(msg);
   }
@@ -127,21 +186,38 @@ function handleMessage(ws, raw) {
   let msg;
   try { msg = JSON.parse(raw); } catch (_) { return; }
 
-  const { action, wallets } = msg;
-  if (!Array.isArray(wallets) || !wallets.length) return;
+  const isBalanceSubscribe = msg && (msg.subscribe === 'balance' || msg.subscribe === 'balances');
+  const balanceAddress = isBalanceSubscribe ? (msg.address || msg.wallet) : null;
+  if (isBalanceSubscribe && balanceAddress) {
+    const current = ws._wallets.size;
+    if (current >= MAX_WALLETS) {
+      send(ws, { type: 'error', event: 'error', message: `Subscription limit is ${MAX_WALLETS} wallets` });
+      return;
+    }
+    ws._wallets.add(balanceAddress);
+    addSub(balanceAddress, ws);
+    send(ws, { type: 'subscribed', event: 'subscribed', address: balanceAddress, subscribe: 'balance' });
+    return;
+  }
+
+  const { action, wallets, address } = msg;
+  const legacyWallets = Array.isArray(wallets) ? wallets : [];
+  const subscribeAddress = !legacyWallets.length && action === 'subscribe' && address ? [address] : [];
+  const effectiveWallets = legacyWallets.length ? legacyWallets : subscribeAddress;
+  if (!effectiveWallets.length) return;
 
   if (action === 'subscribe') {
     const current = ws._wallets.size;
-    const toAdd = wallets.slice(0, MAX_WALLETS - current);
+    const toAdd = effectiveWallets.slice(0, MAX_WALLETS - current);
     for (const w of toAdd) {
       ws._wallets.add(w);
       addSub(w, ws);
     }
-    if (wallets.length > toAdd.length) {
-      send(ws, { event: 'error', message: `Subscription limit is ${MAX_WALLETS} wallets` });
+    if (effectiveWallets.length > toAdd.length) {
+      send(ws, { type: 'error', event: 'error', message: `Subscription limit is ${MAX_WALLETS} wallets` });
     }
   } else if (action === 'unsubscribe') {
-    for (const w of wallets) {
+    for (const w of effectiveWallets) {
       ws._wallets.delete(w);
       removeSub(w, ws);
     }
@@ -160,6 +236,7 @@ function handleMessage(ws, raw) {
  */
 function broadcast(wallet, payload) {
   channel.publish(WS_TOPIC, { wallet, payload });
+  _broadcastLocal(wallet, payload);
 }
 
 // ── donation event hook ───────────────────────────────────────────────────────
@@ -211,11 +288,10 @@ function attach(server) {
 
       ws.on('pong', () => { ws._alive = true; });
       ws.on('message', (raw) => handleMessage(ws, raw));
-      // Clean up all subscriptions for this client on disconnect (#1136)
       ws.on('close', () => removeAllSubs(ws));
       ws.on('error', () => removeAllSubs(ws));
 
-      send(ws, { event: 'connected', message: 'Authenticated. Send subscribe action.' });
+      send(ws, { type: 'connected', event: 'connected', message: 'Authenticated. Send subscribe action.' });
     });
   });
 

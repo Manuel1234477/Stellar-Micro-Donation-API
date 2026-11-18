@@ -1,21 +1,17 @@
 
 // External modules
-const StellarSdk = require('stellar-sdk');
+const StellarSdk = require('./stellar/sdk.js');
 
 // Internal modules
 const StellarServiceInterface = require('./interfaces/StellarServiceInterface');
 const { STELLAR_NETWORKS, HORIZON_URLS } = require('../constants');
-const StellarErrorHandler = require('../utils/stellarErrorHandler');
 const log = require('../utils/log');
 const { withTimeout, TIMEOUT_DEFAULTS, TimeoutError } = require('../utils/timeoutHandler');
 const { runWithAbortController, getCurrentAbortSignal } = require('../utils/abortContext');
 const { CircuitBreaker } = require('../utils/circuitBreaker');
 const HorizonPool = require('./HorizonPool');
 const {
-  toStellarSdkAsset,
-  normalizeHorizonAsset,
   isSameAsset,
-  serializeAsset,
 } = require('../utils/stellarAsset');
 
 // Import decomposed modules
@@ -35,6 +31,8 @@ class StellarService extends StellarServiceInterface {
     this.serviceSecretKey = config.serviceSecretKey;
     this.environment = config.environment;
     this.correlationId = config.correlationId;
+    this.sorobanRpc = config.sorobanRpc || null;
+    this.sorobanRpcUrl = config.sorobanRpcUrl || process.env.SOROBAN_RPC_URL || null;
 
     // Default to SDK definitions if environment config is missing
     this.baseFee = this.environment?.baseFee || StellarSdk.BASE_FEE;
@@ -56,6 +54,9 @@ class StellarService extends StellarServiceInterface {
       size: poolSize,
       cooldownMs: poolCooldownMs,
       createHttpClient: () => this._createHttpClient(),
+      fallbackUrls: config.horizonFallbackUrls || [],
+      failoverThreshold: config.failoverThreshold || 3,
+      recoveryCooldownMs: config.recoveryCooldownMs || 60000,
     });
 
     // Timeout configuration (overridable via env vars or constructor config)
@@ -101,15 +102,19 @@ class StellarService extends StellarServiceInterface {
 
   _createHttpClient() {
     const { generateCorrelationHeaders } = require('../utils/correlation');
+    const { assertSafeOutboundUrl } = require('../utils/ssrf');
     const fetch = globalThis.fetch;
     
     return {
       async request(method, url, data, headers = {}) {
+        if (process.env.MOCK_STELLAR !== 'true') {
+          await assertSafeOutboundUrl(url);
+        }
         const correlationHeaders = generateCorrelationHeaders();
         const mergedHeaders = {
           ...headers,
           ...correlationHeaders,
-          'X-Request-ID': this.correlationId || correlationHeaders['X-Correlation-ID'],
+          'X-Request-ID': correlationHeaders['X-Request-ID'] || this.correlationId,
         };
         
         const signal = getCurrentAbortSignal();
@@ -227,7 +232,7 @@ class StellarService extends StellarServiceInterface {
           delay,
           error: error.message
         });
-        await new Promise(resolve => setTimeout(resolve, delay));
+        await new Promise(resolve => setTimeout(resolve, delay)); // eslint-disable-line local/no-bare-timers -- awaited delay; must not be cancelled by clearAll()
       }
     }
 
@@ -283,6 +288,11 @@ class StellarService extends StellarServiceInterface {
   async getBalance(publicKey) { return this.accounts.getBalance(publicKey); }
   async fundTestnetWallet(publicKey) { return this.accounts.fundTestnetWallet(publicKey); }
   async fundWithFriendbot(publicKey) { return this.accounts.fundWithFriendbot(publicKey); }
+  async createSponsoredAccount(sponsorSecret, publicKey) { return this.accounts.createSponsoredAccount(sponsorSecret, publicKey); }
+  async sponsorAccount(sponsorSecret, publicKey) { return this.accounts.sponsorAccount(sponsorSecret, publicKey); }
+  async revokeSponsoredAccount(sponsorSecret, publicKey) { return this.accounts.revokeSponsoredAccount(sponsorSecret, publicKey); }
+  async revokeSponsorship(sponsorSecret, publicKey, entryType) { return this.accounts.revokeSponsorship(sponsorSecret, publicKey, entryType); }
+  async getSponsorshipStatus(publicKey) { return this.accounts.getSponsorshipStatus(publicKey); }
   async isAccountFunded(publicKey) { return this.accounts.isAccountFunded(publicKey); }
   async loadAccount(publicKey) { return this.accounts.loadAccount(publicKey); }
   async getAccountSequence(publicKey) { return this.accounts.getAccountSequence(publicKey); }
@@ -292,6 +302,12 @@ class StellarService extends StellarServiceInterface {
   }
   async getInflationDestination(publicKey) { 
     return this.accounts.getInflationDestination(publicKey); 
+  }
+  async setHomeDomain(sourceSecret, homeDomain) {
+    return this.accounts.setHomeDomain(sourceSecret, homeDomain);
+  }
+  async getHomeDomain(publicKey) {
+    return this.accounts.getHomeDomain(publicKey);
   }
   isValidAddress(address) { return this.accounts.isValidAddress(address); }
 
@@ -305,6 +321,9 @@ class StellarService extends StellarServiceInterface {
   async sendBatchDonations(sourceSecret, payments) { 
     return this.payments.sendBatchDonations(sourceSecret, payments); 
   }
+  async openChannel(sourceSecret, recipientPublicKey, depositAmount) { return this.channels.openChannel(sourceSecret, recipientPublicKey, depositAmount); }
+  async updateChannel(channelId, newAmount) { return this.channels.updateChannel(channelId, newAmount); }
+  async closeChannel(channelId, escrowSecret, recipientPublicKey, amount) { return this.channels.closeChannel(channelId, escrowSecret, recipientPublicKey, amount); }
   async getTransactionHistory(publicKey, limit = 10) { 
     return this.payments.getTransactionHistory(publicKey, limit); 
   }
@@ -347,11 +366,17 @@ class StellarService extends StellarServiceInterface {
     return this.fees.buildAndSubmitFeeBumpTransaction(envelopeXdr, newFeeStroops, feeSourceSecret); 
   }
   async bumpSequence(secret, bumpTo) { return this.accounts.bumpSequence(secret, bumpTo); }
-  async mergeAccount(sourceSecret, destinationPublic) { 
-    return this.accounts.mergeAccount(sourceSecret, destinationPublic); 
+  async mergeAccount(sourceSecret, destinationPublic) {
+    return this.accounts.mergeAccount(sourceSecret, destinationPublic);
   }
-  async validateMergeEligibility(publicKey) { 
-    return this.accounts.validateMergeEligibility(publicKey); 
+  async validateMergeEligibility(publicKey) {
+    return this.accounts.validateMergeEligibility(publicKey);
+  }
+  async addSigner(masterSecret, signerPublicKey, weight = 1) {
+    return this.accounts.addSigner(masterSecret, signerPublicKey, weight);
+  }
+  async removeSigner(masterSecret, signerPublicKey) {
+    return this.accounts.removeSigner(masterSecret, signerPublicKey);
   }
   async listClaimableBalances(publicKey) { 
     return this.claimableBalances.listClaimableBalances(publicKey); 
@@ -361,6 +386,27 @@ class StellarService extends StellarServiceInterface {
   }
   async claimBalance(claimantSecret, balanceId) { 
     return this.claimableBalances.claimBalance(claimantSecret, balanceId); 
+  }
+
+  // Assets / trustlines
+  async addTrustline(accountSecret, assetCode, issuerPublic, limit = null) {
+    return this.assets.addTrustline(accountSecret, assetCode, issuerPublic, limit);
+  }
+  async removeTrustline(accountSecret, assetCode, issuerPublic) {
+    return this.assets.removeTrustline(accountSecret, assetCode, issuerPublic);
+  }
+  async getTrustlines(publicKey) { return this.assets.getTrustlines(publicKey); }
+  async issueAsset(issuerSecret, assetCode, amount, recipientPublic) {
+    return this.assets.issueAsset(issuerSecret, assetCode, amount, recipientPublic);
+  }
+  async burnAsset(holderSecret, assetCode, issuerPublic, amount) {
+    return this.assets.burnAsset(holderSecret, assetCode, issuerPublic, amount);
+  }
+  async clawback(issuerSecret, from, assetCode, amount) {
+    return this.assets.clawback(issuerSecret, from, assetCode, amount);
+  }
+  async distributeAsset(distributorSecret, assetCode, issuerPublicKey, recipientPublicKey, amount) {
+    return this.assets.distributeAsset(distributorSecret, assetCode, issuerPublicKey, recipientPublicKey, amount);
   }
 }
 

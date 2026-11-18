@@ -19,22 +19,31 @@ The project uses TypeScript's `checkJs` mode to provide type safety for JavaScri
 **File**: `tsconfig.json`
 
 Key settings:
-- `"checkJs": true` — Enable JavaScript type checking
+- `"checkJs": false` — Require per-file opt-in for JavaScript checking
+- `// @ts-check` — Enable strict checking for an individual JavaScript file
 - `"strict": true` — Strict mode for maximum safety
 - `"noEmit": true` — Don't transpile, only check types
 - `"skipLibCheck": true` — Skip third-party type checking (faster)
+
+The initial checked slice is `src/utils/money.js` and
+`src/utils/feeCalculator.js`. Shared Express request metadata is declared in
+`src/types.d.ts`.
 
 ## Running Type Checks
 
 ### Local Development
 
-Check types before committing:
+Check opted-in types before committing:
 
 ```bash
 npm run typecheck
 ```
 
-Output:
+Only files marked with `// @ts-check` participate in JavaScript semantic checking.
+TypeScript still parses included source files, so syntax errors anywhere in `src/`
+must be fixed before this command can succeed.
+
+Example diagnostics:
 ```
 src/services/DonationService.js(234,26): error TS2322: Type 'undefined' is not assignable to type 'string'.
 src/utils/validators.js(45,8): error TS2345: Argument of type 'number' is not assignable to parameter of type 'string'.

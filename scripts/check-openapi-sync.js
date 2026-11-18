@@ -7,6 +7,7 @@
 
 const fs = require('fs');
 const path = require('path');
+const { execFileSync } = require('child_process');
 const Ajv = require('ajv');
 
 const committedPath = path.join(__dirname, '../docs/openapi.json');
@@ -107,6 +108,29 @@ if (missingSchemas.length > 0) {
 }
 
 console.log('✓ All required shared response schemas are defined.');
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Check 5: Verify every registered route is documented (route coverage)
+// ─────────────────────────────────────────────────────────────────────────────
+try {
+  const coverageOutput = execFileSync(
+    process.execPath,
+    [path.join(__dirname, 'verify-route-coverage.js')],
+    { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }
+  );
+  if (coverageOutput.trim()) {
+    console.log(coverageOutput.trim());
+  }
+  console.log('✓ All registered routes are documented in the OpenAPI spec.');
+} catch (err) {
+  const stdout = err.stdout ? err.stdout.toString() : '';
+  const stderr = err.stderr ? err.stderr.toString() : '';
+  if (stdout.trim()) console.error(stdout.trim());
+  if (stderr.trim()) console.error(stderr.trim());
+  console.error('\nERROR: Route coverage check failed. Every registered route must have an OpenAPI annotation.');
+  console.error('Add an annotation to the route, or add internal routes to the allow-list in scripts/verify-route-coverage.js.');
+  process.exit(1);
+}
 
 console.log('\n✓ All OpenAPI checks passed!');
 console.log(`  - ${Object.keys(specPaths).length} documented paths`);

@@ -11,6 +11,8 @@
 'use strict';
 
 const log = require('../utils/log');
+const timerRegistry = require('../utils/timerRegistry');
+const { runWithAbortController } = require('../utils/abortContext');
 
 /**
  * Per-endpoint timeout presets in milliseconds.
@@ -23,6 +25,7 @@ const TIMEOUTS = {
   donation: 30_000,   // 30 s — Stellar transaction submission
   export: 45_000,     // 45 s — synchronous large exports (CSV/JSON generation)
   stream: 60_000,     // 60 s — recurring-donation schedule creation
+  sync: 45_000,       // 45 s — Horizon transaction sync operations
 };
 
 /**
@@ -30,8 +33,10 @@ const TIMEOUTS = {
  *
  * Sets a timer when the request arrives. If the response has not finished
  * before the timer fires the middleware:
- *  1. Logs the timeout with method, path, duration, and client IP.
- *  2. Sends HTTP 503 with a `Retry-After: 5` header.
+ *  1. Aborts in-flight Horizon / HTTP requests via AbortController.
+ *  2. Rolls back in-flight database transactions.
+ *  3. Logs the timeout with method, path, timeoutMs, elapsedTime, and client IP.
+ *  4. Sends HTTP 503 with a `Retry-After: 5` header and structured error body.
  *
  * The timer is cleared automatically when the response finishes normally.
  *
@@ -47,12 +52,34 @@ const TIMEOUTS = {
  */
 function requestTimeout(ms = TIMEOUTS.default) {
   return (req, res, next) => {
-    const timer = setTimeout(() => {
+    const controller = new AbortController();
+    req.abortController = controller;
+    const startTime = Date.now();
+
+    const timer = timerRegistry.createTimeout(() => {
+      // Abort in-flight requests (Horizon, fetch, etc.)
+      try {
+        controller.abort();
+      } catch (_) { /* best-effort */ }
+
+      // Roll back in-flight DB transaction if one exists
+      if (req.dbTransaction && typeof req.dbTransaction.rollback === 'function') {
+        try {
+          req.dbTransaction.rollback();
+        } catch (_) { /* best-effort */ }
+      } else if (req.transaction && typeof req.transaction.rollback === 'function') {
+        try {
+          req.transaction.rollback();
+        } catch (_) { /* best-effort */ }
+      }
+
+      const elapsed = Date.now() - startTime;
       log.warn('REQUEST_TIMEOUT', 'Request timed out', {
         requestId: req.id,
         method: req.method,
         path: req.path,
         timeoutMs: ms,
+        elapsedTime: elapsed,
         ip: req.ip,
       });
 
@@ -72,10 +99,10 @@ function requestTimeout(ms = TIMEOUTS.default) {
     }, ms);
 
     // Clear the timer as soon as the response is finished.
-    res.on('finish', () => clearTimeout(timer));
-    res.on('close', () => clearTimeout(timer));
+    res.on('finish', () => timer.clear());
+    res.on('close', () => timer.clear());
 
-    next();
+    runWithAbortController(controller, () => next());
   };
 }
 

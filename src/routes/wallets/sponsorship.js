@@ -17,8 +17,9 @@ const { payloadSizeLimiter, ENDPOINT_LIMITS } = require('../../middleware/payloa
 const asyncHandler = require('../../utils/asyncHandler');
 const WalletService = require('../../services/WalletService');
 const AuditLogService = require('../../services/AuditLogService');
+const { getStellarService } = require('../../config/stellar');
 
-const walletService = new WalletService();
+const walletService = new WalletService(getStellarService());
 
 const walletIdSchema = validateSchema({
   params: {

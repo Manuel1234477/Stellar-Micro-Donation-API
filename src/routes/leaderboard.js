@@ -13,6 +13,7 @@
 
 const crypto = require('crypto');
 const express = require('express');
+const timerRegistry = require('../utils/timerRegistry');
 const router = express.Router();
 const StatsService = require('../services/LeaderboardStatsService');
 const { checkPermission } = require('../middleware/rbac');
@@ -234,12 +235,12 @@ router.get('/stream', checkPermission(PERMISSIONS.STATS_READ), (req, res, next) 
 
     // Keepalive pings
     const keepaliveMs = parseInt(process.env.LEADERBOARD_KEEPALIVE_MS || '15000', 10);
-    const pingInterval = setInterval(() => {
+    const pingInterval = timerRegistry.createInterval(() => {
       res.write(': ping\n\n');
     }, keepaliveMs);
 
     req.on('close', () => {
-      clearInterval(pingInterval);
+      pingInterval.clear();
       SseManager.removeClient(clientId);
     });
 

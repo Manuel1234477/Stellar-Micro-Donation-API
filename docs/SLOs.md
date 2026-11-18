@@ -45,6 +45,11 @@ This document defines the Service Level Objectives (SLOs) for the Stellar Micro 
 - P95 latency > 300ms for 5 minutes
 - P99 latency > 2s for 5 minutes
 
+**Endpoint-Specific Targets**:
+- `GET /api/v1/donations` (list-donations): P95 ≤ 50ms, verified by the nightly load test (`tests/load/PerformanceBaselines.js`, `NIGHTLY_TARGET_BASELINES`). See `docs/LOAD_TESTING.md` for how to reproduce with `npm run test:load`.
+- The list-donations target must be met for 7 consecutive nightly runs to be considered satisfied (Issue #1796). A regression is flagged when p95 exceeds the 50ms baseline by any margin; the 2026-09-05 regression to ~73ms (+46%) is the reference case.
+- The default list query must use an index in its `EXPLAIN QUERY PLAN` output; before/after measurements are recorded in `PERFORMANCE_AUDIT.md`.
+
 ### 3. API Error Rate
 
 **Definition**: Percentage of HTTP responses with error status codes (5xx).

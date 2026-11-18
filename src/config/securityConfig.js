@@ -10,6 +10,7 @@
  */
 
 const log = require('../utils/log');
+const { unwrapEncryptionKey } = require('../utils/kms');
 
 /**
  * Security-sensitive environment variables and their safe defaults
@@ -83,12 +84,12 @@ const SECURITY_CONFIGS = {
   HORIZON_URL: {
     required: false,
     safeDefault: null, // Use network defaults
-    validator: (value) => {
+    validator: (value, env = process.env) => {
       try {
         if (!value || !value.trim()) return null;
         const url = new URL(value.trim());
         // Only allow HTTPS in production
-        if (process.env.NODE_ENV === 'production' && url.protocol !== 'https:') {
+        if (env.NODE_ENV === 'production' && url.protocol !== 'https:') {
           log.warn('SECURITY_CONFIG', 'Insecure Horizon URL protocol detected, using default', {
             url: value.trim(),
             protocol: url.protocol
@@ -141,19 +142,35 @@ const SECURITY_CONFIGS = {
 };
 
 /**
- * Load and validate security configuration with safe defaults
+ * Load and validate security configuration with safe defaults.
+ *
+ * Pure function of the supplied env object: no reads or writes of the global
+ * `process.env`, so it can be exercised directly in tests without module cache
+ * tricks. Defaults to `process.env` for production callers.
  */
-function loadSecurityConfig() {
+function loadSecurityConfig(env = process.env) {
   const config = {};
   const misconfigurations = [];
-  const isProduction = process.env.NODE_ENV === 'production';
+  const isProduction = env.NODE_ENV === 'production';
 
   log.info('SECURITY_CONFIG', 'Loading security configuration', { 
-    environment: process.env.NODE_ENV || 'development' 
+    environment: env.NODE_ENV || 'development' 
   });
 
+  if (env.KMS_KEY_ID && !env.ENCRYPTED_ENCRYPTION_KEY && !env.ENCRYPTION_KEY) {
+    throw new Error('KMS_KEY_ID is set, but ENCRYPTED_ENCRYPTION_KEY is missing. Use the KMS wrapping script before startup.');
+  }
+
+  if (env.KMS_KEY_ID && env.ENCRYPTED_ENCRYPTION_KEY && !env.ENCRYPTION_KEY) {
+    try {
+      env.ENCRYPTION_KEY = unwrapEncryptionKey();
+    } catch (error) {
+      throw new Error(`KMS key unwrapping failed at startup: ${error.message}`);
+    }
+  }
+
   Object.entries(SECURITY_CONFIGS).forEach(([key, configDef]) => {
-    const envValue = process.env[key];
+    const envValue = env[key];
     let finalValue;
 
     // Check if required in production
@@ -173,7 +190,7 @@ function loadSecurityConfig() {
       }
     } else if (envValue) {
       // Validate provided value
-      const validatedValue = configDef.validator(envValue);
+      const validatedValue = configDef.validator(envValue, env);
       if (validatedValue === null || validatedValue === undefined) {
         misconfigurations.push({
           config: key,

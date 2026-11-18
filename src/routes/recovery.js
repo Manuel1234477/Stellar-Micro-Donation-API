@@ -1,7 +1,7 @@
 /**
- * Recovery Routes - Social Recovery Endpoints
+ * Recovery Routes - Social Recovery Endpoints (#1552)
  *
- * RESPONSIBILITY: HTTP handlers for guardian-based account recovery
+ * RESPONSIBILITY: HTTP handlers for guardian-based (M-of-N) account recovery
  * OWNER: Backend Team
  * DEPENDENCIES: SocialRecoveryService, auth middleware
  */
@@ -22,11 +22,12 @@ const recoveryService = new SocialRecoveryService(getStellarService());
 /**
  * POST /wallets/:id/recovery/guardians
  * Set guardians for a wallet.
+ * Body: { guardianPublicKeys: string[] | {publicKey, email}[], threshold: number }
  */
 router.post(
   '/wallets/:id/recovery/guardians',
   requireApiKey,
-  checkPermission(PERMISSIONS.WALLETS_WRITE),
+  checkPermission(PERMISSIONS.WALLETS_UPDATE),
   asyncHandler(async (req, res, next) => {
     try {
       const walletId = parseInt(req.params.id, 10);
@@ -68,12 +69,15 @@ router.get(
 
 /**
  * POST /wallets/:id/recovery/initiate
- * Initiate a recovery request with a 48-hour time-lock.
+ * Initiate a recovery request with a new target signing key. Notifies every
+ * registered guardian (webhook + email where on file) and starts a strict
+ * 72-hour expiration window.
+ * Body: { newPublicKey }
  */
 router.post(
   '/wallets/:id/recovery/initiate',
   requireApiKey,
-  checkPermission(PERMISSIONS.WALLETS_WRITE),
+  checkPermission(PERMISSIONS.WALLETS_UPDATE),
   asyncHandler(async (req, res, next) => {
     try {
       const walletId = parseInt(req.params.id, 10);
@@ -95,14 +99,47 @@ router.post(
 );
 
 /**
+ * POST /wallets/:id/recovery/:requestId/approve
+ * Submit a guardian approval for a pending recovery request.
+ * Auto-executes the on-chain signer swap once the M-th approval lands,
+ * provided the request hasn't crossed its 72-hour expiration window.
+ * Body: { guardianPublicKey }
+ */
+router.post(
+  '/wallets/:id/recovery/:requestId/approve',
+  requireApiKey,
+  checkPermission(PERMISSIONS.WALLETS_UPDATE),
+  asyncHandler(async (req, res, next) => {
+    try {
+      const walletId = parseInt(req.params.id, 10);
+      const recoveryRequestId = parseInt(req.params.requestId, 10);
+      const { guardianPublicKey } = req.body;
+
+      if (!guardianPublicKey) {
+        return res.status(400).json({
+          success: false,
+          error: { code: 'VALIDATION_ERROR', message: 'guardianPublicKey is required' },
+        });
+      }
+
+      const result = await recoveryService.approveRecovery(walletId, recoveryRequestId, guardianPublicKey);
+      return res.status(200).json({ success: true, data: result });
+    } catch (err) {
+      next(err);
+    }
+  })
+);
+
+/**
  * POST /wallets/:id/recovery/approve
- * Submit a guardian approval for a recovery request.
- * Auto-executes when threshold is met and time-lock has passed.
+ * @deprecated Prefer POST /wallets/:id/recovery/:requestId/approve.
+ * Kept for backward compatibility — recoveryRequestId supplied in the body.
+ * Body: { recoveryRequestId, guardianPublicKey }
  */
 router.post(
   '/wallets/:id/recovery/approve',
   requireApiKey,
-  checkPermission(PERMISSIONS.WALLETS_WRITE),
+  checkPermission(PERMISSIONS.WALLETS_UPDATE),
   asyncHandler(async (req, res, next) => {
     try {
       const walletId = parseInt(req.params.id, 10);

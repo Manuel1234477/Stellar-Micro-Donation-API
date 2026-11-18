@@ -1,29 +1,23 @@
 'use strict';
 
-const { getRateLimitStore } = require('./RateLimitStore');
-const { calculateRetryAfter } = require('./rateLimitHeaders');
+/**
+ * Per-API-key rate limiting.
+ *
+ * Counts through the shared store in src/services/rateLimitStores (#1777), so
+ * limits are shared across instances when RATE_LIMIT_STORE=redis.
+ * Header helpers live in ./rateLimitHeaders (no import back from there).
+ */
+
+const { getRateLimitStore } = require('../services/rateLimitStores');
+const { buildRateLimitHeaders, calculateRetryAfter } = require('./rateLimitHeaders');
 
 const DEFAULT_RATE_LIMIT = 100;
 const DEFAULT_WINDOW_SECONDS = 60;
+const KEY_PREFIX = 'rl:apikey:';
 
-function buildRateLimitHeaders(limit, remaining, resetAt) {
-  const resetSeconds = typeof resetAt === 'number' ? Math.ceil(resetAt / 1000) : resetAt;
-  return {
-    // IETF standard headers
-    'RateLimit-Limit': String(limit),
-    'RateLimit-Remaining': String(Math.max(0, remaining)),
-    'RateLimit-Reset': String(resetSeconds),
-    // Legacy X-RateLimit-* headers for backward compatibility
-    'X-RateLimit-Limit': String(limit),
-    'X-RateLimit-Remaining': String(Math.max(0, remaining)),
-    'X-RateLimit-Reset': String(resetSeconds),
-  };
-}
-
-let _store = null;
+let _storeOverride = null;
 function getStore() {
-  if (!_store) _store = getRateLimitStore();
-  return _store;
+  return _storeOverride || getRateLimitStore();
 }
 
 const perKeyRateLimit = async (req, res, next) => {
@@ -33,9 +27,9 @@ const perKeyRateLimit = async (req, res, next) => {
   const limit = keyInfo.rateLimitPerMinute || keyInfo.rateLimit || DEFAULT_RATE_LIMIT;
   const windowSeconds = keyInfo.rateLimitWindowSeconds || DEFAULT_WINDOW_SECONDS;
 
-  const result = await getStore().incrementAndCheck(keyInfo.id, limit, windowSeconds);
-  // result.resetAt is in milliseconds; convert to seconds for the header contract
-  res.set(buildRateLimitHeaders(limit, result.remaining, Math.ceil(result.resetAt / 1000)));
+  const result = await getStore().incrementAndCheck(KEY_PREFIX + keyInfo.id, limit, windowSeconds);
+  // result.resetAt is epoch ms; buildRateLimitHeaders converts it to seconds
+  res.set(buildRateLimitHeaders(limit, result.remaining, result.resetAt));
 
   if (!result.allowed) {
     const retryAfter = calculateRetryAfter(result.resetAt);
@@ -65,9 +59,11 @@ const perKeyRateLimit = async (req, res, next) => {
  * @returns {{ allowed: boolean, limit: number, remaining: number, resetAt: number }}
  */
 function checkRateLimit(key, limit = DEFAULT_RATE_LIMIT, windowSeconds = DEFAULT_WINDOW_SECONDS) {
-  const result = getStore().incrementAndCheck(key, limit, windowSeconds);
+  const result = getStore().incrementAndCheck(KEY_PREFIX + key, limit, windowSeconds);
   if (result && typeof result.then === 'function') {
-    // Async store: cannot resolve synchronously here — fail open.
+    // Async store (Redis): this synchronous path cannot wait for it. Fail open
+    // and swallow the eventual result; the store logs its own errors.
+    result.catch(() => {});
     return { allowed: true, limit, remaining: limit, resetAt: Date.now() + windowSeconds * 1000 };
   }
   return {
@@ -78,12 +74,14 @@ function checkRateLimit(key, limit = DEFAULT_RATE_LIMIT, windowSeconds = DEFAULT
   };
 }
 
+/** Clear in-memory counters (tests). No-op for shared stores. */
 function clearStore() {
   const s = getStore();
   if (typeof s.clear === 'function') s.clear();
 }
 
-function _setStore(store) { _store = store; }
+/** Override the store (tests). Pass null to go back to the shared store. */
+function _setStore(store) { _storeOverride = store; }
 
 module.exports = perKeyRateLimit;
 module.exports.buildRateLimitHeaders = buildRateLimitHeaders;

@@ -10,7 +10,7 @@
 
 const express = require('express');
 const router = express.Router();
-const StellarSdk = require('stellar-sdk');
+const StellarSdk = require('../../services/stellar/sdk.js');
 const { checkPermission } = require('../../middleware/rbac');
 const { PERMISSIONS } = require('../../utils/permissions');
 const { validateSchema } = require('../../middleware/schemaValidation');
@@ -30,6 +30,62 @@ const walletIdSchema = validateSchema({
 });
 
 /**
+ * @openapi
+ * /wallets/{id}/merge/eligibility:
+ *   get:
+ *     summary: Check wallet merge eligibility
+ *     description: >
+ *       Returns whether a wallet account is eligible for merging, along with all
+ *       blocking conditions (open offers, non-zero trustlines, data entries, or an
+ *       already-merged wallet).
+ *     tags:
+ *       - Wallets
+ *     security:
+ *       - bearerAuth: []
+ *     parameters:
+ *       - in: path
+ *         name: id
+ *         required: true
+ *         schema:
+ *           type: string
+ *         description: Wallet (user) identifier
+ *     responses:
+ *       200:
+ *         description: Eligibility result
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 success:
+ *                   type: boolean
+ *                 data:
+ *                   type: object
+ *                   properties:
+ *                     walletId:
+ *                       type: string
+ *                     publicKey:
+ *                       type: string
+ *                     eligible:
+ *                       type: boolean
+ *                     blockers:
+ *                       type: array
+ *                       items:
+ *                         type: object
+ *                         properties:
+ *                           type:
+ *                             type: string
+ *                           detail:
+ *                             type: string
+ *       404:
+ *         description: Wallet not found
+ *       409:
+ *         description: Wallet has already been merged
+ *       401:
+ *         description: Unauthorized
+ *       403:
+ *         description: Forbidden - missing wallets:read permission
+ *
  * GET /wallets/:id/merge/eligibility
  * Check whether a wallet account is eligible for merging.
  * Returns all blocking conditions (open offers, non-zero trustlines, data entries).
@@ -71,6 +127,87 @@ router.get('/:id/merge/eligibility', checkPermission(PERMISSIONS.WALLETS_READ), 
 }));
 
 /**
+ * @openapi
+ * /wallets/{id}/merge:
+ *   post:
+ *     summary: Merge a wallet into a destination account
+ *     description: >
+ *       Transfers all XLM from the source wallet to the destination, closes the
+ *       source account on the Stellar network, and soft-deletes the wallet record.
+ *       Requires explicit confirmation via `confirm: true`.
+ *     tags:
+ *       - Wallets
+ *     security:
+ *       - bearerAuth: []
+ *     parameters:
+ *       - in: path
+ *         name: id
+ *         required: true
+ *         schema:
+ *           type: string
+ *         description: Wallet (user) identifier of the source account
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             required:
+ *               - destinationPublicKey
+ *               - sourceSecret
+ *               - confirm
+ *             properties:
+ *               destinationPublicKey:
+ *                 type: string
+ *                 description: Stellar public key of the receiving account
+ *               sourceSecret:
+ *                 type: string
+ *                 description: Secret key of the wallet being merged
+ *               confirm:
+ *                 type: boolean
+ *                 enum: [true]
+ *                 description: Must be exactly true to proceed
+ *     responses:
+ *       200:
+ *         description: Account merged successfully
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 success:
+ *                   type: boolean
+ *                 message:
+ *                   type: string
+ *                 data:
+ *                   type: object
+ *                   properties:
+ *                     sourceWalletId:
+ *                       type: string
+ *                     sourcePublicKey:
+ *                       type: string
+ *                     destinationPublicKey:
+ *                       type: string
+ *                     mergedAmount:
+ *                       type: string
+ *                     transactionHash:
+ *                       type: string
+ *                     ledger:
+ *                       type: integer
+ *                     mergedAt:
+ *                       type: string
+ *                       format: date-time
+ *       400:
+ *         description: Missing fields, missing confirmation, invalid secret, or same source/destination
+ *       403:
+ *         description: Forbidden - sourceSecret does not belong to the wallet, or missing wallets:delete permission
+ *       404:
+ *         description: Wallet not found
+ *       409:
+ *         description: Wallet has already been merged
+ *       401:
+ *         description: Unauthorized
+ *
  * POST /wallets/:id/merge
  * Merge a wallet into a destination account.
  *

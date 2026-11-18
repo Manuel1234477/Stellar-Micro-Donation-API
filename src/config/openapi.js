@@ -129,6 +129,35 @@ const options = {
             prev_cursor: { type: 'string', nullable: true, example: null },
           },
         },
+        // ── /api/v2 standardized response envelope (Issue #1553) ──────────────
+        // Note: this is a different, unrelated envelope from Error/PaginationMeta
+        // above, which describe the /api/v1 { success, ... } shape. /api/v2 has
+        // no `success` field at all.
+        V2ListMeta: {
+          type: 'object',
+          description: 'Pagination metadata for a /api/v2 list response.',
+          properties: {
+            total: { type: 'integer', example: 42, description: 'Total matching items across all pages.' },
+            page: { type: 'integer', nullable: true, example: 1 },
+            pageSize: { type: 'integer', nullable: true, example: 20 },
+            cursor: { type: 'string', nullable: true, example: 'MjA=', description: 'Opaque cursor for the next page, base64-encoded; null on the last page.' },
+          },
+        },
+        V2Error: {
+          type: 'object',
+          description: 'Error envelope returned by every /api/v2 endpoint. Unlike /api/v1, there is no top-level `success` field.',
+          properties: {
+            error: {
+              type: 'object',
+              properties: {
+                code: { type: 'string', example: 'NOT_FOUND' },
+                message: { type: 'string', example: 'Resource not found' },
+                requestId: { type: 'string', nullable: true, example: '550e8400-e29b-41d4-a716-446655440000' },
+                timestamp: { type: 'string', format: 'date-time', example: '2026-08-30T09:00:00.000Z' },
+              },
+            },
+          },
+        },
       },
       responses: {
         Unauthorized: {
@@ -147,6 +176,14 @@ const options = {
             },
           },
         },
+        V2Error: {
+          description: '/api/v2 error envelope: { error: { code, message, requestId, timestamp } }',
+          content: {
+            'application/json': {
+              schema: { $ref: '#/components/schemas/V2Error' },
+            },
+          },
+        },
         ValidationError: {
           description: 'Validation error',
           content: {
@@ -160,26 +197,50 @@ const options = {
     security: [{ ApiKeyAuth: [] }],
   },
   apis: [
+    // ── Core resources ────────────────────────────────────────────────────
     path.join(__dirname, '../routes/donation.js'),
-    path.join(__dirname, '../routes/donations/notes.js'),
+    path.join(__dirname, '../routes/donations/*.js'),
     path.join(__dirname, '../routes/wallet.js'),
     path.join(__dirname, '../routes/wallets/*.js'),
-    path.join(__dirname, '../routes/stream.js'),
     path.join(__dirname, '../routes/transaction.js'),
-    path.join(__dirname, '../routes/stats.js'),
-    path.join(__dirname, '../app.js'),
-    path.join(__dirname, '../routes/liquidity-pools.js'),
-    path.join(__dirname, '../routes/campaigns.js'),
-    path.join(__dirname, '../routes/assets.js'),
-    path.join(__dirname, '../routes/tiers.js'),
-    path.join(__dirname, '../routes/offers.js'),
-    path.join(__dirname, '../routes/leaderboard.js'),
-    path.join(__dirname, '../routes/tags.js'),
-    path.join(__dirname, '../routes/receipt.js'),
-    path.join(__dirname, '../routes/disputes.js'),
     path.join(__dirname, '../routes/recurringDonation.js'),
+    path.join(__dirname, '../routes/receipt.js'),
+    path.join(__dirname, '../routes/receipts/*.js'),
+    path.join(__dirname, '../routes/disputes.js'),
+    path.join(__dirname, '../routes/pledges.js'),
+    path.join(__dirname, '../routes/pledges/*.js'),
+    // ── Campaigns, assets, offers, liquidity ──────────────────────────────
+    path.join(__dirname, '../routes/campaigns.js'),
+    path.join(__dirname, '../routes/campaigns/*.js'),
+    path.join(__dirname, '../routes/assets.js'),
+    path.join(__dirname, '../routes/offers.js'),
+    path.join(__dirname, '../routes/liquidity-pools.js'),
+    path.join(__dirname, '../routes/liquidityPools/*.js'),
+    path.join(__dirname, '../routes/tiers.js'),
+    path.join(__dirname, '../routes/tags.js'),
+    // ── Stats, leaderboard, fees, federation ──────────────────────────────
+    path.join(__dirname, '../routes/stats.js'),
+    path.join(__dirname, '../routes/leaderboard.js'),
+    path.join(__dirname, '../routes/fees.js'),
+    path.join(__dirname, '../routes/federation.js'),
+    // ── Streaming / realtime / GraphQL ────────────────────────────────────
+    path.join(__dirname, '../routes/stream.js'),
+    path.join(__dirname, '../routes/graphql.js'),
+    // ── Auth & app-level routes ───────────────────────────────────────────
     path.join(__dirname, '../routes/auth.js'),
-    path.join(__dirname, '../routes/admin/auditLogExport.js'),
+    path.join(__dirname, '../app.js'),
+    // ── Admin routes ──────────────────────────────────────────────────────
+    path.join(__dirname, '../routes/admin/*.js'),
+    path.join(__dirname, '../routes/auditLogExport.js'),
+    path.join(__dirname, '../routes/admin/inspect.js'),
+    path.join(__dirname, '../routes/admin/geoRules.js'),
+    path.join(__dirname, '../routes/admin/backup.js'),
+    // ── /api/v2 routes ────────────────────────────────────────────────────
+    path.join(__dirname, '../routes/v2/*.js'),
+    path.join(__dirname, '../routes/v2/donations.js'),
+    path.join(__dirname, '../routes/v2/wallets.js'),
+    // ── Corporate matching ────────────────────────────────────────────────
+    path.join(__dirname, '../routes/corporateMatching.js'),
   ],
 };
 

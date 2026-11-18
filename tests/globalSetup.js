@@ -25,14 +25,13 @@ module.exports = async () => {
   // it resolves DB_PATH at module load time.
   process.env.DB_PATH = TEMPLATE_DB;
 
+  const Database = require('../src/utils/database');
+  const { runMigrations } = require('../src/utils/migrationRunner');
   try {
-    const Database = require('../src/utils/database');
-    const createTestTables = require('./helpers/dbBootstrap');
-    await createTestTables(Database);
+    await runMigrations();
+  } finally {
     if (typeof Database.close === 'function') {
       await Database.close();
     }
-  } catch (e) {
-    // Ignore errors - tables may already exist
   }
 };

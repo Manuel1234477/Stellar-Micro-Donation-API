@@ -9,11 +9,12 @@ const app = require('../../src/app');
 const Database = require('../../src/utils/database');
 const LimitService = require('../../src/services/LimitService');
 const encryption = require('../../src/utils/encryption');
+const { uniqueKeyName } = require('../builders/uniqueId');
 
 // Admin API key (starts with 'admin-' for legacy role detection)
-const ADMIN_KEY = 'admin-test-key';
+const ADMIN_KEY = uniqueKeyName('admin-test-key');
 // Regular user key
-const USER_KEY = 'test-key-1';
+const USER_KEY = uniqueKeyName('test-key-1');
 
 // Idempotency counter
 let idempotencyCounter = 0;

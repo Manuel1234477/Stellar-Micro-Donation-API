@@ -19,6 +19,7 @@
 'use strict';
 
 const express = require('express');
+const { clientErrorMessage } = require('../utils/clientErrorMessage');
 const fs = require('fs');
 const path = require('path');
 
@@ -70,7 +71,7 @@ router.get('/', (req, res) => {
   } catch (err) {
     return res.status(err.statusCode || 500).json({
       success: false,
-      error: { code: err.code || 'CHANGELOG_ERROR', message: err.message },
+      error: { code: err.code || 'CHANGELOG_ERROR', message: clientErrorMessage('CHANGELOG', err, err.statusCode || 500) },
     });
   }
 
@@ -128,7 +129,7 @@ router.get('/deprecations', (req, res) => {
   } catch (err) {
     return res.status(err.statusCode || 500).json({
       success: false,
-      error: { code: err.code || 'CHANGELOG_ERROR', message: err.message },
+      error: { code: err.code || 'CHANGELOG_ERROR', message: clientErrorMessage('CHANGELOG', err, err.statusCode || 500) },
     });
   }
 

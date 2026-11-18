@@ -61,7 +61,7 @@ const ROUTE_ALLOWED_FIELDS = [
   { methods: ['PATCH'], pattern: /^(\/api\/v1)?\/wallets\/[^/]+$/, fields: ['label', 'ownerName'] },
   { methods: ['POST'], pattern: /^(\/api\/v1)?\/transactions\/sync$/, fields: ['publicKey'] },
   { methods: ['POST'], pattern: /^(\/api\/v1)?\/api-keys\/cleanup$/, fields: ['retentionDays'] },
-  { methods: ['POST'], pattern: /^(\/api\/v1)?\/api-keys$/, fields: ['name', 'role', 'expiresInDays', 'metadata'] },
+  { methods: ['POST'], pattern: /^(\/api\/v1)?\/api-keys$/, fields: ['name', 'role', 'expiresInDays', 'metadata', 'scopes', 'rateLimit', 'rateLimitWindowSeconds', 'allowedIps'] },
 ];
 
 function validatePayloadFields(req, res, next) {

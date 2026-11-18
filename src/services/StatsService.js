@@ -360,9 +360,6 @@ class StatsService {
     const transactions = Transaction.getByDateRange(startDate, endDate);
     const byAsset = {};
 
-    let totalFeeStroops = 0n;
-    let totalVolumeStroops = 0n;
-
     transactions.forEach(tx => {
       const asset = tx.asset || tx.assetCode || 'XLM';
       const amountStroops = toStroops(tx.amount || 0);
@@ -386,8 +383,6 @@ class StatsService {
       const feeInXLMStroops = asset === 'XLM' ? feeStroops : BigInt(Math.floor(Number(feeStroops) * xlmRate));
       byAsset[asset]._totalFeesInXLMStroops += feeInXLMStroops;
 
-      totalFeeStroops += feeInXLMStroops;
-      totalVolumeStroops += asset === 'XLM' ? amountStroops : 0n;
     });
 
     const feesByAsset = Object.values(byAsset).map(a => {
@@ -639,7 +634,10 @@ class StatsService {
     let granularity = 'daily';
     if (hours <= 48) granularity = 'hourly';
     else if (hours <= 24 * 14) granularity = 'daily';
-    else if (hours <= 24 * 90) granularity = 'weekly';
+    // Upper bound generous enough to cover a calendar '3m' period regardless
+    // of which months it spans (28-31 days each, so up to ~93 days) while
+    // staying well under a 1y period (365 days), which must stay monthly.
+    else if (hours <= 24 * 100) granularity = 'weekly';
     else granularity = 'monthly';
 
     return { start, end: now, granularity };

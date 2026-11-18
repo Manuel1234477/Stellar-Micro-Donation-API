@@ -10,40 +10,66 @@
  *   - Each wallet has its own Data Encryption Key (DEK).
  *   - The DEK is encrypted by the KEK managed here (the "envelope").
  *   - Only the encrypted DEK is stored; the plaintext DEK lives only in memory.
+ *
+ * Local wrapping and env key lookup go through src/utils/crypto.js (#1776);
+ * this module only adds the provider switch and the AWS backend.
  */
 
 'use strict';
 
-const crypto = require('crypto');
 const log = require('./log');
+const cryptoCore = require('./crypto');
 
-const ALGORITHM = 'aes-256-gcm';
-const IV_LENGTH = 12;
+function requireAwsKms() {
+  try {
+    return require('@aws-sdk/client-kms');
+  } catch (error) {
+    throw new Error('AWS KMS support is not installed. Add @aws-sdk/client-kms to dependencies or disable KMS mode.');
+  }
+}
+
+/**
+ * Raw master secret from env. Delegates to the shared key provider (#1776).
+ * @returns {string}
+ */
+function resolveEncryptionKeyFromEnv() {
+  return cryptoCore.keyProvider.resolveMasterSecret();
+}
+
+async function unwrapEncryptionKey() {
+  const keyId = process.env.KMS_KEY_ID;
+  if (!keyId) {
+    return resolveEncryptionKeyFromEnv();
+  }
+
+  const encrypted = process.env.ENCRYPTED_ENCRYPTION_KEY;
+  if (!encrypted || !encrypted.trim()) {
+    throw new Error('KMS_KEY_ID is set but ENCRYPTED_ENCRYPTION_KEY is missing');
+  }
+
+  const { KMSClient, DecryptCommand } = requireAwsKms();
+  const client = new KMSClient({ region: process.env.AWS_REGION || 'us-east-1' });
+  const { Plaintext } = await client.send(new DecryptCommand({
+    CiphertextBlob: Buffer.from(encrypted, 'base64'),
+    KeyId: keyId,
+  }));
+
+  if (!Plaintext || !Plaintext.length) {
+    throw new Error('KMS decryption returned empty plaintext for the encryption key');
+  }
+
+  return Buffer.from(Plaintext).toString('hex');
+}
 
 // ─── Local backend ────────────────────────────────────────────────────────────
 
 /**
- * Derive a 32-byte KEK from the ENCRYPTION_KEY env var.
- * @returns {Buffer}
- */
-function _localKEK() {
-  const raw = process.env.ENCRYPTION_KEY;
-  if (!raw) throw new Error('ENCRYPTION_KEY env var is required for local KMS provider');
-  return crypto.createHash('sha256').update(raw).digest();
-}
-
-/**
- * Encrypt a plaintext DEK with the local KEK (AES-256-GCM).
+ * Encrypt a plaintext DEK with the local KEK (AES-256-GCM via src/utils/crypto.js).
  * @param {Buffer} dek - 32-byte plaintext DEK
  * @returns {string} hex-encoded "iv:ciphertext:authTag"
  */
 function _localEncryptDEK(dek) {
-  const kek = _localKEK();
-  const iv = crypto.randomBytes(IV_LENGTH);
-  const cipher = crypto.createCipheriv(ALGORITHM, kek, iv);
-  const encrypted = Buffer.concat([cipher.update(dek), cipher.final()]);
-  const authTag = cipher.getAuthTag();
-  return `${iv.toString('hex')}:${encrypted.toString('hex')}:${authTag.toString('hex')}`;
+  return cryptoCore.formatLegacy(cryptoCore.seal(cryptoCore.keyProvider.getLocalKEK(), dek));
 }
 
 /**
@@ -52,13 +78,8 @@ function _localEncryptDEK(dek) {
  * @returns {Buffer} plaintext DEK
  */
 function _localDecryptDEK(encryptedDEK) {
-  const parts = encryptedDEK.split(':');
-  if (parts.length !== 3) throw new Error('Invalid encrypted DEK format');
-  const [ivHex, ctHex, tagHex] = parts;
-  const kek = _localKEK();
-  const decipher = crypto.createDecipheriv(ALGORITHM, kek, Buffer.from(ivHex, 'hex'));
-  decipher.setAuthTag(Buffer.from(tagHex, 'hex'));
-  return Buffer.concat([decipher.update(Buffer.from(ctHex, 'hex')), decipher.final()]);
+  const sealed = cryptoCore.parseLegacy(encryptedDEK, 'Invalid encrypted DEK format');
+  return cryptoCore.open(cryptoCore.keyProvider.getLocalKEK(), sealed);
 }
 
 // ─── AWS KMS backend ──────────────────────────────────────────────────────────
@@ -70,8 +91,7 @@ function _localDecryptDEK(encryptedDEK) {
  * @returns {Promise<string>} base64-encoded ciphertext blob
  */
 async function _awsEncryptDEK(dek) {
-  // Lazy-load to avoid hard dependency when not using AWS
-  const { KMSClient, EncryptCommand } = require('@aws-sdk/client-kms');
+  const { KMSClient, EncryptCommand } = requireAwsKms();
   const keyId = process.env.KMS_KEY_ID;
   if (!keyId) throw new Error('KMS_KEY_ID env var is required for aws KMS provider');
 
@@ -88,7 +108,7 @@ async function _awsEncryptDEK(dek) {
  * @returns {Promise<Buffer>} plaintext DEK
  */
 async function _awsDecryptDEK(encryptedDEK) {
-  const { KMSClient, DecryptCommand } = require('@aws-sdk/client-kms');
+  const { KMSClient, DecryptCommand } = requireAwsKms();
   const client = new KMSClient({ region: process.env.AWS_REGION || 'us-east-1' });
   const { Plaintext } = await client.send(
     new DecryptCommand({ CiphertextBlob: Buffer.from(encryptedDEK, 'base64') })
@@ -117,7 +137,7 @@ function getProvider() {
  * @returns {Buffer}
  */
 function generateDEK() {
-  return crypto.randomBytes(32);
+  return cryptoCore.generateKey();
 }
 
 /**
@@ -144,4 +164,11 @@ async function decryptDEK(encryptedDEK) {
   return _localDecryptDEK(encryptedDEK);
 }
 
-module.exports = { generateDEK, encryptDEK, decryptDEK, getProvider };
+module.exports = {
+  generateDEK,
+  encryptDEK,
+  decryptDEK,
+  getProvider,
+  resolveEncryptionKeyFromEnv,
+  unwrapEncryptionKey,
+};

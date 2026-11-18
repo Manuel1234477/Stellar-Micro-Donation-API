@@ -94,7 +94,7 @@ async function waitForLock() {
   const start = Date.now();
   while (Date.now() - start < LOCK_TIMEOUT_MS) {
     if (await acquireLock()) return true;
-    await new Promise(resolve => setTimeout(resolve, LOCK_POLL_INTERVAL_MS));
+    await new Promise(resolve => setTimeout(resolve, LOCK_POLL_INTERVAL_MS)); // eslint-disable-line local/no-bare-timers -- awaited delay; must not be cancelled by clearAll()
   }
   return false;
 }

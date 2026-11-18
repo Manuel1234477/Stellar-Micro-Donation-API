@@ -67,8 +67,8 @@ class RedisPubSubAdapter extends PubSubAdapter {
   }
 
   async close() {
-    try { await this._sub.quit(); } catch (_) {}
-    try { await this._pub.quit(); } catch (_) {}
+    try { await this._sub.quit(); } catch (_) { /* best-effort */ }
+    try { await this._pub.quit(); } catch (_) { /* best-effort */ }
   }
 }
 
@@ -85,7 +85,7 @@ function getPubSubAdapter() {
         _instance = new RedisPubSubAdapter(new Redis(url), new Redis(url));
         return _instance;
       }
-    } catch (_) {}
+    } catch (_) { /* best-effort */ }
     log.warn('PUBSUB', 'Redis adapter requested but unavailable; using memory');
   }
   _instance = new MemoryPubSubAdapter();

@@ -9,7 +9,7 @@
  * transactions, ensuring local database reflects blockchain state.
  */
 
-const StellarSdk = require('stellar-sdk');
+const StellarSdk = require('./stellar/sdk.js');
 
 // Internal modules
 const Transaction = require('../models/transaction');

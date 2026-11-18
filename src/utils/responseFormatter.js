@@ -95,9 +95,95 @@ function responseFormatterMiddleware() {
   };
 }
 
+// ─── /v2 envelope (Issue #1553) ────────────────────────────────────────────────
+//
+// A second, intentionally different envelope for /v2/ routes. /v1/ keeps the
+// {success, data|error, meta:{requestId,timestamp,duration}} shape above,
+// untouched, for backward compatibility. /v2/ drops `success` entirely:
+//   List:   { data: [...], meta: { total, page, pageSize, cursor } }
+//   Single: { data: {...} }
+//   Error:  { error: { code, message, requestId, timestamp } }
+
+/**
+ * Build a v2 single-resource response envelope.
+ * @param {*} data - The resource payload
+ * @returns {{ data: * }}
+ */
+function v2DataResponse(data) {
+  return { data };
+}
+
+/**
+ * Build a v2 list response envelope.
+ * @param {Array} data - The page of items
+ * @param {object} [meta]
+ * @param {number} [meta.total]    - Total matching items across all pages
+ * @param {number|null} [meta.page]
+ * @param {number|null} [meta.pageSize]
+ * @param {string|null} [meta.cursor] - Opaque cursor for the next page, if applicable
+ * @returns {{ data: Array, meta: { total: number, page: number|null, pageSize: number|null, cursor: string|null } }}
+ */
+function v2ListResponse(data, meta = {}) {
+  const items = Array.isArray(data) ? data : [];
+  return {
+    data: items,
+    meta: {
+      total: typeof meta.total === 'number' ? meta.total : items.length,
+      page: meta.page ?? null,
+      pageSize: meta.pageSize ?? null,
+      cursor: meta.cursor ?? null,
+    },
+  };
+}
+
+/**
+ * Build a v2 error response envelope.
+ * @param {string} code       - Machine-readable error code
+ * @param {string} message    - Human-readable error message
+ * @param {string} [requestId] - Unique request identifier
+ * @returns {{ error: { code: string, message: string, requestId: string|null, timestamp: string } }}
+ */
+function v2ErrorResponse(code, message, requestId) {
+  return {
+    error: {
+      code,
+      message,
+      requestId: requestId || null,
+      timestamp: new Date().toISOString(),
+    },
+  };
+}
+
+/**
+ * Express middleware that attaches v2-envelope response helpers:
+ *   res.v2Data(data, status?)          -> { data }
+ *   res.v2List(data, meta, status?)    -> { data, meta }
+ *   res.v2Error(code, message, status?) -> { error }
+ *
+ * @returns {Function} Express middleware
+ */
+function v2ResponseFormatterMiddleware() {
+  return (req, res, next) => {
+    res.v2Data = (data, status = 200) => {
+      res.status(status).json(v2DataResponse(data));
+    };
+    res.v2List = (data, meta = {}, status = 200) => {
+      res.status(status).json(v2ListResponse(data, meta));
+    };
+    res.v2Error = (code, message, status = 400) => {
+      res.status(status).json(v2ErrorResponse(code, message, req.id));
+    };
+    next();
+  };
+}
+
 module.exports = {
   successResponse,
   errorResponse,
   buildMeta,
   responseFormatterMiddleware,
+  v2DataResponse,
+  v2ListResponse,
+  v2ErrorResponse,
+  v2ResponseFormatterMiddleware,
 };

@@ -7,6 +7,41 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Removed
+- Deleted 14 orphaned `src/` modules that had no importers and were never wired into the application (#1933):
+  - `src/services/BackupScheduler.js` — backup scheduling was never started at runtime; `BackupService` remains and is mounted under `/admin/backups`
+  - `src/services/FeeService.js` — student-fee installment service unrelated to the Stellar donation platform
+  - `src/services/MockStellarServiceStub.js` — thin test stub superseded by `MockStellarService`; tests that required the stub have been removed
+  - `src/services/NetworkFeeService.js` — duplicate fee-stats fetcher; live fee data comes from `NetworkStatusService` (already wired)
+  - `src/services/PaymentStreamService.js` — payment streaming logic never mounted; `PaymentChannelService` covers this use-case
+  - `src/services/RecipientAccountService.js` — recipient-account helpers with no callers in the application
+  - `src/services/RestoreTestRunner.js` — periodic restore-verification runner with no scheduler or route referencing it
+  - `src/services/SequenceCacheService.js` — duplicate sequence-number cache; the wired `services/SequenceManager.js` supersedes it (see #1773)
+  - `src/utils/errorResponseFormatter.js` — error-formatting helpers duplicated by the already-wired `utils/errors.js` / `utils/responseFormatter.js`
+  - `src/utils/fieldValidator.js` — unknown-field detection helpers not referenced by any route or middleware
+  - `src/utils/sequenceManager.js` — second sequence-manager implementation duplicating `services/SequenceManager.js` (see #1773)
+  - `src/middleware/apiVersion.js` — schema-version header parser duplicated by the already-wired `middleware/schemaVersion.js`
+  - `src/middleware/requestDecryption.js` — request-body decryption middleware never applied to any route
+  - `src/middleware/requestLogger.js` — configurable per-path request logger duplicated by the already-wired `middleware/logger.js`
+- Removed 12 test files whose sole purpose was to exercise the deleted modules (tests for `RestoreTestRunner`, `MockStellarServiceStub`, `SequenceCacheService`, `PaymentStreamService`, `NetworkFeeService`, `FeeService`, `requestLogger`, `requestDecryption`, `fieldValidator`, `errorResponseFormatter`, and `utils/sequenceManager`).
+
+### Added
+- `scripts/check-src-orphans.js`: madge-based orphan check that fails CI when a `src/` module has no importers (#1933). Entry points (`src/app.js`, scripts under `src/scripts/`) are allowlisted. Run with `npm run check:orphans`.
+- `check:orphans` npm script runs the orphan check; added to the `guards` CI job so every PR is gated on an orphan-free `src/`.
+
+### Fixed
+- `SocialRecoveryService.setGuardians()` failed with `DatabaseError` because the test schema lacked the migration 045 columns; guardian replacement is now atomic and rejects duplicate keys (#1695)
+- Transaction model no longer queries `donations_store` at require time; the store loads after migrations in the bootstrap sequence and `/health/ready` reports not-ready until it has loaded (#1696)
+- `rotationLockMiddleware` caches rotation status (`ROTATION_LOCK_CACHE_TTL_MS`), fails open with a rate-limited warning when the lock is unreadable, and migration 040 now actually creates `rotation_locks` (#1697)
+- Admin backup routes are mounted at `/admin/backups` as documented; added `POST /admin/backups/:backupId/verify` and OpenAPI/RBAC coverage (#1698)
+
+### Deprecated
+- Unversioned API paths now redirect to their versioned equivalents with `308 Permanent Redirect` and carry `Deprecation: true`, `Sunset: Sat, 01 Jan 2027 00:00:00 GMT` and `Link: </api/v1/...>; rel="successor-version"` headers (#1802, #1803):
+  - All legacy paths covered by the #738 redirects (e.g. `/stats/overpayments`, `/stats/memo-collisions`) now emit the deprecation headers
+  - `/channels` is no longer mounted directly; it redirects to `/api/v1/channels` with the same headers (#1803)
+  - Legacy-path usage is logged and counted in metrics per API key so remaining callers can be identified
+  - **Removal date: 2027-01-01.** After this date the unversioned redirects (including `/channels`) will be removed. Migrate all clients to `/api/v1/*` before then; see `docs/VERSIONING_STRATEGY.md`.
+
 ### Security
 - Remove `clientIp` and `protocol` from `GET /health` response to prevent IP enumeration (#758)
 - Add allowlist validation for `category` and `severity` filter parameters in `GET /admin/audit-logs` to prevent SQL injection (#760)
@@ -18,6 +53,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Local scanning scripts for developers (`npm run scan:container`)
 
 ### Added
+- Central environment schema `src/config/envSchema.js` declaring all 260 variables with type, default and description; the environment is validated once at startup and exposed as a frozen, typed object via `src/config/env.js` (#1784)
+- `.env.example` and the variable reference in `docs/CONFIGURATION.md` are generated from the schema (`npm run config:generate`); `npm run config:check` fails CI when `src/` reads an undeclared variable or the generated files are stale (#1785)
+- `no-restricted-properties` lint rule blocks new direct `process.env` reads outside `src/config` (existing files grandfathered) (#1784)
+- `SharedStateStore` with memory and Redis backends; with `SHARED_STATE_BACKEND=redis`, body-hash deduplication, request-signing nonces and SSE per-key connection limits are shared across replicas. Inventory of module-level state in `docs/architecture/multi-instance-state.md` (#1786)
+- Inbound webhook sources are registered at boot from `INBOUND_WEBHOOK_SOURCES` so every replica has the same set (#1786)
+- Stellar DEX orderbook fallback for XLM price discovery when CoinGecko is unavailable or rate-limited (#1567):
+  - XLM/USD is derived from the mid-market price of the best bid and ask on the XLM/USDC orderbook
+  - Both sources share the existing 5-minute rate cache; a fresh DEX price is preferred over a stale cached one
+  - `GET /health` and `GET /api/v1/exchange-rates` report the active price source
+  - Quote asset is configurable via `XLM_USDC_ASSET` (defaults to the Circle USDC issuer for the active network)
 - `MockStellarServiceStub`: thin (<200 line) configurable stub implementing `StellarServiceInterface` for unit tests (#756)
 - `npm run changelog` script to generate changelog entries from conventional commits (#761)
 - Container security documentation in `docs/CONTAINER_SECURITY.md` (#1233)
@@ -29,12 +74,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Mutually-exclusive / co-required flag validation (`SIGNING_PROVIDER`→HSM/KMS creds, `REQUIRE_REQUEST_SIGNING`→`REQUEST_SIGNING_SECRET`, `RATE_LIMIT_STORE=redis`→`REDIS_URL`, `ENCRYPTION_KEY_VERSION=1`→`ENCRYPTION_KEY_1`)
   - Boot sequence (`src/app.js`) now runs the checks with `exitOnFailure` before binding the port
 - Fix `isBlockedIPv4` in `src/utils/ssrf.js` so private/link-local ranges with the high bit set (e.g. `192.168.0.0/16`, `172.16.0.0/12`, `169.254.0.0/16`) are actually blocked (#1119)
-
----
-
-## [1.0.0] - 2025-04-01
-
-### Added
 - One-time donations via `POST /donations` with Stellar testnet/mainnet support
 - Recurring donation schedules (`POST /stream/create`, `GET /stream/schedules`)
 - Wallet management endpoints (`POST /wallets`, `GET /wallets`, `PATCH /wallets/:id`)
@@ -61,6 +100,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - PDF tax receipt generation
 - CSV export for donations and audit logs
 - Prometheus metrics at `/metrics`
+
+### Changed
+- Startup checks log through the structured logger when run by the server (console output is kept for `npm run validate-env`); `no-console` now covers all of `src/config` except the two files the logger depends on (#1783)
+- Corrected defaults in `docs/CONFIGURATION.md` that disagreed with the code (e.g. `SSE_MAX_CONNECTIONS_PER_KEY` is 5, `TX_SYNC_INTERVAL_MS` is 15 min, `PLATFORM_FEE_PERCENT` is 1.5) (#1785)
 
 ### Security
 - Helmet middleware for HTTP security headers

@@ -20,6 +20,8 @@ const {
   normalizePath,
   patternToRegex,
   clearRegistry,
+  findDuplicateRegistrations,
+  assertNoDuplicateRoutes,
 } = require('../../src/middleware/methodRegistry');
 
 const {
@@ -59,7 +61,34 @@ describe('methodRegistry — normalizePath', () => {
   it('preserves root /', () => expect(normalizePath('/')).toBe('/'));
   it('lowercases path', () => expect(normalizePath('/WALLETS')).toBe('/wallets'));
   it('handles empty string', () => expect(normalizePath('')).toBe('/'));
-  it('removes double trailing slash', () => expect(normalizePath('/wallets//')).toBe('/wallets/'));
+  it('removes double trailing slash', () => expect(normalizePath('/wallets//')).toBe('/wallets'));
+  it('collapses repeated slashes from nested routers', () =>
+    expect(normalizePath('/api/v1/donations///batch')).toBe('/api/v1/donations/batch'));
+});
+
+describe('methodRegistry — duplicate registrations (#1779)', () => {
+  it('reports nothing when every method + path is registered once', () => {
+    registerMethod('GET', '/wallets');
+    registerMethod('POST', '/wallets');
+    expect(findDuplicateRegistrations()).toEqual([]);
+    expect(() => assertNoDuplicateRoutes()).not.toThrow();
+  });
+
+  it('reports the same method + path registered twice', () => {
+    registerMethod('POST', '/donations/batch');
+    registerMethod('POST', '/donations//batch/');
+    expect(findDuplicateRegistrations()).toEqual([
+      { method: 'POST', path: '/donations/batch', count: 2 },
+    ]);
+    expect(() => assertNoDuplicateRoutes()).toThrow(/POST \/donations\/batch \(registered 2 times\)/);
+  });
+
+  it('clearRegistry resets duplicate tracking', () => {
+    registerMethod('GET', '/x');
+    registerMethod('GET', '/x');
+    clearRegistry();
+    expect(findDuplicateRegistrations()).toEqual([]);
+  });
 });
 
 describe('methodRegistry — registerMethod', () => {

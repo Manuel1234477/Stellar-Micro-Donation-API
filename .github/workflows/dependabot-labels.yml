@@ -1,0 +1,34 @@
+name: Dependabot labels
+
+# Labels Dependabot PRs that bump a major version with "major-update" so they
+# get a manual review instead of being merged with the routine minor/patch
+# groups. See docs/CI_PIPELINE.md#dependency-updates. Refs #1788.
+#
+# pull_request_target is needed for a token that can add labels to Dependabot
+# PRs. This workflow never checks out or runs code from the PR.
+
+on:
+  pull_request_target:
+    types: [opened, reopened, synchronize]
+
+permissions:
+  pull-requests: write
+
+jobs:
+  label-major:
+    if: github.event.pull_request.user.login == 'dependabot[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - id: metadata
+        uses: dependabot/fetch-metadata@v3
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+      - name: Add major-update label
+        if: steps.metadata.outputs.update-type == 'version-update:semver-major'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PR_URL: ${{ github.event.pull_request.html_url }}
+        run: |
+          gh label create major-update --repo "$GITHUB_REPOSITORY" \
+            --color B60205 --description "Major version bump: needs manual review" 2>/dev/null || true
+          gh pr edit "$PR_URL" --add-label major-update

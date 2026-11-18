@@ -17,6 +17,10 @@ This is the envelope-encryption model implemented in `src/utils/kms.js`.
 # Generate a cryptographically random 64-hex-char (32-byte) key
 npm run generate-key
 # Output: a hex string. Paste it as ENCRYPTION_KEY in your secrets manager.
+
+# Or, if using AWS KMS envelope encryption, wrap a fresh data key and store the ciphertext only.
+KMS_KEY_ID=arn:aws:kms:us-east-1:123456789012:key/your-key AWS_REGION=us-east-1 npm run generate-key -- --kms
+# Output: a base64 KMS ciphertext value, stored as ENCRYPTED_ENCRYPTION_KEY.
 ```
 
 **Never store the key in:**
@@ -26,7 +30,7 @@ npm run generate-key
 - Database backups (BackupService strips it, but verify your backup pipeline)
 
 **Recommended source:** AWS Secrets Manager / HashiCorp Vault. Set `KMS_PROVIDER=aws` and
-`KMS_KEY_ID=<your-kms-key-arn>` to use AWS KMS directly for DEK encryption (see `src/utils/kms.js`).
+`KMS_KEY_ID=<your-kms-key-arn>` to use AWS KMS directly for DEK encryption (see `src/utils/kms.js`). When KMS mode is enabled, the plaintext `ENCRYPTION_KEY` is not kept in the runtime environment; only `ENCRYPTED_ENCRYPTION_KEY` is loaded and unwrapped at startup.
 
 ### Scheduled Rotation
 
@@ -54,6 +58,22 @@ The rotation script (`src/scripts/rotateKEK.js`) is:
 - **Idempotent** — rows already wrapped under the new key are detected and skipped.
 - **Crash-safe** — each row is updated atomically; no record is left unreadable if the process
   is killed between rows.
+
+#### Rotation lock (donation writes return 503)
+
+While the script runs it sets `rotation_locks.status = 'in_progress'` for `memoEncryption`,
+and donation write endpoints (`POST /donations`, `/donations/send`, `/batch`, `/bulk`,
+`/cross-asset`) return `503 SERVICE_UNAVAILABLE` with `Retry-After: 5`.
+
+- **Caching** — each API instance caches the lock status in memory for
+  `ROTATION_LOCK_CACHE_TTL_MS` (default `5000`). The script waits one TTL after taking the
+  lock before re-encrypting, so every instance has observed it; keep the same value for the
+  script and the API.
+- **Fail-open** — if the lock cannot be read (for example `rotation_locks` does not exist yet
+  on a fresh database), requests are allowed. A rotation cannot start without a readable
+  `rotation_locks` table, and a database that is actually down fails the request downstream.
+  The condition is logged as one `WARN` per `ROTATION_LOCK_WARN_INTERVAL_MS` (default `60000`)
+  with a count of suppressed repeats, not one error per request.
 
 ### Emergency Rotation (Suspected Compromise)
 
@@ -126,6 +146,28 @@ The startup check (`src/utils/startupChecks.js`) rejects example or placeholder 
 `NODE_ENV=production`:
 - Keys matching `dev_key_*`, `test_*`, or the `.env.example` values fail the check.
 - Rotate or remove them before deploying.
+
+---
+
+## JWT_SIGNING_SECRET
+
+Signs access tokens (HS256). It is independent of `ENCRYPTION_KEY`, so rotating the data
+encryption key does not invalidate sessions, and a leaked data key cannot forge tokens (#1873).
+
+### Provisioning
+
+- Generate at least 32 random characters, for example `openssl rand -hex 32`.
+- Required when `NODE_ENV` is `production` or `staging`. Startup checks fail without it.
+- In development and test a random per-process secret is generated. Tokens do not survive a restart.
+
+### Rotation
+
+1. Set `JWT_SIGNING_SECRET_PREVIOUS` to the current secret.
+2. Set `JWT_SIGNING_SECRET` to the new secret and restart.
+3. New tokens carry the new `kid` header. Tokens signed by the previous key still verify.
+4. After the longest access-token lifetime (15 minutes), remove `JWT_SIGNING_SECRET_PREVIOUS`.
+
+Each token's `kid` is a one-way hash of its signing key, so tokens identify the key without revealing it.
 
 ---
 

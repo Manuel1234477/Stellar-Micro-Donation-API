@@ -289,9 +289,10 @@ class SuspiciousPatternDetector {
    */
   startCleanup() {
     if (process.env.NODE_ENV !== 'test') {
-      this.cleanupTimer = setInterval(() => {
+      const timerRegistry = require('./timerRegistry');
+      this.cleanupTimer = timerRegistry.createInterval(() => {
         this.cleanup();
-      }, this.thresholds.cleanupInterval);
+      }, this.thresholds.cleanupInterval, 'suspicious-pattern-cleanup');
     }
   }
 
@@ -300,7 +301,7 @@ class SuspiciousPatternDetector {
    */
   stop() {
     if (this.cleanupTimer) {
-      clearInterval(this.cleanupTimer);
+      this.cleanupTimer.clear();
     }
   }
 }

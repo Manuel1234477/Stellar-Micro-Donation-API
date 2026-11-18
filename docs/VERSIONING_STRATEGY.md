@@ -189,6 +189,46 @@ available there (see [ADR-005](adr/005-api-v2-scope-and-migration-plan.md)).
 
 Unversioned mounts (outside `/api`): `/.well-known`, `/abuse-signals`, `/admin`, `/csp-report`, `/graphql`, `/health`, `/metrics`, `/openapi.json`, `/reconcile`, `/suspicious-patterns`.
 <!-- API_VERSION_MATRIX:END -->
+### Unversioned path sunset
+
+Historically some routes were exposed without an `/api/v1` prefix. These legacy
+paths now respond with a `308 Permanent Redirect` to their versioned
+equivalent and are scheduled for removal on **2027-01-01**.
+
+Legacy paths covered by the sunset:
+
+| Legacy path | Successor |
+|-------------|-----------|
+| `/stats/overpayments` | `/api/v1/stats/overpayments` |
+| `/stats/memo-collisions` | `/api/v1/stats/memo-collisions` |
+| `/channels` (and sub-paths) | `/api/v1/channels` |
+| Any other unversioned path | `/api/v1<path>` |
+
+Every redirect response includes the following headers:
+
+```
+Deprecation: true
+Sunset: Sat, 01 Jan 2027 00:00:00 GMT
+Link: </api/v1/stats/overpayments>; rel="successor-version"
+```
+
+The `Link` header points at the versioned successor for the requested path
+(`rel="successor-version"`). Legacy-path usage is logged server-side and
+counted in metrics per API key so remaining consumers can be identified before
+removal.
+
+#### Migration steps for clients
+
+1. Replace every unversioned path with its `/api/v1` equivalent (e.g.
+   `GET /stats/overpayments` → `GET /api/v1/stats/overpayments`,
+   `POST /channels` → `POST /api/v1/channels`).
+2. Follow redirects only as a temporary measure — do not rely on `308`
+   handling for `POST` requests, since some HTTP clients drop request bodies on
+   redirect.
+3. Watch for `Deprecation`/`Sunset` headers in responses and treat them as a
+   signal to update the client.
+4. Complete the migration before **2027-01-01**, after which unversioned paths
+   will be removed and return `404`.
 
 ---
 
@@ -310,6 +350,14 @@ For every endpoint or behaviour that is deprecated, the following must all be do
 | Create a GitHub issue labelled `deprecation` | GitHub |
 | Add a `### Deprecated` entry to `CHANGELOG.md` | `CHANGELOG.md` |
 | Document the migration path in `docs/` | `docs/` |
+| Log/meter legacy-path usage per API key | route middleware |
+
+### Scheduled removals
+
+| Surface | Sunset date | Successor |
+|---------|-------------|-----------|
+| Unversioned paths (incl. `/channels`) | 2027-01-01 | `/api/v1/*` |
+| `GET /donations/export` | 2026-10-01 | `POST /donations/export` (async) |
 
 ### Sunset date selection
 
@@ -441,6 +489,10 @@ Pre-releases:
 | Bug fix | PATCH | No |
 | Docs only | No release needed | No |
 | Security patch (no API change) | PATCH | No |
+
+**Unversioned paths:** all clients must use `/api/v1/*`. Unversioned paths
+(including `/channels`) redirect with `Deprecation`/`Sunset` headers and are
+removed on 2027-01-01.
 
 ---
 

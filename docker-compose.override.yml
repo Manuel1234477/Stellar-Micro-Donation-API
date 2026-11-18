@@ -1,0 +1,9 @@
+services:
+  api:
+    env_file:
+      - path: .env
+        required: false
+    environment:
+      NODE_ENV: development
+      DB_PATH: /data/stellar_donations.db
+    read_only: false

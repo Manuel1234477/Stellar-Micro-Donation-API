@@ -62,11 +62,17 @@ Express routers are exported directly.
 **Pattern:**
 ```javascript
 module.exports = router;
+
+// When the module also exposes test hooks or helpers, include `router`:
+module.exports = { router, setService };
 ```
 
 **Examples:**
-- `src/routes/donations.js` → `module.exports = router`
-- `src/routes/wallet.js` → `module.exports = router`
+- `src/routes/wallets/index.js` → `module.exports = router`
+- `src/routes/network.js` → `module.exports = { router, setService }`
+
+`helpers.js` files inside `src/routes/` (shared schemas and helpers, not routers)
+follow the **Utilities & Helpers** convention.
 
 ### Utilities & Helpers
 
@@ -110,11 +116,17 @@ Database migrations use their special format (must match framework expectations)
 
 **Pattern:**
 ```javascript
+exports.name = '048_example_change';
 exports.up = async (db) => { /* ... */ };
 exports.down = async (db) => { /* ... */ };
 ```
 
-**Note:** Migrations are exempt from the general conventions due to framework requirements.
+Every migration must export `name`, `up` and `down`. Do not use
+`module.exports = { ... }` in migrations: one shape lets the migration runner and
+the down-migration checker load every file the same way.
+
+Do not rewrite migrations that have already shipped just to change their style.
+The runner checksums each applied file and warns when its content changes.
 
 ### Configuration
 
@@ -171,9 +183,11 @@ app.use('/donations', router);
 ### ESLint Rule
 
 An ESLint rule (`local/consistent-exports`) enforces compliance:
-- Warns if a service-like module uses object export
-- Warns if utilities use direct export instead of named
-- Allows exceptions with inline comments
+- Errors if a module mixes `module.exports = ...` with `exports.x = ...`
+- Errors if a service wraps a single class in an object (`module.exports = { Foo }`)
+- Errors if a route module exports an object without a `router` property
+- Errors if a migration uses `module.exports` or is missing `name`, `up` or `down`
+- Skips a module whose `module.exports` line has an `EXPORT_CONVENTION_EXCEPTION` comment directly above it
 
 ### CI Checks
 

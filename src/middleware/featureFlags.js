@@ -7,12 +7,34 @@
  * 
  * Provides middleware for protecting routes behind feature flags and
  * attaching flag state to requests for downstream use.
+ *
+ * This module holds no flag state of its own (#1775). Every check delegates
+ * to the single store in src/utils/featureFlags.js, so runtime toggles made
+ * through /admin/feature-flags apply here within the store's cache TTL.
  */
 
 const featureFlagsUtil = require('../utils/featureFlags');
 const { ForbiddenError } = require('../utils/errors');
 const log = require('../utils/log');
 const AuditLogService = require('../services/AuditLogService');
+
+/**
+ * Evaluate a flag for the current request via the shared flag store.
+ *
+ * @param {import('express').Request} req
+ * @param {string} flagName
+ * @param {Object} options
+ * @param {string} [options.environment]
+ * @param {boolean} [options.defaultValue=false]
+ * @returns {Promise<boolean>}
+ */
+function evaluateForRequest(req, flagName, { environment, defaultValue = false } = {}) {
+  return featureFlagsUtil.isFeatureEnabled(flagName, {
+    apiKeyId: req.apiKey?.id,
+    environment: environment || featureFlagsUtil.getDefaultEnvironment(),
+    defaultValue
+  });
+}
 
 /**
  * Middleware to check if a feature flag is enabled
@@ -32,7 +54,7 @@ const AuditLogService = require('../services/AuditLogService');
  * @returns {Function} - Express middleware function
  */
 const checkFeatureFlag = (flagName, options = {}) => {
-  const { defaultValue = false, environment = process.env.NODE_ENV || 'development' } = options;
+  const { defaultValue = false } = options;
 
   return async (req, res, next) => {
     try {
@@ -41,15 +63,9 @@ const checkFeatureFlag = (flagName, options = {}) => {
         throw new ForbiddenError('Feature flag configuration error');
       }
 
-      // Extract API key ID if available
       const apiKeyId = req.apiKey?.id;
-
-      // Evaluate the flag
-      const isEnabled = await featureFlagsUtil.isFeatureEnabled(flagName, {
-        apiKeyId,
-        environment,
-        defaultValue
-      });
+      const environment = options.environment || featureFlagsUtil.getDefaultEnvironment();
+      const isEnabled = await evaluateForRequest(req, flagName, { environment, defaultValue });
 
       // Attach flag state to request for downstream use
       if (!req.flags) {
@@ -119,25 +135,13 @@ const checkFeatureFlag = (flagName, options = {}) => {
  * @returns {Function} - Express middleware function
  */
 const attachFeatureFlags = (options = {}) => {
-  const { environment = process.env.NODE_ENV || 'development' } = options;
-
   return async (req, res, next) => {
     try {
       const apiKeyId = req.apiKey?.id;
+      const environment = options.environment || featureFlagsUtil.getDefaultEnvironment();
 
-      // Get all flags
-      const allFlags = await featureFlagsUtil.getAllFlags();
-
-      // Evaluate each flag and attach to request
-      req.flags = {};
-      for (const flag of allFlags) {
-        const isEnabled = await featureFlagsUtil.isFeatureEnabled(flag.name, {
-          apiKeyId,
-          environment,
-          defaultValue: false
-        });
-        req.flags[flag.name] = isEnabled;
-      }
+      // One cached pass over all flags instead of one lookup per flag
+      req.flags = await featureFlagsUtil.getEffectiveFlagsForKey(apiKeyId, environment);
 
       log.debug('FEATURE_FLAGS', 'Flags attached to request', {
         flagCount: Object.keys(req.flags).length,
@@ -169,17 +173,9 @@ const attachFeatureFlags = (options = {}) => {
  * @returns {Function} - Express middleware function
  */
 const conditionalMiddleware = (flagName, middleware, options = {}) => {
-  const { environment = process.env.NODE_ENV || 'development' } = options;
-
   return async (req, res, next) => {
     try {
-      const apiKeyId = req.apiKey?.id;
-
-      const isEnabled = await featureFlagsUtil.isFeatureEnabled(flagName, {
-        apiKeyId,
-        environment,
-        defaultValue: false
-      });
+      const isEnabled = await evaluateForRequest(req, flagName, options);
 
       if (isEnabled) {
         log.debug('FEATURE_FLAGS', 'Conditional middleware enabled', { flagName });
@@ -211,17 +207,9 @@ const conditionalMiddleware = (flagName, middleware, options = {}) => {
  * @returns {Function} - Express route handler
  */
 const conditionalHandler = (flagName, handler, fallbackHandler = null, options = {}) => {
-  const { environment = process.env.NODE_ENV || 'development' } = options;
-
   return async (req, res, next) => {
     try {
-      const apiKeyId = req.apiKey?.id;
-
-      const isEnabled = await featureFlagsUtil.isFeatureEnabled(flagName, {
-        apiKeyId,
-        environment,
-        defaultValue: false
-      });
+      const isEnabled = await evaluateForRequest(req, flagName, options);
 
       if (isEnabled) {
         log.debug('FEATURE_FLAGS', 'Conditional handler enabled', { flagName });
@@ -246,4 +234,5 @@ module.exports = {
   attachFeatureFlags,
   conditionalMiddleware,
   conditionalHandler,
+  evaluateForRequest,
 };

@@ -331,3 +331,184 @@ describe('POST /admin/encryption/rotate', () => {
     expect([401, 403]).toContain(res.status);
   });
 });
+
+// ─── Migration: encrypt existing plaintext values (#1593) ────────────────────
+
+describe('migrate-wallet-encryption script (#1593)', () => {
+  const path = require('path');
+  const os   = require('os');
+  const fs   = require('fs');
+
+  let tmpDb;
+
+  beforeEach(() => {
+    jest.resetModules();
+    tmpDb = path.join(os.tmpdir(), `wallet-enc-${Date.now()}.db`);
+    process.env.NODE_ENV    = 'test';
+    process.env.ENCRYPTION_KEY_1 = 'migration-test-secret-key-version-1';
+    process.env.ENCRYPTION_KEY   = 'migration-test-secret-key-version-1';
+    process.env.ENCRYPTION_KEY_VERSION = '1';
+  });
+
+  afterEach(() => {
+    delete process.env.ENCRYPTION_KEY_1;
+    delete process.env.ENCRYPTION_KEY;
+    delete process.env.ENCRYPTION_KEY_VERSION;
+    jest.resetModules();
+  });
+
+  it('encryptWalletFields encrypts plaintext label and notes', () => {
+    const { encryptWalletFields, decryptWalletFields } = require('../../src/models/wallet');
+
+    const wallet = { id: 'w1', label: 'My Wallet', notes: 'Some notes' };
+    const encrypted = encryptWalletFields(wallet);
+
+    expect(encrypted.label).not.toBe('My Wallet');
+    expect(encrypted.notes).not.toBe('Some notes');
+    expect(encrypted.label_encrypted).toBe(1);
+    expect(encrypted.notes_encrypted).toBe(1);
+    expect(encrypted.label).toMatch(/^v\d+:/);
+    expect(encrypted.notes).toMatch(/^v\d+:/);
+  });
+
+  it('decryptWalletFields restores plaintext from encrypted values', () => {
+    const { encryptWalletFields, decryptWalletFields } = require('../../src/models/wallet');
+
+    const wallet = { id: 'w1', label: 'My Wallet', notes: 'Some notes' };
+    const encrypted = encryptWalletFields(wallet);
+    const decrypted = decryptWalletFields(encrypted);
+
+    expect(decrypted.label).toBe('My Wallet');
+    expect(decrypted.notes).toBe('Some notes');
+  });
+
+  it('already-encrypted values are not double-encrypted', () => {
+    const { encryptWalletFields } = require('../../src/models/wallet');
+
+    const wallet = { id: 'w1', label: 'My Wallet', notes: null };
+    const firstPass  = encryptWalletFields(wallet);
+    const secondPass = encryptWalletFields(firstPass);
+
+    // The label ciphertext should be the same object (no re-encryption)
+    expect(secondPass.label).toBe(firstPass.label);
+  });
+
+  it('null fields remain null and flag stays 0', () => {
+    const { encryptWalletFields } = require('../../src/models/wallet');
+
+    const wallet = { id: 'w1', label: null, notes: null };
+    const encrypted = encryptWalletFields(wallet);
+
+    expect(encrypted.label).toBeNull();
+    expect(encrypted.notes).toBeNull();
+    expect(encrypted.label_encrypted).toBe(0);
+    expect(encrypted.notes_encrypted).toBe(0);
+  });
+
+  it('DB row contains ciphertext, not plaintext, after create', async () => {
+    const Database = require('../../src/utils/database');
+
+    // Spy on Database.run to capture the INSERT values
+    const runSpy = jest.spyOn(Database, 'run').mockResolvedValue({ lastID: 1, changes: 1 });
+    jest.spyOn(Database, 'all').mockResolvedValue([
+      { name: 'id' }, { name: 'address' }, { name: 'label' }, { name: 'notes' },
+      { name: 'label_encrypted' }, { name: 'notes_encrypted' },
+      { name: 'leaderboard_visibility' }, { name: 'last_synced_at' }, { name: 'last_cursor' },
+      { name: 'createdAt' }, { name: 'updatedAt' }, { name: 'deletedAt' },
+      { name: 'donation_limit_min' }, { name: 'donation_limit_max' }, { name: 'sdg_tags' },
+      { name: 'ownerName' },
+    ]);
+    jest.spyOn(Database, 'get').mockResolvedValue(null);
+
+    const Wallet = require('../../src/models/wallet');
+    await Wallet.create({ address: 'GTEST', label: 'Plaintext Label', notes: 'Plaintext Notes' });
+
+    // Find the INSERT call
+    const insertCall = runSpy.mock.calls.find(c => typeof c[0] === 'string' && c[0].includes('INSERT INTO wallets'));
+    expect(insertCall).toBeDefined();
+
+    const args = insertCall[1];
+    // label is at index 2, notes at index 4 in the INSERT params
+    const labelArg = args[2];
+    const notesArg = args[4];
+
+    expect(labelArg).toMatch(/^v\d+:/);
+    expect(notesArg).toMatch(/^v\d+:/);
+    expect(labelArg).not.toBe('Plaintext Label');
+    expect(notesArg).not.toBe('Plaintext Notes');
+
+    runSpy.mockRestore();
+  });
+});
+
+// ─── Re-encryption on key rotation (#1593) ────────────────────────────────────
+
+describe('Re-encryption on key rotation (#1593)', () => {
+  beforeEach(() => {
+    process.env.ENCRYPTION_KEY_1 = 'old-key-v1-secret';
+    process.env.ENCRYPTION_KEY_2 = 'new-key-v2-secret';
+    process.env.ENCRYPTION_KEY_VERSION = '1';
+    delete require.cache[require.resolve('../../src/services/EncryptionService')];
+  });
+
+  afterEach(() => {
+    delete process.env.ENCRYPTION_KEY_1;
+    delete process.env.ENCRYPTION_KEY_2;
+    delete process.env.ENCRYPTION_KEY_VERSION;
+    delete require.cache[require.resolve('../../src/services/EncryptionService')];
+  });
+
+  it('re-encrypts a v1 ciphertext to v2 correctly', () => {
+    const svc = require('../../src/services/EncryptionService');
+
+    // Encrypt with v1
+    process.env.ENCRYPTION_KEY_VERSION = '1';
+    const ct1 = svc.encryptField('sensitive-data');
+    expect(ct1).toMatch(/^v1:/);
+
+    // Decrypt with v1, re-encrypt with v2
+    const plaintext = svc.decryptField(ct1);
+    process.env.ENCRYPTION_KEY_VERSION = '2';
+    const ct2 = svc.encryptField(plaintext, 2);
+    expect(ct2).toMatch(/^v2:/);
+
+    // Verify round-trip
+    const restored = svc.decryptField(ct2);
+    expect(restored).toBe('sensitive-data');
+  });
+
+  it('decryptField reads key version from ciphertext prefix', () => {
+    const svc = require('../../src/services/EncryptionService');
+
+    process.env.ENCRYPTION_KEY_VERSION = '1';
+    const ct = svc.encryptField('hello');
+    expect(ct).toMatch(/^v1:/);
+
+    process.env.ENCRYPTION_KEY_VERSION = '2';
+    // Should still decrypt using v1 key
+    const result = svc.decryptField(ct);
+    expect(result).toBe('hello');
+  });
+
+  it('different plaintexts produce different ciphertexts (IV randomness)', () => {
+    const svc = require('../../src/services/EncryptionService');
+    process.env.ENCRYPTION_KEY_VERSION = '1';
+
+    const ct1 = svc.encryptField('same-value');
+    const ct2 = svc.encryptField('same-value');
+    // Random IV means ciphertexts differ even for same plaintext
+    expect(ct1).not.toBe(ct2);
+    // But both decrypt correctly
+    expect(svc.decryptField(ct1)).toBe('same-value');
+    expect(svc.decryptField(ct2)).toBe('same-value');
+  });
+
+  it('throws when key version is missing', () => {
+    const svc = require('../../src/services/EncryptionService');
+    delete process.env.ENCRYPTION_KEY_1;
+    delete process.env.ENCRYPTION_KEY;
+    process.env.ENCRYPTION_KEY_VERSION = '1';
+
+    expect(() => svc.encryptField('test')).toThrow(/No encryption key configured/);
+  });
+});

@@ -26,12 +26,14 @@ const ERROR_CODES = {
   MISSING_REQUIRED_FIELD:  { code: 'MISSING_REQUIRED_FIELD',  numeric: 1007 },
   IDEMPOTENCY_KEY_REQUIRED:{ code: 'IDEMPOTENCY_KEY_REQUIRED',numeric: 1008 },
   INVALID_SCHEMA_VERSION:  { code: 'INVALID_SCHEMA_VERSION',  numeric: 1009 },
+  SSRF_BLOCKED:            { code: 'SSRF_BLOCKED',            numeric: 1010 },
 
   // Authentication/Authorization errors (2000-2099)
   UNAUTHORIZED:             { code: 'UNAUTHORIZED',             numeric: 2000 },
   ACCESS_DENIED:            { code: 'ACCESS_DENIED',            numeric: 2001 },
   INSUFFICIENT_PERMISSIONS: { code: 'INSUFFICIENT_PERMISSIONS', numeric: 2002 },
   INVALID_API_KEY:          { code: 'INVALID_API_KEY',          numeric: 2003 },
+  SEP10_REPLAY_DETECTED:    { code: 'SEP10_REPLAY_DETECTED',    numeric: 2004 },
 
   // Not found errors (3000-3099)
   NOT_FOUND:            { code: 'NOT_FOUND',            numeric: 3000 },
@@ -47,6 +49,9 @@ const ERROR_CODES = {
   DUPLICATE_DONATION:    { code: 'DUPLICATE_DONATION',    numeric: 4001 },
 
   // Business logic errors (5000-5099)
+  // INSUFFICIENT_BALANCE: sender's available balance (balance - minimum reserve -
+  // selling liabilities - fee) cannot cover the requested amount. Thrown before
+  // submission so clients can surface "insufficient funds" without a network round-trip.
   INSUFFICIENT_BALANCE: { code: 'INSUFFICIENT_BALANCE', numeric: 5000 },
   TRANSACTION_FAILED:   { code: 'TRANSACTION_FAILED',   numeric: 5001 },
   INVALID_STATE_TRANSITION: { code: 'INVALID_STATE_TRANSITION', numeric: 5015 },
@@ -326,13 +331,55 @@ class InternalError extends AppError {
 
 /**
  * Database error (500)
+ *
+ * Preserves the original error (and its driver-level code) so that retry
+ * logic and circuit breakers can classify transient failures (e.g. dropped
+ * connections, timeouts) versus permanent ones.
  */
 class DatabaseError extends AppError {
   constructor(message = "A database error occurred", originalError = null) {
-    // Audit: We store originalError for internal logging if needed, 
-    // but the base class message is normalized.
+    // Allow callers to pass the original error as the first argument.
+    if (message instanceof Error) {
+      originalError = message;
+      message = originalError.message || "A database error occurred";
+    }
+
     super(ERROR_CODES.DATABASE_ERROR, message, 500, null);
-    this.originalError = originalError;
+
+    this.originalError = originalError || null;
+    // Preserve the underlying driver/error code (e.g. SQLITE_BUSY, ECONNRESET)
+    // so callers can distinguish retryable from non-retryable failures.
+    this.cause = this.originalError || undefined;
+    this.originalCode =
+      (this.originalError && (this.originalError.code || this.originalError.errno)) || null;
+    this.retryable = DatabaseError.isRetryable(this.originalError);
+  }
+
+  /**
+   * Determine whether an underlying database error is transient/retryable.
+   * @param {Error|null} originalError
+   * @returns {boolean}
+   */
+  static isRetryable(originalError) {
+    if (!originalError) return false;
+    const code = String(originalError.code || originalError.errno || '').toUpperCase();
+    const message = String(originalError.message || '').toUpperCase();
+    const retryableCodes = [
+      'ECONNRESET', 'ECONNREFUSED', 'ETIMEDOUT', 'EPIPE', 'ENOTFOUND',
+      'SQLITE_BUSY', 'SQLITE_LOCKED', 'SQLITE_PROTOCOL',
+      'PROTOCOL_CONNECTION_LOST', 'ER_LOCK_DEADLOCK', 'ER_LOCK_WAIT_TIMEOUT',
+      '57P01', '08006', '08003', '08001',
+    ];
+    if (retryableCodes.includes(code)) return true;
+    return /TIMEOUT|TIMED OUT|CONNECTION (LOST|RESET|REFUSED)|DEADLOCK|DATABASE IS LOCKED/.test(message);
+  }
+
+  toJSON() {
+    return {
+      ...super.toJSON(),
+      ...(this.originalCode && { originalCode: this.originalCode }),
+      retryable: this.retryable,
+    };
   }
 }
 

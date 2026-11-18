@@ -1,525 +1,288 @@
-# Distributed Tracing Guide
+# Distributed Tracing
+
+This document describes the distributed tracing system built into the Stellar Micro-Donation API
+using the [OpenTelemetry](https://opentelemetry.io/) (OTel) standard.
+
+---
 
 ## Overview
 
-Distributed tracing provides end-to-end visibility into request processing across multiple systems:
-- HTTP requests through the API
-- Database queries
-- Stellar network operations
-- Webhook deliveries
-- Background jobs
+Tracing gives end-to-end visibility into requests as they flow through the API layer, the database,
+and outbound calls to the Stellar Horizon API. Each logical unit of work becomes a **span**; related
+spans share a common **trace ID** and form a tree that tools like Jaeger, Zipkin, or Honeycomb can
+visualise as a flame graph.
 
-Traces help answer "why was a request slow?" and enable root cause analysis during incidents.
+The tracing system is implemented in `src/utils/tracing.js` and is designed around three principles:
+
+1. **Silent no-op by default** — tracing activates only when `OTEL_EXPORTER_OTLP_ENDPOINT` is
+   explicitly set. The application starts and runs normally without any OTel infrastructure.
+2. **Graceful degradation** — if the OTel SDK packages are not installed, every function becomes a
+   transparent pass-through. No crashes, no noise.
+3. **W3C Trace Context propagation** — all outbound requests (Horizon API, webhooks) carry standard
+   `traceparent` / `tracestate` headers so downstream services can continue the same trace.
+
+---
 
 ## Architecture
 
-### Components
-
-1. **OpenTelemetry SDK**: Provides the tracing infrastructure
-2. **Exporter**: Sends spans to a collector (OTLP, Jaeger, etc.)
-3. **Tracer**: Creates and manages spans
-4. **Spans**: Individual operations (e.g., "db.select user", "stellar.submitTransaction")
-5. **Trace Context**: Propagates trace IDs across system boundaries
-
-### Trace Structure
-
 ```
-HTTP Request (root span)
-├── Validate (child span)
-├── Database Query (child span)
-│   └── db.select users
-├── Stellar Operation (child span)
-│   ├── horizon.loadAccount
-│   └── stellar.submitTransaction
-└── Webhook Delivery (child span)
-    ├── http.post webhook.example.com
-    └── db.insert webhook_delivery_history
-```
-
-## Enabling Tracing
-
-### Installation
-
-```bash
-# Core OpenTelemetry API (always included)
-npm install @opentelemetry/api
-
-# SDK and exporters (optional for local tracing, required for production)
-npm install @opentelemetry/sdk-node \
-            @opentelemetry/exporter-trace-otlp-http \
-            @opentelemetry/resources \
-            @opentelemetry/semantic-conventions \
-            @opentelemetry/auto-instrumentations-node
+ ┌─────────────────────────────────────────────────────────────────────┐
+ │  Inbound HTTP Request                                               │
+ │  Headers: traceparent: 00-<traceId>-<spanId>-01  (optional)        │
+ └──────────────────────┬──────────────────────────────────────────────┘
+                        │ httpTracingMiddleware extracts parent context
+                        ▼
+ ┌─────────────────────────────────────────────────────────────────────┐
+ │  Express Route Handler                                              │
+ │  withSpan / withSpanInContext                                       │
+ │                                                                     │
+ │   ├── traceDbQuery  ──► SQLite                                      │
+ │   │                                                                 │
+ │   └── traceStellarCall / traceHorizonRequest                        │
+ │            │                                                        │
+ │            │  injectHorizonTraceHeaders adds traceparent            │
+ │            ▼                                                        │
+ │       Horizon API (https://horizon-testnet.stellar.org)             │
+ └──────────────────────┬──────────────────────────────────────────────┘
+                        │
+                        ▼
+ ┌─────────────────────────────────────────────────────────────────────┐
+ │  OTLP Exporter  ──►  Collector (Jaeger / Honeycomb / etc.)         │
+ │  (only active when OTEL_EXPORTER_OTLP_ENDPOINT is set)             │
+ └─────────────────────────────────────────────────────────────────────┘
 ```
 
-### Configuration
+---
 
-```javascript
-// In src/app.js, before creating the server
-const tracing = require('./utils/tracing');
+## Environment Variables
 
-// Initialize tracing (gracefully degrades if SDK not installed)
-tracing.initTracing({
-  enabled: process.env.OTEL_ENABLED !== 'false',
-  endpoint: process.env.OTEL_EXPORTER_OTLP_ENDPOINT || 'http://localhost:4318',
-  serviceName: process.env.OTEL_SERVICE_NAME || 'stellar-donation-api'
+| Variable | Required to enable tracing | Default | Description |
+|---|---|---|---|
+| `OTEL_EXPORTER_OTLP_ENDPOINT` | **Yes** | — | Base URL of the OTLP HTTP collector (e.g. `http://jaeger:4318`). When absent, all tracing is a silent no-op. |
+| `OTEL_SERVICE_NAME` | No | `stellar-donation-api` | Service name attached to every span. |
+| `OTEL_ENABLED` | No | `true` | Set to `false` to disable tracing even when an endpoint is configured. |
+| `OTEL_EXPORTER_OTLP_HEADERS` | No | — | Comma-separated `key=value` pairs sent as HTTP headers to the collector (for auth tokens). Example: `Authorization=Bearer my-token`. |
+
+---
+
+## Silent Fallback Behaviour
+
+When `OTEL_EXPORTER_OTLP_ENDPOINT` is **not** set:
+
+- `initTracing()` returns `false` immediately and sets `_enabled = false`.
+- `_loadSdk()` returns `null` without attempting any package imports or network connections.
+- Every span helper (`withSpan`, `traceDbQuery`, `traceHorizonRequest`, etc.) still calls through to
+  the OpenTelemetry API, but since no tracer provider is registered, the SDK returns a no-op tracer
+  that discards all spans silently.
+- `getCurrentTraceparent()` returns `null` when there is no active span.
+- `injectHorizonTraceHeaders()` returns the headers object unchanged (no `traceparent` header added).
+
+This means application code requires **no conditional checks** around tracing calls — they are safe
+to leave in production code regardless of whether a collector is configured.
+
+---
+
+## Usage Examples
+
+### Basic span
+
+```js
+const { withSpan } = require('./src/utils/tracing');
+
+const result = await withSpan('my.operation', { 'custom.attr': 'value' }, async (span) => {
+  // span is the active OTel Span object
+  span.setAttribute('result.count', 42);
+  return doWork();
 });
 ```
 
-### Environment Variables
+### Database query
 
-```bash
-# Enable/disable tracing (default: true if SDK installed)
-OTEL_ENABLED=true
+```js
+const { traceDbQuery } = require('./src/utils/tracing');
 
-# OTLP collector endpoint (default: http://localhost:4318)
-OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:4318
-
-# Service name in traces (default: stellar-donation-api)
-OTEL_SERVICE_NAME=stellar-donation-api
-
-# Authentication headers (optional, comma-separated key=value pairs)
-OTEL_EXPORTER_OTLP_HEADERS="Authorization=Bearer token123,X-Custom=value"
+const rows = await traceDbQuery('SELECT', 'donations', async () => {
+  return db.all('SELECT * FROM donations WHERE status = ?', ['completed']);
+});
 ```
 
-## Using Tracing
+Attributes automatically set: `db.system`, `db.operation`, `db.sql.table`, `db.rows_affected`.
 
-### HTTP Request Tracing
+### Stellar call (generic)
 
-Add the HTTP tracing middleware to your Express app:
+```js
+const { traceStellarCall } = require('./src/utils/tracing');
 
-```javascript
-const tracing = require('./utils/tracing');
-const app = express();
-
-// Add tracing middleware early in the chain
-app.use(tracing.httpTracingMiddleware());
+const account = await traceStellarCall(
+  'loadAccount',
+  { 'stellar.network': 'testnet', 'stellar.account': publicKey },
+  async () => server.loadAccount(publicKey)
+);
 ```
 
-This middleware automatically:
-- Creates a root span for each HTTP request
-- Captures HTTP method, route, status code
-- Injects W3C traceparent headers into responses
-- Correlates with correlation IDs
+### Horizon request with W3C header injection
 
-### Database Query Tracing
+```js
+const { traceHorizonRequest } = require('./src/utils/tracing');
 
-Wrap database operations with `traceDbQuery`:
-
-```javascript
-const tracing = require('./utils/tracing');
-
-async function fetchUser(userId) {
-  return tracing.traceDbQuery('SELECT', 'users', async () => {
-    return await Database.query('SELECT * FROM users WHERE id = ?', [userId]);
-  });
-}
-```
-
-**Span attributes captured:**
-- `db.system`: Database type (sqlite)
-- `db.operation`: Operation type (SELECT, INSERT, UPDATE, DELETE)
-- `db.sql.table`: Target table name
-- `db.rows_affected`: Number of rows affected
-
-### Stellar Operation Tracing
-
-Wrap Stellar network calls with `traceStellarCall`:
-
-```javascript
-const tracing = require('./utils/tracing');
-
-class StellarService {
-  async loadAccount(publicKey) {
-    return tracing.traceStellarCall('loadAccount', async () => {
-      return await this.horizon.loadAccount(publicKey);
-    });
+const response = await traceHorizonRequest(
+  'fetchPayments',
+  'https://horizon-testnet.stellar.org/accounts/GA.../payments',
+  { 'stellar.account': 'GA...' },
+  async ({ injectHeaders }) => {
+    const headers = injectHeaders({ Accept: 'application/json' });
+    return fetch(url, { headers });
   }
-
-  async submitTransaction(xdr) {
-    return tracing.traceStellarCall('submitTransaction', {
-      'stellar.xdr_length': xdr.length,
-      'stellar.network': this.networkName
-    }, async () => {
-      return await this.horizon.submitTransaction(xdr);
-    });
-  }
-}
+);
 ```
 
-**Span attributes captured:**
-- `stellar.operation`: Operation name
-- `peer.service`: Always "stellar-horizon"
-- Custom attributes provided by caller
+The `injectHeaders` helper returns a **new** object that merges your existing headers with the
+W3C `traceparent` (and optionally `tracestate`) header derived from the currently active span.
 
-### Webhook Delivery Tracing
+### Horizon HTTP client (convenience wrapper)
 
-Wrap webhook HTTP calls with spans:
+```js
+const { createHorizonHttpClient } = require('./src/utils/tracing');
 
-```javascript
-const tracing = require('./utils/tracing');
-
-async function sendWebhook(webhookUrl, payload) {
-  return tracing.withSpan(
-    'webhook.post',
-    {
-      'http.method': 'POST',
-      'http.url': webhookUrl,
-      'webhook.event': payload.event
-    },
-    async (span) => {
-      const response = await fetch(webhookUrl, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          ...tracing.injectTraceHeaders({})  // Propagate trace context
-        },
-        body: JSON.stringify(payload)
-      });
-
-      span.setAttribute('http.status_code', response.status);
-      return response.json();
-    }
-  );
-}
-```
-
-### Background Job Tracing
-
-Wrap async operations with `withSpan`:
-
-```javascript
-const tracing = require('./utils/tracing');
-
-async function processWebhookRetry(webhookId) {
-  return tracing.withSpan('webhook.retry', { webhookId }, async (span) => {
-    // Work here is traced as a child span
-    const webhook = await getWebhook(webhookId);
-    span.setAttribute('webhook.url', webhook.url);
-    
-    await sendWebhook(webhook.url, { /* ... */ });
-    
-    span.setAttribute('result', 'success');
-  });
-}
-```
-
-### Generic Span Creation
-
-For custom operations:
-
-```javascript
-const tracing = require('./utils/tracing');
-
-// Option 1: Auto-ending span (recommended)
-await tracing.withSpan('my.operation', { customAttr: 'value' }, async (span) => {
-  // Span is active here
-  // Any nested DB/Stellar calls become child spans
-  
-  span.setAttribute('result', 'success');
-  return result;
+const horizon = createHorizonHttpClient('https://horizon-testnet.stellar.org', {
+  defaultHeaders: { Accept: 'application/json' },
 });
 
-// Option 2: Manual span management
-const span = tracing.startSpan('my.fire-and-forget', { customAttr: 'value' });
-setImmediate(() => {
-  try {
-    doWork();
-    span.setAttribute('result', 'success');
-  } catch (err) {
-    span.recordException(err);
-  } finally {
-    span.end();
-  }
+// Every call automatically carries traceparent
+const res = await horizon.fetch('/accounts/GA.../payments?limit=20');
+```
+
+### Manual traceparent header injection
+
+```js
+const { injectHorizonTraceHeaders } = require('./src/utils/tracing');
+
+// Inject into outgoing headers object (returns a new copy — does not mutate)
+const headers = injectHorizonTraceHeaders({ 'Content-Type': 'application/json' });
+// headers may now contain: { 'Content-Type': '...', traceparent: '00-...', tracestate: '...' }
+```
+
+---
+
+## W3C Trace Context Propagation for Horizon Calls
+
+The [W3C Trace Context specification](https://www.w3.org/TR/trace-context/) defines two HTTP headers:
+
+| Header | Format | Example |
+|---|---|---|
+| `traceparent` | `00-{traceId}-{spanId}-{flags}` | `00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01` |
+| `tracestate` | `vendor=value,...` | `stellar=rojo,congo=t61rcWkgMzE` |
+
+When the API makes an outbound HTTP request to Horizon, the active span's context is serialised
+into these headers. If Horizon (or a compatible proxy) reads and forwards these headers, the
+resulting network request will appear as a child of the API span in your tracing backend.
+
+**traceparent field breakdown:**
+
+```
+ 00   - version (always 00)
+  │
+  └─► 4bf92f3577b34da6a3ce929d0e0e4736  - 128-bit trace ID (32 hex chars)
+                                          │
+                                          └─► 00f067aa0ba902b7  - 64-bit parent span ID (16 hex chars)
+                                                                  │
+                                                                  └─► 01  - flags (01 = sampled)
+```
+
+---
+
+## Initialisation
+
+Call `initTracing()` once at application startup, before the first request is served:
+
+```js
+const { initTracing, shutdownTracing } = require('./src/utils/tracing');
+
+// In server.js / app.js
+const tracingEnabled = initTracing({
+  // endpoint: 'http://jaeger:4318',   // optional — overrides OTEL_EXPORTER_OTLP_ENDPOINT
+  // serviceName: 'my-service',        // optional — overrides OTEL_SERVICE_NAME
+});
+
+console.log(`Tracing ${tracingEnabled ? 'enabled' : 'disabled (no OTLP endpoint configured)'}`);
+
+// Graceful shutdown
+process.on('SIGTERM', async () => {
+  await shutdownTracing();
+  process.exit(0);
 });
 ```
 
-## Correlation ↔ Tracing Integration
-
-Correlation IDs and trace IDs are linked for unified observability:
-
-```javascript
-const { getCorrelationContext } = require('./utils/correlation');
-const tracing = require('./utils/tracing');
-
-// In a request handler:
-const spanContext = tracing.getActiveSpanContext();
-const correlationContext = getCorrelationContext();
-
-log.info('Service', 'Processing', {
-  correlationId: correlationContext.correlationId,  // For log aggregation
-  traceId: spanContext.traceId                      // For distributed tracing
-});
-
-// They refer to the same request:
-// - correlationId tags log lines and webhook headers
-// - traceId identifies spans in the tracing backend
-```
-
-### When to Use What
-
-| Use Case | Tool | Why |
-|----------|------|-----|
-| Trace request across multiple services | Tracing (trace ID) | Spans show exact timing and dependencies |
-| Find all logs for one request | Correlation (correlation ID) | Log aggregators index on this |
-| Link logs to traces | Both | correlationId in logs, trace ID in spans |
-| Debug slow webhook delivery | Tracing | Spans show exact network latency |
-| Audit who changed what | Correlation | Audit logs include correlationId |
-
-## Viewing Traces
-
-### Local Development (In-Memory Store)
-
-During development, traces are stored in memory and accessible via API:
-
-```javascript
-// In a debug endpoint
-const tracing = require('./utils/tracing');
-
-app.get('/api/debug/traces', (req, res) => {
-  const traces = tracing.getTraces();
-  const traceCount = tracing.getTraceCount();
-  
-  res.json({
-    total: traceCount,
-    traces: traces.slice(0, 50)  // Last 50 traces
-  });
-});
-
-app.get('/api/debug/traces/:traceId', (req, res) => {
-  const trace = tracing.getTrace(req.params.traceId);
-  if (!trace) {
-    return res.status(404).json({ error: 'Trace not found' });
-  }
-  
-  res.json(trace);
-});
-```
-
-**Response format:**
-```json
-{
-  "total": 1023,
-  "traces": [
-    {
-      "traceId": "550e8400-e29b-41d4-a716-446655440000",
-      "spanId": "span-123",
-      "operation": "POST /api/donation/create",
-      "durationMs": 342,
-      "status": "ok",
-      "timestamp": "2024-07-24T12:34:56.789Z",
-      "spanCount": 8
-    }
-  ]
-}
-```
-
-### Production (OTLP Exporter)
-
-In production, configure an OTLP collector:
-
-```bash
-# Example: Jaeger all-in-one (includes collector and UI)
-docker run -p 4318:4318 -p 16686:16686 jaegertracing/all-in-one
-
-# Point API to collector
-export OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:4318
-```
-
-Then view traces in Jaeger UI: http://localhost:16686
-
-**Alternative collectors:**
-- [Grafana Loki](https://grafana.com/docs/loki/latest/): Lightweight log-based tracing
-- [Datadog](https://www.datadoghq.com/): SaaS with APM
-- [New Relic](https://newrelic.com/): SaaS with distributed tracing
-- [Zipkin](https://zipkin.io/): Open-source trace aggregator
-
-### Viewing Trace Context in Response Headers
-
-Every response includes W3C trace headers:
-
-```http
-HTTP/1.1 200 OK
-traceparent: 00-550e8400e29b41d4a716446655440000-3d0f96ca74f55241-01
-tracestate: vendor-data
-```
-
-These can be used to correlate with backend traces:
-- `00`: W3C version
-- `550e8400...440000`: Trace ID
-- `3d0f96ca...55241`: Span ID
-- `01`: Trace flags (sampled)
-
-## Performance Considerations
-
-### Overhead
-
-- Tracing adds minimal overhead (~1-2% CPU, ~2-5MB memory)
-- In-memory trace store is capped at 1000 traces (evicts oldest)
-- OTLP export is async and non-blocking
-
-### Sampling
-
-For high-traffic services, enable sampling:
-
-```javascript
-// Trace 10% of requests
-const samplingProbability = 0.1;
-
-tracing.httpTracingMiddleware({
-  sampler: {
-    shouldSample: () => Math.random() < samplingProbability
-  }
-});
-```
-
-### Production Recommendations
-
-```javascript
-tracing.initTracing({
-  enabled: process.env.OTEL_ENABLED !== 'false',
-  endpoint: process.env.OTEL_EXPORTER_OTLP_ENDPOINT,
-  exporterHeaders: {
-    'Authorization': `Bearer ${process.env.OTEL_EXPORTER_TOKEN}`
-  }
-});
-```
+---
 
 ## Testing
 
-### Unit Tests with Mock Tracer
+### Unit tests
 
-```javascript
-const tracing = require('../utils/tracing');
-const api = require('@opentelemetry/api');
+The test suite for Horizon-specific tracing is in:
 
-describe('Donation Service', () => {
-  let mockTracer;
-
-  beforeEach(() => {
-    mockTracer = {
-      startActiveSpan: jest.fn((name, opts, fn) => fn({ 
-        end: jest.fn(),
-        setAttribute: jest.fn(),
-        setStatus: jest.fn(),
-        recordException: jest.fn()
-      }))
-    };
-    
-    tracing._setTracerForTesting(mockTracer);
-  });
-
-  afterEach(() => {
-    tracing._setTracerForTesting(null);
-  });
-
-  it('should trace donation processing', async () => {
-    await DonationService.process({ id: 123, amount: 100 });
-    
-    expect(mockTracer.startActiveSpan).toHaveBeenCalledWith(
-      expect.stringContaining('donation'),
-      expect.any(Object),
-      expect.any(Function)
-    );
-  });
-});
+```
+tests/tracing/otel-w3c-traceparent-horizon.test.js
 ```
 
-### Integration Tests with Real Spans
+It covers:
 
-```javascript
-const tracing = require('../utils/tracing');
+1. `initTracing` silently disabled when `OTEL_EXPORTER_OTLP_ENDPOINT` is not set
+2. `injectHorizonTraceHeaders` injects `traceparent` into a headers object
+3. `traceHorizonRequest` creates a span with the correct attributes
+4. W3C `traceparent` format validation (`00-traceId-spanId-flags`)
+5. Silent fallback when there is no active span (`getCurrentTraceparent` returns `null`)
+6. `traceStellarCall` with attribute forwarding
+7. Header injection does not throw when tracing is disabled
 
-describe('Tracing Integration', () => {
-  beforeAll(() => {
-    tracing._clearTraceStore();
-    tracing.initTracing({ enabled: true });
-  });
+Run just the Horizon tracing tests:
 
-  it('should create spans for database queries', async () => {
-    const startCount = tracing.getTraceCount();
-    
-    // Trigger a request that queries DB
-    await request(app).get('/api/users/123');
-    
-    // Check traces were created
-    const traces = tracing.getTraces();
-    expect(traces.length).toBeGreaterThan(startCount);
-    
-    const dbSpans = traces.flatMap(t => t.spans)
-      .filter(s => s.name.startsWith('db.'));
-    expect(dbSpans.length).toBeGreaterThan(0);
-  });
-});
+```bash
+npm test tests/tracing/otel-w3c-traceparent-horizon.test.js
 ```
 
-## Troubleshooting
+Run all tracing tests:
 
-### Tracing Not Working
+```bash
+npm test tests/tracing/
+```
 
-1. **Check if SDK is installed:**
-   ```bash
-   npm ls @opentelemetry/sdk-node
-   ```
+### Integration testing with a local Jaeger collector
 
-2. **Verify initialization:**
-   ```javascript
-   const tracing = require('./utils/tracing');
-   tracing.initTracing();  // Must be called before routes
-   ```
+```bash
+# Start Jaeger all-in-one (Docker required)
+docker run -d --name jaeger \
+  -e COLLECTOR_OTLP_ENABLED=true \
+  -p 4318:4318 \
+  -p 16686:16686 \
+  jaegertracing/all-in-one:latest
 
-3. **Check logs for errors:**
-   ```javascript
-   const enabled = tracing.initTracing();
-   console.log('Tracing enabled:', enabled);
-   ```
+# Start the API with tracing enabled
+OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:4318 \
+OTEL_SERVICE_NAME=stellar-donation-api \
+npm start
 
-### Spans Not Appearing
+# Open the Jaeger UI
+open http://localhost:16686
+```
 
-1. **Verify middleware is registered:**
-   ```javascript
-   app.use(tracing.httpTracingMiddleware());  // Must be early
-   ```
+---
 
-2. **Check OTLP endpoint connectivity:**
-   ```bash
-   curl -X POST http://localhost:4318/v1/traces \
-     -H "Content-Type: application/json" \
-     -d '{}'
-   ```
+## Adding Custom Spans
 
-3. **Enable debug logging:**
-   ```bash
-   OTEL_SDK_DISABLED=false DEBUG=otel* npm start
-   ```
+Any code in the service layer can create a custom span using `withSpan`:
 
-### High Memory Usage
+```js
+const { withSpan } = require('../utils/tracing');
 
-In-memory trace store may grow large. Solutions:
+async function myServiceMethod(input) {
+  return withSpan('service.myMethod', { 'input.type': typeof input }, async (span) => {
+    const result = await doHeavyWork(input);
+    span.setAttribute('result.size', result.length);
+    return result;
+  });
+}
+```
 
-1. **Reduce trace retention** (update code):
-   ```javascript
-   // In tracing.js, reduce MAX_STORED_TRACES
-   const MAX_STORED_TRACES = 100;  // Was 1000
-   ```
-
-2. **Export to remote collector** to offload memory
-
-3. **Implement sampling** to reduce span count
-
-## Best Practices
-
-1. **Use meaningful span names**: "db.select users" not "query"
-2. **Add span attributes for context**: operation name, input size, result status
-3. **Record exceptions**: Let span capture error details
-4. **Inject headers in outbound requests**: Propagate trace context
-5. **Link correlation IDs to trace IDs**: For unified observability
-6. **Clean up spans**: Always call `span.end()` or use `withSpan()`
-7. **Don't log secrets in spans**: Use span attributes only for metadata
-
-## Related Documentation
-
-- [Structured Logging Guide](./LOGGING.md)
-- [Correlation ID Propagation](./CORRELATION.md)
-- [Error Handling](./ERROR_HANDLING.md)
-- [OpenTelemetry Documentation](https://opentelemetry.io/docs/)
+Attributes should follow [OTel semantic conventions](https://opentelemetry.io/docs/specs/semconv/)
+where applicable (e.g. `http.method`, `db.system`, `peer.service`).

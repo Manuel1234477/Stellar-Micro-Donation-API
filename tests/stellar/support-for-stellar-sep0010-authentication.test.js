@@ -1,5 +1,5 @@
 const request = require('supertest');
-const StellarSdk = require('stellar-sdk');
+const StellarSdk = require('@stellar/stellar-sdk');
 
 describe('SEP-0010 authentication', () => {
   let app;

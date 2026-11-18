@@ -328,6 +328,40 @@ Returns the same decoded structure as `POST /admin/inspect/xdr`.
 
 ---
 
+### POST /admin/inspect/xdr/decode
+Fully decode an XDR envelope: operations with type-specific fields, signatures,
+and fee-bump envelopes (`type: "feeBump"` with `innerTransaction`).
+
+**Headers:** `X-API-Key` (Admin)
+
+**Body:** `{ "xdr": "<base64>", "network": "testnet" | "public" }`
+
+> `POST /admin/transactions/decode-xdr` is a deprecated alias of this endpoint
+> (sunset 1 Jan 2027).
+
+---
+
+### Consolidated admin routes and deprecated paths (#1778)
+
+Each feature now has one route module. Deprecated paths answer exactly as before
+for one release and add `Deprecation: true`, `Sunset: Sat, 01 Jan 2027 00:00:00 GMT`
+and `Link: <successor>; rel="successor-version"` headers.
+
+| Feature | Module | Canonical paths | Deprecated paths → successor |
+|---|---|---|---|
+| Wallet limits | `routes/admin/walletLimits.js` | `/admin/wallets/:id/limits` | — (`walletDonationLimits.js` was shadowed by this router and never reachable; removed) |
+| XDR inspection | `routes/admin/inspect.js` | `/admin/inspect/xdr`, `/admin/inspect/xdr/decode`, `/admin/inspect/xdr/:id` | `POST /admin/transactions/decode-xdr` → `POST /admin/inspect/xdr/decode` |
+| Geo rules | `routes/admin/geoRules.js` | `/admin/geo-rules`, `/:id`, `/test`, `/active`, `/config`, `/reload-db`, `/block/:cc`, `/allow/:cc` | `GET /admin/geo-blocking/rules` → `/admin/geo-rules/active`; `POST /admin/geo-blocking/block\|allow` → `POST /admin/geo-rules`; `DELETE /admin/geo-blocking/block\|allow/:cc` → `/admin/geo-rules/block\|allow/:cc`; `GET\|PUT /admin/geo-blocking` → `/admin/geo-rules/config`; `POST /admin/geo-blocking/reload-db` → `/admin/geo-rules/reload-db` |
+| Corporate matching | `routes/corporateMatching.js` | `/api/v1/corporate-matching/*` (members), `/admin/corporate-matching/*`, `/api/v2/corporate-matching/*` | — (paths unchanged) |
+| Audit log export | `routes/auditLogExport.js` | `/api/v1/api-keys/:id/audit-log*`, `/admin/audit-logs/export/*` | — (paths unchanged) |
+| API key usage | `routes/apiKeyUsage.js` | `/api/v1/api-keys/:id/usage*`, `/api/v1/api-keys/:id/analytics*`, `/admin/api-keys/usage`, `/admin/api-keys/:id/analytics` | — (paths unchanged) |
+| Feature flags | `routes/admin/featureFlags.js` | `/admin/feature-flags` (mounted once) | — |
+
+Donation matching programs (`/admin/matching-programs`) are a separate feature
+with their own service and tables, so they keep their own module.
+
+---
+
 ## Health
 
 ### GET /health

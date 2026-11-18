@@ -20,7 +20,7 @@ const {
 const {
   calculateAnalyticsFee,
   MIN_FEE,
-  MAX_FEE_PERCENTAGE,
+  MAX_FEE_BPS,
 } = require('../../src/utils/feeCalculator');
 
 const {
@@ -34,23 +34,31 @@ const { validateXLMAmount } = require('../../src/utils/validationHelpers');
 // Documented conversion tolerance: one stroop in XLM terms.
 const ONE_STROOP_XLM = 1 / STROOPS_PER_XLM;
 
+// Convert a 7-decimal XLM amount string to integer stroops.
+const xlmToStroops = (xlmStr) => {
+  const res = validateXLMAmount(xlmStr, { allowZero: true });
+  if (!res.valid) throw new Error(`generator produced invalid amount: ${xlmStr} (${res.error})`);
+  return res.stroops;
+};
+
 describe('feeCalculator.calculateAnalyticsFee — invariants', () => {
-  // Generate {amount, feePercentage} across the realistic range.
-  const genAmountAndPct = (rng) => ({
-    amount: floatInRange(MIN_FEE, 100_000, 2)(rng),
-    feePercentage: floatInRange(0, MAX_FEE_PERCENTAGE, 4)(rng),
+  // Generate {amount, feeBps} with integer basis points in [0, MAX_FEE_BPS]
+  // and amounts as 7-decimal strings (converted to stroops for assertions).
+  const genAmountAndBps = (rng) => ({
+    amount: xlmAmountString(MIN_FEE, 100_000)(rng),
+    feeBps: intInRange(0, MAX_FEE_BPS)(rng),
   });
 
   test('fee is always ≥ 0', () => {
-    forAll(genAmountAndPct, ({ amount, feePercentage }) => {
-      const { fee } = calculateAnalyticsFee(amount, feePercentage);
+    forAll(genAmountAndBps, ({ amount, feeBps }) => {
+      const { fee } = calculateAnalyticsFee(amount, feeBps);
       expect(fee).toBeGreaterThanOrEqual(0);
     });
   });
 
   test('fee is always ≥ the configured minimum fee', () => {
-    forAll(genAmountAndPct, ({ amount, feePercentage }) => {
-      const { fee } = calculateAnalyticsFee(amount, feePercentage);
+    forAll(genAmountAndBps, ({ amount, feeBps }) => {
+      const { fee } = calculateAnalyticsFee(amount, feeBps);
       // The implementation floors every fee at MIN_FEE.
       expect(fee).toBeGreaterThanOrEqual(MIN_FEE - 1e-9);
     });
@@ -59,36 +67,45 @@ describe('feeCalculator.calculateAnalyticsFee — invariants', () => {
   test('fee never exceeds the donation amount (for amounts ≥ MIN_FEE)', () => {
     // Below MIN_FEE the flat-minimum fee legitimately exceeds the donation;
     // for any donation at or above the minimum the fee must not exceed it.
-    forAll(genAmountAndPct, ({ amount, feePercentage }) => {
-      const { fee } = calculateAnalyticsFee(amount, feePercentage);
-      expect(fee).toBeLessThanOrEqual(amount + 1e-9);
+    forAll(genAmountAndBps, ({ amount, feeBps }) => {
+      const { fee } = calculateAnalyticsFee(amount, feeBps);
+      expect(fee).toBeLessThanOrEqual(parseFloat(amount) + 1e-9);
     });
   });
 
-  test('totalWithFee equals amount + fee (to cent precision)', () => {
-    forAll(genAmountAndPct, ({ amount, feePercentage }) => {
-      const { fee, totalWithFee, originalAmount } = calculateAnalyticsFee(amount, feePercentage);
+  test('totalWithFee equals amount + fee (to stroop precision)', () => {
+    forAll(genAmountAndBps, ({ amount, feeBps }) => {
+      const { fee, totalWithFee, originalAmount } = calculateAnalyticsFee(amount, feeBps);
       expect(originalAmount).toBe(amount);
-      expect(totalWithFee).toBeCloseTo(amount + fee, 2);
+      const amountStroops = xlmToStroops(amount);
+      const feeStroops = Math.round(fee * STROOPS_PER_XLM);
+      const totalStroops = Math.round(totalWithFee * STROOPS_PER_XLM);
+      // No precision loss: total in stroops equals amount + fee in stroops.
+      expect(totalStroops).toBe(amountStroops + feeStroops);
     });
   });
 
-  test('a higher fee percentage never produces a smaller fee (monotonic)', () => {
+  test('a higher fee in bps never produces a smaller fee (monotonic)', () => {
     forAll(
-      (rng) => floatInRange(MIN_FEE, 100_000, 2)(rng),
+      (rng) => xlmAmountString(MIN_FEE, 100_000)(rng),
       (amount) => {
-        const low = calculateAnalyticsFee(amount, 0.01).fee;
-        const high = calculateAnalyticsFee(amount, MAX_FEE_PERCENTAGE).fee;
+        const low = calculateAnalyticsFee(amount, 100).fee;
+        const high = calculateAnalyticsFee(amount, MAX_FEE_BPS).fee;
         expect(high).toBeGreaterThanOrEqual(low - 1e-9);
       }
     );
   });
 
-  test('rejects non-positive amounts and out-of-range percentages', () => {
+  test('rejects non-positive amounts and out-of-range bps', () => {
     expect(() => calculateAnalyticsFee(0)).toThrow();
     expect(() => calculateAnalyticsFee(-5)).toThrow();
-    expect(() => calculateAnalyticsFee(10, MAX_FEE_PERCENTAGE + 0.01)).toThrow();
-    expect(() => calculateAnalyticsFee(10, -0.01)).toThrow();
+    expect(() => calculateAnalyticsFee(10, MAX_FEE_BPS + 1)).toThrow();
+    expect(() => calculateAnalyticsFee(10, -1)).toThrow();
+  });
+
+  test('rejects non-integer feeBps with a descriptive TypeError', () => {
+    expect(() => calculateAnalyticsFee(10, 0.0333)).toThrow(TypeError);
+    expect(() => calculateAnalyticsFee(10, 0.0333)).toThrow('feeBps must be an integer');
   });
 });
 

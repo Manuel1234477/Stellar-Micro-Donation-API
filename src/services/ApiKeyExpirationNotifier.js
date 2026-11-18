@@ -203,6 +203,23 @@ class ApiKeyExpirationNotifier {
       return { delivered: false, error: 'Invalid webhook URL' };
     }
 
+    // Guard against literal internal/loopback/metadata IP targets. This is a
+    // key-owner-configured URL (set at key creation, not attacker-controlled
+    // per-request input), so — unlike WebhookService's request-time
+    // assertSafeOutboundUrl — we only reject obvious IP-literal SSRF targets
+    // synchronously rather than enforcing HTTPS-only or resolving DNS on
+    // every notification tick.
+    const net = require('net');
+    const { isBlockedIPv4, isBlockedIPv6 } = require('../utils/ssrf');
+    if (net.isIPv4(parsedUrl.hostname) && isBlockedIPv4(parsedUrl.hostname)) {
+      log.warn('API_KEY_EXPIRY_NOTIFIER', 'Blocked webhook URL targeting internal IPv4', { webhookUrl, keyId: key.id });
+      return { delivered: false, error: 'Webhook host is not allowed' };
+    }
+    if (net.isIPv6(parsedUrl.hostname) && isBlockedIPv6(parsedUrl.hostname)) {
+      log.warn('API_KEY_EXPIRY_NOTIFIER', 'Blocked webhook URL targeting internal IPv6', { webhookUrl, keyId: key.id });
+      return { delivered: false, error: 'Webhook host is not allowed' };
+    }
+
     const event = thresholdDays === 0
       ? 'api_key.expired'
       : 'api_key.expiring';

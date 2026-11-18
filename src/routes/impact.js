@@ -10,12 +10,6 @@
  *   POST /impact/report/export        — downloadable CSV or PDF report
  */
 
-const STROOPS_PER_XLM = 10_000_000n;
-
-function toStroops(xlmAmount) {
-  return BigInt(Math.round(Number(xlmAmount) * Number(STROOPS_PER_XLM)));
-}
-
 const express = require('express');
 const router = express.Router();
 const requireApiKey = require('../middleware/apiKey');
@@ -23,7 +17,6 @@ const { checkPermission } = require('../middleware/rbac');
 const { PERMISSIONS } = require('../utils/permissions');
 const Transaction = require('../models/transaction');
 const { SDG_CATEGORIES} = require('../services/ImpactMetricService');
-const { serialize: csvSerialize } = require('../utils/csvSerializer');
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -34,7 +27,7 @@ const { serialize: csvSerialize } = require('../utils/csvSerializer');
  * @returns {string}
  */
 function escapeCsvFormula(field) {
-  if (!field) return '';
+  if (field === undefined || field === null) return '';
   const str = String(field);
   // Prevent formula injection by prepending ' to fields starting with formula chars
   if (/^[=+\-@]/.test(str)) {
@@ -62,29 +55,25 @@ function filterByDateRange(txs, startDate, endDate) {
 /**
  * Build SDG breakdown from a list of transactions.
  * @param {Array} txs
- * @returns {Array<{code, goal, title, totalAmount, count}>}
+ * @returns {Array<{code: string, goal: number, title: string, description: string, totalAmount: number, count: number}>}
  */
 function buildSdgBreakdown(txs) {
   const map = {};
   for (const sdg of SDG_CATEGORIES) {
-    map[sdg.code] = { ...sdg, totalAmountStroops: 0n, count: 0 };
+    map[sdg.code] = { ...sdg, totalAmount: 0, count: 0 };
   }
 
   for (const tx of txs) {
     const cats = Array.isArray(tx.sdgCategories) ? tx.sdgCategories : [];
     for (const code of cats) {
       if (map[code]) {
-        map[code].totalAmountStroops += toStroops(tx.amount);
+        map[code].totalAmount += Number(tx.amount || 0);
         map[code].count += 1;
       }
     }
   }
 
-  return Object.values(map).map(s => ({
-    ...s,
-    totalAmount: s.totalAmountStroops.toString(),
-    totalAmountStroops: undefined,
-  }));
+  return Object.values(map);
 }
 
 // ─── Routes ───────────────────────────────────────────────────────────────────
@@ -124,7 +113,7 @@ router.get('/report', checkPermission(PERMISSIONS.DONATIONS_READ), (req, res, ne
     const txs = filterByDateRange(Transaction.getAll(), startDate, endDate);
     const breakdown = buildSdgBreakdown(txs);
 
-    const totalAmountStroops = txs.reduce((sum, tx) => sum + toStroops(tx.amount), 0n);
+    const totalAmount = txs.reduce((sum, tx) => sum + Number(tx.amount || 0), 0);
     const taggedCount = txs.filter(tx => Array.isArray(tx.sdgCategories) && tx.sdgCategories.length > 0).length;
     const activeSdgs = breakdown.filter(s => s.count > 0);
 
@@ -135,12 +124,12 @@ router.get('/report', checkPermission(PERMISSIONS.DONATIONS_READ), (req, res, ne
         dateRange: { startDate: startDate || null, endDate: endDate || null },
         summary: {
           totalDonations: txs.length,
-          totalAmount: totalAmountStroops.toString(),
+          totalAmount,
           taggedDonations: taggedCount,
           activeSdgCount: activeSdgs.length,
         },
         sdgBreakdown: breakdown,
-        topSdgs: [...activeSdgs].sort((a, b) => (BigInt(a.totalAmount) > BigInt(b.totalAmount) ? -1 : 1)).slice(0, 5),
+        topSdgs: [...activeSdgs].sort((a, b) => b.totalAmount - a.totalAmount).slice(0, 5),
       },
     });
   } catch (error) {
@@ -167,21 +156,21 @@ router.post('/report/export', requireApiKey, checkPermission(PERMISSIONS.DONATIO
 
     const txs = filterByDateRange(Transaction.getAll(), startDate, endDate);
     const breakdown = buildSdgBreakdown(txs);
-    const totalAmountStroops = txs.reduce((sum, tx) => sum + toStroops(tx.amount), 0n);
+    const totalAmount = txs.reduce((sum, tx) => sum + Number(tx.amount || 0), 0);
 
     if (format === 'csv') {
       const lines = [
-        'SDG Code,Goal,Title,Total Amount (stroops),Donation Count',
+        'SDG Code,Goal,Title,Total Amount,Donation Count',
         ...breakdown.map(s =>
-          `${escapeCsvFormula(s.code)},${escapeCsvFormula(s.goal)},"${escapeCsvFormula(s.title)}",${s.totalAmount},${s.count}`
+          `${escapeCsvFormula(s.code)},${escapeCsvFormula(s.goal)},"${escapeCsvFormula(s.title)}",${Number(s.totalAmount).toFixed(7)},${s.count}`
         ),
         '',
-        `Total,,All SDGs,${totalAmountStroops.toString()},${txs.length}`,
+        `Total,,All SDGs,${Number(totalAmount).toFixed(7)},${txs.length}`,
       ];
 
       res.setHeader('Content-Type', 'text/csv');
       res.setHeader('Content-Disposition', `attachment; filename="impact-report-${Date.now()}.csv"`);
-      return res.send(csvSerialize(headers, rows));
+      return res.send(lines.join('\n'));
     }
 
     // PDF: return a minimal text-based PDF
@@ -193,10 +182,10 @@ router.post('/report/export', requireApiKey, checkPermission(PERMISSIONS.DONATIO
       '',
       'SDG Breakdown:',
       ...breakdown.filter(s => s.count > 0).map(s =>
-        `  ${s.code} - ${s.title}: ${s.totalAmount} stroops (${s.count} donations)`
+        `  ${s.code} - ${s.title}: ${Number(s.totalAmount).toFixed(7)} XLM (${s.count} donations)`
       ),
       '',
-      `Total: ${totalAmountStroops.toString()} stroops across ${txs.length} donations`,
+      `Total: ${Number(totalAmount).toFixed(7)} XLM across ${txs.length} donations`,
     ].filter(l => l !== undefined).join('\n');
 
     // Minimal valid PDF wrapping plain text

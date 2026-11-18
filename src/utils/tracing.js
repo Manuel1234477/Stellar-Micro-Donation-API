@@ -2,15 +2,20 @@
  * Distributed Tracing Utility - OpenTelemetry Integration
  *
  * RESPONSIBILITY: End-to-end distributed tracing for HTTP requests, database queries,
- *                 and Stellar network calls via OpenTelemetry SDK.
+ *                 Stellar network calls, and outbound Horizon API requests via OpenTelemetry SDK.
  * OWNER: Platform Team
  * DEPENDENCIES: @opentelemetry/api, optional SDK packages
  *
  * Provides automatic and manual instrumentation with graceful degradation when
  * the full SDK is not installed. Traces are exported to a configurable OTLP endpoint.
  *
+ * Tracing is only activated when OTEL_EXPORTER_OTLP_ENDPOINT is explicitly set in the
+ * environment. If the variable is absent, all tracing functions are silent no-ops so the
+ * application can run without any OTel infrastructure.
+ *
  * Environment variables:
- *   OTEL_EXPORTER_OTLP_ENDPOINT  - OTLP collector endpoint (default: http://localhost:4318)
+ *   OTEL_EXPORTER_OTLP_ENDPOINT  - OTLP collector endpoint. REQUIRED to enable tracing.
+ *                                   When absent, tracing is silently disabled.
  *   OTEL_SERVICE_NAME            - Service name reported in traces (default: stellar-donation-api)
  *   OTEL_ENABLED                 - Set to "false" to disable tracing entirely (default: true)
  *   OTEL_EXPORTER_OTLP_HEADERS  - Comma-separated key=value auth headers for the exporter
@@ -34,13 +39,26 @@ const TRACESTATE_HEADER = 'tracestate';
 
 /**
  * Attempt to load and initialise the OpenTelemetry Node SDK.
- * Returns null when SDK packages are not installed so the application
- * continues to run without tracing rather than crashing.
+ * Returns null when:
+ *   - OTEL_EXPORTER_OTLP_ENDPOINT is not explicitly set in the environment
+ *     (and not supplied via options.endpoint), OR
+ *   - SDK packages are not installed.
+ *
+ * This ensures the application never attempts to connect to a default
+ * localhost:4318 endpoint that may not exist, preventing noisy startup
+ * errors in environments without an OTel collector.
  *
  * @param {Object} [options] - Initialisation options (see initTracing)
  * @returns {Object|null} SDK instance or null
  */
 function _loadSdk(options = {}) {
+  // Only initialise when an explicit endpoint is provided.
+  const endpoint = options.endpoint || process.env.OTEL_EXPORTER_OTLP_ENDPOINT;
+  if (!endpoint) {
+    // No collector configured — silently skip SDK initialisation.
+    return null;
+  }
+
   try {
     const { NodeSDK } = require('@opentelemetry/sdk-node');
     const { OTLPTraceExporter } = require('@opentelemetry/exporter-trace-otlp-http');
@@ -48,11 +66,6 @@ function _loadSdk(options = {}) {
     const { SEMRESATTRS_SERVICE_NAME, SEMRESATTRS_SERVICE_VERSION } =
       require('@opentelemetry/semantic-conventions');
     const { getNodeAutoInstrumentations } = require('@opentelemetry/auto-instrumentations-node');
-
-    const endpoint =
-      options.endpoint ||
-      process.env.OTEL_EXPORTER_OTLP_ENDPOINT ||
-      'http://localhost:4318';
 
     const serviceName =
       options.serviceName ||
@@ -118,8 +131,12 @@ let _enabled = true;
  * Initialise the OpenTelemetry SDK and register a global tracer provider.
  * Safe to call multiple times — subsequent calls are no-ops.
  *
+ * Tracing is only enabled when OTEL_EXPORTER_OTLP_ENDPOINT is explicitly set
+ * (either in the environment or via options.endpoint). When neither is present,
+ * initTracing returns false immediately without attempting any network connections.
+ *
  * @param {Object} [options] - Configuration options
- * @param {string} [options.endpoint]       - OTLP collector base URL
+ * @param {string} [options.endpoint]       - OTLP collector base URL (overrides env var)
  * @param {string} [options.serviceName]    - Service name for resource attributes
  * @param {string|Object} [options.exporterHeaders] - Auth headers for the exporter
  * @param {boolean} [options.enabled]       - Explicitly enable/disable tracing
@@ -136,6 +153,14 @@ function initTracing(options = {}) {
   _initialised = true;
 
   if (!_enabled) return false;
+
+  // Require an explicit OTLP endpoint — never fall back to localhost.
+  const hasEndpoint = Boolean(options.endpoint || process.env.OTEL_EXPORTER_OTLP_ENDPOINT);
+  if (!hasEndpoint) {
+    // No collector configured — tracing is silently disabled.
+    _enabled = false;
+    return false;
+  }
 
   _sdk = _loadSdk(options);
 
@@ -592,6 +617,153 @@ async function withSpanInContext(spanName, parentContext, attributes, fn) {
   );
 }
 
+// ─── Horizon-specific Instrumentation ────────────────────────────────────────
+
+/**
+ * Inject W3C traceparent/tracestate headers into an outgoing Horizon HTTP
+ * request headers object.
+ *
+ * This is a Horizon-specific alias for `injectTraceHeaders` that makes call
+ * sites more self-documenting. The function silently returns the original
+ * headers object unchanged when there is no active span or tracing is disabled.
+ *
+ * @param {Object} [existingHeaders={}] - Existing headers for the outbound request
+ * @returns {Object} Headers object with W3C traceparent/tracestate injected
+ */
+function injectHorizonTraceHeaders(existingHeaders = {}) {
+  const headers = { ...existingHeaders };
+  try {
+    api.propagation.inject(api.context.active(), headers);
+  } catch (_err) {
+    // Propagation not available — return headers unchanged
+  }
+  return headers;
+}
+
+/**
+ * Wrap an outbound Horizon API call in a CLIENT span, automatically injecting
+ * W3C traceparent/tracestate into the HTTP request headers via the `fn` callback.
+ *
+ * The callback receives an `{ injectHeaders }` helper so callers can obtain
+ * the trace-context-enriched headers without a separate call:
+ *
+ *   const result = await traceHorizonRequest('loadAccount', url, attrs, async ({ injectHeaders }) => {
+ *     const headers = injectHeaders({ Accept: 'application/json' });
+ *     return fetch(url, { headers });
+ *   });
+ *
+ * @param {string} operation  - Short operation name (e.g. "loadAccount", "submitTransaction")
+ * @param {string} url        - Full Horizon endpoint URL being called
+ * @param {Object} [attributes] - Additional span attributes
+ * @param {Function} fn       - Async callback receiving `{ span, injectHeaders }`
+ * @returns {Promise<*>} Result of fn
+ */
+async function traceHorizonRequest(operation, url, attributes, fn) {
+  if (typeof attributes === 'function') {
+    fn = attributes;
+    attributes = {};
+  }
+
+  // Parse hostname from URL for peer.service attribute; fall back gracefully.
+  let peerHostname = 'stellar-horizon';
+  try {
+    peerHostname = new URL(url).hostname;
+  } catch (_err) {
+    // Not a valid URL — use the default
+  }
+
+  return withSpan(
+    `horizon.${operation}`,
+    {
+      'http.method': 'GET',
+      'http.url': url,
+      'stellar.operation': operation,
+      'peer.service': peerHostname,
+      'span.kind': 'client',
+      ...attributes,
+    },
+    async (span) => {
+      // Provide a convenience helper so the caller can get headers
+      // that carry the current span's trace context.
+      const injectHeaders = (existingHeaders = {}) =>
+        injectHorizonTraceHeaders(existingHeaders);
+
+      try {
+        const result = await fn({ span, injectHeaders });
+        if (result && result.status) {
+          span.setAttribute('http.status_code', result.status);
+        }
+        return result;
+      } catch (err) {
+        span.recordException(err);
+        throw err;
+      }
+    },
+    { kind: api.SpanKind.CLIENT }
+  );
+}
+
+/**
+ * Create a lightweight Horizon HTTP client wrapper that automatically injects
+ * W3C trace context into every outbound request.
+ *
+ * The returned client exposes a single `fetch(path, options)` method that
+ * resolves relative paths against the configured baseUrl and injects the
+ * current span's traceparent/tracestate into request headers before calling
+ * the underlying fetch implementation.
+ *
+ * @param {string} baseUrl - Base URL of the Horizon server
+ *   (e.g. "https://horizon-testnet.stellar.org")
+ * @param {Object} [options] - Client options
+ * @param {Function} [options.fetchImpl] - fetch implementation (defaults to global fetch)
+ * @param {Object}  [options.defaultHeaders] - Headers added to every request
+ * @returns {{ fetch: Function }} Horizon HTTP client
+ */
+function createHorizonHttpClient(baseUrl, options = {}) {
+  const fetchImpl =
+    options.fetchImpl ||
+    (typeof globalThis !== 'undefined' && globalThis.fetch) ||
+    (typeof fetch !== 'undefined' ? fetch : null);
+
+  const defaultHeaders = options.defaultHeaders || {};
+
+  /**
+   * Make a traced HTTP request to the Horizon API.
+   *
+   * @param {string} path      - Path or full URL (relative paths are resolved against baseUrl)
+   * @param {Object} [reqOpts] - fetch RequestInit options
+   * @returns {Promise<Response>}
+   */
+  async function horizonFetch(path, reqOpts = {}) {
+    // Build the full URL
+    let fullUrl;
+    try {
+      fullUrl = new URL(path, baseUrl).toString();
+    } catch (_err) {
+      fullUrl = path;
+    }
+
+    // Merge default headers, caller headers, and trace context
+    const mergedHeaders = injectHorizonTraceHeaders({
+      ...defaultHeaders,
+      ...(reqOpts.headers || {}),
+    });
+
+    const mergedOpts = { ...reqOpts, headers: mergedHeaders };
+
+    if (!fetchImpl) {
+      throw new Error(
+        'createHorizonHttpClient: no fetch implementation available. ' +
+        'Provide options.fetchImpl or ensure globalThis.fetch is defined.'
+      );
+    }
+
+    return fetchImpl(fullUrl, mergedOpts);
+  }
+
+  return { fetch: horizonFetch };
+}
+
 // ─── Exports ──────────────────────────────────────────────────────────────────
 
 module.exports = {
@@ -615,6 +787,11 @@ module.exports = {
   traceDbQuery,
   traceStellarCall,
   traceWebhookDelivery,
+
+  // Horizon-specific helpers (issue #1549)
+  injectHorizonTraceHeaders,
+  traceHorizonRequest,
+  createHorizonHttpClient,
 
   // Propagation
   injectTraceHeaders,

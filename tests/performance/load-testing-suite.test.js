@@ -21,8 +21,9 @@ const path = require('path');
 const os = require('os');
 const fs = require('fs');
 const LoadTestRunner = require('../load/LoadTestRunner');
-const { BASELINES, validateAgainstBaseline, validateReport } = require('../load/PerformanceBaselines');
+const { BASELINES, NIGHTLY_TARGET_BASELINES, validateAgainstBaseline, validateReport } = require('../load/PerformanceBaselines');
 const { generateJsonReport, generateHtmlReport } = require('../load/ReportGenerator');
+const { computeRegressions, REGRESSION_THRESHOLD_PCT } = require('../../scripts/check-load-test-regression');
 
 // ---------------------------------------------------------------------------
 // Minimal Express app for integration testing (no DB or Stellar calls needed)
@@ -297,6 +298,12 @@ describe('PerformanceBaselines', () => {
     test('defines baseline for liveness', () => {
       expect(BASELINES['liveness']).toBeDefined();
       expect(BASELINES['liveness'].p95LatencyMs).toBeLessThan(BASELINES['donation-creation'].p95LatencyMs);
+    });
+
+    test('defines baseline for stats-summary (issue #1546)', () => {
+      expect(BASELINES['stats-summary']).toBeDefined();
+      expect(BASELINES['stats-summary'].p95LatencyMs).toBeGreaterThan(0);
+      expect(BASELINES['stats-summary'].minThroughputRps).toBeGreaterThan(0);
     });
 
     test('all baselines have required fields', () => {
@@ -646,5 +653,79 @@ describe('CI integration', () => {
   test('GitHub Actions workflow file for load tests exists', () => {
     const workflowPath = path.join(__dirname, '..', '..', '.github', 'workflows', 'load-tests.yml');
     expect(fs.existsSync(workflowPath)).toBe(true);
+  });
+
+  test('GitHub Actions workflow file for the nightly regression check exists (issue #1546)', () => {
+    const workflowPath = path.join(__dirname, '..', '..', '.github', 'workflows', 'nightly-load-test.yml');
+    expect(fs.existsSync(workflowPath)).toBe(true);
+  });
+
+  test('npm run test:load script is defined in package.json', () => {
+    const pkg = require('../../package.json');
+    expect(pkg.scripts['test:load']).toBeDefined();
+  });
+
+  test('docs/LOAD_TESTING.md exists', () => {
+    const docPath = path.join(__dirname, '..', '..', 'docs', 'LOAD_TESTING.md');
+    expect(fs.existsSync(docPath)).toBe(true);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Nightly regression check (Issue #1546)
+// ---------------------------------------------------------------------------
+
+describe('check-load-test-regression', () => {
+  test('NIGHTLY_TARGET_BASELINES defines the three issue-#1546 endpoints', () => {
+    expect(NIGHTLY_TARGET_BASELINES['donation-creation']).toEqual(
+      expect.objectContaining({ p95LatencyMs: 150, minThroughputRps: 200 })
+    );
+    expect(NIGHTLY_TARGET_BASELINES['list-donations']).toEqual(
+      expect.objectContaining({ p95LatencyMs: 50, minThroughputRps: 500 })
+    );
+    expect(NIGHTLY_TARGET_BASELINES['stats-summary']).toEqual(
+      expect.objectContaining({ p95LatencyMs: 200, minThroughputRps: 100 })
+    );
+  });
+
+  test('REGRESSION_THRESHOLD_PCT is 20 (issue #1546)', () => {
+    expect(REGRESSION_THRESHOLD_PCT).toBe(20);
+  });
+
+  test('flags a scenario whose p95 exceeds the baseline by more than 20%', () => {
+    const report = {
+      scenarios: [
+        { scenario: 'donation-creation', latencyMs: { p95: 200 } }, // 150 * 1.2 = 180 → 200 is +33%
+      ],
+    };
+    const regressions = computeRegressions(report, NIGHTLY_TARGET_BASELINES);
+    expect(regressions).toHaveLength(1);
+    expect(regressions[0].scenario).toBe('donation-creation');
+    expect(regressions[0].pctOver).toBeGreaterThan(20);
+  });
+
+  test('does not flag a scenario within the 20% tolerance', () => {
+    const report = {
+      scenarios: [
+        { scenario: 'donation-creation', latencyMs: { p95: 165 } }, // +10%, under threshold
+      ],
+    };
+    const regressions = computeRegressions(report, NIGHTLY_TARGET_BASELINES);
+    expect(regressions).toHaveLength(0);
+  });
+
+  test('ignores scenarios with no defined baseline', () => {
+    const report = { scenarios: [{ scenario: 'unknown-scenario', latencyMs: { p95: 99999 } }] };
+    expect(computeRegressions(report, NIGHTLY_TARGET_BASELINES)).toHaveLength(0);
+  });
+
+  test('accepts the legacy `latency` shape (from LoadTestRunner) as well as `latencyMs` (from ReportGenerator)', () => {
+    const report = { scenarios: [{ scenario: 'list-donations', latency: { p95: 200 } }] }; // baseline 50 → way over
+    const regressions = computeRegressions(report, NIGHTLY_TARGET_BASELINES);
+    expect(regressions).toHaveLength(1);
+  });
+
+  test('handles an empty scenarios array', () => {
+    expect(computeRegressions({ scenarios: [] }, NIGHTLY_TARGET_BASELINES)).toHaveLength(0);
   });
 });
