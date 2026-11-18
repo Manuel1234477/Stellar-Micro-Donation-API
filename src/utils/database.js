@@ -12,7 +12,7 @@
 
 const path = require('path');
 const EventEmitter = require('events');
-require('dotenv').config({ path: path.join(__dirname, '../../src/.env') });
+// Environment is loaded by src/config (via log -> config -> loadEnv), never here (#1943).
 
 // External modules
 const sqlite3 = require('sqlite3').verbose();
