@@ -32,6 +32,9 @@ tests:
               severity: critical
               slo: availability
               service: stellar-donation-api
+            exp_annotations:
+              description: "HTTP request success rate is 10% over the last 5 minutes.\nSLO requires >= 99% availability.\n\nAffected endpoints: Check /metrics endpoint for per-route breakdown.\n\nAction items:\n1. Check API logs for error patterns: grep ERROR /var/log/api.log\n2. Review recent deployments: git log --oneline -10\n3. Check database connection pool: curl /health/ready\n4. See runbook: docs/RUNBOOKS.md#api-availability\n"
+              summary: "API availability below 99% SLO"
 
   # Total outage: no 2xx/3xx series at all must still fire (regression for the
   # missing "or vector(0)" that silenced the alert when a term was absent).
@@ -47,6 +50,9 @@ tests:
               severity: critical
               slo: availability
               service: stellar-donation-api
+            exp_annotations:
+              description: "HTTP request success rate is 0% over the last 5 minutes.\nSLO requires >= 99% availability.\n\nAffected endpoints: Check /metrics endpoint for per-route breakdown.\n\nAction items:\n1. Check API logs for error patterns: grep ERROR /var/log/api.log\n2. Review recent deployments: git log --oneline -10\n3. Check database connection pool: curl /health/ready\n4. See runbook: docs/RUNBOOKS.md#api-availability\n"
+              summary: "API availability below 99% SLO"
 
   - interval: 1m
     input_series:
@@ -74,6 +80,9 @@ tests:
               severity: critical
               slo: error_rate
               service: stellar-donation-api
+            exp_annotations:
+              description: "HTTP 5xx error rate is 2% over the last 5 minutes.\nSLO requires < 0.5% error rate.\n\nImmediate actions:\n1. Check application logs for stack traces\n2. Review database query performance\n3. Check external service connectivity (Horizon)\n\nRunbook: docs/RUNBOOKS.md#api-error-rate\n"
+              summary: "API error rate above SLO threshold"
 
   - interval: 1m
     input_series:
@@ -106,6 +115,9 @@ tests:
               slo: latency
               percentile: p95
               service: stellar-donation-api
+            exp_annotations:
+              description: "95th percentile request latency is 478.9ms.\nSLO requires P95 <= 200ms.\n\nDiagnostics:\n1. Check slow endpoint: top slow routes in /metrics\n2. Review database query performance: EXPLAIN in SQL logs\n3. Check memory usage: curl /health/live | jq .memory\n4. Review recent code changes\n\nRunbook: docs/RUNBOOKS.md#api-latency\n"
+              summary: "API P95 latency above SLO (478.9ms)"
 
   - interval: 1m
     input_series:
@@ -139,6 +151,9 @@ tests:
               slo: latency
               percentile: p99
               service: stellar-donation-api
+            exp_annotations:
+              description: "99th percentile request latency is 2.35s.\nSLO target P99 <= 1s (warning at 2s).\n\nLikely causes:\n1. High query load on database\n2. Slow external API (Horizon) responses\n3. Garbage collection pauses\n4. Disk I/O bottleneck\n\nRunbook: docs/RUNBOOKS.md#api-latency\n"
+              summary: "API P99 latency degraded (2.35s)"
 
   - interval: 1m
     input_series:
@@ -166,6 +181,9 @@ tests:
               severity: warning
               slo: scheduler_lag
               service: stellar-donation-api
+            exp_annotations:
+              description: "The recurring donation scheduler is skipping 166.7m schedules/s.\nA sustained non-zero skip rate means pending donations are not processed on time.\n\nCommon skip reasons (check the 'reason' label in /metrics):\n  - in_progress:      duplicate-execution guard triggered\n  - network_degraded: Stellar network issue detected\n  - scheduler_paused: scheduler is explicitly paused\n\nDiagnostics:\n1. Check scheduler logs: grep \"RecurringDonationScheduler\" /var/log/api.log\n2. Check Stellar network connectivity\n3. Check database pool health\n\nRunbook: docs/RUNBOOKS.md#scheduler-lag\n"
+              summary: "Recurring donation scheduler is skipping schedules at a high rate"
 
   - interval: 1m
     input_series:
@@ -189,6 +207,9 @@ tests:
               severity: critical
               slo: scheduler_lag
               service: stellar-donation-api
+            exp_annotations:
+              description: "The recurring donation scheduler is skipping 1 schedules/s.\nThis is severely impacting pending donation processing.\n\nIMMEDIATE ACTIONS:\n1. Page on-call engineer NOW\n2. Check if scheduler is still running: ps aux | grep -i node\n3. Check database connectivity: /health/ready\n4. Review last 100 log entries: tail -100 /var/log/api.log\n5. If hung: restart the scheduler process\n\nRunbook: docs/RUNBOOKS.md#scheduler-lag-critical\n"
+              summary: "CRITICAL: Recurring donation scheduler is skipping at a very high rate"
 
   - interval: 1m
     input_series:
@@ -215,6 +236,9 @@ tests:
               slo: background_job
               job_type: recurring_donations
               service: stellar-donation-api
+            exp_annotations:
+              description: "Recurring donation execution success rate is 50%.\nSLO requires >= 99% success rate.\n\nFailed donations are being retried but may ultimately fail.\n\nDiagnostics:\n1. Check Stellar network status\n2. Review error logs: grep \"RECURRING_DONATION.*ERROR\" /var/log/api.log\n3. Check account balance: curl /api/v1/account\n4. Verify Horizon API connectivity\n\nRunbook: docs/RUNBOOKS.md#recurring-donation-failure\n"
+              summary: "Recurring donation success rate below SLO: 50%"
 
   # All executions failing (no success series) must still fire.
   - interval: 1m
@@ -230,6 +254,9 @@ tests:
               slo: background_job
               job_type: recurring_donations
               service: stellar-donation-api
+            exp_annotations:
+              description: "Recurring donation execution success rate is 0%.\nSLO requires >= 99% success rate.\n\nFailed donations are being retried but may ultimately fail.\n\nDiagnostics:\n1. Check Stellar network status\n2. Review error logs: grep \"RECURRING_DONATION.*ERROR\" /var/log/api.log\n3. Check account balance: curl /api/v1/account\n4. Verify Horizon API connectivity\n\nRunbook: docs/RUNBOOKS.md#recurring-donation-failure\n"
+              summary: "Recurring donation success rate below SLO: 0%"
 
   - interval: 1m
     input_series:
@@ -256,6 +283,9 @@ tests:
               slo: background_job
               job_type: recurring_donations
               service: stellar-donation-api
+            exp_annotations:
+              description: "16.67m schedules/s are being permanently suspended (all retries exhausted).\nEach suspension means a donor's recurring donation has permanently failed.\n\nDiagnostics:\n1. Check Stellar network connectivity\n2. Review suspension logs: grep \"RECURRING_DONATION.*suspended\" /var/log/api.log\n3. Confirm donor accounts have sufficient balance\n\nRunbook: docs/RUNBOOKS.md#recurring-donation-failure\n"
+              summary: "Recurring donation schedules are being suspended at a high rate"
 
   - interval: 1m
     input_series:
@@ -282,6 +312,9 @@ tests:
               slo: external_api
               external_service: horizon
               service: stellar-donation-api
+            exp_annotations:
+              description: "More than 50% of Horizon pool members are in cooldown.\nDonation submissions may be slower or fail if all members become unhealthy.\n\nThis may indicate:\n1. Stellar network issues or maintenance\n2. Network connectivity problems to configured Horizon endpoints\n3. Rate limiting from Stellar\n\nActions:\n1. Check Stellar status page: https://stellar.org/status\n2. Verify network connectivity: curl https://horizon.stellar.org\n3. Check rate limit headers in logs\n\nRunbook: docs/RUNBOOKS.md#horizon-connectivity\n"
+              summary: "Horizon connection pool is degraded: 60% unhealthy"
 
   - interval: 1m
     input_series:
@@ -308,6 +341,9 @@ tests:
               slo: external_api
               external_service: horizon
               service: stellar-donation-api
+            exp_annotations:
+              description: "Every member of the Horizon connection pool is in cooldown.\nDonation submissions to Stellar will fail until at least one member recovers.\n\nIMMEDIATE ACTIONS:\n1. Check Stellar status page: https://stellar.org/status\n2. Verify network connectivity from the server\n3. Check application logs for HORIZON errors\n4. Consider enabling MOCK_STELLAR=true to accept submissions without network calls\n\nRunbook: docs/RUNBOOKS.md#horizon-connectivity\n"
+              summary: "CRITICAL: All Horizon pool members are unhealthy"
 
   - interval: 1m
     input_series:
@@ -332,6 +368,9 @@ tests:
               slo: external_api
               external_service: horizon
               service: stellar-donation-api
+            exp_annotations:
+              description: "Horizon pool members are entering cooldown at 166.7m events/s.\nThis indicates Horizon API calls are frequently failing.\n\nActions:\n1. Check Stellar status page: https://stellar.org/status\n2. Verify network connectivity: curl https://horizon.stellar.org\n3. Check rate limit headers in logs\n\nRunbook: docs/RUNBOOKS.md#horizon-connectivity\n"
+              summary: "Horizon API error rate elevated: 166.7m cooldowns/s"
 
   - interval: 1m
     input_series:
@@ -361,6 +400,9 @@ tests:
               slo: scheduler_lag
               scheduler: transaction_sync
               service: stellar-donation-api
+            exp_annotations:
+              description: "The 99th percentile time to acquire a Horizon pool member is 455ms.\nHigh acquisition latency will delay transaction sync and donation submissions.\n\nDiagnostics:\n1. Check Horizon API responsiveness\n2. Review database query performance\n3. Check scheduler logs\n\nRunbook: docs/RUNBOOKS.md#transaction-sync-lag\n"
+              summary: "Horizon pool acquire P99 latency high: 455ms"
 
   - interval: 1m
     input_series:
@@ -389,6 +431,9 @@ tests:
               slo: availability
               service: stellar-donation-api
               job: stellar-donation-api
+            exp_annotations:
+              description: "Prometheus cannot reach /health/ready endpoint.\n\nApplication may have crashed or port is blocked.\n\nIMMEDIATE ACTIONS:\n1. Check if process is running: ps aux | grep node\n2. Check port 3000: netstat -tulpn | grep 3000\n3. Check logs for startup errors\n4. Restart application if crashed\n\nRunbook: docs/RUNBOOKS.md#application-down\n"
+              summary: "Application health check failing"
 
   - interval: 1m
     input_series:
@@ -414,6 +459,9 @@ tests:
               severity: warning
               component: nodejs
               service: stellar-donation-api
+            exp_annotations:
+              description: "Application is using 90.91% of available memory.\n\nMay indicate:\n1. Memory leak in recent code\n2. Large data structures in memory\n3. Cache growing unbounded\n\nActions:\n1. Review heap dump\n2. Check for recent deployments\n3. Restart application if needed\n\nRunbook: docs/RUNBOOKS.md#high-memory\n"
+              summary: "High memory usage: 90.91%"
 
   - interval: 1m
     input_series:
@@ -439,6 +487,9 @@ tests:
               severity: warning
               component: nodejs
               service: stellar-donation-api
+            exp_annotations:
+              description: "Node.js event loop is lagging 2s.\n\nIndicates application is CPU-bound (long-running synchronous operations).\n\nThis will impact request latency.\n\nRunbook: docs/RUNBOOKS.md#event-loop-lag\n"
+              summary: "High event loop lag: 2s"
 
   - interval: 1m
     input_series:
@@ -465,6 +516,9 @@ tests:
               severity: warning
               slo: scheduler_lag
               service: stellar-donation-api
+            exp_annotations:
+              description: "The oldest due recurring donation has been waiting 20m 0s.\nSLO warning threshold is 60 seconds (docs/SLOs.md section 4).\n\nDiagnostics:\n1. Check scheduler logs: grep \"RECURRING_SCHEDULER\" /var/log/api.log\n2. Check leader election: the scheduler only runs on the instance holding the lease\n3. Check database connectivity: /health/ready\n\nRunbook: docs/RUNBOOKS.md#scheduler-lag\n"
+              summary: "Recurring donation scheduler is lagging: 20m 0s overdue"
 
   - interval: 1m
     input_series:
@@ -478,6 +532,9 @@ tests:
               severity: critical
               slo: scheduler_lag
               service: stellar-donation-api
+            exp_annotations:
+              description: "The oldest due recurring donation has been waiting 20m 0s.\nSLO critical threshold is 300 seconds (docs/SLOs.md section 4).\n\nIMMEDIATE ACTIONS:\n1. Page on-call engineer\n2. Check if the scheduler process is running: ps aux | grep -i node\n3. Check leader election and database connectivity: /health/ready\n4. If the scheduler is hung, restart the process\n\nRunbook: docs/RUNBOOKS.md#scheduler-lag-critical\n"
+              summary: "CRITICAL: Recurring donation scheduler is 20m 0s behind"
 
   - interval: 1m
     input_series:
@@ -512,6 +569,9 @@ tests:
               slo: scheduler_lag
               scheduler: transaction_sync
               service: stellar-donation-api
+            exp_annotations:
+              description: "The least recently synced wallet was last synced 50m 0s ago.\nExpected sync interval is 15 minutes (TX_SYNC_INTERVAL_MS).\n\nDiagnostics:\n1. Check transaction sync logs: grep \"TX_SYNC_SCHEDULER\" /var/log/api.log\n2. Check Horizon API responsiveness\n3. Check that a leader instance holds the tx_sync_scheduler lease\n\nRunbook: docs/RUNBOOKS.md#transaction-sync-lag\n"
+              summary: "Transaction sync is lagging: a wallet is 50m 0s stale"
 
   - interval: 1m
     input_series:
@@ -535,6 +595,9 @@ tests:
               slo: scheduler_lag
               scheduler: transaction_sync
               service: stellar-donation-api
+            exp_annotations:
+              description: "The least recently synced wallet was last synced 2h 5m 0s ago.\nIncoming donations may not be reflected in local records.\n\nIMMEDIATE ACTIONS:\n1. Page on-call engineer\n2. Check Horizon status and connectivity\n3. Check the sync scheduler process and lease holder\n\nRunbook: docs/RUNBOOKS.md#transaction-sync-lag\n"
+              summary: "CRITICAL: Transaction sync is 2h 5m 0s behind"
 
   - interval: 1m
     input_series:
