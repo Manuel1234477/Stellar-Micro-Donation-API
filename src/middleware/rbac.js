@@ -23,10 +23,12 @@ const { verifyAccessToken } = require('../services/JwtService');
 const { hasScope, hasAnyScope, hasAllScopes } = require('../utils/scopeValidator');
 const log = require('../utils/log');
 const { getLegacyKeySunsetDate, isLegacyKeyDisabled } = require('../utils/legacyApiKeySunset');
-const { recordLegacyKeyUsage } = require('../utils/metrics');
+const { recordLegacyKeyUsage, recordAuthValidationError } = require('../utils/metrics');
 const { allowAuditEvent } = require('../utils/authAuditThrottle');
 
 const LEGACY_AUDIT_WINDOW_MS = 60 * 60 * 1000;
+// Hint for clients when API key validation is temporarily unavailable (issue #1940)
+const API_KEY_VALIDATION_RETRY_AFTER_SECONDS = 5;
 
 /**
  * Role-Based Access Control (RBAC) Configuration
@@ -495,10 +497,24 @@ const attachUserRole = () => {
           }
           next();
         }).catch((err) => {
-          // On error, default to guest access
-          log.warn('RBAC', 'Failed to validate API key, defaulting to guest', { error: err.message });
-          req.user = { id: 'guest', role: 'guest', name: 'Guest', scopes: [] };
-          next();
+          // A validation error means "could not decide", not "invalid key". Never
+          // downgrade a presented credential to guest (issue #1940): that turns a
+          // database incident into misleading 403s. Fail closed with 503 instead.
+          log.error('RBAC', 'API key validation unavailable; rejecting request', {
+            error: err.message,
+            code: err.code,
+          });
+          if (res.headersSent) return;
+          recordAuthValidationError(String(err.code || 'unknown'));
+          res.set('Retry-After', String(API_KEY_VALIDATION_RETRY_AFTER_SECONDS));
+          return res.status(503).json({
+            success: false,
+            error: {
+              code: 'SERVICE_UNAVAILABLE',
+              message: 'API key validation is temporarily unavailable. Retry shortly.',
+              requestId: req.id,
+            },
+          });
         });
         return;
       }
