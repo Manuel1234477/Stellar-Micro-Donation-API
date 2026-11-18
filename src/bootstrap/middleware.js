@@ -12,7 +12,7 @@
 const helmet = require('helmet');
 const { createCorsMiddleware } = require('../middleware/cors');
 const { createPathBasedCspMiddleware, cspReportRouter } = require('../middleware/csp');
-const { payloadSizeLimiter } = require('../middleware/payloadSizeLimiter');
+const { payloadSizeLimiter, ENDPOINT_LIMITS } = require('../middleware/payloadSizeLimiter');
 const { responseFormatterMiddleware } = require('../utils/responseFormatter');
 const requestId = require('../middleware/requestId');
 const { attachLifecycleTracking } = require('../middleware/requestLifecycle');
@@ -36,6 +36,10 @@ const requestCounter = require('../utils/requestCounter');
 const state = require('./state');
 
 const STREAMING_PATH_RE = /\/(stream|sse|events|ws|websocket|subscribe)(\/|$)/i;
+
+// Bulk donation endpoints accept the larger ENDPOINT_LIMITS.batchDonation body
+// size (#1953). Every other path keeps the 100 KB default.
+const BATCH_BODY_PATH_RE = /^(?:\/api\/v1)?\/donations\/(?:batch|bulk)\/?$/;
 
 /**
  * Apply all middleware to the given Express app.
@@ -97,7 +101,11 @@ function applyMiddleware(app) {
 
   // ─── Early security — before body parsers ────────────────────────────────────
   app.use(require('../middleware/geoBlock'));
-  app.use(payloadSizeLimiter());
+  // Pre-parse Content-Length guard. Batch paths get their own limit (#1953)
+  // so a valid batch is not rejected before its route-level limiter runs.
+  const defaultBodyLimiter = payloadSizeLimiter();
+  const batchBodyLimiter = payloadSizeLimiter(ENDPOINT_LIMITS.batchDonation);
+  app.use((req, res, next) => (BATCH_BODY_PATH_RE.test(req.path) ? batchBodyLimiter : defaultBodyLimiter)(req, res, next));
 
   // ─── Body parsers ────────────────────────────────────────────────────────────
   // #1929: The raw request body is only needed for signature verification
@@ -117,14 +125,18 @@ function applyMiddleware(app) {
     'x-hub-signature-256',    // inbound webhook (GitHub-style)
     'x-hub-signature',        // inbound webhook (GitHub-style legacy)
   ];
-  app.use(express.json({
-    verify: (req, _res, buf) => {
-      const hasSignatureHeader = SIGNATURE_HEADERS.some(h => req.get(h));
-      if (hasSignatureHeader) {
-        req.rawBody = buf; // keep as Buffer — never convert to string
-      }
-    },
-  }));
+  // Parser limits match the per-endpoint limits enforced by payloadSizeLimiter.
+  // body-parser's own default (100 KB) would otherwise reject valid batch
+  // payloads before the batch route runs (#1953).
+  const jsonBodyVerify = (req, _res, buf) => {
+    const hasSignatureHeader = SIGNATURE_HEADERS.some(h => req.get(h));
+    if (hasSignatureHeader) {
+      req.rawBody = buf; // keep as Buffer — never convert to string
+    }
+  };
+  const defaultJsonParser = express.json({ limit: ENDPOINT_LIMITS.default, verify: jsonBodyVerify });
+  const batchJsonParser = express.json({ limit: ENDPOINT_LIMITS.batchDonation, verify: jsonBodyVerify });
+  app.use((req, res, next) => (BATCH_BODY_PATH_RE.test(req.path) ? batchJsonParser : defaultJsonParser)(req, res, next));
   app.use(express.urlencoded({ extended: true }));
 
   // ─── Post-parse security ─────────────────────────────────────────────────────

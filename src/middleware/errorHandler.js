@@ -229,6 +229,24 @@ function errorHandler(err, req, res, next) {
     });
   }
 
+  // Body-parser rejected a body over its limit (e.g. chunked, no Content-Length).
+  // Return the same envelope as payloadSizeLimiter so clients see one 413 shape
+  // whichever layer rejected the request (#1953).
+  if (err.type === 'entity.too.large') {
+    return res.status(413).json({
+      success: false,
+      error: {
+        code: 'PAYLOAD_TOO_LARGE',
+        message: 'Request body too large.',
+        ...(typeof err.limit === 'number' && {
+          details: { max_size_bytes: err.limit },
+        }),
+        requestId: req.id,
+        timestamp: new Date().toISOString(),
+      },
+    });
+  }
+
   // Handle named validation errors — 422 Unprocessable Entity:
   // The request was well-formed (parseable) but failed semantic validation rules.
   // 400 Bad Request is reserved for syntactically malformed requests (e.g. invalid JSON).
