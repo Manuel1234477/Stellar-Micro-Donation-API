@@ -98,6 +98,7 @@ const ENV_VARS = [
   { group: G2, name: 'ENCRYPTION_PUBLIC_KEY', type: 'string', description: 'RSA/EC public key PEM used to verify asymmetric signatures' },
   { group: G2, name: 'ENCRYPTION_SECRET', type: 'string', secret: true, description: 'Legacy symmetric encryption secret for non-wallet data paths' },
   { group: G2, name: 'EXPORT_SIGNING_SECRET', type: 'string', secret: true, description: 'HMAC secret for signing CSV/JSON export files. Must be distinct from `ENCRYPTION_KEY`' },
+  { group: G2, name: 'EXPORT_SIGNING_SECRET_PREVIOUS', type: 'string', secret: true, description: 'Comma-separated previous `EXPORT_SIGNING_SECRET` values, still accepted for verifying export download links during rotation' },
   { group: G2, name: 'JWT_SIGNING_SECRET', type: 'string', secret: true, description: 'HMAC secret that signs access tokens (at least 32 characters). Required in production and staging. Must be distinct from `ENCRYPTION_KEY`' },
   { group: G2, name: 'JWT_SIGNING_SECRET_PREVIOUS', type: 'string', secret: true, description: 'Previous `JWT_SIGNING_SECRET`, kept during rotation so tokens issued before the change still verify' },
   { group: G2, name: 'MEMO_REENCRYPT_BATCH_SIZE', type: 'integer', default: 50, min: 1, description: 'Memos processed per batch by the background re-encryption job' },

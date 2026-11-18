@@ -247,19 +247,22 @@ router.get('/:id', requireApiKey, exportIdSchema, asyncHandler(async (req, res, 
 router.get('/:id/download', requireApiKey, exportIdSchema, asyncHandler(async (req, res, next) => {
   try {
     if (req.params.id.startsWith('export-')) {
-      const { token, expires } = req.query;
-      if (!token || !expires) {
+      const { expires } = req.query;
+      const signature = req.query.signature || req.query.token;
+      if (!signature || !expires) {
         return res.status(400).json({
           success: false,
-          error: { code: 'MISSING_PARAMS', message: 'token and expires parameters are required' },
+          error: { code: 'MISSING_PARAMS', message: 'signature and expires parameters are required' },
         });
       }
 
-      const { filePath, format } = await DonationExportService.verifyAndGetDownload(
-        req.params.id,
-        token,
-        expires
-      );
+      const principalId = req.apiKey ? req.apiKey.id : (req.user ? req.user.id : 'anonymous');
+      const { filePath, format } = await DonationExportService.verifyAndGetDownload({
+        jobId: req.params.id,
+        principalId,
+        expires,
+        signature,
+      });
 
       if (!fs.existsSync(filePath)) {
         return res.status(404).json({
