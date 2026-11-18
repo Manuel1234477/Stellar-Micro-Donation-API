@@ -4,823 +4,142 @@
 [![Security Scan](https://github.com/Manuel1234477/Stellar-Micro-Donation-API/workflows/Security%20Scan/badge.svg)](https://github.com/Manuel1234477/Stellar-Micro-Donation-API/actions/workflows/security-scan.yml)
 [![Container Security](https://github.com/Manuel1234477/Stellar-Micro-Donation-API/workflows/Container%20Image%20Vulnerability%20Scan/badge.svg)](https://github.com/Manuel1234477/Stellar-Micro-Donation-API/actions/workflows/container-scan.yml)
 
-A Node.js/Express API for managing micro-donations on the Stellar blockchain network. Supports one-time donations, recurring donation schedules, wallet management, and donation analytics.
+A Node.js/Express API for micro-donations on the Stellar network. It supports one-time donations, recurring donation schedules, wallet management, and donation analytics.
 
-## 📋 Table of Contents
-
-- [Features](#features)
-- [Architecture](#architecture)
-- [Getting Started](#getting-started)
-- [Runtime Configuration](#runtime-configuration)
-- [API Endpoints](#api-endpoints)
-- [Database Schema](#database-schema)
+- [Quickstart](#quickstart)
+- [Configuration](#configuration)
+- [API](#api)
 - [Development](#development)
-- [Testing](#testing)
-- [Troubleshooting](#troubleshooting)
 - [Documentation](#documentation)
-## ✨ Features
+- [Contributing](#contributing)
 
-- **One-Time Donations**: Create and verify donations on Stellar testnet/mainnet
-- **Recurring Donations**: Schedule automated recurring donations (daily, weekly, monthly)
-- **Wallet Management**: Track wallets and query transaction history
-- **Analytics**: Get donation statistics and summaries
-- **API Key Rotation**: Zero-downtime key rotation with versioning and graceful deprecation
-- **Mock Mode**: Development mode with simulated Stellar operations
-- **Debug Mode**: Configurable verbose logging for local development troubleshooting
-- **Failure Simulation**: Comprehensive network failure testing for robust error handling
-- **Automated Scheduler**: Background service for executing recurring donations
-- **Rate Limiting**: Protection against abuse with configurable request limits on donation endpoints
-- **Idempotency**: Prevent duplicate transactions with idempotency key support
-- **Sensitive Data Masking**: Automatic masking of secrets, API keys, and private values in all logs
+## Quickstart
 
-## 🏗️ Architecture
+Requires Node.js 24 or later and npm 10 or later. With `MOCK_STELLAR=true` the API runs without a Stellar account or network access.
 
-### High-Level Overview
-
-```
-                                     ┌─────────────┐
-                                     │   Clients   │
-                                     │ (Web/Mobile)│
-                                     └──────┬──────┘
-                                            │ HTTP/HTTPS
-                                            ▼
-                            ┌─────────────────────────────────┐
-                            │      Express.js API Layer       │
-                            │  /donations  /wallets  /stream  │
-                            └──────┬──────────────────────────┘
-                                            │
-                                            ▼
-                            ┌─────────────────────────────────┐
-                            │       Service Layer             │
-                            │  Stellar Service | Scheduler    │
-                            └──────┬──────────────────────────┘
-                                            │
-                                ├──────────────┬────────────┐
-                                ▼              ▼            ▼
-                            ┌──────────┐   ┌──────────┐  ┌─────────┐
-                            │ SQLite   │   │ Stellar  │  │ Horizon │
-                            │ Database │   │ Network  │  │   API   │
-                            └──────────┘   └──────────┘  └─────────┘
-```
-
-For detailed architecture documentation, see:
-- [Full Architecture Documentation](docs/ARCHITECTURE.md) - Comprehensive diagrams and component details
-- [Simple Architecture Diagram](docs/ARCHITECTURE_SIMPLE.txt) - ASCII art overview
-
-### Key Components
-
-- **API Layer**: Express.js routes handling HTTP requests
-- **Service Layer**: Business logic and Stellar blockchain integration
-- **Data Layer**: SQLite database for persistent storage
-- **Scheduler**: Background service for recurring donations (runs every 60s)
-
-## 🚀 Getting Started
-
-### Prerequisites
-
-- Node.js 24 (or Node.js 22+)
-- npm or yarn
-- SQLite3
-
-### Installation
-
-1. Clone the repository:
-```bash
-git clone https://github.com/yourusername/Stellar-Micro-Donation-API.git
-cd Stellar-Micro-Donation-API
-```
-
-2. Install dependencies:
 ```bash
 npm install
-```
-
-3. Configure environment variables:
-```bash
 cp .env.example .env
-# Edit .env — at minimum set ENCRYPTION_KEY (run `npm run generate-key`) and API_KEYS
 ```
 
-4. Initialize the database:
-```bash
-npm run init-db
-```
-
-5. Start the server:
-```bash
-npm start
-```
-
-The API will be available at `http://localhost:3000`
-
-### Development Mode
-
-For development with auto-reload:
-```bash
-npm run dev
-```
-
-### Debug Mode
-
-Enable verbose logging for troubleshooting:
-```bash
-# Add to .env file
-DEBUG_MODE=true
-
-# Start server with debug logging
-npm start
-```
-
-See [Debug Mode Documentation](docs/features/DEBUG_MODE.md) for details.
-
-### Quick API Testing
-
-Get started with the API immediately using:
-
-**Option 1: Postman/Insomnia Collection**
-- Import [Stellar-Micro-Donation-API.postman_collection.json](examples/Stellar-Micro-Donation-API.postman_collection.json) into Postman or Insomnia
-- Set the `API_KEY` variable with your API key
-- All core flows are pre-configured (wallet management, donations, recurring donations, statistics, SSE)
-
-**Option 2: Curl Commands**
-- See [API_CURL_EXAMPLES.md](examples/API_CURL_EXAMPLES.md) for copy-paste curl commands
-- Covers all core flows with examples and troubleshooting tips
-
-## ⚙️ Runtime Configuration
-
-For comprehensive documentation of runtime environment assumptions, timeouts, retry logic, persistence requirements, background services, and operational procedures, see:
-
-**[RUNTIME_ASSUMPTIONS.md](./RUNTIME_ASSUMPTIONS.md)** - Complete runtime environment documentation
-
-This document covers:
-- **Network Configuration**: Timeouts, retry logic, external dependencies
-- **Persistence Layer**: Database paths, storage requirements, backup strategies
-- **Background Services**: Scheduler intervals, service behavior, lifecycle management
-- **Resource Requirements**: Memory, disk, CPU, and network requirements by deployment scale
-- **Configuration Reference**: All environment variables with validation rules
-- **Production Deployment**: Warnings, readiness checklist, monitoring recommendations
-- **Operational Procedures**: Graceful shutdown, troubleshooting guide
-
-## 📡 API Endpoints
-
-### Quick Reference
-
-For detailed request/response examples with error handling, see the **[Complete API Examples Documentation](docs/API_EXAMPLES.md)**.
-
-### Donations
-
-- `POST /donations` - Create a new donation
-- `GET /donations` - List all donations
-- `GET /donations/recent?limit=10` - Get recent donations
-- `GET /donations/:id` - Get specific donation
-- `GET /donations/limits` - Get donation amount limits
-- `POST /donations/verify` - Verify transaction on blockchain
-- `PATCH /donations/:id/status` - Update donation status
-
-### Wallets
-
-- `POST /wallets` - Create wallet metadata
-- `GET /wallets` - List all wallets
-- `GET /wallets/:id` - Get specific wallet
-- `GET /wallets/:publicKey/transactions` - Get all transactions for a wallet
-- `PATCH /wallets/:id` - Update wallet metadata
-
-### Recurring Donations (Stream)
-
-- `POST /stream/create` - Create recurring donation schedule
-- `GET /stream/schedules` - List all schedules
-- `GET /stream/schedules/:id` - Get specific schedule
-- `DELETE /stream/schedules/:id` - Cancel schedule
-
-### Statistics
-
-- `GET /stats/daily` - Get daily donation statistics
-- `GET /stats/weekly` - Get weekly donation statistics
-- `GET /stats/summary` - Get summary analytics
-- `GET /stats/donors` - Get donor statistics
-- `GET /stats/recipients` - Get recipient statistics
-- `GET /stats/analytics-fees` - Get analytics fee summary
-- `GET /stats/wallet/:walletAddress/analytics` - Get wallet analytics
-
-### Transactions
-
-- `GET /transactions` - Get paginated transactions
-- `POST /transactions/sync` - Sync wallet transactions from Stellar network
-
-### Health Check
-
-- `GET /health` - API health status
-
-## 🗄️ Database Schema
-
-### Users Table
-```sql
-CREATE TABLE users (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    publicKey TEXT NOT NULL UNIQUE,
-    createdAt DATETIME DEFAULT CURRENT_TIMESTAMP
-);
-```
-
-### Transactions Table
-```sql
-CREATE TABLE transactions (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    senderId INTEGER NOT NULL,
-    receiverId INTEGER NOT NULL,
-    amount REAL NOT NULL,
-    memo TEXT,
-    timestamp DATETIME DEFAULT CURRENT_TIMESTAMP,
-    FOREIGN KEY (senderId) REFERENCES users(id),
-    FOREIGN KEY (receiverId) REFERENCES users(id)
-);
-```
-
-### Recurring Donations Table
-```sql
-CREATE TABLE recurring_donations (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    donorId INTEGER NOT NULL,
-    recipientId INTEGER NOT NULL,
-    amount REAL NOT NULL,
-    frequency TEXT NOT NULL,
-    nextExecutionDate DATETIME NOT NULL,
-    status TEXT DEFAULT 'active',
-    executionCount INTEGER DEFAULT 0,
-    FOREIGN KEY (donorId) REFERENCES users(id),
-    FOREIGN KEY (recipientId) REFERENCES users(id)
-);
-```
-
-## 🛠️ Development
-
-### Project Structure
-
-```
-Stellar-Micro-Donation-API/
-├── src/
-│   ├── config/           # Configuration files
-│   ├── middleware/       # Express middleware
-│   ├── routes/           # API route handlers
-│   │   ├── app.js
-│   │   ├── donation.js
-│   │   ├── wallet.js
-│   │   ├── stream.js
-│   │   ├── transaction.js
-│   │   └── stats.js
-│   ├── services/         # Business logic services
-│   │   ├── StellarService.js
-│   │   ├── MockStellarService.js
-│   │   └── RecurringDonationScheduler.js
-│   ├── scripts/          # Database scripts
-│   │   └── initDB.js
-│   └── utils/            # Utility functions
-│       ├── database.js
-│       └── permissions.js
-├── data/                 # SQLite database files
-├── docs/                 # Documentation
-├── tests/                # Test files
-└── package.json
-```
-
-### API Key Permissions
-
-The API uses role-based access control (RBAC) with three roles:
-
-| Role | Permissions | Use Case |
-|------|-------------|----------|
-| **admin** | All permissions (`*`) | System administration, API key management |
-| **user** | donations:*, wallets:*, stream:*, stats:read, transactions:* | Standard API operations |
-| **guest** | donations:read, stats:read | Read-only public access |
-
-For detailed permission audit and security hardening, see [API Key Permissions Audit](docs/API_KEY_PERMISSIONS_AUDIT.md).
-
-### Environment Variables
-
-Create a `.env` file in the project root:
-
-```env
-STELLAR_NETWORK=testnet
-HORIZON_URL=https://horizon-testnet.stellar.org
-PORT=3000
-```
-
-For API key authentication, use the new database-backed system (recommended):
-```bash
-npm run keys:create -- --name "My Key" --role user --expires 365
-```
-
-Or use legacy environment-based keys (deprecated):
-```env
-API_KEYS=your-api-key-here
-```
-
-Required at startup:
-- `API_KEYS` (legacy method, or use database-backed keys)
-  - Legacy keys are rejected after `LEGACY_API_KEYS_DISABLED_AFTER` (default `2026-12-31`). See [docs/MIGRATION_LEGACY_API_KEYS.md](docs/MIGRATION_LEGACY_API_KEYS.md) for migrating to database-backed keys.
-- `ENCRYPTION_KEY` (required only when `NODE_ENV=production`)
-
-Validated at startup (if provided):
-- `PORT` must be an integer from 1 to 65535
-- `STELLAR_NETWORK` must be one of `testnet`, `mainnet`, `futurenet`
-- `MOCK_STELLAR` must be `true` or `false`
-- `HORIZON_URL` must be a valid URL
-
-### API Key Management
-
-The API supports zero-downtime key rotation. See:
-- [API Key Rotation Guide](docs/API_KEY_ROTATION.md) - Complete documentation
-- [Quick Start Guide](docs/API_KEY_ROTATION_QUICK_START.md) - Common commands
-
-Quick commands:
-```bash
-npm run keys:create -- --name "My Key" --role user --expires 365
-npm run keys:list
-npm run keys -- deprecate --id 1
-npm run keys -- revoke --id 2
-```
-
-## 🧪 Testing
-
-### Run Tests
-
-```bash
-npm test
-```
-
-### Test Isolation
-
-All tests are fully isolated and can run independently in any order:
-
-```bash
-# Run tests in random order to verify isolation
-npm test -- --randomize
-
-# Run with specific seed to reproduce order
-npm test -- --randomize --seed=123456
-```
-
-For detailed information about test isolation, see [Test Isolation Guide](docs/TEST_ISOLATION.md).
-
-### Run Tests with Coverage
-
-```bash
-npm run test:coverage
-```
-
-This generates:
-- Terminal coverage summary
-- HTML report at `coverage/lcov-report/index.html`
-- LCOV report for CI/CD integration
-- JSON summary for programmatic access
-
-### Check Coverage Thresholds
-
-```bash
-npm run check-coverage
-```
-
-Validates that coverage meets minimum thresholds:
-- **Branches**: 60%
-- **Functions**: 60%
-- **Lines**: 60%
-- **Statements**: 60%
-
-### View Coverage Report
-
-After running coverage, open the HTML report:
-
-```bash
-# macOS
-open coverage/lcov-report/index.html
-
-# Windows
-start coverage/lcov-report/index.html
-
-# Linux
-xdg-open coverage/lcov-report/index.html
-```
-
-### Coverage Enforcement
-
-Coverage is automatically enforced in CI/CD:
-- ✅ PRs must meet minimum 60% coverage thresholds
-- ❌ Builds fail if coverage drops below thresholds
-- 📊 Coverage reports uploaded as artifacts (30-day retention)
-
-For detailed coverage documentation, see [Coverage Guide](docs/COVERAGE_GUIDE.md).
-
-### Run Specific Tests
-
-```bash
-npm test -- tests/integration.test.js
-```
-
-### Run Integration Tests for Donation Routes
-
-Comprehensive end-to-end tests for all donation endpoints:
-
-```bash
-npm test tests/donation-routes-integration.test.js
-```
-
-**Coverage**: 60+ test cases covering:
-- All 7 donation endpoints
-- Success and failure scenarios
-- Validation, authentication, idempotency
-- Rate limiting and error handling
-- No live Stellar network required (uses MockStellarService)
-
-For detailed information, see [Donation Routes Integration Tests](DONATION_ROUTES_INTEGRATION_TESTS.md).
-
-### Test Recurring Donations
-
-```bash
-node test-recurring-donations.js
-```
-
-### Load Testing & Performance Baselines
-
-The load test suite drives the app with concurrent virtual users and gates CI
-on defined performance baselines (p50/p95/p99 latency, throughput, error rate)
-for `POST /donations`, `GET /donations`, and `GET /stats/summary`:
-
-```bash
-npm run test:load
-```
-
-Runs nightly via `.github/workflows/nightly-load-test.yml`, which compares
-results against production SLA targets and automatically files a GitHub
-issue if latency regresses by more than 20%. See
-[docs/LOAD_TESTING.md](docs/LOAD_TESTING.md) for thresholds, local flags, and
-how to interpret a regression.
-
-### Test Failure Scenarios
-
-The project includes comprehensive failure simulation for testing network errors and retry logic:
-
-```bash
-# Run failure simulation tests
-npm test tests/stellar-network-failures.test.js
-
-# Run retry logic tests
-npm test tests/stellar-retry-logic.test.js
-```
-
-**Failure Types Tested**:
-- Timeouts and network errors
-- Service unavailability
-- Transaction failures (bad sequence, insufficient fee)
-- Rate limiting
-- Partial responses
-
-For detailed information, see [Stellar Failure Simulation Guide](docs/STELLAR_FAILURE_SIMULATION.md).
-
-## �️ Troubleshooting
-
-Having issues? We've got you covered!
-
-### Quick Fixes
-- **Server won't start?** Check environment: `npm run validate-env`
-- **Tests failing?** Clear cache: `npx jest --clearCache`
-- **Port in use?** Kill process: `kill -9 $(lsof -ti:3000)`
-- **Dependencies broken?** Fresh install: `rm -rf node_modules package-lock.json && npm install`
-
-### Common Issues and Fixes
-
-#### `Error: ENCRYPTION_KEY is required in production`
-The server refuses to start without an encryption key when `NODE_ENV=production`.
-
-```bash
-# Generate a key
-npm run generate-key
-# Copy the output into .env
-ENCRYPTION_KEY=<64-char hex output>
-```
-
-If you are running locally, set `NODE_ENV=development` to skip enforcement, or provide a key regardless (recommended).
-
-#### Server exits immediately with "No valid API keys configured"
-`API_KEYS` is missing or empty. Add at least one key to `.env`:
-
-```env
-API_KEYS=dev_key_1234567890
-```
-
-To use the database-backed key system instead (recommended for production):
-
-```bash
-npm run keys:create -- --name "My Key" --role user --expires 365
-```
-
-#### Database not initialized / `SQLITE_ERROR: no such table`
-Run the init script before the first start:
+Edit `.env` and set:
+
+| Variable | Value |
+|----------|-------|
+| `MOCK_STELLAR` | `true` |
+| `API_KEYS` | any local key, for example `dev_key_change_me` |
+| `ENCRYPTION_KEY` | 64 hex characters from `npm run generate-key` |
+
+Then initialise the database and start the server:
 
 ```bash
 npm run init-db
+npm start
 ```
 
-If the database exists but is missing new tables introduced by a migration, run:
+Verify the server is running. The versioned health endpoint is `/api/v1/health`:
 
 ```bash
-npm run migrate
+curl http://localhost:3000/api/v1/health
 ```
 
-#### Port 3000 already in use
-Kill whatever process owns the port:
+Create a donation (replace `dev_key_change_me` with your `API_KEYS` value):
 
 ```bash
-kill -9 $(lsof -ti:3000)
+curl -X POST http://localhost:3000/api/v1/donations \
+  -H "Content-Type: application/json" \
+  -H "X-API-Key: dev_key_change_me" \
+  -d '{
+    "senderPublicKey": "GAAZI4TCR3TY5OJHCTJC2A4QSY6CJWJH5IAJTGKIN2ER7LBNVKOCCWN",
+    "recipientPublicKey": "GBRPYHIL2CI3FNQ4BXLFMNDLFJUNPU2HY3ZMFSHONUCEOASW7QC7OX2H",
+    "amount": "10.00"
+  }'
 ```
 
-Or change the port in `.env`:
+The step-by-step guide, including troubleshooting, is in [docs/quickstart.md](docs/quickstart.md).
 
-```env
-PORT=3001
-```
+## Configuration
 
-#### Optional integrations failing silently
+Settings are read from `.env` in the project root. The variables below are the ones most setups need. The full reference, with defaults and validation rules, is in [docs/CONFIGURATION.md](docs/CONFIGURATION.md).
 
-The following integrations are **completely optional**. If their env vars are absent the feature is disabled and the API continues working:
+| Variable | Required | Description |
+|----------|----------|-------------|
+| `PORT` | No (`3000`) | HTTP port, 1–65535 |
+| `API_KEYS` | Yes, unless you use database-backed keys | Comma-separated legacy keys. Rejected after `LEGACY_API_KEYS_DISABLED_AFTER` (default `2026-12-31`); see [docs/MIGRATION_LEGACY_API_KEYS.md](docs/MIGRATION_LEGACY_API_KEYS.md) |
+| `ENCRYPTION_KEY` | Yes in production | 64 hex characters. Generate with `npm run generate-key`. Changing it makes previously encrypted data unreadable |
+| `STELLAR_NETWORK` | No (`testnet`) | `testnet`, `mainnet`, or `futurenet` |
+| `MOCK_STELLAR` | No (`false`) | `true` disables all outbound Stellar calls. Use it for local development and CI |
+| `HORIZON_URL` | No | Overrides the Horizon endpoint for the selected network |
+| `DB_PATH` | No (`./data/stellar_donations.db`) | Location of the SQLite database file |
 
-| Integration | Required vars | Fallback behaviour |
-|-------------|---------------|--------------------|
-| CoinGecko price oracle | `COINGECKO_API_KEY` | Public rate-limited endpoint is used; if CoinGecko is unreachable, XLM/USD comes from the Stellar DEX orderbook |
-| IPFS certificate pinning | `PINATA_API_KEY`, `PINATA_SECRET_KEY` | Certificates stored in local memory only |
-| Email receipts (SMTP) | `SMTP_HOST`, `SMTP_USER`, `SMTP_PASS`, `SMTP_FROM` | Email delivery skipped/graceful failure |
-| Geographic IP blocking | `GEO_BLOCKED_COUNTRIES`, `MAXMIND_DB_PATH` | All IPs allowed; no geo rules applied |
-| KMS key wrapping | `KMS_KEY_ID`, `AWS_REGION` | Software-only encryption is used |
-| Webhooks (external) | `WEBHOOK_SECRET` | Outbound webhooks still fire; no signature |
+Check your configuration before starting:
 
-To confirm which integrations are active at runtime, call `GET /health` — the response includes dependency status.
-
-#### Missing `.env` file
 ```bash
-cp .env.example .env
-# Then edit .env — at minimum set ENCRYPTION_KEY and API_KEYS
+npm run validate-env
 ```
 
-#### Mock mode for local development
-Avoid needing a real Stellar account during development:
+## API
 
-```env
-MOCK_STELLAR=true
+All endpoints are versioned under `/api/v1`. Authenticate every request with the `X-API-Key` header. Use `npm run keys:create` to create database-backed keys and `npm run keys:list` to list them. For roles and permissions, see [docs/authentication.md](docs/authentication.md) and [docs/PERMISSIONS.md](docs/PERMISSIONS.md).
+
+| Area | Endpoints |
+|------|-----------|
+| Donations | `POST /api/v1/donations`, `GET /api/v1/donations`, `GET /api/v1/donations/recent`, `GET /api/v1/donations/:id`, `POST /api/v1/donations/verify` |
+| Wallets | `POST /api/v1/wallets`, `GET /api/v1/wallets`, `GET /api/v1/wallets/:id`, `GET /api/v1/wallets/:publicKey/transactions` |
+| Recurring donations | `POST /api/v1/stream/create`, `GET /api/v1/stream/schedules`, `GET /api/v1/stream/schedules/:id`, `DELETE /api/v1/stream/schedules/:id` |
+| Statistics | `GET /api/v1/stats/daily`, `GET /api/v1/stats/weekly`, `GET /api/v1/stats/summary`, `GET /api/v1/stats/donors`, `GET /api/v1/stats/recipients` |
+| Transactions | `GET /api/v1/transactions`, `POST /api/v1/transactions/sync` |
+| Health | `GET /api/v1/health` |
+
+- Endpoint reference with request and response shapes: [docs/api-reference.md](docs/api-reference.md)
+- Machine-readable OpenAPI spec: [docs/openapi.json](docs/openapi.json)
+- Copy-paste examples: [docs/API_EXAMPLES.md](docs/API_EXAMPLES.md) and [examples/API_CURL_EXAMPLES.md](examples/API_CURL_EXAMPLES.md)
+- Postman collection: [examples/Stellar-Micro-Donation-API.postman_collection.json](examples/Stellar-Micro-Donation-API.postman_collection.json)
+
+## Development
+
+Run `npm run` to list every script. The commands contributors use most often are:
+
+| Command | Purpose |
+|---------|---------|
+| `npm test` | Run the Jest test suite |
+| `npm run test:coverage` | Run tests with coverage; `npm run check-coverage` enforces the thresholds |
+| `npm run lint` | Run ESLint |
+| `npm run typecheck` | Run TypeScript type checking |
+| `npm run migrate` | Apply pending database migrations |
+| `npm run openapi:check` | Verify the committed OpenAPI spec matches the route annotations |
+| `npm run examples:validate` | Validate the example requests in `examples/` |
+| `npm run check:docs` | Verify README and docs links, script references, and API paths |
+
+Project layout:
+
+```
+src/        Application code: routes, services, middleware, migrations, utils
+tests/      Jest test suites
+scripts/    Maintenance, validation, and generation scripts
+docs/       Reference documentation (start at docs/README.md)
+examples/   Curl examples and the Postman collection
+monitoring/ Prometheus alert rules and Grafana dashboards
 ```
 
-### Get Help
-- **[Full Troubleshooting Guide](docs/DEVELOPER_TROUBLESHOOTING_GUIDE.md)** - Comprehensive solutions
-- **[Quick Reference](docs/TROUBLESHOOTING_QUICK_REFERENCE.md)** - Fast fixes for common problems
-- Check [GitHub Issues](../../issues) for known problems
-- Search [Discussions](../../discussions) for community help
+For coverage and test conventions, see [docs/COVERAGE_GUIDE.md](docs/COVERAGE_GUIDE.md). For CI, see [docs/CI_PIPELINE.md](docs/CI_PIPELINE.md). For load tests, run `npm run test:load` and see [docs/LOAD_TESTING.md](docs/LOAD_TESTING.md).
 
-### Debug Mode
-Enable detailed logging for troubleshooting:
-```bash
-DEBUG_MODE=true LOG_VERBOSE=true npm start
-```
+## Documentation
 
----
+The full documentation index is at [docs/README.md](docs/README.md). Frequently used guides:
 
-## ⚙️ Environment Variable Reference
+- [Quickstart](docs/quickstart.md): first run, end to end
+- [Configuration](docs/CONFIGURATION.md): every environment variable
+- [Architecture](docs/architecture/ARCHITECTURE.md): components and data flow
+- [Deployment](docs/deployment.md) and [Production deployment](docs/PRODUCTION_DEPLOYMENT.md)
+- [Troubleshooting](docs/DEVELOPER_TROUBLESHOOTING_GUIDE.md) and [quick reference](docs/TROUBLESHOOTING_QUICK_REFERENCE.md)
+- [API key rotation](docs/API_KEY_ROTATION.md)
+- [Stellar concepts](docs/stellar-concepts.md) for contributors new to Stellar
 
-All variables are read from the `.env` file in the project root (see `.env.example`).
+## Contributing
 
-### Server
+Read [CONTRIBUTING.md](CONTRIBUTING.md) before opening a pull request. All CI checks must pass before merge. Report security vulnerabilities privately as described in [SECURITY.md](SECURITY.md); do not open public issues for them.
 
-| Variable | Required | Default | Description |
-|----------|----------|---------|-------------|
-| `PORT` | No | `3000` | Port the HTTP server listens on (1–65535) |
-| `NODE_ENV` | No | `development` | Runtime environment (`development` \| `production` \| `test`) |
+## License
 
-### Authentication
-
-| Variable | Required | Default | Description |
-|----------|----------|---------|-------------|
-| `API_KEYS` | **Yes** (legacy) | — | Comma-separated list of accepted API keys. Not needed when using database-backed keys exclusively. |
-
-### Encryption
-
-| Variable | Required | Default | Description |
-|----------|----------|---------|-------------|
-| `ENCRYPTION_KEY` | **Yes** in production | — | 64-character hex string (32 bytes) used to encrypt sensitive data. Generate with `npm run generate-key`. Changing this makes previously-encrypted data unrecoverable. |
-
-### Stellar Network
-
-| Variable | Required | Default | Description |
-|----------|----------|---------|-------------|
-| `STELLAR_NETWORK` | No | `testnet` | Target network: `testnet` \| `mainnet` \| `futurenet` |
-| `MOCK_STELLAR` | No | `true` | When `true`, no outbound Stellar calls are made. Recommended for local dev and CI. |
-| `HORIZON_URL` | No | network default | Override the Horizon API endpoint |
-
-### Database
-
-| Variable | Required | Default | Description |
-|----------|----------|---------|-------------|
-| `DB_PATH` | No | `./data/stellar_donations.db` | Path to the SQLite file |
-| `DB_POOL_SIZE` | No | `5` | Number of pooled SQLite connections |
-| `DB_ACQUIRE_TIMEOUT` | No | `10000` | Milliseconds to wait for a connection before timing out |
-
-### CORS
-
-| Variable | Required | Default | Description |
-|----------|----------|---------|-------------|
-| `CORS_ALLOWED_ORIGINS` | No | `http://localhost:3000,...` | Comma-separated allowed origins for browser clients |
-| `CORS_ALLOWED_METHODS` | No | standard verbs | Override allowed HTTP methods |
-| `CORS_ALLOWED_HEADERS` | No | standard headers | Override allowed request headers |
-| `CORS_MAX_AGE` | No | `86400` | Preflight cache duration in seconds |
-
-### Logging
-
-| Variable | Required | Default | Description |
-|----------|----------|---------|-------------|
-| `DEBUG_MODE` | No | `false` | Enable verbose debug logging. **Never enable in production.** |
-| `LOG_TO_FILE` | No | `false` | Write logs to files in addition to stdout |
-| `LOG_DIR` | No | `./logs` | Directory for log files (used when `LOG_TO_FILE=true`) |
-| `LOG_VERBOSE` | No | `false` | Include request/response bodies in console output |
-
-### Donation Limits
-
-| Variable | Required | Default | Description |
-|----------|----------|---------|-------------|
-| `MIN_DONATION_AMOUNT` | No | `0.01` | Minimum donation amount in XLM |
-| `MAX_DONATION_AMOUNT` | No | `10000` | Maximum donation amount in XLM |
-| `MAX_DAILY_DONATION_PER_DONOR` | No | `0` (no limit) | Daily cap per donor in XLM |
-
-### Rate Limiting
-
-| Variable | Required | Default | Description |
-|----------|----------|---------|-------------|
-| `RATE_LIMIT` | No | `100` | Maximum requests per IP per window |
-| `AUTH_TOKEN_RATE_LIMIT` | No | `10` | Auth token endpoint requests per minute per IP |
-| `AUTH_REFRESH_RATE_LIMIT` | No | `20` | Auth refresh endpoint requests per minute per IP |
-
-### Optional Integrations
-
-All variables in this section are **optional**. Omitting them disables the integration gracefully.
-
-#### CoinGecko (Price Oracle)
-
-| Variable | Default | Description |
-|----------|---------|-------------|
-| `COINGECKO_API_KEY` | — | API key for XLM/fiat rates. Without it the public (rate-limited) endpoint is used. |
-| `XLM_USDC_ASSET` | Circle USDC for the active network | `CODE:ISSUER` used for the Stellar DEX price fallback (XLM/USDC mid-market price). |
-
-#### IPFS Certificate Pinning (Pinata)
-
-| Variable | Default | Description |
-|----------|---------|-------------|
-| `PINATA_API_KEY` | — | Pinata API key for IPFS certificate pinning |
-| `PINATA_SECRET_KEY` | — | Pinata secret key |
-| `IPFS_GATEWAY_URL` | `https://gateway.pinata.cloud/ipfs` | Public IPFS gateway base URL |
-
-#### Email Receipts (SMTP)
-
-| Variable | Default | Description |
-|----------|---------|-------------|
-| `SMTP_HOST` | — | SMTP relay hostname |
-| `SMTP_PORT` | `587` | SMTP port |
-| `SMTP_SECURE` | `false` | Use TLS (`true`) or STARTTLS (`false`) |
-| `SMTP_USER` | — | SMTP authentication username |
-| `SMTP_PASS` | — | SMTP authentication password |
-| `SMTP_FROM` | — | Sender address (must be verified with your provider) |
-
-#### Geographic IP Blocking
-
-| Variable | Default | Description |
-|----------|---------|-------------|
-| `GEO_BLOCKED_COUNTRIES` | — | Comma-separated ISO country codes to block (e.g. `RU,IR,KP`) |
-| `GEO_ALLOWED_COUNTRIES` | — | Comma-separated ISO country codes to always allow (overrides blocked list) |
-| `GEO_ALLOWED_IPS` | — | Comma-separated IPs / CIDR ranges that bypass geo-blocking |
-| `MAXMIND_DB_PATH` | `./data/GeoLite2-Country.mmdb` | Path to MaxMind GeoLite2 database file |
-
-#### KMS Key Wrapping
-
-| Variable | Default | Description |
-|----------|---------|-------------|
-| `KMS_KEY_ID` | — | AWS KMS key ID or ARN for envelope encryption |
-| `AWS_REGION` | — | AWS region for KMS calls |
-
-#### Webhooks
-
-| Variable | Default | Description |
-|----------|---------|-------------|
-| `WEBHOOK_SECRET` | — | HMAC secret used to sign outbound webhook payloads |
-| `SIGNED_URL_EXPIRY_MS` | `3600000` (1 hour) | Expiry for signed export download URLs |
-
-#### Service Account
-
-| Variable | Default | Description |
-|----------|---------|-------------|
-| `SERVICE_SECRET_KEY` | — | Stellar secret key for service-side signing. **Never commit a real key.** |
-
-## 🔧 Configuration
-
-### Stellar Network
-
-The API can work with both Stellar testnet and mainnet. Configure via environment variables:
-
-- **Testnet** (default): For development and testing
-- **Mainnet**: For production use
-
-### Recurring Donation Scheduler
-
-The scheduler runs automatically when the server starts and checks for due donations every 60 seconds. It can be configured in `src/services/RecurringDonationScheduler.js`.
-
-## 📚 Documentation
-
-### Getting Started
-- **[API Examples](docs/API_EXAMPLES.md)** - Complete request/response examples for all endpoints
-- **[Webhook verification](docs/WEBHOOK_VERIFICATION.md)** - Verify outbound webhook authenticity with timestamped HMAC signatures
-- **[Quick Start Guide](QUICK_START.md)** - Getting started quickly
-- **[Troubleshooting Guide](docs/DEVELOPER_TROUBLESHOOTING_GUIDE.md)** - Solutions for common issues
-- **[Quick Reference](docs/TROUBLESHOOTING_QUICK_REFERENCE.md)** - Fast fixes for common problems
-
-### Technical Documentation
-- **[Architecture Documentation](docs/ARCHITECTURE.md)** - Detailed system architecture
-- **[Database Schema](docs/DATABASE_SCHEMA.md)** - ER diagram and per-table column reference
-- **[SEP Compliance](docs/SEP_COMPLIANCE.md)** - SEP-10 web auth, SEP-2 federation, and stellar.toml
-- **[Versioning Strategy](docs/VERSIONING_STRATEGY.md)** - SemVer rules, release flow, and breaking change policy
-- **[Stellar Failure Simulation](docs/STELLAR_FAILURE_SIMULATION.md)** - Network failure testing guide
-- **[API Flow Diagram](API%20flow%20diagram.txt)** - API request flow
-- **[Mock Stellar Guide](MOCK_STELLAR_GUIDE.md)** - Using mock Stellar service
-- **[Kubernetes Probes](docs/KUBERNETES_PROBES.md)** - Liveness and readiness probe configuration
-- **[Container Security](docs/CONTAINER_SECURITY.md)** - Container image vulnerability scanning and remediation
-
-### Development & Deployment
-- **[Pre-Deployment Checklist](docs/guides/PRE_DEPLOYMENT_CHECKLIST.md)** - Production deployment verification
-- **[CI Pipeline Documentation](docs/CI_PIPELINE.md)** - Understanding CI/CD workflows
-- **[Test Coverage Guide](docs/COVERAGE_GUIDE.md)** - Writing and maintaining tests
-
-## 🤝 Contributing
-
-Please read our **[Contributing Guide](CONTRIBUTING.md)** before submitting a PR.
-
-For security vulnerabilities, see our **[Security Policy](SECURITY.md)** — please do not open public issues for security reports.
-
-**New to the project?** Check out our [Onboarding Checklist](ONBOARDING_CHECKLIST.md) for a step-by-step guide to getting started!
-
-1. Fork the repository
-2. Create a feature branch (`git checkout -b feature/amazing-feature`)
-3. Make your changes and add tests
-4. Run tests locally (`npm test`)
-5. Check coverage (`npm run test:coverage`)
-6. Ensure coverage thresholds are met (`npm run check-coverage`)
-7. Commit your changes (`git commit -m 'Add amazing feature'`)
-8. Push to the branch (`git push origin feature/amazing-feature`)
-9. Open a Pull Request
-
-**Note:** All CI checks must pass before merge, including:
-- ✅ All tests passing
-- ✅ Coverage thresholds met (60% minimum)
-- ✅ Linting checks passed
-- ✅ Security checks passed
-
-See [Branch Protection](docs/BRANCH_PROTECTION.md) and [Coverage Guide](docs/COVERAGE_GUIDE.md) for details.
-
-## 📝 License
-
-This project is licensed under the MIT License.
-
-## 🙏 Acknowledgments
-
-- [Stellar Development Foundation](https://www.stellar.org/) - Blockchain platform
-- [Stellar SDK](https://github.com/stellar/js-stellar-sdk) - JavaScript SDK for Stellar
-
-## 📞 Support
-
-For issues and questions:
-- Open an issue on GitHub
-- Check the [documentation](docs/)
-- Review the [architecture guide](docs/ARCHITECTURE.md)
-
----
-
-Built with ❤️ using Node.js and Stellar
-
-
-## 📚 Documentation
-
-For comprehensive documentation, see the [Documentation Index](docs/README.md).
-
-### Key Documentation
-
-- **[Pre-Deployment Checklist](docs/guides/PRE_DEPLOYMENT_CHECKLIST.md)** - Production deployment verification
-- **[Quick Start Guide](docs/guides/QUICK_START.md)** - Get started quickly
-- **[API Examples](docs/API_EXAMPLES.md)** - Complete API usage examples
-- **[Coverage Guide](docs/COVERAGE_GUIDE.md)** - Test coverage documentation
-- **[Mock Stellar Guide](docs/guides/MOCK_STELLAR_GUIDE.md)** - Testing without network calls
-- **[Versioning Strategy](docs/VERSIONING_STRATEGY.md)** - SemVer rules, release flow, and breaking change policy
-
-## Handsoff notes
-
-<!-- handsoff-issue-1731 -->
-- #1731: Account merge endpoint does not return the merge result or soft-delete the source wallet
-
-<!-- handsoff-issue-1772 -->
-- #1772: Continue decomposing DonationService.js (2,552 lines)
-
-<!-- handsoff-issue-1773 -->
-- #1773: Merge duplicate sequence-number managers (utils/sequenceManager.js, services/SequenceManager.js, SequenceCacheService)
-
-<!-- handsoff-issue-1911 -->
-- #1911: Leaderboard tests fail with "wallets.filter is not a function"
+This project is licensed under the MIT License. See [LICENSE](LICENSE).

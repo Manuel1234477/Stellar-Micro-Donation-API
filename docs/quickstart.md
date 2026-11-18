@@ -4,14 +4,14 @@ Get the Stellar Micro-Donation API running locally in under 10 minutes.
 
 ## Prerequisites
 
-- **Node.js v20 or higher** (`node --version` must print `v20.x.x` or later)
+- **Node.js v24 or higher** (`node --version` must print `v24.x.x` or later)
 - **npm v10 or higher**
 - **Git**
 - **SQLite3** (usually pre-installed on macOS and most Linux distributions)
 
 > **Verify your Node version:**
 > ```bash
-> node --version   # must be ≥ v20.0.0
+> node --version   # must be ≥ v24.0.0
 > npm --version    # must be ≥ v10.0.0
 > ```
 
@@ -83,7 +83,7 @@ Both commands are idempotent — safe to re-run.
 npm start
 ```
 
-The API is now available at `http://localhost:3000`.
+The API is now available at `http://localhost:3000`. All endpoints are served under `/api/v1`.
 
 Expected output:
 ```
@@ -98,7 +98,7 @@ Mock Stellar mode: enabled
 ## 6. Verify It Works
 
 ```bash
-curl http://localhost:3000/health
+curl http://localhost:3000/api/v1/health
 ```
 
 Expected response:
@@ -112,7 +112,7 @@ Expected response:
 ## 7. Make Your First Donation
 
 ```bash
-curl -s -X POST http://localhost:3000/donations \
+curl -s -X POST http://localhost:3000/api/v1/donations \
   -H "Content-Type: application/json" \
   -H "X-API-Key: dev_key_123" \
   -d '{
@@ -135,7 +135,7 @@ A successful response returns HTTP 201 with the created donation object:
 }
 ```
 
-> **Note:** The base path for the API is `/` (no `/api/v1` prefix). Use `/donations`, `/wallets`, `/health`, etc.
+> **Note:** Every endpoint is versioned. Use `/api/v1/donations`, `/api/v1/wallets`, `/api/v1/health`, and so on. Unversioned paths are no longer served.
 
 ---
 
@@ -154,7 +154,7 @@ All tests use an isolated in-memory SQLite database — no cleanup needed betwee
 - [API Reference](./api-reference.md) — all endpoints with request/response examples
 - [API Examples](./API_EXAMPLES.md) — copy-paste curl commands for every flow
 - [Authentication Guide](./authentication.md) — API key setup and RBAC
-- [Architecture Overview](./architecture.md) — how the system fits together
+- [Architecture Overview](./architecture/ARCHITECTURE.md) — how the system fits together
 - [SEP Compliance](./SEP_COMPLIANCE.md) — SEP-10 web auth and federation
 - [Database Schema](./DATABASE_SCHEMA.md) — ER diagram and per-table column reference
 - [Stellar Concepts](./stellar-concepts.md) — blockchain background for new contributors
@@ -166,7 +166,7 @@ All tests use an isolated in-memory SQLite database — no cleanup needed betwee
 
 | Problem | Fix |
 |---------|-----|
-| `node: version must be ≥ 20` | Install Node.js 20+ from https://nodejs.org |
+| `node: version must be ≥ 24` | Install Node.js 24+ from https://nodejs.org |
 | Port in use | Set `PORT=3001` in `.env` |
 | `API_KEYS` missing error | Add `API_KEYS=dev_key_123` to `.env` |
 | `ENCRYPTION_KEY is required` | Run `npm run generate-key` and add the value to `.env` |
