@@ -42,9 +42,15 @@
               "raw": "{\n  \"address\": \"{{WALLET_PUBLIC_KEY}}\",\n  \"name\": \"My Donation Wallet\",\n  \"metadata\": {\n    \"region\": \"US\",\n    \"donorType\": \"individual\"\n  }\n}\n"
             },
             "url": {
-              "raw": "{{BASE_URL}}/wallets",
-              "host": ["{{BASE_URL}}"],
-              "path": ["wallets"]
+              "raw": "{{BASE_URL}}/api/v1/wallets",
+              "host": [
+                "{{BASE_URL}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "wallets"
+              ]
             }
           }
         },
@@ -59,9 +65,17 @@
               }
             ],
             "url": {
-              "raw": "{{BASE_URL}}/wallets/{{WALLET_PUBLIC_KEY}}/transactions",
-              "host": ["{{BASE_URL}}"],
-              "path": ["wallets", "{{WALLET_PUBLIC_KEY}}", "transactions"]
+              "raw": "{{BASE_URL}}/api/v1/wallets/{{WALLET_PUBLIC_KEY}}/transactions",
+              "host": [
+                "{{BASE_URL}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "wallets",
+                "{{WALLET_PUBLIC_KEY}}",
+                "transactions"
+              ]
             }
           }
         }
@@ -89,9 +103,15 @@
               "raw": "{\n  \"senderId\": 1,\n  \"receiverId\": 2,\n  \"amount\": \"50.00\",\n  \"memo\": \"Education fund donation\",\n  \"sdgCategories\": [\"04\"]\n}\n"
             },
             "url": {
-              "raw": "{{BASE_URL}}/donations",
-              "host": ["{{BASE_URL}}"],
-              "path": ["donations"]
+              "raw": "{{BASE_URL}}/api/v1/donations",
+              "host": [
+                "{{BASE_URL}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "donations"
+              ]
             }
           }
         },
@@ -114,9 +134,15 @@
               "raw": "{\n  \"donor\": \"{{DONOR_PUBLIC_KEY}}\",\n  \"recipient\": \"{{RECIPIENT_PUBLIC_KEY}}\",\n  \"amount\": \"50.00\",\n  \"memo\": \"Education fund donation\"\n}\n"
             },
             "url": {
-              "raw": "{{BASE_URL}}/donations",
-              "host": ["{{BASE_URL}}"],
-              "path": ["donations"]
+              "raw": "{{BASE_URL}}/api/v1/donations",
+              "host": [
+                "{{BASE_URL}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "donations"
+              ]
             }
           }
         },
@@ -131,9 +157,16 @@
               }
             ],
             "url": {
-              "raw": "{{BASE_URL}}/donations/recent?limit=10",
-              "host": ["{{BASE_URL}}"],
-              "path": ["donations", "recent"],
+              "raw": "{{BASE_URL}}/api/v1/donations/recent?limit=10",
+              "host": [
+                "{{BASE_URL}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "donations",
+                "recent"
+              ],
               "query": [
                 {
                   "key": "limit",
@@ -162,9 +195,16 @@
               "raw": "{\n  \"transactionHash\": \"{{TRANSACTION_HASH}}\"\n}\n"
             },
             "url": {
-              "raw": "{{BASE_URL}}/donations/verify",
-              "host": ["{{BASE_URL}}"],
-              "path": ["donations", "verify"]
+              "raw": "{{BASE_URL}}/api/v1/donations/verify",
+              "host": [
+                "{{BASE_URL}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "donations",
+                "verify"
+              ]
             }
           }
         }
@@ -192,9 +232,16 @@
               "raw": "{\n  \"donorPublicKey\": \"{{DONOR_PUBLIC_KEY}}\",\n  \"recipientPublicKey\": \"{{RECIPIENT_PUBLIC_KEY}}\",\n  \"amount\": \"25.00\",\n  \"frequency\": \"monthly\",\n  \"startDate\": \"2026-07-01\"\n}\n"
             },
             "url": {
-              "raw": "{{BASE_URL}}/stream/create",
-              "host": ["{{BASE_URL}}"],
-              "path": ["stream", "create"]
+              "raw": "{{BASE_URL}}/api/v1/stream/create",
+              "host": [
+                "{{BASE_URL}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "stream",
+                "create"
+              ]
             }
           }
         },
@@ -209,9 +256,16 @@
               }
             ],
             "url": {
-              "raw": "{{BASE_URL}}/stream/schedules",
-              "host": ["{{BASE_URL}}"],
-              "path": ["stream", "schedules"]
+              "raw": "{{BASE_URL}}/api/v1/stream/schedules",
+              "host": [
+                "{{BASE_URL}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "stream",
+                "schedules"
+              ]
             }
           }
         },
@@ -226,9 +280,17 @@
               }
             ],
             "url": {
-              "raw": "{{BASE_URL}}/stream/schedules/{{SCHEDULE_ID}}",
-              "host": ["{{BASE_URL}}"],
-              "path": ["stream", "schedules", "{{SCHEDULE_ID}}"]
+              "raw": "{{BASE_URL}}/api/v1/stream/schedules/{{SCHEDULE_ID}}",
+              "host": [
+                "{{BASE_URL}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "stream",
+                "schedules",
+                "{{SCHEDULE_ID}}"
+              ]
             }
           }
         }
@@ -248,9 +310,16 @@
               }
             ],
             "url": {
-              "raw": "{{BASE_URL}}/stats/daily",
-              "host": ["{{BASE_URL}}"],
-              "path": ["stats", "daily"]
+              "raw": "{{BASE_URL}}/api/v1/stats/daily",
+              "host": [
+                "{{BASE_URL}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "stats",
+                "daily"
+              ]
             }
           }
         },
@@ -265,9 +334,16 @@
               }
             ],
             "url": {
-              "raw": "{{BASE_URL}}/stats/weekly",
-              "host": ["{{BASE_URL}}"],
-              "path": ["stats", "weekly"]
+              "raw": "{{BASE_URL}}/api/v1/stats/weekly",
+              "host": [
+                "{{BASE_URL}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "stats",
+                "weekly"
+              ]
             }
           }
         },
@@ -282,9 +358,16 @@
               }
             ],
             "url": {
-              "raw": "{{BASE_URL}}/stats/summary",
-              "host": ["{{BASE_URL}}"],
-              "path": ["stats", "summary"]
+              "raw": "{{BASE_URL}}/api/v1/stats/summary",
+              "host": [
+                "{{BASE_URL}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "stats",
+                "summary"
+              ]
             }
           }
         },
@@ -299,9 +382,16 @@
               }
             ],
             "url": {
-              "raw": "{{BASE_URL}}/stats/donors",
-              "host": ["{{BASE_URL}}"],
-              "path": ["stats", "donors"]
+              "raw": "{{BASE_URL}}/api/v1/stats/donors",
+              "host": [
+                "{{BASE_URL}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "stats",
+                "donors"
+              ]
             }
           }
         }
@@ -321,9 +411,16 @@
               }
             ],
             "url": {
-              "raw": "{{BASE_URL}}/stream/transactions",
-              "host": ["{{BASE_URL}}"],
-              "path": ["stream", "transactions"]
+              "raw": "{{BASE_URL}}/api/v1/stream/transactions",
+              "host": [
+                "{{BASE_URL}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "stream",
+                "transactions"
+              ]
             }
           }
         },
@@ -338,9 +435,16 @@
               }
             ],
             "url": {
-              "raw": "{{BASE_URL}}/stream/leaderboard",
-              "host": ["{{BASE_URL}}"],
-              "path": ["stream", "leaderboard"]
+              "raw": "{{BASE_URL}}/api/v1/stream/leaderboard",
+              "host": [
+                "{{BASE_URL}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "stream",
+                "leaderboard"
+              ]
             }
           }
         }
@@ -352,9 +456,15 @@
         "method": "GET",
         "header": [],
         "url": {
-          "raw": "{{BASE_URL}}/health",
-          "host": ["{{BASE_URL}}"],
-          "path": ["health"]
+          "raw": "{{BASE_URL}}/api/v1/health",
+          "host": [
+            "{{BASE_URL}}"
+          ],
+          "path": [
+            "api",
+            "v1",
+            "health"
+          ]
         }
       }
     }
@@ -362,7 +472,7 @@
   "variable": [
     {
       "key": "BASE_URL",
-      "value": "http://localhost:3000/api/v1",
+      "value": "http://localhost:3000",
       "type": "string"
     },
     {
