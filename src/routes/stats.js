@@ -1,3 +1,4 @@
+const { bestEffort } = require('../utils/bestEffort');
 /**
  * Stats Routes - API Endpoint Layer
  * 
@@ -174,7 +175,7 @@ function auditStatsAccess(req, res, next) {
     ipAddress: req.ip,
     resource: req.path,
     details: { query: req.query, params: req.params }
-  }).catch(() => {});
+  }).catch(bestEffort('src/routes/stats.js:177'));
   next();
 }
 

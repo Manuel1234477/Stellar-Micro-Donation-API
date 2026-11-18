@@ -11,6 +11,7 @@
  */
 
 'use strict';
+const { bestEffort } = require('./bestEffort');
 
 const Database = require('./database');
 const fs = require('fs');
@@ -938,7 +939,7 @@ async function run({ exitOnFailure = false } = {}) {
   ];
 
   // Non-blocking DB integrity check — log result but never fail startup
-  runDbIntegrityCheck().catch(() => {});
+  runDbIntegrityCheck().catch(bestEffort('src/utils/startupChecks.js:941'));
 
   const passed = criticalResults.every(Boolean);
 

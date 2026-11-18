@@ -337,7 +337,33 @@ function recordLegacyPathRequest(path, apiKeyId) {
       path: normaliseRoute(path || 'unknown'),
       api_key: apiKeyId || 'anonymous',
     });
-  } catch (_) {}
+  } catch (_) {
+    // Metrics must never break the request path; this failure is intentionally ignored.
+  }
+}
+
+/**
+ * Counter: best-effort side effects that failed and were logged instead of
+ * propagated (#1946). Label `site` is the call site ("relative/path:line").
+ * @type {client.Counter}
+ */
+const bestEffortFailuresTotal = new client.Counter({
+  name: 'best_effort_failures_total',
+  help: 'Best-effort operations (audit, webhook, cleanup) that failed and were logged',
+  labelNames: ['site'],
+  registers: [registry],
+});
+
+/**
+ * Records a failed best-effort operation.
+ * @param {string} site Call-site label
+ */
+function recordBestEffortFailure(site) {
+  try {
+    bestEffortFailuresTotal.inc({ site: String(site || 'unknown') });
+  } catch (_) {
+    // Metrics must never break the caller; the failure is already logged.
+  }
 }
 
 /**
@@ -363,7 +389,9 @@ function recordRequestTimeout(path, timeoutMs) {
       route: normaliseRoute(path || 'unknown'),
       timeout_ms: String(timeoutMs),
     });
-  } catch (_) {}
+  } catch (_) {
+    // Metrics must never break the request path; this failure is intentionally ignored.
+  }
 }
 
 /**
@@ -470,6 +498,9 @@ module.exports = {
   recurringDonationsSkippedTotal,
   // Process error metrics (#1928)
   processUnhandledRejectionsTotal,
+  // Best-effort failure metrics (#1946)
+  bestEffortFailuresTotal,
+  recordBestEffortFailure,
   // Request timeout metrics (#1948)
   requestTimeoutsTotal,
   recordRequestTimeout,

@@ -68,6 +68,8 @@ jobs:
       # Suites must not leak env/global state or share fixtures across workers.
       - run: npm run check:isolation
       - run: npm run check:i18n-orphans
+      # #1946: no silently swallowed errors in src/ (use bestEffort() or comment why).
+      - run: npm run check:no-silent-catch
       # Runtime data (backups, JSON stores, SQLite files, memo keys) must stay untracked.
       - run: npm run check:no-tracked-artifacts
       - run: npm run validate:rbac

@@ -1,3 +1,4 @@
+const { bestEffort } = require('../utils/bestEffort');
 /**
  * Donation Service - Business Logic Layer
  * 
@@ -173,7 +174,7 @@ class DonationService {
             donation.overpaymentDetails = overpayment;
             donation.overpaymentReturnStatus = donation.overpaymentReturnStatus || 'pending';
             Transaction.saveTransactions(Transaction.loadTransactions());
-            WebhookService.deliver('donation.overpayment_detected', { donationId, excessAmount: overpayment.excessAmount, receivedAmount: onChainAmount, donationAmount }).catch(() => {});
+            WebhookService.deliver('donation.overpayment_detected', { donationId, excessAmount: overpayment.excessAmount, receivedAmount: onChainAmount, donationAmount }).catch(bestEffort('src/services/DonationService.js:176'));
           }
         }
 
@@ -934,7 +935,7 @@ class DonationService {
         excessAmount: overpayment.excessAmount,
         donor: sanitizedDonor,
         recipient: sanitizedRecipient,
-      }).catch(() => {});
+      }).catch(bestEffort('src/services/DonationService.js:937'));
     }
 
     const sourceAssetProvided = sourceAsset !== undefined && sourceAsset !== null;
@@ -1472,7 +1473,7 @@ class DonationService {
       requestId,
       resource: `donation:${id}`,
       details: { donationId: id, signerKeyId, approvalsCount: approvals.length, required },
-    }).catch(() => {});
+    }).catch(bestEffort('src/services/DonationService.js:1475'));
 
     const fullyApproved = approvals.length >= required;
 
@@ -1498,7 +1499,7 @@ class DonationService {
           requestId,
           resource: `donation:${id}`,
           details: { donationId: id, error: err.message },
-        }).catch(() => {});
+        }).catch(bestEffort('src/services/DonationService.js:1501'));
         throw new BusinessLogicError(
           ERROR_CODES.TRANSACTION_FAILED,
           `Approved donation ${id} failed to submit: ${err.message}`
@@ -1519,7 +1520,7 @@ class DonationService {
         requestId,
         resource: `donation:${id}`,
         details: { donationId: id, stellarTxId: stellarResult.transactionId, approvals: approvals.length },
-      }).catch(() => {});
+      }).catch(bestEffort('src/services/DonationService.js:1522'));
 
       if (updated.campaign_id) {
         await this.processCampaignContribution(updated.campaign_id, String(updated.amount)).catch(err => {
@@ -1567,7 +1568,7 @@ class DonationService {
           result: 'SUCCESS',
           resource: `donation:${tx.id}`,
           details: { donationId: tx.id, approvalExpiresAt: tx.approvalExpiresAt },
-        }).catch(() => {});
+        }).catch(bestEffort('src/services/DonationService.js:1570'));
         expired++;
       }
     }
@@ -2434,7 +2435,7 @@ class DonationService {
     donation.overpaymentReturnStatus = 'completed';
     donation.overpaymentReturnTxId = reverseResult.transactionId;
     Transaction.saveTransactions(Transaction.loadTransactions());
-    await WebhookService.deliver('donation.overpayment_returned', { donationId, amount, transactionId: reverseResult.transactionId, requestId }).catch(() => {});
+    await WebhookService.deliver('donation.overpayment_returned', { donationId, amount, transactionId: reverseResult.transactionId, requestId }).catch(bestEffort('src/services/DonationService.js:2437'));
     return { donationId, amount, status: 'completed', reverseTxId: reverseResult.transactionId, ledger: reverseResult.ledger };
   }
 
@@ -2654,7 +2655,7 @@ class DonationService {
       reverseTxId: reverseResult.transactionId,
       reason: reason || null,
       refundedAt: new Date().toISOString(),
-    }).catch(() => {});
+    }).catch(bestEffort('src/services/DonationService.js:2657'));
 
     // Log refund in audit trail
     await AuditLogService.log({

@@ -1,3 +1,4 @@
+const { bestEffort, reportBestEffortFailure } = require('./bestEffort');
 /**
  * Database Utility - Data Access Layer
  *
@@ -917,6 +918,8 @@ class Database {
           rejectStatement = reject;
         });
 
+        // Rejection is surfaced to the awaiting caller; this only silences an
+        // unhandled-rejection warning when the statement times out first.
         statementPromise.catch(() => {});
 
         const callback = function(err, result) {
@@ -1074,7 +1077,7 @@ class Database {
         settled = true;
         const mappedError = Database.mapDatabaseError(err, message);
         const retire = Database.classifyDatabaseError(err) === 'connection';
-        lease.release({ retire }).catch(() => {});
+        lease.release({ retire }).catch(bestEffort('src/utils/database.js:1077'));
         reject(mappedError);
       };
 
@@ -1086,14 +1089,14 @@ class Database {
         } catch (callbackErr) {
           if (settled) return;
           settled = true;
-          lease.release().catch(() => {});
+          lease.release().catch(bestEffort('src/utils/database.js:1089'));
           reject(callbackErr);
         }
       }, (err) => {
         if (err) return fail(err, 'Query iteration failed');
         if (settled) return;
         settled = true;
-        lease.release().catch(() => {});
+        lease.release().catch(bestEffort('src/utils/database.js:1096'));
         resolve(rowCount);
       });
     });
@@ -1140,11 +1143,11 @@ class Database {
       await runOnConn('COMMIT');
       return result;
     } catch (err) {
-      try { await runOnConn('ROLLBACK'); } catch (_) {}
+      try { await runOnConn('ROLLBACK'); } catch (err) { reportBestEffortFailure('src/utils/database.js:1143', err); }
       // Never surface raw sqlite errors from a transaction.
       throw Database.mapDatabaseError(err, 'Transaction failed');
     } finally {
-      await lease.release().catch(() => {});
+      await lease.release().catch(bestEffort('src/utils/database.js:1147'));
     }
   }
 
@@ -1286,7 +1289,7 @@ class Database {
     if (process.env.NODE_ENV === 'test') return;
     const timerRegistry = require('./timerRegistry');
     this._healthCheckTimer = timerRegistry.createInterval(() => {
-      this._runHealthCheck().catch(() => {});
+      this._runHealthCheck().catch(bestEffort('src/utils/database.js:1289'));
     }, HEALTH_CHECK_INTERVAL_MS, 'db-health-check');
     this._healthCheckTimer.unref();
   }

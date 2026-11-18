@@ -1,3 +1,4 @@
+const { bestEffort } = require('../utils/bestEffort');
 /**
  * API Key Middleware - Authentication Layer
  * 
@@ -162,7 +163,7 @@ const requireApiKey = async (req, res, next) => {
           userAgent: req.get("User-Agent"),
           method: req.method
         }
-      }).catch(() => {});
+      }).catch(bestEffort('src/middleware/apiKey.js:165'));
     }
 
     return res.status(401).json({
@@ -215,7 +216,7 @@ const requireApiKey = async (req, res, next) => {
             resource: req.path,
             reason: 'Monthly quota exceeded',
             details: { keyId: keyInfo.id, quotaUsed: keyInfo.quotaUsed, monthlyQuota: keyInfo.monthlyQuota },
-          }).catch(() => {});
+          }).catch(bestEffort('src/middleware/apiKey.js:218'));
 
           // Fire quota.exceeded webhook event
           WebhookService.deliver('quota.exceeded', {
@@ -224,7 +225,7 @@ const requireApiKey = async (req, res, next) => {
             quotaUsed: keyInfo.quotaUsed,
             monthlyQuota: keyInfo.monthlyQuota,
             quotaResetAt: keyInfo.quotaResetAt ? new Date(keyInfo.quotaResetAt).toISOString() : null,
-          }).catch(() => {});
+          }).catch(bestEffort('src/middleware/apiKey.js:227'));
 
           return res.status(429).json({
             success: false,
@@ -265,7 +266,7 @@ const requireApiKey = async (req, res, next) => {
           resource: req.path,
           reason: 'IP address not in allowlist',
           details: { keyId: keyInfo.id, clientIp: req.ip },
-        }).catch(() => {});
+        }).catch(bestEffort('src/middleware/apiKey.js:268'));
 
         return res.status(403).json({
           success: false,
@@ -365,7 +366,7 @@ const requireApiKey = async (req, res, next) => {
           isDeprecated: keyInfo.isDeprecated || false,
           keyPrefix: apiKey.substring(0, 8) + '...'
         }
-      }).catch(() => {});
+      }).catch(bestEffort('src/middleware/apiKey.js:368'));
 
       // Proactive rotation warning for client-side automated systems
       if (keyInfo.isDeprecated) {
@@ -440,7 +441,7 @@ const requireApiKey = async (req, res, next) => {
                 keyIdHash: legacyKeyHash,
                 warning: 'Consider migrating to database-backed keys'
               }
-            }).catch(() => {});
+            }).catch(bestEffort('src/middleware/apiKey.js:443'));
           }
 
           req.apiKey = {
@@ -470,7 +471,7 @@ const requireApiKey = async (req, res, next) => {
         details: {
           keyPrefix: apiKey.substring(0, 8) + '...'
         }
-      }).catch(() => {});
+      }).catch(bestEffort('src/middleware/apiKey.js:473'));
     }
 
     return res.status(401).json({
