@@ -11,6 +11,7 @@
 
 require('dotenv').config({ path: require('path').join(__dirname, '../../.env') });
 const log = require('../utils/log');
+const { isMockStellarEnabled } = require('./stellarMode');
 
 const serviceContainer = require('./serviceContainer');
 
@@ -29,7 +30,7 @@ const activeEnv = getActiveEnvironment();
 
 module.exports = {
   getStellarService,
-  useMockStellar: process.env.USE_MOCK_STELLAR === 'true',
+  useMockStellar: isMockStellarEnabled(),
   port: process.env.PORT || 3000,
   ...activeEnv,
 };

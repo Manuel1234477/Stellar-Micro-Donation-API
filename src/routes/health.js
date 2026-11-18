@@ -12,6 +12,7 @@ const asyncHandler = require('../utils/asyncHandler');
 const log = require('../utils/log');
 const HealthCheckService = require('../services/HealthCheckService');
 const state = require('../bootstrap/state');
+const { getStellarMode } = require('../config/stellarMode');
 
 /**
  * Build the health handlers for the given services.
@@ -51,9 +52,11 @@ function createHealthHandlers(services = {}) {
         return res.status(result.status === 'healthy' ? 200 : 503).json({
           status: result.status,
           timestamp: result.timestamp,
+          stellarMode: getStellarMode(),
         });
       }
 
+      result.stellarMode = getStellarMode();
       result.stellarEnvironment = require('../config/stellar').environment || 'testnet';
       result.stellarNetwork = require('../config/stellar').network || 'testnet';
       result.requestId = req.id;

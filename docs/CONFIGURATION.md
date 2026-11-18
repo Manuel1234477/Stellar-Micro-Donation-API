@@ -51,7 +51,7 @@ npm run config:check      # what CI runs: schema covers src/, generated files ar
 22. [Shared State (Multi-Instance)](#22-shared-state-multi-instance)
 23. [GraphQL](#23-graphql)
 
-260 variables are declared. Further topics follow the reference below.
+272 variables are declared. Further topics follow the reference below.
 
 ---
 
@@ -110,6 +110,8 @@ npm run config:check      # what CI runs: schema covers src/, generated files ar
 | `ENCRYPTION_PUBLIC_KEY` | string | — | no | RSA/EC public key PEM used to verify asymmetric signatures |
 | `ENCRYPTION_SECRET` | string | — | no | Legacy symmetric encryption secret for non-wallet data paths Secret. |
 | `EXPORT_SIGNING_SECRET` | string | — | no | HMAC secret for signing CSV/JSON export files. Must be distinct from `ENCRYPTION_KEY` Secret. |
+| `JWT_SIGNING_SECRET` | string | — | no | HMAC secret that signs access tokens (at least 32 characters). Required in production and staging. Must be distinct from `ENCRYPTION_KEY` Secret. |
+| `JWT_SIGNING_SECRET_PREVIOUS` | string | — | no | Previous `JWT_SIGNING_SECRET`, kept during rotation so tokens issued before the change still verify Secret. |
 | `MEMO_REENCRYPT_BATCH_SIZE` | integer | `50` | no | Memos processed per batch by the background re-encryption job Minimum: 1. |
 | `MEMO_REENCRYPT_INTERVAL_MS` | integer | `30000` | no | Interval (ms) between memo re-encryption batches Minimum: 1. |
 | `NEW_ENCRYPTION_KEY` | string | — | no | Target key during a live re-encryption pass (`npm run migrate:reencrypt`) Secret. |
@@ -154,6 +156,7 @@ npm run config:check      # what CI runs: schema covers src/, generated files ar
 | `RECIPIENT_SECRETS` | string | — | no | JSON-encoded map of recipient IDs to Stellar secret keys for multi-recipient flows Secret. |
 | `SERVICE_ACCOUNT_PUBLIC_KEY` | string | — | no | Public key of the service account monitored for low balance |
 | `SERVICE_SECRET_KEY` | string | — | no | Stellar secret key (`S…`) for service-initiated signing operations. Never commit. Secret. |
+| `SEP10_SIGNING_KEY` | string | — | no | Dedicated, unfunded Stellar secret key (`S…`) that signs SEP-10 challenges and is published as `SIGNING_KEY` in stellar.toml. Falls back to `STELLAR_SECRET`/`SERVICE_SECRET_KEY` when unset. Must not be a funded account. Secret. |
 | `SERVICE_SIGNING_KEY` | string | — | no | Alias for `SERVICE_SECRET_KEY` used in some signing paths Secret. |
 | `SIMULATION_ENABLED` | boolean | `true` | no | Mock Stellar only: set `false` to disable transaction simulation |
 | `SOROBAN_RPC_URL` | url | — | no | Soroban RPC endpoint for smart-contract calls |
@@ -168,7 +171,8 @@ npm run config:check      # what CI runs: schema covers src/, generated files ar
 | `SYNC_MAX_PAGES` | integer | `100` | no | Maximum number of Horizon history pages fetched during a transaction sync pass Maximum: 1000. |
 | `TX_SYNC_INTERVAL_MS` | integer | `900000` | no | Interval (ms) between automatic transaction reconciliation runs Minimum: 60000. |
 | `TX_SYNC_LEASE_MULTIPLIER` | integer | `2` | no | Sync lease length as a multiple of `TX_SYNC_INTERVAL_MS` Range: 1–10. |
-| `USE_MOCK_STELLAR` | boolean | `false` | no | Alias for `MOCK_STELLAR` in some service modules |
+| `ALLOW_MOCK_STELLAR_IN_PRODUCTION` | boolean | `false` | no | Explicit override that lets `MOCK_STELLAR=true` start with `NODE_ENV=production`. Mock mode records transfers that never happen on-chain, so leave this unset in real deployments |
+| `USE_MOCK_STELLAR` | boolean | `false` | no | DEPRECATED and ignored. `MOCK_STELLAR` is the only variable that controls mock mode; startup logs a warning if this is set |
 
 ---
 
@@ -313,20 +317,6 @@ npm run config:check      # what CI runs: schema covers src/, generated files ar
 | `SMTP_TO` | string | — | no | Fallback recipient for export notifications |
 | `SMTP_USER` | string | — | no | SMTP authentication username |
 
-> **Startup validation:** When `SMTP_HOST` is set, the startup checks verify that `SMTP_FROM` is also configured and, if `SMTP_USER` is provided, that `SMTP_PASSWORD` (or `SMTP_PASS`) is present. The check also attempts to verify the SMTP connection; a failed verification logs a warning but does not block startup.
-
----
-
-## 11a. Webhook Email Notifications
-
-These variables control the email notifications sent when a webhook is auto-disabled after repeated delivery failures (`WebhookEmailNotificationService`). They only take effect when `SMTP_HOST` is configured.
-
-| Variable | Type | Default | Required? | Effect |
-|---|---|---|---|---|
-| `WEBHOOK_NOTIFICATION_DEDUP_WINDOW_MS` | integer | `3600000` | no | Duration (ms) of the deduplication window — a second notification for the same webhook is suppressed within this window |
-| `WEBHOOK_NOTIFICATION_MAX_RETRIES` | integer | `3` | no | Maximum retry attempts for failed notification emails |
-| `WEBHOOK_NOTIFICATION_RETRY_DELAYS_MS` | string | `60000,300000,1800000` | no | Comma-separated retry delays (ms) for each successive retry attempt |
-
 ---
 
 ## 12. IPFS / Pinata
@@ -372,7 +362,7 @@ These variables control the email notifications sent when a webhook is auto-disa
 |---|---|---|---|---|
 | `BODY_DEDUP_WINDOW_SECONDS` | integer | `60` | no | Window (seconds) in which identical mutating requests without an Idempotency-Key are deduplicated by body hash Minimum: 1. |
 | `MEMO_COLLISION_WINDOW_MS` | integer | `300000` | no | Window (ms) in which duplicate memo values are considered collisions |
-| `MEMO_KEYS_DIR` | string | `./data/memo-keys` | no | Directory where memo encryption keys are persisted. Must be outside the repository when `NODE_ENV=production` (startup fails otherwise) |
+| `MEMO_KEYS_DIR` | string | `./data/memo-keys` | no | Directory where memo encryption keys are persisted |
 | `NONCE_CLEANUP_INTERVAL_MS` | integer | `300000` | no | Interval (ms) between nonce-store cleanup passes |
 | `NONCE_MAX_SIZE` | integer | `100000` | no | Maximum number of nonce entries held in memory |
 | `REPLAY_CLEANUP_INTERVAL_SECONDS` | integer | `60` | no | Interval (seconds) between replay-store cleanup passes |
@@ -405,6 +395,12 @@ These variables control the email notifications sent when a webhook is auto-disa
 | `SSE_MAX_CONNECTIONS_PER_KEY` | integer | `5` | no | Maximum concurrent SSE streams per API key. Enforced cluster-wide when `SHARED_STATE_BACKEND=redis` Minimum: 1. |
 | `WS_HEARTBEAT_MS` | integer | `30000` | no | Interval (ms) between WebSocket ping frames |
 | `WS_MAX_WALLETS` | integer | `50` | no | Maximum number of wallet subscriptions per WebSocket connection |
+| `SSE_MAX_CONNECTIONS` | integer | `1000` | no | Global cap on concurrent SSE streams across all API keys on this instance. Excess connections receive 503 with `Retry-After` Minimum: 1. |
+| `WS_MAX_CONNECTIONS` | integer | `1000` | no | Global cap on concurrent WebSocket connections (balance stream and GraphQL subscriptions) on this instance. Excess upgrades receive 503 with `Retry-After` Minimum: 1. |
+| `WS_MAX_PAYLOAD_BYTES` | integer | `16384` | no | Maximum size (bytes) of a single inbound WebSocket frame. Larger frames close the connection with code 1009 Minimum: 1024. |
+| `WS_AUTH_TIMEOUT_MS` | integer | `10000` | no | Deadline (ms) for a GraphQL WebSocket client to send `connection_init` with a valid API key before the socket is closed Minimum: 1000. |
+| `WS_MAX_MESSAGES_PER_SECOND` | integer | `20` | no | Maximum inbound WebSocket messages per connection per second. Excess messages are dropped and the client is sent an error Minimum: 1. |
+| `WS_MAX_SUBSCRIPTIONS` | integer | `20` | no | Maximum concurrent GraphQL subscriptions per WebSocket connection Minimum: 1. |
 
 ---
 
@@ -414,6 +410,8 @@ These variables control the email notifications sent when a webhook is auto-disa
 |---|---|---|---|---|
 | `ANOMALY_WEBHOOK_URL` | string | — | no | URL to POST anomaly-detection alerts to. When unset, alerts are logged only |
 | `ORPHAN_ALERT_THRESHOLD` | integer | `1` | no | Number of orphaned transactions before an alert is triggered |
+| `METRICS_PORT` | integer | `0` | no | When non-zero, serve `GET /metrics` without application auth on this separate port (intended for pod-internal scraping). `0` disables it and keeps `/metrics` on the main port behind `metrics:read` Minimum: 0. |
+| `METRICS_HOST` | string | `0.0.0.0` | no | Bind address for the separate metrics port. Do not expose it outside the pod or cluster network |
 | `OTEL_ENABLED` | boolean | `true` | no | Enable OpenTelemetry tracing. Set `false` to disable |
 | `OTEL_EXPORTER_OTLP_ENDPOINT` | url | — | no | OTLP exporter endpoint URL (e.g. `http://collector:4318`) |
 | `OTEL_EXPORTER_OTLP_HEADERS` | string | — | no | Comma-separated `key=value` pairs added as headers to OTLP export requests |

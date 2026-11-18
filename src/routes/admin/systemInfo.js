@@ -149,7 +149,7 @@ router.get('/', requireAdmin(), systemInfoRateLimiter, asyncHandler(async (req, 
       featureFlags,
       configuration: {
         stellarNetwork: process.env.STELLAR_NETWORK || 'testnet',
-        mockMode: process.env.MOCK_STELLAR === 'true',
+        mockMode: require('../../config/stellarMode').isMockStellarEnabled(),
         rateLimitSettings,
       },
       generatedAt: new Date().toISOString(),

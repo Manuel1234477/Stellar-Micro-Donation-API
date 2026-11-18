@@ -28,10 +28,12 @@ const RoutingConfigRepository = require('../services/RoutingConfigRepository');
 const { PaymentChannelService } = require('../services/PaymentChannelService');
 const ServiceAccountBalanceMonitor = require('../services/ServiceAccountBalanceMonitor');
 
+const { isMockStellarEnabled } = require('./stellarMode');
+
 class ServiceContainer {
   constructor(config = {}) {
     // Determine which stellar service to use based on environment
-    const useMockStellar = config.useMockStellar || process.env.USE_MOCK_STELLAR === 'true' || process.env.MOCK_STELLAR === 'true';
+    const useMockStellar = config.useMockStellar || isMockStellarEnabled();
 
     // Initialize Stellar Service (real or mock)
     this.stellarService = useMockStellar

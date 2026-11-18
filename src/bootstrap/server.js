@@ -91,6 +91,7 @@ async function startServer(app, overrideServices = {}) {
 
     // ── #714: Bind port immediately so /health/live responds right away ───────
     const server = app.listen(PORT);
+    let metricsServer = null;
 
     server.on('error', (err) => {
       if (err.code === 'EADDRINUSE') {
@@ -106,6 +107,16 @@ async function startServer(app, overrideServices = {}) {
       port: PORT,
       healthCheck: `http://localhost:${PORT}/health`,
     });
+
+    // ── Optional unauthenticated pod-internal metrics port (#1982) ─────────────
+    const metricsPort = require('../config/env').env.METRICS_PORT;
+    if (metricsPort > 0) {
+      const { startMetricsServer } = require('./metricsServer');
+      metricsServer = await startMetricsServer({
+        port: metricsPort,
+        host: require('../config/env').env.METRICS_HOST,
+      });
+    }
 
     // ── Socket tracking for keep-alive drain (#1089) ──────────────────────────
     const openSockets = new Set();
@@ -147,7 +158,7 @@ async function startServer(app, overrideServices = {}) {
         // ── Attach WebSocket servers after migrations and api_keys table are ready ──
         // This prevents clients from hitting raw database errors (missing tables)
         // during the brief startup window before the schema is fully initialised.
-        attachSubscriptionServer(server);
+        state.graphqlWsServer = attachSubscriptionServer(server);
         require('../services/websocketService').attach(server);
 
         const { initializeFeatureFlagsTable, loadFlagsFromEnv } = require('../utils/featureFlags');
@@ -166,7 +177,9 @@ async function startServer(app, overrideServices = {}) {
 
         // Verify Horizon connectivity before marking as ready
         // This ensures the service doesn't accept traffic that depends on Horizon
-        const isMockStellar = process.env.USE_MOCK_STELLAR === 'true' || process.env.MOCK_STELLAR === 'true';
+        const stellarModeHelper = require('../config/stellarMode');
+        require('../utils/metrics').recordStellarMode(stellarModeHelper.getStellarMode());
+        const isMockStellar = stellarModeHelper.isMockStellarEnabled();
         if (!isMockStellar && stellarService.server && typeof stellarService.server.root === 'function') {
           try {
             await Promise.race([
@@ -301,6 +314,17 @@ async function startServer(app, overrideServices = {}) {
         log.error('SHUTDOWN', 'Error terminating SSE connections', { error: err.message });
       }
 
+      // 1b. Close WebSocket streams with 1001 (#1983)
+      try {
+        const closedWs = require('../services/websocketService').closeAll('server_shutdown');
+        if (closedWs > 0) log.info('SHUTDOWN', `Closed ${closedWs} WebSocket connection(s)`);
+        if (state.graphqlWsServer && typeof state.graphqlWsServer.dispose === 'function') {
+          await state.graphqlWsServer.dispose();
+        }
+      } catch (err) {
+        log.error('SHUTDOWN', 'Error closing WebSocket streams', { error: err.message });
+      }
+
       // 2. Destroy idle keep-alive sockets so server.close() can resolve
       for (const socket of openSockets) {
         if (!busySockets.has(socket)) {
@@ -309,6 +333,7 @@ async function startServer(app, overrideServices = {}) {
       }
 
       // 3. Stop accepting new connections; wait for active ones to finish
+      if (metricsServer) metricsServer.close();
       server.close(async () => {
         log.info('SHUTDOWN', 'HTTP server closed to new connections');
 

@@ -18,6 +18,7 @@ const path = require('path');
 const { isValidStellarSecretKey } = require('./validators');
 const { getLegacyKeySunsetDate } = require('./legacyApiKeySunset');
 const { findMissingSigningSecrets, isStrictEnvironment } = require('./signingSecrets');
+const { isMockStellarEnabled, isMockStellarAllowedInProduction } = require('../config/stellarMode');
 
 const STELLAR_TIMEOUT_MS = 5000;
 
@@ -512,7 +513,7 @@ const STELLAR_SIGNING_KEY_VARS = [
 /** Check — presence/validity of Stellar signing keys (#1234) */
 function checkStellarSigningKeys() {
   const isProduction = (process.env.NODE_ENV || '').toLowerCase() === 'production';
-  const isMock = process.env.MOCK_STELLAR === 'true' || process.env.USE_MOCK_STELLAR === 'true';
+  const isMock = isMockStellarEnabled();
   let allOk = true;
 
   for (const name of STELLAR_SIGNING_KEY_VARS) {
@@ -692,10 +693,9 @@ function checkCoRequiredFlags() {
     allOk = false;
   }
 
-  // Mocking Stellar in production means no real transactions — dangerous for a payments service.
-  const isMock = process.env.MOCK_STELLAR === 'true' || process.env.USE_MOCK_STELLAR === 'true';
-  if (isProduction && isMock) {
-    warn('MOCK_STELLAR', '=true in production — no real Stellar transactions will be sent; disable it before deploying');
+  // Mock mode in production is fatal; see checkMainnetProductionGuard() (#1984).
+  if (process.env.USE_MOCK_STELLAR !== undefined) {
+    warn('USE_MOCK_STELLAR', 'is deprecated and ignored — set MOCK_STELLAR instead (the only variable that controls mock mode)');
   }
 
   // STELLAR_ENVIRONMENT and STELLAR_NETWORK disagreeing is confusing; STELLAR_NETWORK wins.
@@ -718,22 +718,38 @@ function checkMainnetProductionGuard() {
     return true;
   }
 
+  // Mock mode has its own explicit override, so it cannot be unlocked by the testnet one (#1984).
+  if (isMockStellarEnabled()) {
+    if (isMockStellarAllowedInProduction()) {
+      warn(
+        'Mainnet guard',
+        'ALLOW_MOCK_STELLAR_IN_PRODUCTION=true override active: MOCK_STELLAR=true permitted in NODE_ENV=production — no real Stellar transactions will be sent'
+      );
+      return true;
+    }
+    fail(
+      'Mainnet guard',
+      'PRODUCTION SAFETY: MOCK_STELLAR=true is not allowed in NODE_ENV=production (no real transactions would be sent). ' +
+      'Unset MOCK_STELLAR, or set ALLOW_MOCK_STELLAR_IN_PRODUCTION=true to override explicitly.'
+    );
+    return false;
+  }
+
   const allowOverride = process.env.ALLOW_TESTNET_IN_PRODUCTION === 'true';
   const network = (process.env.STELLAR_NETWORK || process.env.STELLAR_ENVIRONMENT || 'testnet').toLowerCase();
-  const isMock = process.env.MOCK_STELLAR === 'true' || process.env.USE_MOCK_STELLAR === 'true';
 
-  if (network !== 'mainnet' || isMock) {
+  if (network !== 'mainnet') {
     if (allowOverride) {
       warn(
         'Mainnet guard',
-        'ALLOW_TESTNET_IN_PRODUCTION=true override active: testnet or mock mode permitted in NODE_ENV=production'
+        'ALLOW_TESTNET_IN_PRODUCTION=true override active: testnet permitted in NODE_ENV=production'
       );
       return true;
     }
 
     fail(
       'Mainnet guard',
-      'PRODUCTION SAFETY: testnet or mock mode is not allowed in NODE_ENV=production.'
+      'PRODUCTION SAFETY: testnet is not allowed in NODE_ENV=production.'
     );
     return false;
   }
