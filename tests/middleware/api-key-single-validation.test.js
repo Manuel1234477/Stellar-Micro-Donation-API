@@ -19,6 +19,7 @@ const { validateApiKey } = require('../../src/models/apiKeys');
 const attachUserRole = require('../../src/middleware/rbac').attachUserRole;
 const requireApiKey = require('../../src/middleware/apiKey');
 const { clearStore } = require('../../src/middleware/perKeyRateLimit');
+const AuditLogService = require('../../src/services/AuditLogService');
 
 function buildApp() {
   const app = express();
@@ -28,6 +29,15 @@ function buildApp() {
   });
   return app;
 }
+
+// Audit writes are fire-and-forget; stub them so none outlive the test.
+beforeAll(() => {
+  jest.spyOn(AuditLogService, 'log').mockResolvedValue(undefined);
+});
+
+afterAll(() => {
+  jest.restoreAllMocks();
+});
 
 describe('API key validation runs once per request (#1941)', () => {
   beforeEach(() => {
