@@ -376,22 +376,65 @@ Returns API health status. No authentication required.
 
 ## Error Responses
 
-All errors follow this shape:
+Errors use this envelope:
 
 ```json
 {
   "success": false,
-  "error": "Human-readable message",
-  "code": "ERROR_CODE"
+  "error": {
+    "code": "VALIDATION_ERROR",
+    "message": "Request body failed schema validation",
+    "details": [],
+    "requestId": "550e8400-e29b-41d4-a716-446655440000",
+    "timestamp": "2026-06-29T12:20:00.000Z"
+  }
+}
+```
+
+`error.code` is a stable machine-readable value. The full list is in [ERROR_CODES.md](./ERROR_CODES.md). `details` is present on validation failures (see below).
+
+### Validation errors
+
+Request bodies that fail schema validation return HTTP 422. Each entry in `error.details` describes one failed rule:
+
+| Field | Description |
+|-------|-------------|
+| `field` | Path to the rejected value. Array items use indexes, for example `recipients[2].amount` |
+| `message` | Human-readable description of the failure |
+| `code` | Failure type: `REQUIRED`, `NULL_NOT_ALLOWED`, `INVALID_TYPE`, `INVALID_ENUM`, and others |
+| `constraint` | Rule that failed: `required`, `notNull`, `type`, `enum`, `minLength`, `maxLength`, `length`, `minimum`, `maximum`, `range`, `pattern`, or `custom` |
+| `value` | The rejected value. Masked for sensitive fields |
+| `expected` | What the field must be |
+| `example` | An example of an accepted value |
+
+```json
+{
+  "success": false,
+  "error": {
+    "code": "VALIDATION_ERROR",
+    "message": "Request body failed schema validation",
+    "details": [
+      {
+        "field": "amount",
+        "message": "amount must be of type number",
+        "code": "INVALID_TYPE",
+        "constraint": "type",
+        "value": "abc",
+        "expected": "number",
+        "example": 1
+      }
+    ]
+  }
 }
 ```
 
 | Status | Meaning |
 |--------|---------|
-| 400 | Validation error / bad request |
+| 400 | Malformed request (for example, invalid JSON) |
 | 401 | Missing or invalid API key |
 | 403 | Insufficient permissions |
 | 404 | Resource not found |
+| 422 | Request body failed schema validation (see Validation errors) |
 | 409 | Conflict (e.g. duplicate idempotency key) |
 | 429 | Rate limit exceeded |
 | 500 | Internal server error |

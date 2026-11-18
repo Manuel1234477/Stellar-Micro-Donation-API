@@ -302,6 +302,7 @@ Instead:
 Do not commit:
 - TODO.md or status files at the root
 - *_IMPLEMENTATION_*.md files at the root
+- PR summaries, change logs or "issues implemented" write-ups under `docs/`. They go stale as soon as the PR merges. Put user-facing changes in `CHANGELOG.md` and reference details in the PR description
 - Tool-specific working directories (.kiro/, .memory/, etc.)
 
 This keeps documentation organized and prevents stale working notes from misleading readers.

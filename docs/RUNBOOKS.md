@@ -378,6 +378,14 @@ HORIZON_URL=https://horizon.stellar.org          # mainnet fallback
 HORIZON_URL=https://horizon-testnet.stellar.org  # testnet fallback
 ```
 
+### Fallback Horizon endpoints
+
+When `HORIZON_FALLBACK_URLS` is set, `HorizonPool` tracks consecutive failures per endpoint:
+
+1. After `HORIZON_FAILOVER_THRESHOLD` consecutive failures on the active endpoint (default `3`), the pool switches to the next endpoint in the list. Fallbacks that failed within the last `HORIZON_POOL_COOLDOWN_MS` are skipped.
+2. While running on a fallback, the pool switches back to the primary once the primary has no consecutive failures and its last failure is older than `HORIZON_RECOVERY_COOLDOWN_MS` (default `60000`).
+3. `HorizonPool.getStatus()` reports the active endpoint and per-endpoint failure counts. Use it to confirm which endpoint is serving requests.
+
 ### Recovery confirmation
 
 ```bash
