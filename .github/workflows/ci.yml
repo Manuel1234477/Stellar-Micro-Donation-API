@@ -46,6 +46,11 @@ jobs:
       - run: npm run test:coverage:ci
       - run: npm run check-coverage
       - run: npm run openapi:check
+      # Generated docs must match the code they describe (#1957, #1958, #1960)
+      - run: npm run docs:error-codes:check
+      - run: npm run check:error-codes
+      - run: npm run docs:api-matrix:check
+      - run: npm run docs:db-schema:check
       - run: npm run check:no-json-persistence
       - run: npm run changelog:check
       - run: npm audit --audit-level=high
