@@ -29,13 +29,13 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
 
       - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v4
+        uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4
 
       - name: Build Docker image
-        uses: docker/build-push-action@v7
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7
         with:
           context: .
           file: ./Dockerfile
@@ -48,7 +48,7 @@ jobs:
       - name: Verify sqlite3 loads in the production image
         run: docker run --rm stellar-micro-donation-api:${{ github.sha }} node -e "require('sqlite3'); console.log('sqlite3 loaded')"
       - name: Run Trivy vulnerability scanner
-        uses: aquasecurity/trivy-action@v0.36.0
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
         with:
           image-ref: stellar-micro-donation-api:${{ github.sha }}
           format: 'sarif'
@@ -61,14 +61,14 @@ jobs:
           trivyignores: '.trivyignore'
 
       - name: Upload Trivy results to GitHub Security tab
-        uses: github/codeql-action/upload-sarif@v4
+        uses: github/codeql-action/upload-sarif@33d7b85da1a04171e211befe2c739303b9a4c066 # v4
         if: always()
         with:
           sarif_file: 'trivy-results.sarif'
           category: 'container-image'
 
       - name: Run Trivy with table output for CI artifact
-        uses: aquasecurity/trivy-action@v0.36.0
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
         if: always()
         with:
           image-ref: stellar-micro-donation-api:${{ github.sha }}
@@ -81,7 +81,7 @@ jobs:
           trivyignores: '.trivyignore'
 
       - name: Run Trivy with JSON output for parsing
-        uses: aquasecurity/trivy-action@v0.36.0
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
         if: always()
         with:
           image-ref: stellar-micro-donation-api:${{ github.sha }}
@@ -94,7 +94,7 @@ jobs:
           trivyignores: '.trivyignore'
 
       - name: Upload Trivy scan reports as artifacts
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         if: always()
         with:
           name: trivy-scan-reports-${{ github.sha }}
@@ -138,7 +138,7 @@ jobs:
           fi
 
       - name: Post PR comment with scan results
-        uses: actions/github-script@v9
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9
         if: github.event_name == 'pull_request' && always()
         continue-on-error: true
         with:
