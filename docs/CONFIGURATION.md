@@ -392,6 +392,9 @@ These variables control the email notifications sent when a webhook is auto-disa
 | `BACKUP_INTERVAL_MS` | integer | `86400000` | no | Interval (ms) between automatic backup runs |
 | `BACKUP_S3_BUCKET` | string | — | no | S3 bucket name for off-site backup upload. When unset, backups are local only |
 | `BACKUP_S3_PREFIX` | string | `backups/` | no | Key prefix used when uploading backup files to S3 |
+| `BACKUP_ENCRYPTION_KEY` | string | — | no | Dedicated key material for encrypting backups (#1951). When unset, `ENCRYPTION_KEY` is used. Secret. |
+| `BACKUP_KEY_ID` | string | derived | no | Identifier written into each backup header (#1951). Defaults to an id derived from the key material. |
+| `BACKUP_PREVIOUS_KEYS` | string | — | no | Comma-separated `id:material` pairs for keys that encrypted older backups (#1951). Needed to restore those after rotation. Secret. |
 
 ---
 
