@@ -84,12 +84,12 @@ const SECURITY_CONFIGS = {
   HORIZON_URL: {
     required: false,
     safeDefault: null, // Use network defaults
-    validator: (value, env = process.env) => {
+    validator: (value) => {
       try {
         if (!value || !value.trim()) return null;
         const url = new URL(value.trim());
         // Only allow HTTPS in production
-        if (env.NODE_ENV === 'production' && url.protocol !== 'https:') {
+        if (process.env.NODE_ENV === 'production' && url.protocol !== 'https:') {
           log.warn('SECURITY_CONFIG', 'Insecure Horizon URL protocol detected, using default', {
             url: value.trim(),
             protocol: url.protocol
@@ -142,35 +142,31 @@ const SECURITY_CONFIGS = {
 };
 
 /**
- * Load and validate security configuration with safe defaults.
- *
- * Pure function of the supplied env object: no reads or writes of the global
- * `process.env`, so it can be exercised directly in tests without module cache
- * tricks. Defaults to `process.env` for production callers.
+ * Load and validate security configuration with safe defaults
  */
-function loadSecurityConfig(env = process.env) {
+function loadSecurityConfig() {
   const config = {};
   const misconfigurations = [];
-  const isProduction = env.NODE_ENV === 'production';
+  const isProduction = process.env.NODE_ENV === 'production';
 
   log.info('SECURITY_CONFIG', 'Loading security configuration', { 
-    environment: env.NODE_ENV || 'development' 
+    environment: process.env.NODE_ENV || 'development' 
   });
 
-  if (env.KMS_KEY_ID && !env.ENCRYPTED_ENCRYPTION_KEY && !env.ENCRYPTION_KEY) {
+  if (process.env.KMS_KEY_ID && !process.env.ENCRYPTED_ENCRYPTION_KEY && !process.env.ENCRYPTION_KEY) {
     throw new Error('KMS_KEY_ID is set, but ENCRYPTED_ENCRYPTION_KEY is missing. Use the KMS wrapping script before startup.');
   }
 
-  if (env.KMS_KEY_ID && env.ENCRYPTED_ENCRYPTION_KEY && !env.ENCRYPTION_KEY) {
+  if (process.env.KMS_KEY_ID && process.env.ENCRYPTED_ENCRYPTION_KEY && !process.env.ENCRYPTION_KEY) {
     try {
-      env.ENCRYPTION_KEY = unwrapEncryptionKey();
+      process.env.ENCRYPTION_KEY = unwrapEncryptionKey();
     } catch (error) {
       throw new Error(`KMS key unwrapping failed at startup: ${error.message}`);
     }
   }
 
   Object.entries(SECURITY_CONFIGS).forEach(([key, configDef]) => {
-    const envValue = env[key];
+    const envValue = process.env[key];
     let finalValue;
 
     // Check if required in production
@@ -190,7 +186,7 @@ function loadSecurityConfig(env = process.env) {
       }
     } else if (envValue) {
       // Validate provided value
-      const validatedValue = configDef.validator(envValue, env);
+      const validatedValue = configDef.validator(envValue);
       if (validatedValue === null || validatedValue === undefined) {
         misconfigurations.push({
           config: key,
@@ -221,7 +217,7 @@ function loadSecurityConfig(env = process.env) {
     // throw a catchable error instead of killing the process/worker.
     if (key === 'ENCRYPTION_KEY' && !finalValue) {
       log.error('SECURITY_CONFIG', 'ENCRYPTION_KEY is not set. Run `npm run generate-key` to create one, then add it to your .env file.');
-      if (isProduction) {
+      if (process.env.NODE_ENV === 'production') {
         process.exit(1);
       }
       throw new Error('ENCRYPTION_KEY is not set');
@@ -229,6 +225,105 @@ function loadSecurityConfig(env = process.env) {
 
     config[key] = finalValue;
 
-    // Log con
+    // Log configuration loading (without sensitive values)
+    const logValue = key.includes('KEY') || key.includes('SECRET') 
+      ? '[REDACTED]' 
+      : finalValue;
+    
+    log.debug('SECURITY_CONFIG', `Loaded ${key}`, {
+      value: logValue,
+      source: envValue ? 'environment' : 'default'
+    });
+  });
 
-/* … truncated 2928 chars — edit only what you need near the top … */
+  // Log misconfigurations
+  if (misconfigurations.length > 0) {
+    log.warn('SECURITY_CONFIG', 'Security configuration issues detected', {
+      count: misconfigurations.length,
+      issues: misconfigurations.map(m => ({
+        config: m.config,
+        issue: m.issue,
+        severity: m.severity
+      }))
+    });
+
+    // Check for critical issues
+    const criticalIssues = misconfigurations.filter(m => m.severity === 'ERROR');
+    if (criticalIssues.length > 0 && isProduction) {
+      log.error('SECURITY_CONFIG', 'CRITICAL security misconfigurations in production', {
+        issues: criticalIssues
+      });
+    }
+  }
+
+  // Security recommendations
+  logSecurityRecommendations(config, isProduction);
+
+  return config;
+}
+
+/**
+ * Log security recommendations based on current configuration
+ */
+function logSecurityRecommendations(config, isProduction) {
+  const recommendations = [];
+
+  if (isProduction) {
+    if (config.DEBUG_MODE === 'true') {
+      recommendations.push('Disable DEBUG_MODE in production');
+    }
+    if (config.MOCK_STELLAR === 'true') {
+      recommendations.push('Consider disabling MOCK_STELLAR in production');
+    }
+    if (!config.ENCRYPTION_KEY) {
+      recommendations.push('Set ENCRYPTION_KEY in production');
+    }
+    if (!config.SERVICE_SECRET_KEY && !config.STELLAR_SECRET) {
+      recommendations.push('Consider setting SERVICE_SECRET_KEY for service operations');
+    }
+  } else {
+    if (config.STELLAR_NETWORK === 'mainnet') {
+      recommendations.push('Avoid using mainnet in development environments');
+    }
+    if (config.RATE_LIMIT === '100') {
+      recommendations.push('Consider adjusting RATE_LIMIT for development testing');
+    }
+  }
+
+  if (recommendations.length > 0) {
+    log.info('SECURITY_CONFIG', 'Security recommendations', {
+      environment: isProduction ? 'production' : 'development',
+      recommendations
+    });
+  }
+}
+
+/**
+ * Get security configuration summary (safe for logging)
+ */
+function getSecuritySummary() {
+  const config = loadSecurityConfig();
+  const summary = {};
+
+  Object.entries(config).forEach(([key, value]) => {
+    if (key.includes('KEY') || key.includes('SECRET')) {
+      summary[key] = value ? '[CONFIGURED]' : '[NOT SET]';
+    } else if (key === 'API_KEYS') {
+      summary[key] = Array.isArray(value) && value.length > 0 ? '[CONFIGURED]' : '[NOT SET]';
+    } else {
+      summary[key] = value;
+    }
+  });
+
+  return summary;
+}
+
+// Load configuration at module initialization
+const securityConfig = loadSecurityConfig();
+
+module.exports = {
+  securityConfig,
+  loadSecurityConfig,
+  getSecuritySummary,
+  SECURITY_CONFIGS
+};
