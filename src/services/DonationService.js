@@ -2357,6 +2357,61 @@ class DonationService {
   }
 
   /**
+   * Mark one refund attempt as failed, touching only that attempt's rows.
+   * Never throws: the original error is more useful to the caller than a
+   * secondary failure during cleanup.
+   * @private
+   */
+  async _markRefundAttemptFailed({ refundId, ledgerId, errorMessage, requestId }) {
+    try {
+      await Database.run(`UPDATE refunds SET status = 'failed' WHERE id = ?`, [refundId]);
+      if (ledgerId) {
+        await Database.run(
+          `UPDATE refund_transactions SET status = 'failed', error = ? WHERE id = ?`,
+          [errorMessage || null, ledgerId]
+        );
+      }
+    } catch (cleanupErr) {
+      log.error('DONATION_SERVICE', 'Failed to mark refund attempt as failed', {
+        requestId,
+        refundId,
+        ledgerId,
+        error: cleanupErr.message,
+      });
+    }
+  }
+
+  /**
+   * Record a successful refund attempt in both ledgers, keyed by primary key.
+   * The on-chain transfer already happened, so a failure here is logged with
+   * the data needed for reconciliation rather than reported as a failed refund,
+   * which would invite a duplicate retry.
+   * @private
+   */
+  async _completeRefundAttempt({ refundId, ledgerId, donationId, reverseResult, requestId }) {
+    try {
+      await Database.run(
+        `UPDATE refunds SET reverse_transaction_id = ?, stellar_ledger = ?, status = 'completed' WHERE id = ?`,
+        [reverseResult.transactionId, reverseResult.ledger, refundId]
+      );
+      await Database.run(
+        `UPDATE refund_transactions SET reverse_transaction_id = ?, stellar_ledger = ?, status = 'completed', completed_at = CURRENT_TIMESTAMP WHERE id = ?`,
+        [reverseResult.transactionId, reverseResult.ledger, ledgerId]
+      );
+    } catch (completeErr) {
+      log.error('DONATION_SERVICE', 'Refund submitted on-chain but ledger completion failed; manual reconciliation required', {
+        requestId,
+        donationId,
+        refundId,
+        ledgerId,
+        reverseTxId: reverseResult.transactionId,
+        ledger: reverseResult.ledger,
+        error: completeErr.message,
+      });
+    }
+  }
+
+  /**
    * Refund a confirmed donation by creating a reverse Stellar transaction
    * @param {string} donationId - ID of the donation to refund
    * @param {Object} params - Refund parameters
@@ -2493,31 +2548,54 @@ class DonationService {
       originalTxId: donation.stellarTxId
     });
 
-    // Record refund as pending before submitting to Stellar
-    const pendingRecord = await Database.run(
-      `INSERT INTO refunds (
-        original_donation_id, reverse_transaction_id, amount, reason, notes,
-        idempotency_key, refunded_at, stellar_ledger, status
-      ) VALUES (?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, ?, ?)`,
-      [
-        donationId,
-        `pending_${Date.now()}`,
-        donation.amount,
-        reason || null,
-        notes || null,
-        idempotencyKey || null,
-        null,
-        'pending'
-      ]
-    );
-
-    // Keep the issue-defined refund_transactions ledger synchronized when present.
-    await Database.run(`INSERT INTO refund_transactions (original_donation_id, reverse_transaction_id, amount, reason, notes, idempotency_key, status) VALUES (?, ?, ?, ?, ?, ?, 'pending')`, [donationId, `pending_${Date.now()}`, donation.amount, reason || null, notes || null, idempotencyKey || null]).catch(() => {});
-    // Update status to processing
-    await Database.run(`UPDATE refunds SET status = 'processing' WHERE id = ?`, [pendingRecord.id]);
-
+    // Each attempt gets its own placeholder id so concurrent or retried refunds
+    // for the same donation never share a ledger key (#1947). The refunds table
+    // requires a non-null, unique reverse_transaction_id, so the placeholder is
+    // replaced by the real Stellar hash on success.
+    const attemptRef = `pending_${crypto.randomUUID()}`;
+    let pendingRecord = null;
+    let ledgerRecord = null;
     let reverseResult;
+
     try {
+      // Record refund as pending before submitting to Stellar. Ledger writes are
+      // part of the refund itself and are not best-effort (#1946): if they fail,
+      // nothing has been submitted yet, so the error is surfaced to the caller.
+      pendingRecord = await Database.run(
+        `INSERT INTO refunds (
+          original_donation_id, reverse_transaction_id, amount, reason, notes,
+          idempotency_key, refunded_at, stellar_ledger, status
+        ) VALUES (?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, ?, ?)`,
+        [donationId, attemptRef, donation.amount, reason || null, notes || null, idempotencyKey || null, null, 'pending']
+      );
+
+      ledgerRecord = await Database.run(
+        `INSERT INTO refund_transactions (original_donation_id, reverse_transaction_id, amount, reason, notes, idempotency_key, status)
+         VALUES (?, ?, ?, ?, ?, ?, 'pending')`,
+        [donationId, attemptRef, donation.amount, reason || null, notes || null, idempotencyKey || null]
+      );
+
+      // Only one processing refund per donation is allowed (partial unique index,
+      // migration 061). A violation here means a concurrent refund is in flight.
+      try {
+        await Database.run(`UPDATE refunds SET status = 'processing' WHERE id = ?`, [pendingRecord.id]);
+      } catch (processingErr) {
+        if (/UNIQUE constraint failed/i.test(processingErr.message || '')) {
+          throw new DuplicateError(
+            'A refund is already in progress for this donation',
+            ERROR_CODES.DUPLICATE_DONATION
+          );
+        }
+        throw processingErr;
+      }
+
+      log.debug('DONATION_SERVICE', 'Creating reverse Stellar transaction', {
+        requestId,
+        donationId,
+        amount: donation.amount,
+        attemptRef,
+      });
+
       // Stellar text memos are capped at 28 bytes, so a "REFUND:<uuid>" text
       // memo always overflows. Use a 32-byte hash memo instead: reconciliation
       // can recompute sha256('REFUND:' + donationId) to match the refund.
@@ -2528,15 +2606,21 @@ class DonationService {
         memo: refundMemoHash(donationId),
         memoType: 'hash'
       });
-    } catch (stellarErr) {
-      await Database.run(`UPDATE refunds SET status = 'failed' WHERE id = ?`, [pendingRecord.id]);
-      await Database.run(`UPDATE refund_transactions SET status = 'failed', error = ? WHERE original_donation_id = ? AND status = 'pending'`, [stellarErr.message, donationId]).catch(() => {});
+    } catch (err) {
+      // Mark only this attempt's rows. Nothing was confirmed on-chain at this point.
+      if (pendingRecord) {
+        await this._markRefundAttemptFailed({
+          refundId: pendingRecord.id,
+          ledgerId: ledgerRecord ? ledgerRecord.id : null,
+          errorMessage: err.message,
+          requestId,
+        });
+      }
+      throw err;
+    } finally {
+      // The signing secret must not outlive this attempt on any path (#1947).
       secret = null;
-      throw stellarErr;
     }
-
-    // Immediately discard the secret
-    secret = null;
 
     log.debug('DONATION_SERVICE', 'Reverse transaction successful', {
       requestId,
@@ -2544,12 +2628,15 @@ class DonationService {
       ledger: reverseResult.ledger
     });
 
-    // Update refund record to completed
-    await Database.run(
-      `UPDATE refunds SET reverse_transaction_id = ?, stellar_ledger = ?, status = 'completed' WHERE id = ?`,
-      [reverseResult.transactionId, reverseResult.ledger, pendingRecord.id]
-    );
-    await Database.run(`UPDATE refund_transactions SET reverse_transaction_id = ?, stellar_ledger = ?, status = 'completed', completed_at = CURRENT_TIMESTAMP WHERE original_donation_id = ? AND status = 'pending'`, [reverseResult.transactionId, reverseResult.ledger, donationId]).catch(() => {});
+    // The Stellar transaction is final from here on. Completion writes are keyed
+    // by this attempt's primary keys so no other ledger row is touched.
+    await this._completeRefundAttempt({
+      refundId: pendingRecord.id,
+      ledgerId: ledgerRecord.id,
+      donationId,
+      reverseResult,
+      requestId,
+    });
 
     // Update original donation status to refunded
     Transaction.updateStatus(donationId, 'refunded', {
