@@ -341,6 +341,32 @@ function recordLegacyPathRequest(path, apiKeyId) {
 }
 
 /**
+ * Counter: requests aborted by the request timeout middleware (#1948).
+ * Labels: route (normalised path), timeout_ms (budget that was exceeded).
+ * @type {client.Counter}
+ */
+const requestTimeoutsTotal = new client.Counter({
+  name: 'request_timeouts_total',
+  help: 'Total number of requests aborted by the request timeout middleware',
+  labelNames: ['route', 'timeout_ms'],
+  registers: [registry],
+});
+
+/**
+ * Records a request aborted by the timeout middleware.
+ * @param {string} path Request path (normalised before labelling)
+ * @param {number} timeoutMs Timeout budget that was exceeded
+ */
+function recordRequestTimeout(path, timeoutMs) {
+  try {
+    requestTimeoutsTotal.inc({
+      route: normaliseRoute(path || 'unknown'),
+      timeout_ms: String(timeoutMs),
+    });
+  } catch (_) {}
+}
+
+/**
  * Counter: requests authenticated with a legacy environment-based API key.
  * Labels: key_id_hash — non-reversible hash of the legacy key (never the raw key)
  * @type {client.Counter}
@@ -444,6 +470,9 @@ module.exports = {
   recurringDonationsSkippedTotal,
   // Process error metrics (#1928)
   processUnhandledRejectionsTotal,
+  // Request timeout metrics (#1948)
+  requestTimeoutsTotal,
+  recordRequestTimeout,
   // Legacy unversioned path metrics (#1802)
   legacyPathRequestsTotal,
   recordLegacyPathRequest,
