@@ -1,7 +1,7 @@
 <!-- AUTO-GENERATED — do not edit by hand.
      Regenerate with: node scripts/generate-error-codes.js
      Source of truth: src/utils/errors.js
-     Last generated: 2026-06-29T23:33:31.902Z -->
+     CI verifies this file with: node scripts/generate-error-codes.js --check -->
 
 # Error Code Reference
 
@@ -43,6 +43,7 @@ npm run docs:error-codes
 | `MISSING_REQUIRED_FIELD` | 1007 | 400 | A required request field is absent. | Add the missing field. Check the `details` array for the field name. |
 | `IDEMPOTENCY_KEY_REQUIRED` | 1008 | 400 | The `Idempotency-Key` header is required for this endpoint but was not provided. | Include a unique `Idempotency-Key` header (UUID recommended). |
 | `INVALID_SCHEMA_VERSION` | 1009 | 400 | The `X-Schema-Version` header specifies a schema version that is not supported. | Omit the header to use the current version, or use a supported version string. |
+| `PAYLOAD_TOO_LARGE` | 1010 | 413 | The request body exceeds the maximum allowed size. | Reduce the payload size, or split the request into several smaller requests. |
 
 ## Authentication / Authorization
 
@@ -63,6 +64,7 @@ npm run docs:error-codes
 | `USER_NOT_FOUND` | 3003 | 404 | No user record exists for the given ID. | Verify the user ID or create a new wallet/user record. |
 | `DONATION_NOT_FOUND` | 3004 | 404 | No donation record exists for the given ID. | Verify the donation ID. Use `GET /donations` to list existing records. |
 | `ENDPOINT_NOT_FOUND` | 3005 | 404 | The requested URL path does not match any route. | Check the API reference for the correct endpoint path. |
+| `METHOD_NOT_ALLOWED` | 3006 | 500 | — | — |
 
 ## Conflict / Duplicate
 
@@ -95,6 +97,10 @@ npm run docs:error-codes
 | `NO_ELIGIBLE_RECIPIENTS` | 5028 | 422 | No recipients in the pool met the routing criteria (e.g. geo-proximity filter). | Expand the search radius, add more recipients, or use a different routing strategy. |
 | `NO_ACTIVE_CAMPAIGNS` | 5029 | 422 | There are no active campaigns available for this operation. | Create or activate a campaign before submitting campaign-targeted donations. |
 | `RECIPIENT_ACCOUNT_NOT_FOUND` | 5030 | 422 | The recipient's Stellar account does not exist on the network. | Fund and activate the recipient account on the Stellar network before sending donations. |
+| `DONATION_APPROVAL_EXPIRED` | 5031 | 500 | — | — |
+| `DONATION_ALREADY_APPROVED_BY_SIGNER` | 5032 | 500 | — | — |
+| `INSUFFICIENT_BALANCE_AFTER_RESERVE` | 5033 | 500 | — | — |
+| `MISSING_SECRET_KEY` | 5034 | 500 | — | — |
 
 ## Rate Limiting
 
@@ -113,6 +119,7 @@ npm run docs:error-codes
 | `STELLAR_NETWORK_ERROR` | 9004 | 503 | Communication with the Stellar Horizon API failed. | Check Stellar network status at https://status.stellar.org. Retry with exponential back-off. |
 | `EXTERNAL_SERVICE_ERROR` | 9005 | 503 | A call to an external service (e.g. price oracle, IPFS, SMTP) failed. | Check the optional-integrations status in `GET /health`. The feature requiring the external service is temporarily unavailable. |
 | `NOT_IMPLEMENTED` | 9006 | 501 | This endpoint or feature is not yet implemented. | Check the roadmap or use an alternative endpoint. |
+| `METRICS_ERROR` | 9007 | 503 | The Prometheus metrics snapshot could not be generated. | Retry `GET /metrics` after a moment. If it persists, check the server logs for the `requestId`. |
 
 ---
 

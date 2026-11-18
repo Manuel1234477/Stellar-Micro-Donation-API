@@ -15,6 +15,7 @@ const { createPathBasedCspMiddleware, cspReportRouter } = require('../middleware
 const { payloadSizeLimiter } = require('../middleware/payloadSizeLimiter');
 const { responseFormatterMiddleware } = require('../utils/responseFormatter');
 const requestId = require('../middleware/requestId');
+const errorEnvelopeMiddleware = require('../middleware/errorEnvelope');
 const { attachLifecycleTracking } = require('../middleware/requestLifecycle');
 const logger = require('../middleware/logger');
 const { attachUserRole, requireAdmin } = require('../middleware/rbac');
@@ -72,6 +73,8 @@ function applyMiddleware(app) {
 
   // ─── Request identity & lifecycle ────────────────────────────────────────────
   app.use(requestId);
+  // Every JSON error body leaves in the canonical envelope (Issue #1957).
+  app.use(errorEnvelopeMiddleware());
   app.use(attachLifecycleTracking);
   app.use(responseFormatterMiddleware());
 

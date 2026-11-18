@@ -18,7 +18,12 @@
  * 5. Mask sensitive information in production environments.
  */
 
-const { AppError, ERROR_CODES } = require("../utils/errors");
+const {
+  AppError,
+  ERROR_CODES,
+  buildErrorEnvelope,
+  fallbackCodeForStatus,
+} = require("../utils/errors");
 const log = require('../utils/log');
 const { parseLanguage, getMessage } = require('../utils/i18n');
 const { maskSensitiveData } = require('../utils/dataMasker');
@@ -184,23 +189,34 @@ function errorHandler(err, req, res, next) {
     });
   }
 
-  // Default: unexpected errors
+  // Client-side framework errors (body-parser: malformed JSON, payload too large,
+  // etc.) carry `expose: true` and a 4xx status. They get a request-shape code
+  // rather than INTERNAL_ERROR (Issue #1957).
   const statusCode = err.statusCode || err.status || 500;
+  if (statusCode >= 400 && statusCode < 500 && err.expose) {
+    const code = fallbackCodeForStatus(statusCode);
+    const catalogued = ERROR_CODES[code] || ERROR_CODES.INVALID_REQUEST;
+    return res.status(statusCode).json(buildErrorEnvelope({
+      code: catalogued.code,
+      numericCode: catalogued.numeric,
+      message: err.message || 'Invalid request',
+      requestId: req.id,
+    }));
+  }
+
+  // Default: unexpected errors
   const message = isProduction
     ? (getMessage('INTERNAL_ERROR', lang) || 'An unexpected error occurred. Please try again later.')
     : err.message;
 
-  res.status(statusCode).json({
-    success: false,
-    error: {
-      code: ERROR_CODES.INTERNAL_ERROR.code,
-      numericCode: ERROR_CODES.INTERNAL_ERROR.numeric,
-      message,
-      requestId: req.id,
-      timestamp: new Date().toISOString(),
-      ...(!isProduction && { debug: { name: 'InternalError' } }),
-    },
+  const envelope = buildErrorEnvelope({
+    code: ERROR_CODES.INTERNAL_ERROR.code,
+    numericCode: ERROR_CODES.INTERNAL_ERROR.numeric,
+    message,
+    requestId: req.id,
   });
+  if (!isProduction) envelope.error.debug = { name: 'InternalError' };
+  res.status(statusCode >= 400 && statusCode < 600 ? statusCode : 500).json(envelope);
 }
 
 /**

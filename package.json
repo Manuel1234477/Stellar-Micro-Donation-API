@@ -58,7 +58,9 @@
     "docs:error-codes": "node scripts/generate-error-codes.js",
     "scan:container": "bash scripts/scan-container.sh",
     "scan:container:all": "bash scripts/scan-container.sh --severity CRITICAL,HIGH,MEDIUM,LOW",
-    "scan:container:json": "bash scripts/scan-container.sh --format json --output trivy-results.json"
+    "scan:container:json": "bash scripts/scan-container.sh --format json --output trivy-results.json",
+    "docs:error-codes:check": "node scripts/generate-error-codes.js --check",
+    "check:error-codes": "node scripts/check-error-codes.js"
   },
   "dependencies": {
     "ajv": "^8.12.0",
