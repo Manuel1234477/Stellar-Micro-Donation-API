@@ -5,7 +5,7 @@
  * Fast, dependency-free CI guard (#1927) that catches boot blockers before
  * they reach main:
  *
- * 1. `node --check` on every src/**/*.js and scripts/**/*.js file (syntax parse)
+ * 1. `node --check` on every .js file under src/ and scripts/ (syntax parse)
  * 2. `require()` every module under src/ (excludes src/scripts/) with a minimal
  *    test environment to catch undefined exports and missing dependencies
  * 3. Boot check: require('./src/app').createApp exists and returns an object
