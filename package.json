@@ -74,6 +74,7 @@
     "docs:db-schema:check": "node scripts/generate-database-schema.js --check",
     "check:isolation": "node scripts/check-test-isolation.js",
     "check:orphans": "node scripts/check-src-orphans.js",
+    "check:prometheus-rules": "node scripts/check-prometheus-rules.js",
     "test:ci": "npm run check:isolation && jest --ci --maxWorkers=2"
   },
   "dependencies": {
@@ -117,6 +118,7 @@
     "eslint-plugin-security": "^4.2.0",
     "fast-check": "^4.10.2",
     "jest": "^30.5.2",
+    "js-yaml": "^4.3.2",
     "madge": "^8.0.0",
     "nodemon": "^3.1.14",
     "sql.js": "^1.15.1",
