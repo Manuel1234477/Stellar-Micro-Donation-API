@@ -14,6 +14,7 @@
  */
 
 'use strict';
+const { bestEffort } = require('../utils/bestEffort');
 
 const express = require('express');
 const router = express.Router();
@@ -59,7 +60,7 @@ router.post('/', checkPermission(PERMISSIONS.ADMIN_ALL), payloadSizeLimiter(ENDP
       ipAddress: req.ip,
       resource: `/tiers/${tier.id}`,
       details: { tierId: tier.id, name: tier.name, amount: tier.amount },
-    }).catch(() => {});
+    }).catch(bestEffort('src/routes/tiers.js:62'));
 
     res.status(201).json({ success: true, data: tier });
   } catch (err) {
@@ -143,7 +144,7 @@ router.get('/analytics', checkPermission(PERMISSIONS.STATS_ADMIN), asyncHandler(
       ipAddress: req.ip,
       resource: '/tiers/analytics',
       details: {},
-    }).catch(() => {});
+    }).catch(bestEffort('src/routes/tiers.js:146'));
 
     res.json({ success: true, data: analytics });
   } catch (err) {
@@ -202,7 +203,7 @@ router.post('/:id/subscribe', checkPermission(PERMISSIONS.STREAM_CREATE), payloa
         tierId,
         recurringDonationId: subscription.recurringDonationId,
       },
-    }).catch(() => {});
+    }).catch(bestEffort('src/routes/tiers.js:205'));
 
     res.status(201).json({ success: true, data: subscription });
   } catch (err) {
@@ -238,7 +239,7 @@ router.delete('/subscriptions/:subId', checkPermission(PERMISSIONS.STREAM_DELETE
       ipAddress: req.ip,
       resource: `/tiers/subscriptions/${subId}`,
       details: { subscriptionId: subId },
-    }).catch(() => {});
+    }).catch(bestEffort('src/routes/tiers.js:241'));
 
     res.json({ success: true, data: subscription });
   } catch (err) {

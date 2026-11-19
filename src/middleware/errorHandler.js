@@ -18,7 +18,12 @@
  * 5. Mask sensitive information in production environments.
  */
 
-const { AppError, ERROR_CODES } = require("../utils/errors");
+const {
+  AppError,
+  ERROR_CODES,
+  buildErrorEnvelope,
+  fallbackCodeForStatus,
+} = require("../utils/errors");
 const log = require('../utils/log');
 const { parseLanguage, getMessage } = require('../utils/i18n');
 const { maskSensitiveData } = require('../utils/dataMasker');
@@ -229,6 +234,24 @@ function errorHandler(err, req, res, next) {
     });
   }
 
+  // Body-parser rejected a body over its limit (e.g. chunked, no Content-Length).
+  // Return the same envelope as payloadSizeLimiter so clients see one 413 shape
+  // whichever layer rejected the request (#1953).
+  if (err.type === 'entity.too.large') {
+    return res.status(413).json({
+      success: false,
+      error: {
+        code: 'PAYLOAD_TOO_LARGE',
+        message: 'Request body too large.',
+        ...(typeof err.limit === 'number' && {
+          details: { max_size_bytes: err.limit },
+        }),
+        requestId: req.id,
+        timestamp: new Date().toISOString(),
+      },
+    });
+  }
+
   // Handle named validation errors — 422 Unprocessable Entity:
   // The request was well-formed (parseable) but failed semantic validation rules.
   // 400 Bad Request is reserved for syntactically malformed requests (e.g. invalid JSON).
@@ -237,23 +260,34 @@ function errorHandler(err, req, res, next) {
     return res.status(422).json(buildValidationErrorResponse(err, req.id, lang));
   }
 
-  // Default: unexpected errors
+  // Client-side framework errors (body-parser: malformed JSON, payload too large,
+  // etc.) carry `expose: true` and a 4xx status. They get a request-shape code
+  // rather than INTERNAL_ERROR (Issue #1957).
   const statusCode = err.statusCode || err.status || 500;
+  if (statusCode >= 400 && statusCode < 500 && err.expose) {
+    const code = fallbackCodeForStatus(statusCode);
+    const catalogued = ERROR_CODES[code] || ERROR_CODES.INVALID_REQUEST;
+    return res.status(statusCode).json(buildErrorEnvelope({
+      code: catalogued.code,
+      numericCode: catalogued.numeric,
+      message: err.message || 'Invalid request',
+      requestId: req.id,
+    }));
+  }
+
+  // Default: unexpected errors
   const message = isProduction
     ? (getMessage('INTERNAL_ERROR', lang) || 'An unexpected error occurred. Please try again later.')
     : err.message;
 
-  res.status(statusCode).json({
-    success: false,
-    error: {
-      code: ERROR_CODES.INTERNAL_ERROR.code,
-      numericCode: ERROR_CODES.INTERNAL_ERROR.numeric,
-      message,
-      requestId: req.id,
-      timestamp: new Date().toISOString(),
-      ...(!isProduction && { debug: { name: 'InternalError' } }),
-    },
+  const envelope = buildErrorEnvelope({
+    code: ERROR_CODES.INTERNAL_ERROR.code,
+    numericCode: ERROR_CODES.INTERNAL_ERROR.numeric,
+    message,
+    requestId: req.id,
   });
+  if (!isProduction) envelope.error.debug = { name: 'InternalError' };
+  res.status(statusCode >= 400 && statusCode < 600 ? statusCode : 500).json(envelope);
 }
 
 /**

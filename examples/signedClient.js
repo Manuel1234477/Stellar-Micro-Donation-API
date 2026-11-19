@@ -22,7 +22,7 @@
  *   All example paths are versioned (`/api/v1/...`). Unversioned legacy
  *   paths are deprecated and only return 308 redirects to `/api/v1/*`;
  *   they will be removed on the sunset date announced in
- *   docs/VERSIONING_STRATEGY.md.
+ *   docs/versioning-strategy.md.
  *
  * Behavior:
  *   - Generates a fresh Unix-seconds timestamp per request

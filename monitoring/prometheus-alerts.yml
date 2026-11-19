@@ -22,8 +22,10 @@
 #   horizon_pool_recovery_events_total                         (Counter)
 #   horizon_pool_acquire_duration_seconds                      (Histogram)
 #   process_resident_memory_bytes                              (Gauge, default metrics)
-#   nodejs_heap_size_limit_bytes                               (Gauge, default metrics)
 #   nodejs_eventloop_lag_seconds                               (Gauge, default metrics)
+#   nodejs_heap_size_limit_bytes                               (Gauge, #1967)
+#   stellar_scheduler_lag_seconds                              (Gauge, scrape-time, #1968)
+#   stellar_transaction_sync_lag_seconds                       (Gauge, scrape-time, #1968)
 #
 # To use:
 # 1. Copy this file to your Prometheus config directory
@@ -46,8 +48,8 @@ groups:
       - alert: APIAvailabilityBelowSLO
         expr: |
           (
-            sum(rate(http_request_duration_seconds_count{status_code=~"2.."}[5m])) +
-            sum(rate(http_request_duration_seconds_count{status_code=~"3.."}[5m]))
+            (sum(rate(http_request_duration_seconds_count{status_code=~"2.."}[5m])) or vector(0)) +
+            (sum(rate(http_request_duration_seconds_count{status_code=~"3.."}[5m])) or vector(0))
           ) /
           sum(rate(http_request_duration_seconds_count[5m])) < 0.99
         for: 5m
@@ -67,7 +69,7 @@ groups:
             1. Check API logs for error patterns: grep ERROR /var/log/api.log
             2. Review recent deployments: git log --oneline -10
             3. Check database connection pool: curl /health/ready
-            4. See runbook: docs/RUNBOOKS.md#api-availability
+            4. See runbook: docs/runbooks.md#api-availability
 
       - alert: APIErrorRateAboveSLO
         expr: |
@@ -89,7 +91,7 @@ groups:
             2. Review database query performance
             3. Check external service connectivity (Horizon)
 
-            Runbook: docs/RUNBOOKS.md#api-error-rate
+            Runbook: docs/runbooks.md#api-error-rate
 
       # ─── API Latency SLO ──────────────────────────────────────────────────────
 
@@ -116,7 +118,7 @@ groups:
             3. Check memory usage: curl /health/live | jq .memory
             4. Review recent code changes
 
-            Runbook: docs/RUNBOOKS.md#api-latency
+            Runbook: docs/runbooks.md#api-latency
 
       - alert: APIP99LatencyAboveSLO
         expr: |
@@ -141,17 +143,57 @@ groups:
             3. Garbage collection pauses
             4. Disk I/O bottleneck
 
-            Runbook: docs/RUNBOOKS.md#api-latency
+            Runbook: docs/runbooks.md#api-latency
 
       # ─── Scheduler Health SLO ─────────────────────────────────────────────────
       #
-      # The app does not emit a stellar_scheduler_lag_seconds gauge directly.
-      # We use two proxies from the metrics that ARE emitted:
+      # Primary signal: stellar_scheduler_lag_seconds (#1968). It is computed at
+      # scrape time from the oldest due active schedule, so it keeps rising when
+      # the scheduler is stuck and never reaches its tick body.
       #
-      #   1. A high rate of skipped schedules (recurring_donations_skipped_total)
-      #      indicates the scheduler is unable to keep up.
-      #   2. A zero rate of due schedules combined with a non-zero active count
-      #      may indicate the scheduler has stalled.
+      # Secondary signals: the skip-rate alerts below. A high skip rate shows a
+      # scheduler that is running but cannot keep up.
+
+      - alert: SchedulerLagWarning
+        expr: stellar_scheduler_lag_seconds > 60
+        for: 5m
+        labels:
+          severity: warning
+          slo: scheduler_lag
+          service: stellar-donation-api
+        annotations:
+          summary: "Recurring donation scheduler is lagging: {{ $value | humanizeDuration }} overdue"
+          description: |
+            The oldest due recurring donation has been waiting {{ $value | humanizeDuration }}.
+            SLO warning threshold is 60 seconds (docs/SLOs.md section 4).
+
+            Diagnostics:
+            1. Check scheduler logs: grep "RECURRING_SCHEDULER" /var/log/api.log
+            2. Check leader election: the scheduler only runs on the instance holding the lease
+            3. Check database connectivity: /health/ready
+
+            Runbook: docs/RUNBOOKS.md#scheduler-lag
+
+      - alert: SchedulerLagCritical
+        expr: stellar_scheduler_lag_seconds > 300
+        for: 2m
+        labels:
+          severity: critical
+          slo: scheduler_lag
+          service: stellar-donation-api
+        annotations:
+          summary: "CRITICAL: Recurring donation scheduler is {{ $value | humanizeDuration }} behind"
+          description: |
+            The oldest due recurring donation has been waiting {{ $value | humanizeDuration }}.
+            SLO critical threshold is 300 seconds (docs/SLOs.md section 4).
+
+            IMMEDIATE ACTIONS:
+            1. Page on-call engineer
+            2. Check if the scheduler process is running: ps aux | grep -i node
+            3. Check leader election and database connectivity: /health/ready
+            4. If the scheduler is hung, restart the process
+
+            Runbook: docs/RUNBOOKS.md#scheduler-lag-critical
 
       - alert: SchedulerSkipRateWarning
         expr: |
@@ -177,7 +219,7 @@ groups:
             2. Check Stellar network connectivity
             3. Check database pool health
 
-            Runbook: docs/RUNBOOKS.md#scheduler-lag
+            Runbook: docs/runbooks.md#scheduler-lag
 
       - alert: SchedulerSkipRateCritical
         expr: |
@@ -200,16 +242,16 @@ groups:
             4. Review last 100 log entries: tail -100 /var/log/api.log
             5. If hung: restart the scheduler process
 
-            Runbook: docs/RUNBOOKS.md#scheduler-lag-critical
+            Runbook: docs/runbooks.md#scheduler-lag-critical
 
       # ─── Recurring Donation Execution SLO ────────────────────────────────────
 
       - alert: RecurringDonationSuccessRateLow
         expr: |
-          sum(rate(stellar_recurring_donations_executed_total{status="success"}[1h])) /
+          (sum(rate(stellar_recurring_donations_executed_total{status="success"}[1h])) or vector(0)) /
           (
-            sum(rate(stellar_recurring_donations_executed_total{status="success"}[1h])) +
-            sum(rate(stellar_recurring_donations_executed_total{status="failure"}[1h]))
+            (sum(rate(stellar_recurring_donations_executed_total{status="success"}[1h])) or vector(0)) +
+            (sum(rate(stellar_recurring_donations_executed_total{status="failure"}[1h])) or vector(0))
           ) < 0.98
         for: 10m
         labels:
@@ -231,7 +273,7 @@ groups:
             3. Check account balance: curl /api/v1/account
             4. Verify Horizon API connectivity
 
-            Runbook: docs/RUNBOOKS.md#recurring-donation-failure
+            Runbook: docs/runbooks.md#recurring-donation-failure
 
       - alert: RecurringDonationSuspensionRateHigh
         expr: |
@@ -253,7 +295,7 @@ groups:
             2. Review suspension logs: grep "RECURRING_DONATION.*suspended" /var/log/api.log
             3. Confirm donor accounts have sufficient balance
 
-            Runbook: docs/RUNBOOKS.md#recurring-donation-failure
+            Runbook: docs/runbooks.md#recurring-donation-failure
 
       # ─── Horizon Connection Pool SLO ──────────────────────────────────────────
       #
@@ -286,7 +328,7 @@ groups:
             2. Verify network connectivity: curl https://horizon.stellar.org
             3. Check rate limit headers in logs
 
-            Runbook: docs/RUNBOOKS.md#horizon-connectivity
+            Runbook: docs/runbooks.md#horizon-connectivity
 
       - alert: HorizonPoolExhausted
         expr: |
@@ -309,7 +351,7 @@ groups:
             3. Check application logs for HORIZON errors
             4. Consider enabling MOCK_STELLAR=true to accept submissions without network calls
 
-            Runbook: docs/RUNBOOKS.md#horizon-connectivity
+            Runbook: docs/runbooks.md#horizon-connectivity
 
       - alert: HorizonPoolCooldownRateHigh
         expr: |
@@ -331,13 +373,58 @@ groups:
             2. Verify network connectivity: curl https://horizon.stellar.org
             3. Check rate limit headers in logs
 
-            Runbook: docs/RUNBOOKS.md#horizon-connectivity
+            Runbook: docs/runbooks.md#horizon-connectivity
 
       # ─── Transaction Sync Scheduler SLO ───────────────────────────────────────
       #
-      # The app does not emit a stellar_transaction_sync_lag_seconds gauge.
-      # We monitor the Horizon pool acquire latency as a proxy for sync health:
-      # if pool acquisition is slow, transaction sync will also be slow.
+      # Primary signal: stellar_transaction_sync_lag_seconds (#1968), the age of
+      # the least recently synced monitored wallet. The sync scheduler runs every
+      # 15 minutes by default (TX_SYNC_INTERVAL_MS), so the warning threshold is
+      # 2x that interval and the critical threshold is 4x.
+
+      - alert: TransactionSyncLagWarning
+        expr: stellar_transaction_sync_lag_seconds > 1800
+        for: 5m
+        labels:
+          severity: warning
+          slo: scheduler_lag
+          scheduler: transaction_sync
+          service: stellar-donation-api
+        annotations:
+          summary: "Transaction sync is lagging: a wallet is {{ $value | humanizeDuration }} stale"
+          description: |
+            The least recently synced wallet was last synced {{ $value | humanizeDuration }} ago.
+            Expected sync interval is 15 minutes (TX_SYNC_INTERVAL_MS).
+
+            Diagnostics:
+            1. Check transaction sync logs: grep "TX_SYNC_SCHEDULER" /var/log/api.log
+            2. Check Horizon API responsiveness
+            3. Check that a leader instance holds the tx_sync_scheduler lease
+
+            Runbook: docs/RUNBOOKS.md#transaction-sync-lag
+
+      - alert: TransactionSyncLagCritical
+        expr: stellar_transaction_sync_lag_seconds > 3600
+        for: 5m
+        labels:
+          severity: critical
+          slo: scheduler_lag
+          scheduler: transaction_sync
+          service: stellar-donation-api
+        annotations:
+          summary: "CRITICAL: Transaction sync is {{ $value | humanizeDuration }} behind"
+          description: |
+            The least recently synced wallet was last synced {{ $value | humanizeDuration }} ago.
+            Incoming donations may not be reflected in local records.
+
+            IMMEDIATE ACTIONS:
+            1. Page on-call engineer
+            2. Check Horizon status and connectivity
+            3. Check the sync scheduler process and lease holder
+
+            Runbook: docs/RUNBOOKS.md#transaction-sync-lag
+
+      # Secondary signal: slow Horizon pool acquisition also delays sync.
 
       - alert: HorizonPoolAcquireLatencyHigh
         expr: |
@@ -361,7 +448,7 @@ groups:
             2. Review database query performance
             3. Check scheduler logs
 
-            Runbook: docs/RUNBOOKS.md#transaction-sync-lag
+            Runbook: docs/runbooks.md#transaction-sync-lag
 
       # ─── Application Startup & Health ────────────────────────────────────────
 
@@ -386,7 +473,7 @@ groups:
             3. Check logs for startup errors
             4. Restart application if crashed
 
-            Runbook: docs/RUNBOOKS.md#application-down
+            Runbook: docs/runbooks.md#application-down
 
       # ─── General Node.js Health ──────────────────────────────────────────────
 
@@ -416,7 +503,7 @@ groups:
             2. Check for recent deployments
             3. Restart application if needed
 
-            Runbook: docs/RUNBOOKS.md#high-memory
+            Runbook: docs/runbooks.md#high-memory
 
       - alert: HighEventLoopLag
         expr: |
@@ -435,4 +522,4 @@ groups:
 
             This will impact request latency.
 
-            Runbook: docs/RUNBOOKS.md#event-loop-lag
+            Runbook: docs/runbooks.md#event-loop-lag

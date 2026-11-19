@@ -68,10 +68,14 @@ describe('BackupService', () => {
       const result = await svc.backup();
 
       const encrypted = fs.readFileSync(result.filePath);
-      const key = crypto.createHash('sha256').update(process.env.ENCRYPTION_KEY).digest();
-      const iv = encrypted.slice(0, 12);
-      const tag = encrypted.slice(12, 28);
-      const ct = encrypted.slice(28);
+      // v2 layout (#1951): "SBK2" | idLen | keyId | iv | tag | ciphertext, key = HKDF-SHA256(ENCRYPTION_KEY)
+      expect(encrypted.subarray(0, 4).toString('ascii')).toBe('SBK2');
+      const idLen = encrypted[4];
+      const body = encrypted.subarray(5 + idLen);
+      const key = Buffer.from(crypto.hkdfSync('sha256', process.env.ENCRYPTION_KEY, Buffer.alloc(0), 'stellar-backup-v1', 32));
+      const iv = body.slice(0, 12);
+      const tag = body.slice(12, 28);
+      const ct = body.slice(28);
       const decipher = crypto.createDecipheriv('aes-256-gcm', key, iv);
       decipher.setAuthTag(tag);
       const decrypted = Buffer.concat([decipher.update(ct), decipher.final()]);

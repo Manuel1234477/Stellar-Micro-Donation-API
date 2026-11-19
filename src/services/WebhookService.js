@@ -8,6 +8,7 @@
  */
 
 'use strict';
+const { bestEffort } = require('../utils/bestEffort');
 
 const https = require('https');
 const http = require('http');
@@ -155,7 +156,7 @@ class WebhookService {
         reason: blocked
           ? 'tlsSkipVerify rejected in production without break-glass flag'
           : 'TLS verification bypass registered',
-      }).catch(() => {});
+      }).catch(bestEffort('src/services/WebhookService.js:158'));
 
       if (blocked) {
         const e = new Error('tlsSkipVerify is not allowed in production'); e.status = 400; throw e;
@@ -590,13 +591,13 @@ class WebhookService {
             payload,
             attempt: 0,
             lastError: err.message,
-          }).catch(() => {});
+          }).catch(bestEffort('src/services/WebhookService.js:593'));
         }
       }, {
         webhookId: webhook.id,
         event,
         parentRequestId: parentContext.requestId
-      }).catch(() => {});
+      }).catch(bestEffort('src/services/WebhookService.js:599'));
     }
   }
 
@@ -637,12 +638,12 @@ class WebhookService {
         `INSERT INTO webhook_delivery_history (webhook_id, event, payload, attempt, status, status_code)
          VALUES (?, ?, ?, ?, ?, ?)`,
         [webhook.id, event, JSON.stringify(payload), attempt + 1, 'success', result.statusCode]
-      ).catch(() => {});
+      ).catch(bestEffort('src/services/WebhookService.js:640'));
       
       await Database.run(
         `UPDATE webhooks SET consecutive_failures = 0 WHERE id = ?`,
         [webhook.id]
-      ).catch(() => {});
+      ).catch(bestEffort('src/services/WebhookService.js:645'));
       log.debug('WEBHOOK', 'Delivered', { id: webhook.id, event, attempt });
     } catch (err) {
       const failures = (webhook.consecutive_failures || 0) + 1;
@@ -653,14 +654,14 @@ class WebhookService {
         await Database.run(
           `UPDATE webhooks SET is_active = 0, consecutive_failures = ? WHERE id = ?`,
           [failures, webhook.id]
-        ).catch(() => {});
+        ).catch(bestEffort('src/services/WebhookService.js:656'));
         return;
       }
 
       await Database.run(
         `UPDATE webhooks SET consecutive_failures = ? WHERE id = ?`,
         [failures, webhook.id]
-      ).catch(() => {});
+      ).catch(bestEffort('src/services/WebhookService.js:663'));
 
       webhook.consecutive_failures = failures;
 
@@ -717,7 +718,7 @@ class WebhookService {
           context: 'delivery-layer override — tls_skip_verify flag ignored in production',
         },
         reason: 'tlsSkipVerify suppressed at delivery time in production (defense-in-depth)',
-      }).catch(() => {});
+      }).catch(bestEffort('src/services/WebhookService.js:720'));
       log.error('WEBHOOK_SERVICE', 'tls_skip_verify flag suppressed in production at delivery time', { webhookId, url });
     }
 
@@ -788,7 +789,7 @@ class WebhookService {
 
     await Promise.allSettled(
       pending.map((webhook) =>
-        WebhookService._deliverWithRetry(webhook, 'flush', { flushed: true }, 0).catch(() => {})
+        WebhookService._deliverWithRetry(webhook, 'flush', { flushed: true }, 0).catch(bestEffort('src/services/WebhookService.js:791'))
       )
     );
 

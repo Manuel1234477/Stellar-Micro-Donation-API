@@ -3,7 +3,7 @@
  *
  * Performance baselines (SLOs) for the Stellar Micro-Donation API. The CI
  * load-test job fails (and therefore blocks the merge) if any threshold is
- * exceeded — see .github/workflows/load-tests.yml and docs/LOAD_TESTING.md.
+ * exceeded — see .github/workflows/load-tests.yml and docs/load-testing.md.
  *
  * Baselines are defined per scenario with p50, p95, p99 latency (ms), minimum
  * throughput (req/s), and maximum error rate (0–1).
@@ -90,7 +90,7 @@ const NIGHTLY_TARGET_BASELINES = {
   },
   // GET /donations: 500 req/s, p95 < 50ms (issue #1796)
   // The nightly gate must hold this p95 for 7 consecutive days before the
-  // regression is considered resolved. Keep in sync with docs/SLOs.md.
+  // regression is considered resolved. Keep in sync with docs/slos.md.
   'list-donations': {
     p50LatencyMs: 50,
     p95LatencyMs: 50,

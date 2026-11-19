@@ -4,12 +4,12 @@
  * Environment Variable Coverage Test (Issue #1177)
  *
  * Scans every .js file under src/ for process.env.VARIABLE_NAME references and
- * verifies that each variable is documented in docs/CONFIGURATION.md.
+ * verifies that each variable is documented in docs/configuration.md.
  *
  * Fails when a variable is referenced in code but absent from the documentation,
  * keeping the docs honest as the codebase evolves.
  *
- * To fix a failure: add the new variable to docs/CONFIGURATION.md (and
+ * To fix a failure: add the new variable to docs/configuration.md (and
  * .env.example if appropriate) then re-run the tests.
  */
 
@@ -72,7 +72,7 @@ const KNOWN_EXCLUSIONS = new Set([
 // ---------------------------------------------------------------------------
 
 const SRC_DIR = path.resolve(__dirname, '../../src');
-const CONFIG_MD = path.resolve(__dirname, '../../docs/CONFIGURATION.md');
+const CONFIG_MD = path.resolve(__dirname, '../../docs/configuration.md');
 
 describe('Environment variable documentation coverage (Issue #1177)', () => {
   let allVarsInSrc;
@@ -90,18 +90,18 @@ describe('Environment variable documentation coverage (Issue #1177)', () => {
     configMdContent = fs.readFileSync(CONFIG_MD, 'utf8');
   });
 
-  test('docs/CONFIGURATION.md exists and is non-empty', () => {
+  test('docs/configuration.md exists and is non-empty', () => {
     expect(configMdContent.length).toBeGreaterThan(100);
   });
 
-  test('every process.env.* reference in src/ is documented in CONFIGURATION.md', () => {
+  test('every process.env.* reference in src/ is documented in configuration.md', () => {
     const undocumented = [];
 
     for (const varName of allVarsInSrc) {
       if (KNOWN_EXCLUSIONS.has(varName)) continue;
 
       // The variable is considered documented if its backtick-quoted name
-      // (`VARIABLE_NAME`) appears anywhere in CONFIGURATION.md.
+      // (`VARIABLE_NAME`) appears anywhere in configuration.md.
       const pattern = new RegExp('`' + varName + '`');
       if (!pattern.test(configMdContent)) {
         undocumented.push(varName);
@@ -112,8 +112,8 @@ describe('Environment variable documentation coverage (Issue #1177)', () => {
       const list = undocumented.sort().map(v => `  - ${v}`).join('\n');
       throw new Error(
         `The following environment variables are used in src/ but are not documented ` +
-        `in docs/CONFIGURATION.md:\n\n${list}\n\n` +
-        `Add each variable to the appropriate section of docs/CONFIGURATION.md ` +
+        `in docs/configuration.md:\n\n${list}\n\n` +
+        `Add each variable to the appropriate section of docs/configuration.md ` +
         `(and .env.example if it is user-facing), then re-run this test.`
       );
     }
@@ -125,7 +125,7 @@ describe('Environment variable documentation coverage (Issue #1177)', () => {
     expect(content.length).toBeGreaterThan(100);
   });
 
-  test('CONFIGURATION.md documents required variables with their types', () => {
+  test('configuration.md documents required variables with their types', () => {
     // Spot-check that the most critical required variables are documented
     // with the expected metadata markers.
     const required = [

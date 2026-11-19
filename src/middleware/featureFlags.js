@@ -1,3 +1,4 @@
+const { bestEffort } = require('../utils/bestEffort');
 /**
  * Feature Flags Middleware - Feature Flag Enforcement Layer
  * 
@@ -91,7 +92,7 @@ const checkFeatureFlag = (flagName, options = {}) => {
             method: req.method,
             environment
           }
-        }).catch(() => {});
+        }).catch(bestEffort('src/middleware/featureFlags.js:94'));
 
         throw new ForbiddenError(
           `Feature not available. Flag: ${flagName}`,
@@ -115,7 +116,7 @@ const checkFeatureFlag = (flagName, options = {}) => {
           method: req.method,
           environment
         }
-      }).catch(() => {});
+      }).catch(bestEffort('src/middleware/featureFlags.js:118'));
 
       next();
     } catch (error) {

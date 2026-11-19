@@ -1,76 +1,115 @@
 #!/usr/bin/env bash
 #
-# Onboarding validation (#1977)
+# validate-onboarding.sh
 #
-# Verifies that the commands and files a new contributor is told to use in
-# CONTRIBUTING.md exist and work. CI runs this on a fresh checkout after
-# `npm ci`, migrations and a mock-mode boot (see .github/workflows/ci.yml).
+# Verifies the README quickstart still works.
 #
-# Environment:
-#   ONBOARDING_HEALTH_URL  If set, GET this URL and require HTTP 200 (e.g.
-#                          http://localhost:3000/health). When unset the health
-#                          check is skipped, so the script also runs locally
-#                          without a running server.
+# Default (static) mode, run in CI on every change:
+#   - README and docs/quickstart.md pass scripts/check-docs.js
+#   - every file the quickstart depends on exists
+#   - every npm script the quickstart runs is defined in package.json
+#
+# Boot mode (--boot): also runs the quickstart commands against a real process:
+#   npm run init-db, npm start, then GET /api/v1/health must return HTTP 200.
+#   Requires a working install (npm ci) and uses a temporary database.
+#
+# Usage:
+#   bash scripts/validate-onboarding.sh          # static checks
+#   bash scripts/validate-onboarding.sh --boot   # static checks + live boot
 
-set -u
+set -euo pipefail
 
-GREEN='\033[0;32m'
-RED='\033[0;31m'
-NC='\033[0m'
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+cd "$ROOT"
 
-PASSED=0
+BOOT=false
+if [[ "${1:-}" == "--boot" ]]; then
+  BOOT=true
+fi
+
+PORT="${ONBOARDING_PORT:-3000}"
 FAILED=0
 
-check() {
-  local description=$1
-  shift
-  if "$@" > /dev/null 2>&1; then
-    echo -e "  ${GREEN}✓${NC} $description"
-    PASSED=$((PASSED + 1))
+pass() { printf '  \033[0;32m✓\033[0m %s\n' "$1"; }
+fail() { printf '  \033[0;31m✗\033[0m %s\n' "$1"; FAILED=$((FAILED + 1)); }
+
+check_file() {
+  if [[ -f "$1" ]]; then pass "$1 exists"; else fail "$1 is missing"; fi
+}
+
+check_npm_script() {
+  if node -e "const s=require('./package.json').scripts||{};process.exit(s[process.argv[1]]?0:1)" "$1"; then
+    pass "npm run $1 is defined"
   else
-    echo -e "  ${RED}✗${NC} $description"
-    FAILED=$((FAILED + 1))
+    fail "npm run $1 is not defined in package.json"
   fi
 }
 
-has_npm_script() {
-  node -e "const p=require('./package.json'); process.exit(p.scripts && p.scripts['$1'] ? 0 : 1)"
-}
+echo "Checking quickstart files..."
+check_file README.md
+check_file docs/quickstart.md
+check_file .env.example
+check_file docs/openapi.json
+check_file examples/API_CURL_EXAMPLES.md
+check_file examples/Stellar-Micro-Donation-API.postman_collection.json
 
-echo "Files referenced by CONTRIBUTING.md"
-for f in CONTRIBUTING.md README.md .env.example package.json \
-         src/app.js src/services/DonationService.js src/services/WalletService.js \
-         src/utils/stellarErrorHandler.js scripts/validate-rbac.js; do
-  check "$f exists" test -f "$f"
+echo "Checking quickstart npm scripts..."
+for script in generate-key init-db validate-env keys:create check:docs; do
+  check_npm_script "$script"
 done
 
-echo "Directory layout"
-for d in src/routes src/services src/middleware src/utils src/config tests; do
-  check "$d/ exists" test -d "$d"
-done
-
-echo "npm scripts named in CONTRIBUTING.md"
-for s in test test:coverage lint validate-env init-db generate-key keys:list keys:create validate:rbac check:parse migrate:check; do
-  check "npm run $s is defined" has_npm_script "$s"
-done
-
-echo "Dependencies"
-check "node_modules installed (npm ci)" test -d node_modules
-
-if [ -n "${ONBOARDING_HEALTH_URL:-}" ]; then
-  echo "Running server"
-  check "GET $ONBOARDING_HEALTH_URL returns 200" \
-    bash -c "[ \"\$(curl -s -o /dev/null -w '%{http_code}' --max-time 10 '$ONBOARDING_HEALTH_URL')\" = 200 ]"
+echo "Checking README and quickstart documentation..."
+if node scripts/check-docs.js; then
+  pass "check-docs.js passed"
 else
-  echo "Running server: skipped (set ONBOARDING_HEALTH_URL to check /health)"
+  fail "check-docs.js reported problems"
+fi
+
+if [[ "$BOOT" == true ]]; then
+  echo "Booting the quickstart (mock mode, temporary database)..."
+  TMP_DIR="$(mktemp -d)"
+  SERVER_PID=""
+  cleanup() {
+    if [[ -n "$SERVER_PID" ]]; then kill "$SERVER_PID" 2>/dev/null || true; fi
+    rm -rf "$TMP_DIR"
+  }
+  trap cleanup EXIT
+
+  export MOCK_STELLAR=true
+  export PORT
+  export DB_PATH="$TMP_DIR/onboarding.db"
+  export API_KEYS="onboarding_key_$(date +%s)"
+  export ENCRYPTION_KEY="${ENCRYPTION_KEY:-$(node -e "console.log(require('crypto').randomBytes(32).toString('hex'))")}"
+
+  if npm run init-db >"$TMP_DIR/init-db.log" 2>&1; then
+    pass "npm run init-db succeeded"
+  else
+    fail "npm run init-db failed (see $TMP_DIR/init-db.log)"
+    tail -n 20 "$TMP_DIR/init-db.log" || true
+  fi
+
+  npm start >"$TMP_DIR/server.log" 2>&1 &
+  SERVER_PID=$!
+
+  HEALTH_CODE=000
+  for _ in $(seq 1 60); do
+    HEALTH_CODE="$(curl -s -o /dev/null -w '%{http_code}' "http://localhost:${PORT}/api/v1/health" || true)"
+    if [[ "$HEALTH_CODE" == "200" ]]; then break; fi
+    sleep 1
+  done
+
+  if [[ "$HEALTH_CODE" == "200" ]]; then
+    pass "GET /api/v1/health returned 200"
+  else
+    fail "GET /api/v1/health returned $HEALTH_CODE (see $TMP_DIR/server.log)"
+    tail -n 30 "$TMP_DIR/server.log" || true
+  fi
 fi
 
 echo ""
-echo "Results: ${PASSED} passed, ${FAILED} failed"
-
-if [ "$FAILED" -eq 0 ]; then
-  echo -e "${GREEN}All onboarding checks passed.${NC}"
+if [[ $FAILED -eq 0 ]]; then
+  echo "All onboarding checks passed."
   exit 0
 fi
-echo -e "${RED}Onboarding checks failed. Review CONTRIBUTING.md and the items above.${NC}"
+echo "$FAILED onboarding check(s) failed. Update README.md or docs/quickstart.md to match."
 exit 1

@@ -14,12 +14,12 @@ module.exports = {
     type: 'problem',
     docs: {
       description: 'Require asyncHandler() wrapper for async Express route handlers',
-      url: 'docs/ASYNC_HANDLER_MIGRATION.md',
+      url: 'docs/async-handler-migration.md',
     },
     messages: {
       missingWrapper:
         'Async route handler must be wrapped with asyncHandler(). ' +
-        'See docs/ASYNC_HANDLER_MIGRATION.md',
+        'See docs/async-handler-migration.md',
     },
     schema: [],
   },

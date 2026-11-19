@@ -20,7 +20,7 @@
  * value (in-memory) or a Promise (Redis). `incrementAndCheck()` preserves that:
  * a synchronous store gives a synchronous result.
  *
- * Failure policy (see docs/RATE_LIMITING.md):
+ * Failure policy (see docs/rate-limiting.md):
  * - fail-open (default): a store error allows the request
  * - fail-closed (RATE_LIMIT_FAIL_OPEN=false): a store error rejects the request
  * Either way the error is logged with the policy that was applied.

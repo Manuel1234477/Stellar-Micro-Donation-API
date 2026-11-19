@@ -1,4 +1,5 @@
 'use strict';
+const { bestEffort } = require('../utils/bestEffort');
 
 /**
  * Per-API-key rate limiting.
@@ -20,14 +21,28 @@ function getStore() {
   return _storeOverride || getRateLimitStore();
 }
 
-const perKeyRateLimit = async (req, res, next) => {
+/**
+ * Applies the per-key limit and then calls next() (or responds 429).
+ *
+ * Synchronous when the configured store is synchronous (the default in-memory
+ * store), so the request continues without extra microtask hops. An async store
+ * (Redis) is awaited; a store failure is forwarded to next(err).
+ */
+const perKeyRateLimit = (req, res, next) => {
   const keyInfo = req.apiKey;
   if (!keyInfo || keyInfo.isLegacy || !keyInfo.id) return next();
 
   const limit = keyInfo.rateLimitPerMinute || keyInfo.rateLimit || DEFAULT_RATE_LIMIT;
   const windowSeconds = keyInfo.rateLimitWindowSeconds || DEFAULT_WINDOW_SECONDS;
 
-  const result = await getStore().incrementAndCheck(KEY_PREFIX + keyInfo.id, limit, windowSeconds);
+  const outcome = getStore().incrementAndCheck(KEY_PREFIX + keyInfo.id, limit, windowSeconds);
+  if (outcome && typeof outcome.then === 'function') {
+    return outcome.then((result) => enforceKeyLimit(result, limit, res, next), next);
+  }
+  return enforceKeyLimit(outcome, limit, res, next);
+};
+
+function enforceKeyLimit(result, limit, res, next) {
   // result.resetAt is epoch ms; buildRateLimitHeaders converts it to seconds
   res.set(buildRateLimitHeaders(limit, result.remaining, result.resetAt));
 
@@ -41,7 +56,7 @@ const perKeyRateLimit = async (req, res, next) => {
   }
 
   return next();
-};
+}
 
 /**
  * Synchronous per-key rate-limit check used by the legacy-API-key path in
@@ -63,7 +78,7 @@ function checkRateLimit(key, limit = DEFAULT_RATE_LIMIT, windowSeconds = DEFAULT
   if (result && typeof result.then === 'function') {
     // Async store (Redis): this synchronous path cannot wait for it. Fail open
     // and swallow the eventual result; the store logs its own errors.
-    result.catch(() => {});
+    result.catch(bestEffort('src/middleware/perKeyRateLimit.js:66'));
     return { allowed: true, limit, remaining: limit, resetAt: Date.now() + windowSeconds * 1000 };
   }
   return {

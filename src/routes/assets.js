@@ -15,6 +15,7 @@
  */
 
 'use strict';
+const { bestEffort } = require('../utils/bestEffort');
 
 const express = require('express');
 const router = express.Router();
@@ -141,7 +142,7 @@ router.post('/issue', requireAdmin(), payloadSizeLimiter(ENDPOINT_LIMITS.asset),
       ipAddress: req.ip,
       resource: `/assets/issue`,
       details: { assetCode, issuerPublic: result.issuerPublic, distributorPublicKey: distributor, amount: result.amount, hash: result.hash },
-    }).catch(() => {});
+    }).catch(bestEffort('src/routes/assets.js:144'));
 
     return res.status(201).json({
       success: true,
@@ -220,7 +221,7 @@ router.post('/:code/distribute', requireAdmin(), payloadSizeLimiter(ENDPOINT_LIM
       ipAddress: req.ip,
       resource: `/assets/${code}/distribute`,
       details: { assetCode: code, issuerPublicKey, distributorPublic, recipientPublicKey, amount: result.amount, hash: result.hash },
-    }).catch(() => {});
+    }).catch(bestEffort('src/routes/assets.js:223'));
 
     return res.status(201).json({
       success: true,

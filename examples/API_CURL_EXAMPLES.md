@@ -7,7 +7,7 @@ This guide provides copy-paste curl commands to test the core donation API flows
 ```bash
 # Set your environment variables
 export API_KEY="your-api-key-here"
-export BASE_URL="http://localhost:3000/api/v1"
+export BASE_URL="http://localhost:3000"
 # Sample Stellar Ed25519 public keys (testnet, DO NOT send real funds to these)
 export DONOR_PUBLIC_KEY="GCBT6W2QOCFDKQAQBWNGNYYGAH2LRHGTEVK5YBL6WRVQPPWJVKUNMOMS"
 export RECIPIENT_PUBLIC_KEY="GCVUHGLGMHYWM6NY33LKPHMX2GHXNMPW6HCO4DLQDG25T4OWDG7JJL6Y"
@@ -21,7 +21,7 @@ export WALLET_PUBLIC_KEY="GCMXPIWRCPVM63NUOZZDHC42CQKEUDLIBS6ZM6A3VD7SJ3UE2OHI6I
 The wallet-create route expects `address` (the Stellar public key), NOT `publicKey`.
 
 ```bash
-curl -X POST "$BASE_URL/wallets" \
+curl -X POST "$BASE_URL/api/v1/wallets" \
   -H "X-API-Key: $API_KEY" \
   -H "Content-Type: application/json" \
   -d '{
@@ -37,7 +37,7 @@ curl -X POST "$BASE_URL/wallets" \
 ### Get Wallet Transactions
 
 ```bash
-curl -X GET "$BASE_URL/wallets/$DONOR_PUBLIC_KEY/transactions" \
+curl -X GET "$BASE_URL/api/v1/wallets/$DONOR_PUBLIC_KEY/transactions" \
   -H "X-API-Key: $API_KEY"
 ```
 
@@ -48,7 +48,7 @@ curl -X GET "$BASE_URL/wallets/$DONOR_PUBLIC_KEY/transactions" \
 The custodial donation path expects `receiverId` (not `recipientId`). The wallet IDs are the internal integer IDs of the donor/recipient wallet rows.
 
 ```bash
-curl -X POST "$BASE_URL/donations" \
+curl -X POST "$BASE_URL/api/v1/donations" \
   -H "X-API-Key: $API_KEY" \
   -H "Content-Type: application/json" \
   -d '{
@@ -66,7 +66,7 @@ curl -X POST "$BASE_URL/donations" \
 ### Create Donation (non-custodial)
 
 ```bash
-curl -X POST "$BASE_URL/donations" \
+curl -X POST "$BASE_URL/api/v1/donations" \
   -H "X-API-Key: $API_KEY" \
   -H "Content-Type: application/json" \
   -d '{
@@ -81,7 +81,7 @@ curl -X POST "$BASE_URL/donations" \
 ### Get Recent Donations
 
 ```bash
-curl -X GET "$BASE_URL/donations/recent?limit=10" \
+curl -X GET "$BASE_URL/api/v1/donations/recent?limit=10" \
   -H "X-API-Key: $API_KEY" | jq .
 ```
 
@@ -89,7 +89,7 @@ curl -X GET "$BASE_URL/donations/recent?limit=10" \
 
 ```bash
 # Replace TRANSACTION_HASH with the hash from create response
-curl -X POST "$BASE_URL/donations/verify" \
+curl -X POST "$BASE_URL/api/v1/donations/verify" \
   -H "X-API-Key: $API_KEY" \
   -H "Content-Type: application/json" \
   -d '{
@@ -100,7 +100,7 @@ curl -X POST "$BASE_URL/donations/verify" \
 ### Get Donation Limits
 
 ```bash
-curl -X GET "$BASE_URL/donations/limits" \
+curl -X GET "$BASE_URL/api/v1/donations/limits" \
   -H "X-API-Key: $API_KEY" | jq .
 ```
 
@@ -111,7 +111,7 @@ curl -X GET "$BASE_URL/donations/limits" \
 The stream/create route expects `donorPublicKey` and `recipientPublicKey` (not `donorId`/`recipientId`).
 
 ```bash
-curl -X POST "$BASE_URL/stream/create" \
+curl -X POST "$BASE_URL/api/v1/stream/create" \
   -H "X-API-Key: $API_KEY" \
   -H "Content-Type: application/json" \
   -d '{
@@ -126,7 +126,7 @@ curl -X POST "$BASE_URL/stream/create" \
 ### List Recurring Donation Schedules
 
 ```bash
-curl -X GET "$BASE_URL/stream/schedules" \
+curl -X GET "$BASE_URL/api/v1/stream/schedules" \
   -H "X-API-Key: $API_KEY" | jq .
 ```
 
@@ -134,7 +134,7 @@ curl -X GET "$BASE_URL/stream/schedules" \
 
 ```bash
 # Replace SCHEDULE_ID with ID from list response
-curl -X GET "$BASE_URL/stream/schedules/SCHEDULE_ID" \
+curl -X GET "$BASE_URL/api/v1/stream/schedules/SCHEDULE_ID" \
   -H "X-API-Key: $API_KEY" | jq .
 ```
 
@@ -142,7 +142,7 @@ curl -X GET "$BASE_URL/stream/schedules/SCHEDULE_ID" \
 
 ```bash
 # Replace SCHEDULE_ID with ID from list response
-curl -X DELETE "$BASE_URL/stream/schedules/SCHEDULE_ID" \
+curl -X DELETE "$BASE_URL/api/v1/stream/schedules/SCHEDULE_ID" \
   -H "X-API-Key: $API_KEY"
 ```
 
@@ -151,35 +151,35 @@ curl -X DELETE "$BASE_URL/stream/schedules/SCHEDULE_ID" \
 ### Get Daily Statistics
 
 ```bash
-curl -X GET "$BASE_URL/stats/daily" \
+curl -X GET "$BASE_URL/api/v1/stats/daily" \
   -H "X-API-Key: $API_KEY" | jq .
 ```
 
 ### Get Weekly Statistics
 
 ```bash
-curl -X GET "$BASE_URL/stats/weekly" \
+curl -X GET "$BASE_URL/api/v1/stats/weekly" \
   -H "X-API-Key: $API_KEY" | jq .
 ```
 
 ### Get Summary Analytics
 
 ```bash
-curl -X GET "$BASE_URL/stats/summary" \
+curl -X GET "$BASE_URL/api/v1/stats/summary" \
   -H "X-API-Key: $API_KEY" | jq .
 ```
 
 ### Get Donor Statistics
 
 ```bash
-curl -X GET "$BASE_URL/stats/donors" \
+curl -X GET "$BASE_URL/api/v1/stats/donors" \
   -H "X-API-Key: $API_KEY" | jq .
 ```
 
 ### Get Recipient Statistics
 
 ```bash
-curl -X GET "$BASE_URL/stats/recipients" \
+curl -X GET "$BASE_URL/api/v1/stats/recipients" \
   -H "X-API-Key: $API_KEY" | jq .
 ```
 
@@ -190,7 +190,7 @@ curl -X GET "$BASE_URL/stats/recipients" \
 This uses SSE (Server-Sent Events) for real-time updates. Open in a separate terminal and leave running:
 
 ```bash
-curl -X GET "$BASE_URL/stream/transactions" \
+curl -X GET "$BASE_URL/api/v1/stream/transactions" \
   -H "X-API-Key: $API_KEY" \
   -H "Accept: text/event-stream"
 ```
@@ -203,7 +203,7 @@ data: {"type":"transaction","id":"123","amount":"50.00","sender":"...","recipien
 ### Real-Time Leaderboard Updates
 
 ```bash
-curl -X GET "$BASE_URL/stream/leaderboard" \
+curl -X GET "$BASE_URL/api/v1/stream/leaderboard" \
   -H "X-API-Key: $API_KEY" \
   -H "Accept: text/event-stream"
 ```
@@ -213,7 +213,7 @@ curl -X GET "$BASE_URL/stream/leaderboard" \
 ### Check API Health
 
 ```bash
-curl -X GET "$BASE_URL/health" | jq .
+curl -X GET "$BASE_URL/api/v1/health" | jq .
 ```
 
 ## Authentication Header
@@ -241,15 +241,15 @@ set -e  # Exit on error
 
 # Set variables
 export API_KEY="dev-key"
-export BASE_URL="http://localhost:3000/api/v1"
+export BASE_URL="http://localhost:3000"
 export DONOR="GCBT6W2QOCFDKQAQBWNGNYYGAH2LRHGTEVK5YBL6WRVQPPWJVKUNMOMS"
 export RECIPIENT="GCVUHGLGMHYWM6NY33LKPHMX2GHXNMPW6HCO4DLQDG25T4OWDG7JJL6Y"
 
 echo "📊 Checking API health..."
-curl -s "$BASE_URL/health" | jq .
+curl -s "$BASE_URL/api/v1/health" | jq .
 
 echo -e "\n💰 Creating a non-custodial donation (uses Stellar public keys)..."
-DONATION=$(curl -s -X POST "$BASE_URL/donations" \
+DONATION=$(curl -s -X POST "$BASE_URL/api/v1/donations" \
   -H "X-API-Key: $API_KEY" \
   -H "Content-Type: application/json" \
   -d '{
@@ -261,11 +261,11 @@ DONATION=$(curl -s -X POST "$BASE_URL/donations" \
 echo $DONATION | jq .
 
 echo -e "\n📈 Getting recent donations..."
-curl -s "$BASE_URL/donations/recent?limit=5" \
+curl -s "$BASE_URL/api/v1/donations/recent?limit=5" \
   -H "X-API-Key: $API_KEY" | jq .
 
 echo -e "\n📊 Getting summary stats..."
-curl -s "$BASE_URL/stats/summary" \
+curl -s "$BASE_URL/api/v1/stats/summary" \
   -H "X-API-Key: $API_KEY" | jq .
 ```
 

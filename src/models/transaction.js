@@ -10,6 +10,7 @@
  */
 
 'use strict';
+const { bestEffort } = require('../utils/bestEffort');
 
 const { v4: uuidv4 } = require('uuid');
 const donationEvents = require('../events/donationEvents');
@@ -529,7 +530,7 @@ class Transaction {
           fromState: currentStatus,
           toState: nextStatus,
         },
-      }).catch(() => {});
+      }).catch(bestEffort('src/models/transaction.js:532'));
       throw transitionErr;
     }
 

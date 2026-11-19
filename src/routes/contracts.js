@@ -1,6 +1,12 @@
+const { bestEffort } = require('../utils/bestEffort');
 /**
  * Contracts Route
  * Exposes endpoints for Soroban smart contract invocation, simulation, state, and event monitoring.
+ *
+ * These endpoints are a thin proxy over the configured Stellar service. They do
+ * not hold or escrow funds, and they do not use the in-memory EscrowContract
+ * simulation (src/contracts/EscrowContract.js, issue #1939). Campaign escrow is
+ * documented on /campaigns/:id/pledge and /campaigns/:id/escrow.
  */
 
 const express = require('express');
@@ -57,7 +63,7 @@ router.post('/:contractId/invoke', requireApiKey, requireAdmin(), payloadSizeLim
       ipAddress: req.ip || null,
       resource: `contract:${contractId}`,
       details: { contractId, method, argCount: args.length },
-    }).catch(() => {});
+    }).catch(bestEffort('src/routes/contracts.js:60'));
 
     return res.status(200).json({ success: true, data: result });
   } catch (err) {

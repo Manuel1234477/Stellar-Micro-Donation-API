@@ -19,7 +19,7 @@
  *
  * File location: tests/bootstrap/graceful-shutdown.test.js
  * (mirrors src/bootstrap/server.js per the naming convention in
- *  docs/TEST_NAMING_CONVENTION.md)
+ *  docs/test-naming-convention.md)
  */
 
 const { spawn } = require('child_process');

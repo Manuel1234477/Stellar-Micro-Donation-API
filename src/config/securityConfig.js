@@ -145,8 +145,8 @@ const SECURITY_CONFIGS = {
  * Load and validate security configuration with safe defaults.
  *
  * Pure function of the supplied env object: no reads or writes of the global
- * `process.env`, so it can be exercised directly in tests without module cache
- * tricks. Defaults to `process.env` for production callers.
+ * `process.env`, so it can be exercised directly in tests. Defaults to
+ * `process.env` for production callers.
  */
 function loadSecurityConfig(env = process.env) {
   const config = {};
@@ -221,7 +221,7 @@ function loadSecurityConfig(env = process.env) {
     // throw a catchable error instead of killing the process/worker.
     if (key === 'ENCRYPTION_KEY' && !finalValue) {
       log.error('SECURITY_CONFIG', 'ENCRYPTION_KEY is not set. Run `npm run generate-key` to create one, then add it to your .env file.');
-      if (isProduction) {
+      if (process.env.NODE_ENV === 'production') {
         process.exit(1);
       }
       throw new Error('ENCRYPTION_KEY is not set');

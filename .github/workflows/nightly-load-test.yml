@@ -12,7 +12,7 @@ name: Load Tests
 #     p95<200ms) and files a single tracking issue when any scenario's p95
 #     latency exceeds its target by more than 20%.
 #
-# See docs/LOAD_TESTING.md for the harness and how to reproduce locally.
+# See docs/load-testing.md for the harness and how to reproduce locally.
 on:
   push:
     branches: [main]
@@ -34,10 +34,10 @@ jobs:
     timeout-minutes: 20
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 
       - name: Set up Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: '24'
           cache: 'npm'
@@ -55,7 +55,7 @@ jobs:
 
       - name: Upload load test report
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: load-test-report
           path: reports/load/
@@ -67,10 +67,10 @@ jobs:
     timeout-minutes: 20
 
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
 
       - name: Set up Node.js
-        uses: actions/setup-node@v7
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
         with:
           node-version: '20'
           cache: 'npm'
@@ -95,7 +95,7 @@ jobs:
 
       - name: File or update the tracking issue for detected regressions
         if: steps.regression_check.outputs.has_regressions == 'true'
-        uses: actions/github-script@v9
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9
         with:
           script: |
             const fs = require('fs');
@@ -112,7 +112,7 @@ jobs:
               `Checked at: ${data.checkedAt}`,
               `Workflow run: ${runUrl}`,
               '',
-              'Targets are defined in `tests/load/PerformanceBaselines.js` (`NIGHTLY_TARGET_BASELINES`). See `docs/LOAD_TESTING.md` for how to reproduce locally with `npm run test:load`.',
+              'Targets are defined in `tests/load/PerformanceBaselines.js` (`NIGHTLY_TARGET_BASELINES`). See `docs/load-testing.md` for how to reproduce locally with `npm run test:load`.',
             ].join('\n');
 
             // Single tracking issue: update the existing open one if present,
@@ -173,7 +173,7 @@ jobs:
 
       - name: Upload load test report
         if: always()
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
           name: nightly-load-test-report
           path: reports/load/

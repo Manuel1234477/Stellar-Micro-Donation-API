@@ -1,0 +1,53 @@
+name: CodeQL
+
+# Semantic (dataflow-aware) static analysis for the JavaScript codebase.
+# Findings are published to the repository's Security tab (code scanning).
+on:
+  push:
+    branches: ["main", "master"]
+  pull_request:
+    branches: ["main", "master"]
+  schedule:
+    # Every Monday at 7:30 AM UTC (offset from security-scan.yml)
+    - cron: "30 7 * * 1"
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  analyze:
+    name: CodeQL (javascript-typescript)
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      # Required to upload SARIF results to code scanning
+      security-events: write
+      # Required to read the workflow run for private repos
+      actions: read
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+
+      - name: Initialize CodeQL
+        uses: github/codeql-action/init@33d7b85da1a04171e211befe2c739303b9a4c066 # v4
+        with:
+          languages: javascript-typescript
+          # Broader query suite than the default: adds lower-precision
+          # security queries (e.g. missing auth checks, weak crypto usage).
+          queries: security-extended
+          # Only analyse application code; test fixtures and generated
+          # output would add noise without security value.
+          paths-ignore: |
+            node_modules
+            coverage
+            tests/**
+            **/*.test.js
+
+      - name: Perform CodeQL analysis
+        uses: github/codeql-action/analyze@33d7b85da1a04171e211befe2c739303b9a4c066 # v4
+        with:
+          category: "/language:javascript-typescript"

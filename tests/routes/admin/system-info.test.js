@@ -4,7 +4,7 @@
  * Tests for GET /admin/system/info.
  *
  * Extracted from the legacy issue-numbered bundle (issue #803) so the suite
- * lives next to the module it covers, per docs/TEST_NAMING_CONVENTION.md.
+ * lives next to the module it covers, per docs/test-naming-convention.md.
  */
 
 const request = require('supertest');

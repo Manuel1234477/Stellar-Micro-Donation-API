@@ -22,7 +22,7 @@ docs/
 
 **Location**: `docs/architecture/`
 
-- **ARCHITECTURE.md** - System architecture overview with diagrams
+- **architecture.md** - System architecture overview with diagrams
 - **API flow diagram.txt** - API request/response flow
 
 ---
@@ -33,11 +33,11 @@ docs/
 
 - **DONATION_FLOW_SECURITY_AUDIT.md** - Comprehensive security audit (42 vulnerabilities identified)
 - **SECURITY_FIXES_IMPLEMENTATION_PLAN.md** - Actionable fixes with code examples
-- **AUTHENTICATION_REQUIRED.md** - Authentication requirements
-- **MEMO_SECURITY.md** - Memo field security considerations
-- **ERROR_HANDLING.md** - Error handling best practices
-- **STELLAR_ERROR_HANDLING.md** - Stellar-specific error handling
-- **UNIFIED_ERROR_HANDLING_SUMMARY.md** - Error handling summary
+- **authentication-required.md** - Authentication requirements
+- **memo-security.md** - Memo field security considerations
+- **error-handling.md** - Error handling best practices
+- **stellar-error-handling.md** - Stellar-specific error handling
+- **unified-error-handling-summary.md** - Error handling summary
 
 ---
 
@@ -63,9 +63,9 @@ docs/
 
 **Location**: `docs/guides/`
 
-- **QUICK_START.md** - Quick start guide
-- **PRE_DEPLOYMENT_CHECKLIST.md** - Production deployment verification checklist
-- **MOCK_STELLAR_GUIDE.md** - Using mock Stellar service for testing
+- **quick-start.md** - Quick start guide
+- **pre-deployment-checklist.md** - Production deployment verification checklist
+- **mock-stellar-guide.md** - Using mock Stellar service for testing
 - **MEMO_QUICK_REFERENCE.md** - Memo field quick reference
 - **Improved Readme.md** - Enhanced README
 
@@ -76,7 +76,7 @@ docs/
 **Location**: `docs/deployment/`
 
 - **MEMO_DEPLOYMENT.md** - Memo feature deployment
-- **MIGRATION_GUIDE.md** - Database migration guide
+- **migration-guide.md** - Database migration guide
 - **DELIVERY_CHECKLIST.md** - Pre-deployment checklist
 - **PUSH_INSTRUCTIONS.md** - Git push instructions
 - **MANUAL_PUSH_STEPS.md** - Manual deployment steps
@@ -89,7 +89,7 @@ docs/
 **Location**: `docs/testing/`
 
 - **TEST_COVERAGE_REPORT.md** - Test coverage report
-- **PERMISSIONS.md** - Permission system testing
+- **permissions.md** - Permission system testing
 - **PERMISSION_AUDIT_SUMMARY.md** - Permission audit results
 
 ---
@@ -106,7 +106,7 @@ docs/
 
 **Location**: `docs/`
 
-- **VERSIONING_STRATEGY.md** - SemVer rules, breaking vs. non-breaking change definitions, API URL versioning, release flow, hotfix procedure, deprecation policy, and changelog requirements
+- **versioning-strategy.md** - SemVer rules, breaking vs. non-breaking change definitions, API URL versioning, release flow, hotfix procedure, deprecation policy, and changelog requirements
 
 ---
 
@@ -126,45 +126,45 @@ docs/
 ## 🔍 Quick Links
 
 ### For Developers
-- [Quick Start Guide](guides/QUICK_START.md)
+- [Quick Start Guide](guides/quick-start.md)
 - [Local Dev Quickstart](quickstart.md) ⭐ NEW
-- [Architecture Overview](architecture/ARCHITECTURE.md)
-- [Database Schema & ER Diagram](DATABASE_SCHEMA.md) ⭐ NEW
-- [SEP Compliance (SEP-10, SEP-2)](SEP_COMPLIANCE.md) ⭐ NEW
-- [API Documentation](features/STATS_API.md)
-- [Testing Guide](testing/TEST_COVERAGE_REPORT.md)
-- [Versioning Strategy](VERSIONING_STRATEGY.md)
+- [Architecture Overview](architecture/architecture.md)
+- [Database Schema & ER Diagram](database-schema.md) ⭐ NEW
+- [SEP Compliance (SEP-10, SEP-2)](sep-compliance.md) ⭐ NEW
+- API Documentation
+- Testing Guide
+- [Versioning Strategy](versioning-strategy.md)
 
 ### For Release Management
-- [Versioning Strategy](VERSIONING_STRATEGY.md) — SemVer rules, breaking vs. non-breaking changes, release flow, deprecation policy
-- [Branch Protection & Merge Policy](BRANCH_PROTECTION.md)
-- [CI Pipeline](CI_PIPELINE.md)
+- [Versioning Strategy](versioning-strategy.md) — SemVer rules, breaking vs. non-breaking changes, release flow, deprecation policy
+- Branch Protection & Merge Policy
+- [CI Pipeline](ci-pipeline.md)
 
 ### For Security
 - [Security Policy](../SECURITY.md) ⭐ NEW — vulnerability reporting & disclosure
-- [Security Audit](security/DONATION_FLOW_SECURITY_AUDIT.md)
-- [Security Fixes](security/SECURITY_FIXES_IMPLEMENTATION_PLAN.md)
-- [Permission System](testing/PERMISSIONS.md)
+- Security Audit
+- Security Fixes
+- [Permission System](permissions.md)
 
 ### For Operations
-- [Pre-Deployment Checklist](guides/PRE_DEPLOYMENT_CHECKLIST.md) ⭐ NEW
-- [Deployment Guide](deployment/MIGRATION_GUIDE.md)
-- [Deployment Checklist](deployment/DELIVERY_CHECKLIST.md)
-- [Troubleshooting](deployment/PULL_TROUBLESHOOTING.md)
-- [Kubernetes Liveness & Readiness Probes](KUBERNETES_PROBES.md)
+- [Pre-Deployment Checklist](guides/pre-deployment-checklist.md) ⭐ NEW
+- [Deployment Guide](migration-guide.md)
+- Deployment Checklist
+- Troubleshooting
+- [Kubernetes Liveness & Readiness Probes](kubernetes-probes.md)
 
 ### For Features
-- [Idempotency](features/IDEMPOTENCY.md) ⭐ NEW
-- [Recurring Donations](features/SCHEDULER_RESILIENCE_FEATURE.md)
-- [Transaction Memos](features/MEMO_FEATURE.md)
-- [Analytics](features/ANALYTICS_FEE_FEATURE.md)
+- Idempotency ⭐ NEW
+- Recurring Donations
+- Transaction Memos
+- Analytics
 
 ---
 
 ## 📝 Documentation Standards
 
 ### File Naming
-- Use UPPERCASE for main documents (e.g., `ARCHITECTURE.md`)
+- Use UPPERCASE for main documents (e.g., `architecture.md`)
 - Use descriptive names that indicate content
 - Include feature name in feature docs
 

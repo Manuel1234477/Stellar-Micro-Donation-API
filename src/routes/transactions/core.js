@@ -1,3 +1,4 @@
+const { reportBestEffortFailure } = require('../../utils/bestEffort');
 /**
  * Transaction Routes - API Endpoint Layer
  * 
@@ -819,7 +820,7 @@ try {
   donationEvents.on(donationEvents.EVENTS.CONFIRMED, broadcastHandler);
   donationEvents.on(donationEvents.EVENTS.CREATED, broadcastHandler);
   donationEvents.on(donationEvents.EVENTS.SUBMITTED, broadcastHandler);
-} catch (_) {}
+} catch (err) { reportBestEffortFailure('src/routes/transactions/core.js:822', err); }
 
 /**
  * GET /transactions/:id

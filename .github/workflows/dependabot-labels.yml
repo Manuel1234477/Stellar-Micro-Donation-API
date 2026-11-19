@@ -2,7 +2,7 @@ name: Dependabot labels
 
 # Labels Dependabot PRs that bump a major version with "major-update" so they
 # get a manual review instead of being merged with the routine minor/patch
-# groups. See docs/CI_PIPELINE.md#dependency-updates. Refs #1788.
+# groups. See docs/ci-pipeline.md#dependency-updates. Refs #1788.
 #
 # pull_request_target is needed for a token that can add labels to Dependabot
 # PRs. This workflow never checks out or runs code from the PR.
@@ -20,7 +20,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - id: metadata
-        uses: dependabot/fetch-metadata@v3
+        uses: dependabot/fetch-metadata@25dd0e34f4fe68f24cc83900b1fe3fe149efef98 # v3
         with:
           github-token: ${{ secrets.GITHUB_TOKEN }}
       - name: Add major-update label

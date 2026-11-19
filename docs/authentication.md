@@ -57,7 +57,7 @@ npm run keys -- deprecate --id 1
 npm run keys -- revoke --id 1
 ```
 
-See [API Key Rotation Guide](./API_KEY_ROTATION.md) for full details.
+See [API Key Rotation Guide](./api-key-rotation.md) for full details.
 
 ## Permission Errors
 

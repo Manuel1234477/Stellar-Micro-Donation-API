@@ -613,7 +613,7 @@ describe('Combined role + scope access control', () => {
   }
 
   // ── admin role — role grants '*', but narrowed key scopes still apply ────────
-  // Decision (#1694, docs/PERMISSIONS.md): an admin key issued with explicit
+  // Decision (#1694, docs/permissions.md): an admin key issued with explicit
   // scopes is restricted to those scopes (least privilege). Only an admin key
   // with no scopes (or with admin:*) gets unrestricted access.
   describe('admin role', () => {
