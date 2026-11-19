@@ -14,6 +14,7 @@ const express = require('express');
 const { applyMiddleware } = require('./bootstrap/middleware');
 const { mountRoutes } = require('./bootstrap/routes');
 const serviceContainer = require('./config/serviceContainer');
+const { resolveTrustProxy, trustProxyStartupWarning } = require('./utils/trustProxy');
 
 /**
  * Build and return a fully-wired Express application.
@@ -24,10 +25,15 @@ const serviceContainer = require('./config/serviceContainer');
 function createApp() {
   const app = express();
 
-  const trustedProxies = process.env.TRUSTED_PROXIES
-    ? process.env.TRUSTED_PROXIES.split(',').map(ip => ip.trim())
-    : 'loopback';
-  app.set('trust proxy', trustedProxies);
+  app.set('trust proxy', resolveTrustProxy(process.env.TRUSTED_PROXIES));
+  // #1954: `log` is declared below this function, so require it at call time.
+  const proxyWarning = trustProxyStartupWarning({
+    NODE_ENV: process.env.NODE_ENV,
+    TRUSTED_PROXIES: process.env.TRUSTED_PROXIES,
+  });
+  if (proxyWarning) {
+    require('./utils/log').warn('APP', proxyWarning);
+  }
 
   const stellarService = serviceContainer.getStellarService();
   const reconciliationService = serviceContainer.getTransactionReconciliationService();

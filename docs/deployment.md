@@ -114,6 +114,7 @@ Use the Dockerfile above. Pass environment variables via the platform's secrets/
 - [ ] API keys created via `npm run keys:create`
 - [ ] Database file backed up (or on persistent volume)
 - [ ] HTTPS termination at load balancer / reverse proxy
+- [ ] `TRUSTED_PROXIES` set to the proxy/ingress address or CIDR, so client IPs are not all the proxy IP (see [Trusted proxies](./PRODUCTION_DEPLOYMENT.md#trusted-proxies-trusted_proxies))
 - [ ] Health check configured: `GET /health`
 - [ ] Log aggregation set up
 - [ ] Rate limiting reviewed for expected traffic

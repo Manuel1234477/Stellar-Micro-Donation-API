@@ -51,7 +51,7 @@ npm run config:check      # what CI runs: schema covers src/, generated files ar
 22. [Shared State (Multi-Instance)](#22-shared-state-multi-instance)
 23. [GraphQL](#23-graphql)
 
-260 variables are declared. Further topics follow the reference below.
+266 variables are declared. Further topics follow the reference below.
 
 ---
 
@@ -67,6 +67,9 @@ npm run config:check      # what CI runs: schema covers src/, generated files ar
 | `SHUTDOWN_TIMEOUT` | integer | `30000` | no | Alias for `SHUTDOWN_TIMEOUT_MS` (milliseconds). Time allowed for in-flight requests to drain before force-exit |
 | `SHUTDOWN_TIMEOUT_MS` | integer | `30000` | no | Milliseconds to wait for graceful shutdown before force-exit |
 | `TRUSTED_PROXIES` | string | `loopback` | no | Comma-separated list of trusted proxy IPs/CIDRs. Passed to Express `trust proxy`. Set to the address of your load balancer in production |
+| `HSTS_MAX_AGE` | integer | `31536000` | no | Strict-Transport-Security `max-age` in seconds. Sent only when `NODE_ENV=production` Minimum: 0. |
+| `HSTS_INCLUDE_SUBDOMAINS` | boolean | `true` | no | Add `includeSubDomains` to Strict-Transport-Security. Sent only when `NODE_ENV=production` |
+| `HSTS_PRELOAD` | boolean | `false` | no | Add `preload` to Strict-Transport-Security. Only enable after the domain is submitted to the browser preload list; this applies to all subdomains. Sent only when `NODE_ENV=production` |
 
 ---
 
@@ -155,6 +158,7 @@ npm run config:check      # what CI runs: schema covers src/, generated files ar
 | `RECIPIENT_SECRETS` | string | — | no | JSON-encoded map of recipient IDs to Stellar secret keys for multi-recipient flows Secret. |
 | `SERVICE_ACCOUNT_PUBLIC_KEY` | string | — | no | Public key of the service account monitored for low balance |
 | `SERVICE_SECRET_KEY` | string | — | no | Stellar secret key (`S…`) for service-initiated signing operations. Never commit. Secret. |
+| `SEP10_SIGNING_KEY` | string | — | no | Dedicated, unfunded Stellar secret key (`S…`) that signs SEP-10 challenges and is published as `SIGNING_KEY` in stellar.toml. Falls back to `STELLAR_SECRET`/`SERVICE_SECRET_KEY` when unset. Must not be a funded account. Secret. |
 | `SERVICE_SIGNING_KEY` | string | — | no | Alias for `SERVICE_SECRET_KEY` used in some signing paths Secret. |
 | `SIMULATION_ENABLED` | boolean | `true` | no | Mock Stellar only: set `false` to disable transaction simulation |
 | `SOROBAN_RPC_URL` | url | — | no | Soroban RPC endpoint for smart-contract calls |
@@ -314,20 +318,6 @@ npm run config:check      # what CI runs: schema covers src/, generated files ar
 | `SMTP_TO` | string | — | no | Fallback recipient for export notifications |
 | `SMTP_USER` | string | — | no | SMTP authentication username |
 
-> **Startup validation:** When `SMTP_HOST` is set, the startup checks verify that `SMTP_FROM` is also configured and, if `SMTP_USER` is provided, that `SMTP_PASSWORD` (or `SMTP_PASS`) is present. The check also attempts to verify the SMTP connection; a failed verification logs a warning but does not block startup.
-
----
-
-## 11a. Webhook Email Notifications
-
-These variables control the email notifications sent when a webhook is auto-disabled after repeated delivery failures (`WebhookEmailNotificationService`). They only take effect when `SMTP_HOST` is configured.
-
-| Variable | Type | Default | Required? | Effect |
-|---|---|---|---|---|
-| `WEBHOOK_NOTIFICATION_DEDUP_WINDOW_MS` | integer | `3600000` | no | Duration (ms) of the deduplication window — a second notification for the same webhook is suppressed within this window |
-| `WEBHOOK_NOTIFICATION_MAX_RETRIES` | integer | `3` | no | Maximum retry attempts for failed notification emails |
-| `WEBHOOK_NOTIFICATION_RETRY_DELAYS_MS` | string | `60000,300000,1800000` | no | Comma-separated retry delays (ms) for each successive retry attempt |
-
 ---
 
 ## 12. IPFS / Pinata
@@ -373,7 +363,7 @@ These variables control the email notifications sent when a webhook is auto-disa
 |---|---|---|---|---|
 | `BODY_DEDUP_WINDOW_SECONDS` | integer | `60` | no | Window (seconds) in which identical mutating requests without an Idempotency-Key are deduplicated by body hash Minimum: 1. |
 | `MEMO_COLLISION_WINDOW_MS` | integer | `300000` | no | Window (ms) in which duplicate memo values are considered collisions |
-| `MEMO_KEYS_DIR` | string | `./data/memo-keys` | no | Directory where memo encryption keys are persisted. Must be outside the repository when `NODE_ENV=production` (startup fails otherwise) |
+| `MEMO_KEYS_DIR` | string | `./data/memo-keys` | no | Directory where memo encryption keys are persisted |
 | `NONCE_CLEANUP_INTERVAL_MS` | integer | `300000` | no | Interval (ms) between nonce-store cleanup passes |
 | `NONCE_MAX_SIZE` | integer | `100000` | no | Maximum number of nonce entries held in memory |
 | `REPLAY_CLEANUP_INTERVAL_SECONDS` | integer | `60` | no | Interval (seconds) between replay-store cleanup passes |

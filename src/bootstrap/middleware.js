@@ -12,7 +12,7 @@
 const helmet = require('helmet');
 const { createCorsMiddleware } = require('../middleware/cors');
 const { createPathBasedCspMiddleware, cspReportRouter } = require('../middleware/csp');
-const { payloadSizeLimiter } = require('../middleware/payloadSizeLimiter');
+const { payloadSizeLimiter, ENDPOINT_LIMITS } = require('../middleware/payloadSizeLimiter');
 const { responseFormatterMiddleware } = require('../utils/responseFormatter');
 const requestId = require('../middleware/requestId');
 const { attachLifecycleTracking } = require('../middleware/requestLifecycle');
@@ -34,8 +34,68 @@ const asyncHandler = require('../utils/asyncHandler');
 const log = require('../utils/log');
 const requestCounter = require('../utils/requestCounter');
 const state = require('./state');
+const { env } = require('../config/env');
 
 const STREAMING_PATH_RE = /\/(stream|sse|events|ws|websocket|subscribe)(\/|$)/i;
+
+/**
+ * Build the helmet HSTS option from typed environment values (#1956).
+ *
+ * HSTS pins browsers to HTTPS for the host, so it is sent only in production.
+ * `preload` is never on by default because it is an organisational commitment
+ * for the whole registrable domain.
+ *
+ * @param {{ NODE_ENV: string, HSTS_MAX_AGE: number, HSTS_INCLUDE_SUBDOMAINS: boolean, HSTS_PRELOAD: boolean }} values
+ * @returns {false | { maxAge: number, includeSubDomains: boolean, preload: boolean }}
+ */
+function buildHstsOptions(values) {
+  if (values.NODE_ENV !== 'production') return false;
+  return {
+    maxAge: values.HSTS_MAX_AGE,
+    includeSubDomains: values.HSTS_INCLUDE_SUBDOMAINS,
+    preload: values.HSTS_PRELOAD,
+  };
+}
+
+// Bulk donation endpoints accept the larger ENDPOINT_LIMITS.batchDonation body
+// size (#1953). Every other path keeps the 100 KB default.
+const BATCH_BODY_PATH_RE = /^(?:\/api\/v1)?\/donations\/(?:batch|bulk)\/?$/;
+
+// Content types accepted on body-carrying requests. multipart/form-data is for
+// the bulk wallet import upload routes (multer). Form-encoded is accepted only on
+// SEP-10 token exchange, which parses it on its own router (#1955).
+const SUPPORTED_BODY_TYPES = new Set(['application/json', 'multipart/form-data']);
+const SEP10_FORM_PATH_RE = /^(?:\/api\/v1)?\/auth\/token\/?$/;
+const MUTATING_METHODS = new Set(['POST', 'PUT', 'PATCH', 'DELETE']);
+
+/**
+ * Reject body-carrying mutating requests whose Content-Type this API does not
+ * parse. Responds 415 with the standard error envelope (#1955).
+ */
+function unsupportedMediaTypeGuard(req, res, next) {
+  if (!MUTATING_METHODS.has(req.method)) return next();
+
+  const contentLength = req.get('content-length');
+  const hasBody = (contentLength !== undefined && contentLength !== '0') || req.get('transfer-encoding');
+  if (!hasBody) return next();
+
+  const rawType = req.get('content-type');
+  if (!rawType) return next();
+
+  const type = rawType.split(';')[0].trim().toLowerCase();
+  if (SUPPORTED_BODY_TYPES.has(type)) return next();
+  if (type === 'application/x-www-form-urlencoded' && SEP10_FORM_PATH_RE.test(req.path)) return next();
+
+  return res.status(415).json({
+    success: false,
+    error: {
+      code: 'UNSUPPORTED_MEDIA_TYPE',
+      message: 'Unsupported Content-Type. Send application/json.',
+      requestId: req.id,
+      timestamp: new Date().toISOString(),
+    },
+  });
+}
 
 /**
  * Apply all middleware to the given Express app.
@@ -83,7 +143,7 @@ function applyMiddleware(app) {
     frameguard: { action: 'deny' },
     noSniff: true,
     referrerPolicy: { policy: 'no-referrer' },
-    hsts: { maxAge: 31536000, includeSubDomains: true, preload: true },
+    hsts: buildHstsOptions(env),
     xssFilter: false,
     hidePoweredBy: true,
   }));
@@ -97,7 +157,11 @@ function applyMiddleware(app) {
 
   // ─── Early security — before body parsers ────────────────────────────────────
   app.use(require('../middleware/geoBlock'));
-  app.use(payloadSizeLimiter());
+  // Pre-parse Content-Length guard. Batch paths get their own limit (#1953)
+  // so a valid batch is not rejected before its route-level limiter runs.
+  const defaultBodyLimiter = payloadSizeLimiter();
+  const batchBodyLimiter = payloadSizeLimiter(ENDPOINT_LIMITS.batchDonation);
+  app.use((req, res, next) => (BATCH_BODY_PATH_RE.test(req.path) ? batchBodyLimiter : defaultBodyLimiter)(req, res, next));
 
   // ─── Body parsers ────────────────────────────────────────────────────────────
   // #1929: The raw request body is only needed for signature verification
@@ -117,15 +181,24 @@ function applyMiddleware(app) {
     'x-hub-signature-256',    // inbound webhook (GitHub-style)
     'x-hub-signature',        // inbound webhook (GitHub-style legacy)
   ];
-  app.use(express.json({
-    verify: (req, _res, buf) => {
-      const hasSignatureHeader = SIGNATURE_HEADERS.some(h => req.get(h));
-      if (hasSignatureHeader) {
-        req.rawBody = buf; // keep as Buffer — never convert to string
-      }
-    },
-  }));
-  app.use(express.urlencoded({ extended: true }));
+  // Parser limits match the per-endpoint limits enforced by payloadSizeLimiter.
+  // body-parser's own default (100 KB) would otherwise reject valid batch
+  // payloads before the batch route runs (#1953).
+  const jsonBodyVerify = (req, _res, buf) => {
+    const hasSignatureHeader = SIGNATURE_HEADERS.some(h => req.get(h));
+    if (hasSignatureHeader) {
+      req.rawBody = buf; // keep as Buffer — never convert to string
+    }
+  };
+  const defaultJsonParser = express.json({ limit: ENDPOINT_LIMITS.default, verify: jsonBodyVerify });
+  const batchJsonParser = express.json({ limit: ENDPOINT_LIMITS.batchDonation, verify: jsonBodyVerify });
+  app.use((req, res, next) => (BATCH_BODY_PATH_RE.test(req.path) ? batchJsonParser : defaultJsonParser)(req, res, next));
+
+  // #1955: no global urlencoded parser. Form-encoded bodies are accepted only
+  // where the protocol requires them (SEP-10 token exchange, parsed on that
+  // router). Any other body with an unsupported Content-Type is rejected with 415
+  // instead of silently arriving as an empty or unexpectedly shaped body.
+  app.use(unsupportedMediaTypeGuard);
 
   // ─── Post-parse security ─────────────────────────────────────────────────────
   app.use(require('../middleware/blockCheck'));
@@ -194,4 +267,4 @@ function applyMiddleware(app) {
   app.use(schemaVersionMiddleware);
 }
 
-module.exports = { applyMiddleware };
+module.exports = { applyMiddleware, buildHstsOptions };

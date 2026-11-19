@@ -65,6 +65,11 @@ const ENV_VARS = [
   { group: G0, name: 'SHUTDOWN_TIMEOUT', type: 'integer', default: 30000, description: 'Alias for `SHUTDOWN_TIMEOUT_MS` (milliseconds). Time allowed for in-flight requests to drain before force-exit' },
   { group: G0, name: 'SHUTDOWN_TIMEOUT_MS', type: 'integer', default: 30000, description: 'Milliseconds to wait for graceful shutdown before force-exit' },
   { group: G0, name: 'TRUSTED_PROXIES', type: 'string', default: 'loopback', description: 'Comma-separated list of trusted proxy IPs/CIDRs. Passed to Express `trust proxy`. Set to the address of your load balancer in production' },
+  // HSTS is sent only when NODE_ENV=production (#1956). Preload is opt-in because
+  // it asserts the whole registrable domain belongs to HTTPS-only hosts.
+  { group: G0, name: 'HSTS_MAX_AGE', type: 'integer', default: 31536000, min: 0, description: 'Strict-Transport-Security `max-age` in seconds. Sent only when `NODE_ENV=production`' },
+  { group: G0, name: 'HSTS_INCLUDE_SUBDOMAINS', type: 'boolean', default: true, description: 'Add `includeSubDomains` to Strict-Transport-Security. Sent only when `NODE_ENV=production`' },
+  { group: G0, name: 'HSTS_PRELOAD', type: 'boolean', default: false, description: 'Add `preload` to Strict-Transport-Security. Only enable after the domain is submitted to the browser preload list; this applies to all subdomains. Sent only when `NODE_ENV=production`' },
 
   // ── Authentication & API Keys ───────────────────────────────────
   { group: G1, name: 'API_KEY_EXPIRED_WINDOW_DAYS', type: 'integer', default: 1, min: 0, description: 'Notify owners of keys that expired within this many days' },
