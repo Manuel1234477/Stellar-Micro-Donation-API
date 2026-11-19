@@ -1,3 +1,4 @@
+const { bestEffort } = require('./bestEffort');
 /**
  * Circuit Breaker - Horizon API Protection
  *
@@ -116,7 +117,7 @@ class CircuitBreaker {
     // Lazy-require timerRegistry to break potential circular deps
     const timerRegistry = require('./timerRegistry');
     this._syncTimer = timerRegistry.createInterval(
-      () => this._syncFromDb().catch(() => {}),
+      () => this._syncFromDb().catch(bestEffort('src/utils/circuitBreaker.js:119')),
       ms,
       `circuit-breaker-sync-${this.name}`
     );
@@ -288,7 +289,7 @@ class CircuitBreaker {
        WHERE name = ? AND state IN ('open', 'half_open')
          AND (probeHolder IS NULL OR probeHolder = ?)`,
       [this._instanceId, this.name, this._instanceId]
-    ).catch(() => {});
+    ).catch(bestEffort('src/utils/circuitBreaker.js:291'));
   }
 
   /** @private */

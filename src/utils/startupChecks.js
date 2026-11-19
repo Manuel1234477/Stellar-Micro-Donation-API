@@ -11,6 +11,7 @@
  */
 
 'use strict';
+const { bestEffort } = require('./bestEffort');
 
 const Database = require('./database');
 const fs = require('fs');
@@ -938,7 +939,7 @@ async function run({ exitOnFailure = false } = {}) {
   ];
 
   // Non-blocking DB integrity check — log result but never fail startup
-  runDbIntegrityCheck().catch(() => {});
+  runDbIntegrityCheck().catch(bestEffort('src/utils/startupChecks.js:941'));
 
   const passed = criticalResults.every(Boolean);
 
@@ -956,7 +957,7 @@ module.exports = { run, results, checkMainnetProductionGuard, checkGeoBlocking, 
 // Allow running directly: `node src/utils/startupChecks.js`
 if (require.main === module) {
   // Load .env when run standalone
-  require('dotenv').config({ path: require('path').join(__dirname, '../../.env') });
+  require('../config/loadEnv');
   run({ exitOnFailure: true }).catch((err) => {
     print('error', `Startup checks threw an unexpected error: ${err.message}`);
     process.exit(1);

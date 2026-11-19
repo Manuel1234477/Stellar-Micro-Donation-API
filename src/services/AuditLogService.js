@@ -1,3 +1,4 @@
+const { bestEffort } = require('../utils/bestEffort');
 /**
  * Audit Log Service - Security Audit Layer
  * 
@@ -420,7 +421,11 @@ class AuditLogService {
             ]
           );
         }
-      });
+        await db.run('COMMIT');
+      } catch (err) {
+        await db.run('ROLLBACK').catch(bestEffort('src/services/AuditLogService.js:423'));
+        throw err;
+      }
     };
 
     const FLUSH_TIMEOUT_MS = 5000;
@@ -447,7 +452,7 @@ class AuditLogService {
     if (_autoFlushTimer) return;
     _autoFlushTimer = timerRegistry.createInterval(() => {
       if (_pendingBuffer.length > 0) {
-        AuditLogService.flush().catch(() => {});
+        AuditLogService.flush().catch(bestEffort('src/services/AuditLogService.js:452'));
       }
     }, BUFFER_FLUSH_INTERVAL_MS, 'audit-log-auto-flush');
     _autoFlushTimer.unref();

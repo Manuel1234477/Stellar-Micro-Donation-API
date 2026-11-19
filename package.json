@@ -57,6 +57,7 @@
     "check:no-tracked-artifacts": "node scripts/check-no-tracked-artifacts.js",
     "check:test-naming": "node scripts/check-test-naming.js",
     "check:i18n-orphans": "node scripts/check-i18n-orphans.js",
+    "check:no-silent-catch": "node scripts/check-no-silent-catch.js",
     "check:no-float-money": "node scripts/check-no-float-money.js",
     "check:declared-deps": "node scripts/check-declared-deps.js",
     "config:generate": "node scripts/generate-config-docs.js",

@@ -1,4 +1,5 @@
 'use strict';
+const { bestEffort } = require('./bestEffort');
 
 /**
  * SSRF Protection Utility — Issue #1119 / #1529
@@ -103,7 +104,7 @@ function logSsrfBlocked(target, reason) {
       result: 'FAILURE',
       details: { target, reason },
       reason,
-    }).catch(() => {});
+    }).catch(bestEffort('src/utils/ssrf.js:106'));
   } catch (_) {
     // AuditLogService may not be available in all contexts
   }

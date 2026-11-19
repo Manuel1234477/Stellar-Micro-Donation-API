@@ -51,7 +51,7 @@ npm run config:check      # what CI runs: schema covers src/, generated files ar
 22. [Shared State (Multi-Instance)](#22-shared-state-multi-instance)
 23. [GraphQL](#23-graphql)
 
-260 variables are declared. Further topics follow the reference below.
+266 variables are declared. Further topics follow the reference below.
 
 ---
 
@@ -63,10 +63,13 @@ npm run config:check      # what CI runs: schema covers src/, generated files ar
 | `INSTANCE_ID` | string | — | no | Unique identifier for this process instance (used for scheduler/sequence leases and logs). Defaults to a random UUID |
 | `NODE_ENV` | string | `development` | no | Runtime environment: `development`, `test` or `production`. Controls logging verbosity, startup guards and unsafe-flag checks |
 | `PORT` | integer | `3000` | no | TCP port the HTTP server listens on |
-| `REQUEST_TIMEOUT_MS` | integer | `30000` | no | Global per-request timeout in milliseconds. Streaming endpoints are exempt |
+| `REQUEST_TIMEOUT_MS` | integer | `15000` | no | General per-request timeout in milliseconds for non-submission routes. Stellar submission routes (donations, batch, cross-asset, refunds, channels) always use 30 s. Streaming endpoints are exempt |
 | `SHUTDOWN_TIMEOUT` | integer | `30000` | no | Alias for `SHUTDOWN_TIMEOUT_MS` (milliseconds). Time allowed for in-flight requests to drain before force-exit |
 | `SHUTDOWN_TIMEOUT_MS` | integer | `30000` | no | Milliseconds to wait for graceful shutdown before force-exit |
 | `TRUSTED_PROXIES` | string | `loopback` | no | Comma-separated list of trusted proxy IPs/CIDRs. Passed to Express `trust proxy`. Set to the address of your load balancer in production |
+| `HSTS_MAX_AGE` | integer | `31536000` | no | Strict-Transport-Security `max-age` in seconds. Sent only when `NODE_ENV=production` Minimum: 0. |
+| `HSTS_INCLUDE_SUBDOMAINS` | boolean | `true` | no | Add `includeSubDomains` to Strict-Transport-Security. Sent only when `NODE_ENV=production` |
+| `HSTS_PRELOAD` | boolean | `false` | no | Add `preload` to Strict-Transport-Security. Only enable after the domain is submitted to the browser preload list; this applies to all subdomains. Sent only when `NODE_ENV=production` |
 
 ---
 
@@ -110,6 +113,7 @@ npm run config:check      # what CI runs: schema covers src/, generated files ar
 | `ENCRYPTION_PUBLIC_KEY` | string | — | no | RSA/EC public key PEM used to verify asymmetric signatures |
 | `ENCRYPTION_SECRET` | string | — | no | Legacy symmetric encryption secret for non-wallet data paths Secret. |
 | `EXPORT_SIGNING_SECRET` | string | — | no | HMAC secret for signing CSV/JSON export files. Must be distinct from `ENCRYPTION_KEY` Secret. |
+| `EXPORT_SIGNING_SECRET_PREVIOUS` | string | — | no | Comma-separated previous `EXPORT_SIGNING_SECRET` values, still accepted for verifying export download links during rotation. Secret. |
 | `MEMO_REENCRYPT_BATCH_SIZE` | integer | `50` | no | Memos processed per batch by the background re-encryption job Minimum: 1. |
 | `MEMO_REENCRYPT_INTERVAL_MS` | integer | `30000` | no | Interval (ms) between memo re-encryption batches Minimum: 1. |
 | `NEW_ENCRYPTION_KEY` | string | — | no | Target key during a live re-encryption pass (`npm run migrate:reencrypt`) Secret. |
@@ -154,6 +158,7 @@ npm run config:check      # what CI runs: schema covers src/, generated files ar
 | `RECIPIENT_SECRETS` | string | — | no | JSON-encoded map of recipient IDs to Stellar secret keys for multi-recipient flows Secret. |
 | `SERVICE_ACCOUNT_PUBLIC_KEY` | string | — | no | Public key of the service account monitored for low balance |
 | `SERVICE_SECRET_KEY` | string | — | no | Stellar secret key (`S…`) for service-initiated signing operations. Never commit. Secret. |
+| `SEP10_SIGNING_KEY` | string | — | no | Dedicated, unfunded Stellar secret key (`S…`) that signs SEP-10 challenges and is published as `SIGNING_KEY` in stellar.toml. Falls back to `STELLAR_SECRET`/`SERVICE_SECRET_KEY` when unset. Must not be a funded account. Secret. |
 | `SERVICE_SIGNING_KEY` | string | — | no | Alias for `SERVICE_SECRET_KEY` used in some signing paths Secret. |
 | `SIMULATION_ENABLED` | boolean | `true` | no | Mock Stellar only: set `false` to disable transaction simulation |
 | `SOROBAN_RPC_URL` | url | — | no | Soroban RPC endpoint for smart-contract calls |
@@ -313,20 +318,6 @@ npm run config:check      # what CI runs: schema covers src/, generated files ar
 | `SMTP_TO` | string | — | no | Fallback recipient for export notifications |
 | `SMTP_USER` | string | — | no | SMTP authentication username |
 
-> **Startup validation:** When `SMTP_HOST` is set, the startup checks verify that `SMTP_FROM` is also configured and, if `SMTP_USER` is provided, that `SMTP_PASSWORD` (or `SMTP_PASS`) is present. The check also attempts to verify the SMTP connection; a failed verification logs a warning but does not block startup.
-
----
-
-## 11a. Webhook Email Notifications
-
-These variables control the email notifications sent when a webhook is auto-disabled after repeated delivery failures (`WebhookEmailNotificationService`). They only take effect when `SMTP_HOST` is configured.
-
-| Variable | Type | Default | Required? | Effect |
-|---|---|---|---|---|
-| `WEBHOOK_NOTIFICATION_DEDUP_WINDOW_MS` | integer | `3600000` | no | Duration (ms) of the deduplication window — a second notification for the same webhook is suppressed within this window |
-| `WEBHOOK_NOTIFICATION_MAX_RETRIES` | integer | `3` | no | Maximum retry attempts for failed notification emails |
-| `WEBHOOK_NOTIFICATION_RETRY_DELAYS_MS` | string | `60000,300000,1800000` | no | Comma-separated retry delays (ms) for each successive retry attempt |
-
 ---
 
 ## 12. IPFS / Pinata
@@ -372,7 +363,7 @@ These variables control the email notifications sent when a webhook is auto-disa
 |---|---|---|---|---|
 | `BODY_DEDUP_WINDOW_SECONDS` | integer | `60` | no | Window (seconds) in which identical mutating requests without an Idempotency-Key are deduplicated by body hash Minimum: 1. |
 | `MEMO_COLLISION_WINDOW_MS` | integer | `300000` | no | Window (ms) in which duplicate memo values are considered collisions |
-| `MEMO_KEYS_DIR` | string | `./data/memo-keys` | no | Directory where memo encryption keys are persisted. Must be outside the repository when `NODE_ENV=production` (startup fails otherwise) |
+| `MEMO_KEYS_DIR` | string | `./data/memo-keys` | no | Directory where memo encryption keys are persisted |
 | `NONCE_CLEANUP_INTERVAL_MS` | integer | `300000` | no | Interval (ms) between nonce-store cleanup passes |
 | `NONCE_MAX_SIZE` | integer | `100000` | no | Maximum number of nonce entries held in memory |
 | `REPLAY_CLEANUP_INTERVAL_SECONDS` | integer | `60` | no | Interval (seconds) between replay-store cleanup passes |
@@ -391,6 +382,9 @@ These variables control the email notifications sent when a webhook is auto-disa
 | `BACKUP_INTERVAL_MS` | integer | `86400000` | no | Interval (ms) between automatic backup runs |
 | `BACKUP_S3_BUCKET` | string | — | no | S3 bucket name for off-site backup upload. When unset, backups are local only |
 | `BACKUP_S3_PREFIX` | string | `backups/` | no | Key prefix used when uploading backup files to S3 |
+| `BACKUP_ENCRYPTION_KEY` | string | — | no | Dedicated key material for encrypting backups (#1951). When unset, `ENCRYPTION_KEY` is used. Secret. |
+| `BACKUP_KEY_ID` | string | derived | no | Identifier written into each backup header (#1951). Defaults to an id derived from the key material. |
+| `BACKUP_PREVIOUS_KEYS` | string | — | no | Comma-separated `id:material` pairs for keys that encrypted older backups (#1951). Needed to restore those after rotation. Secret. |
 
 ---
 

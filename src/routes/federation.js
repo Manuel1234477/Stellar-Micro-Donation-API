@@ -4,24 +4,29 @@
  * RESPONSIBILITY: Serve as a Stellar federation server for this domain.
  *   Implements the two required endpoints:
  *     GET /.well-known/stellar.toml  — advertises federation server URL
- *     GET /federation                — resolves name→account_id queries
+ *     GET /federation                — name→account_id (type=name) and
+ *                                      account_id→name (type=id, reverse lookup)
  *
  * OWNER: Backend Team
- * DEPENDENCIES: express, federation registry (in-memory for now)
+ * DEPENDENCIES: express, federation_records table (FederationRecordService)
  *
- * To register a user: call federationRegistry.set(name, { account_id, memo_type?, memo? })
- * The registry is exported so tests and other modules can populate it.
+ * Records are managed at runtime through /admin/federation (issue #1938).
+ * FEDERATION_RECORDS is an optional seed inserted on startup; invalid entries
+ * are skipped with a warning. The in-memory federationRegistry Map is kept for
+ * backward compatibility only; GET /federation reads the database.
  */
 
 'use strict';
+const { bestEffort } = require('../utils/bestEffort');
 
 const express = require('express');
-const StellarSdk = require('stellar-sdk');
+const StellarSdk = require('../services/stellar/sdk.js');
 const router = express.Router();
 const log = require('../utils/log');
 const config = require('../config');
 const { resolveSep10SigningSecret } = require('../utils/sep10SigningKey');
 const Database = require('../utils/database');
+const FederationRecordService = require('../services/FederationRecordService');
 
 /**
  * Seed federation records from FEDERATION_RECORDS env var into the database.
@@ -35,14 +40,24 @@ async function seedFederationRecordsFromEnv() {
     const parsed = JSON.parse(raw);
     for (const [name, value] of Object.entries(parsed)) {
       const entry = typeof value === 'string' ? { account_id: value } : value;
+      const checked = FederationRecordService.validateRecord({
+        name,
+        account_id: entry.account_id,
+        memo_type: entry.memo_type,
+        memo: entry.memo,
+      });
+      if (!checked.valid) {
+        log.warn('FEDERATION', 'Skipping invalid FEDERATION_RECORDS entry', { name, errors: checked.errors });
+        continue;
+      }
       await Database.run(
         `INSERT OR IGNORE INTO federation_records (name, account_id, memo_type, memo)
          VALUES (?, ?, ?, ?)`,
         [
-          name.toLowerCase(),
-          entry.account_id,
-          entry.memo_type || null,
-          entry.memo || null,
+          checked.value.name,
+          checked.value.account_id,
+          checked.value.memo_type,
+          checked.value.memo,
         ]
       );
     }
@@ -50,7 +65,7 @@ async function seedFederationRecordsFromEnv() {
 }
 
 // Seed on module load (best-effort; errors are swallowed)
-seedFederationRecordsFromEnv().catch(() => {});
+seedFederationRecordsFromEnv().catch(bestEffort('src/routes/federation.js:53'));
 
 // Keep a backward-compatible in-memory Map for modules that import federationRegistry directly.
 // It is populated from the env var for compatibility but the GET /federation route reads from the DB.
@@ -61,7 +76,8 @@ try {
     const parsed = JSON.parse(raw);
     for (const [name, value] of Object.entries(parsed)) {
       const entry = typeof value === 'string' ? { account_id: value } : value;
-      federationRegistry.set(name.toLowerCase(), entry);
+      const checked = FederationRecordService.validateRecord({ name, ...entry });
+      if (checked.valid) federationRegistry.set(checked.value.name, entry);
     }
   }
 } catch (_) { /* invalid JSON — ignore */ }
@@ -161,11 +177,15 @@ router.get('/federation', async (req, res) => {
     });
   }
 
+  if (type === 'id') {
+    return handleReverseLookup(req, res, String(q));
+  }
+
   if (type !== 'name') {
     // The server understands the federation endpoint but does not implement
     // this lookup type, so report the protocol's 501 Not Implemented status.
     return res.status(501).json({
-      detail: `Unsupported federation lookup type "${type}". Only "name" is supported.`,
+      detail: `Unsupported federation lookup type "${type}". Only "name" and "id" are supported.`,
     });
   }
 
@@ -198,5 +218,32 @@ router.get('/federation', async (req, res) => {
   res.set('Access-Control-Allow-Origin', '*');
   return res.json(response);
 });
+
+/**
+ * SEP-0002 reverse lookup (type=id): account id → federation address.
+ * Returns the first name in name order when an account has several.
+ */
+async function handleReverseLookup(req, res, accountId) {
+  if (!StellarSdk.StrKey.isValidEd25519PublicKey(accountId)) {
+    return res.status(400).json({ detail: 'Invalid account id for type=id lookup.' });
+  }
+
+  const entry = await FederationRecordService.getByAccountId(accountId);
+  if (!entry) {
+    log.debug('FEDERATION_SERVER', 'No federation address for account', { account_id: accountId });
+    return res.status(404).json({ detail: `No federation address for account: ${accountId}` });
+  }
+
+  const domain = process.env.FEDERATION_DOMAIN || req.hostname || 'localhost';
+  const response = {
+    stellar_address: `${entry.name}*${domain}`,
+    account_id: entry.account_id,
+  };
+  if (entry.memo_type) response.memo_type = entry.memo_type;
+  if (entry.memo) response.memo = entry.memo;
+
+  res.set('Access-Control-Allow-Origin', '*');
+  return res.json(response);
+}
 
 module.exports = { router, federationRegistry, renderStellarToml };

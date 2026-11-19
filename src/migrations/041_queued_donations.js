@@ -8,6 +8,9 @@
  *
  * This allows donations to be accepted and persisted when Horizon API is
  * unreachable, with background processing to retry once the circuit breaker closes.
+ *
+ * Each statement is issued through db.run(): the Database facade has no exec()
+ * method, and every other migration uses run/all/get.
  */
 
 exports.name = '041_queued_donations';
@@ -22,25 +25,21 @@ exports.up = async (db) => {
   if (!donationsTable) return;
 
   // Add queued tracking columns
-  await db.exec(`
-    ALTER TABLE donations ADD COLUMN queuedAt TEXT;
-    ALTER TABLE donations ADD COLUMN queueAttempts INTEGER DEFAULT 0;
-    ALTER TABLE donations ADD COLUMN lastQueueError TEXT;
-  `);
+  await db.run('ALTER TABLE donations ADD COLUMN queuedAt TEXT');
+  await db.run('ALTER TABLE donations ADD COLUMN queueAttempts INTEGER DEFAULT 0');
+  await db.run('ALTER TABLE donations ADD COLUMN lastQueueError TEXT');
 
   // Create index for queued donation queries
-  await db.exec(`
+  await db.run(`
     CREATE INDEX IF NOT EXISTS idx_donations_queued
     ON donations(status, queuedAt)
-    WHERE status = 'queued' AND deletedAt IS NULL;
+    WHERE status = 'queued' AND deletedAt IS NULL
   `);
 };
 
 exports.down = async (db) => {
-  await db.exec(`
-    DROP INDEX IF EXISTS idx_donations_queued;
-    ALTER TABLE donations DROP COLUMN queuedAt;
-    ALTER TABLE donations DROP COLUMN queueAttempts;
-    ALTER TABLE donations DROP COLUMN lastQueueError;
-  `);
+  await db.run('DROP INDEX IF EXISTS idx_donations_queued');
+  await db.run('ALTER TABLE donations DROP COLUMN queuedAt');
+  await db.run('ALTER TABLE donations DROP COLUMN queueAttempts');
+  await db.run('ALTER TABLE donations DROP COLUMN lastQueueError');
 };
