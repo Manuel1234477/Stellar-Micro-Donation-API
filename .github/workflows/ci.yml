@@ -19,7 +19,7 @@ jobs:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
-          node-version: '24'
+          node-version-file: .nvmrc
           cache: 'npm'
       - run: npm ci
       - run: npm run boot-guard
@@ -27,6 +27,29 @@ jobs:
           NODE_ENV: test
           API_KEYS: ci_key
           ENCRYPTION_KEY: '0000000000000000000000000000000000000000000000000000000000000000'
+
+  # #2053: Main lint script (npm run lint, --max-warnings=440). Must be a
+  # required status check alongside boot-guard and the tests so style rules,
+  # the custom safety rules (no-bare-timers, no-float-money) and the warning
+  # budget are actually enforced.
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version-file: .nvmrc
+          cache: 'npm'
+      - run: npm ci
+      - name: Restore ESLint cache
+        uses: actions/cache@v4
+        with:
+          path: .eslintcache
+          key: eslint-${{ runner.os }}-${{ hashFiles('package-lock.json', 'eslint.config.js', '.eslintrc*') }}
+          restore-keys: |
+            eslint-${{ runner.os }}-
+      - run: npm run lint
+=======
 
   build:
     runs-on: ubuntu-latest
@@ -59,7 +82,7 @@ jobs:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
-          node-version: '24'
+          node-version-file: .nvmrc
           cache: 'npm'
       - run: npm ci
       # ADR-004: no float arithmetic on money. Fails on findings beyond the
@@ -99,7 +122,7 @@ jobs:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
-          node-version: '20'
+          node-version-file: .nvmrc
           cache: 'npm'
       - run: npm ci
       - run: npm run test:quarantine -- --ci
@@ -109,16 +132,14 @@ jobs:
       contents: read
       pull-requests: write
     runs-on: ubuntu-latest
-    strategy:
-      matrix:
-        # Test against supported Node.js LTS versions (aligned with package.json engines field)
-        node-version: ['22.x', '24.x']
-    name: Test on Node.js ${{ matrix.node-version }}
+    # #2054: single Node version read from .nvmrc (one source of truth, and
+    # always within the package.json engines range).
+    name: Test
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
         with:
-          node-version: ${{ matrix.node-version }}
+          node-version-file: .nvmrc
           cache: 'npm'
       - run: npm ci
       - run: ENCRYPTION_KEY=0000000000000000000000000000000000000000000000000000000000000000 API_KEYS=ci_key npm run predeploy:check
@@ -142,7 +163,7 @@ jobs:
         if: github.event_name == 'pull_request'
         uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
         with:
-          name: coverage-base-node-${{ matrix.node-version }}
+          name: coverage-base
           path: coverage/base
 
       # ── Coverage diff: copy base lcov to expected path ─────────────────────
@@ -218,7 +239,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
-          name: coverage-report-node-${{ matrix.node-version }}
+          name: coverage-report
           path: coverage/
           retention-days: 30
 
@@ -226,7 +247,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
-          name: jest-results-node-${{ matrix.node-version }}
+          name: jest-results
           path: coverage/jest-results.json
           retention-days: 30
 
@@ -237,7 +258,7 @@ jobs:
         if: github.event_name == 'push'
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
-          name: coverage-base-node-${{ matrix.node-version }}
+          name: coverage-base
           path: coverage/lcov.info
           retention-days: 90
 
@@ -247,7 +268,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
         with:
-          node-version: '24'
+          node-version-file: .nvmrc
           cache: 'npm'
       - run: npm ci
       - run: npm run test:smoke
@@ -259,7 +280,7 @@ jobs:
       - uses: actions/checkout@v7
       - uses: actions/setup-node@v7
         with:
-          node-version: '24'
+          node-version-file: .nvmrc
           cache: 'npm'
       - run: npm ci
       - run: npm run check:parse
@@ -279,7 +300,7 @@ jobs:
       - uses: actions/checkout@v7
       - uses: actions/setup-node@v7
         with:
-          node-version: '24'
+          node-version-file: .nvmrc
           cache: 'npm'
       - run: npm ci
       - run: npm run validate-env

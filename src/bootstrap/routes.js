@@ -376,6 +376,9 @@ function mountRoutes(app, services = {}) {
   app.use('/api/v2', require('../routes/v2'));
 
   // Unversioned export endpoints (#1596); the versioned router is in V1_ROUTES.
+  // NOTE (#1936): this root-level mount is still present on main and is tracked
+  // by the re-verification issue #2051 — do not remove without updating the
+  // route-table snapshot test.
   app.use('/exports', require('../routes/exports'));
 
   // Stellar federation protocol server (SEP-0002).
