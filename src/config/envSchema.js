@@ -98,6 +98,7 @@ const ENV_VARS = [
   { group: G2, name: 'ENCRYPTION_PUBLIC_KEY', type: 'string', description: 'RSA/EC public key PEM used to verify asymmetric signatures' },
   { group: G2, name: 'ENCRYPTION_SECRET', type: 'string', secret: true, description: 'Legacy symmetric encryption secret for non-wallet data paths' },
   { group: G2, name: 'EXPORT_SIGNING_SECRET', type: 'string', secret: true, description: 'HMAC secret for signing CSV/JSON export files. Must be distinct from `ENCRYPTION_KEY`' },
+  { group: G2, name: 'EXPORT_SIGNING_SECRET_PREVIOUS', type: 'string', secret: true, description: 'Comma-separated previous `EXPORT_SIGNING_SECRET` values, still accepted for verifying export download links during rotation' },
   { group: G2, name: 'JWT_SIGNING_SECRET', type: 'string', secret: true, description: 'HMAC secret that signs access tokens (at least 32 characters). Required in production and staging. Must be distinct from `ENCRYPTION_KEY`' },
   { group: G2, name: 'JWT_SIGNING_SECRET_PREVIOUS', type: 'string', secret: true, description: 'Previous `JWT_SIGNING_SECRET`, kept during rotation so tokens issued before the change still verify' },
   { group: G2, name: 'MEMO_REENCRYPT_BATCH_SIZE', type: 'integer', default: 50, min: 1, description: 'Memos processed per batch by the background re-encryption job' },
@@ -302,6 +303,9 @@ const ENV_VARS = [
   { group: G15, name: 'BACKUP_INTERVAL_MS', type: 'integer', default: 86400000, example: '3600000', description: 'Interval (ms) between automatic backup runs' },
   { group: G15, name: 'BACKUP_S3_BUCKET', type: 'string', description: 'S3 bucket name for off-site backup upload. When unset, backups are local only' },
   { group: G15, name: 'BACKUP_S3_PREFIX', type: 'string', default: 'backups/', description: 'Key prefix used when uploading backup files to S3' },
+  { group: G15, name: 'BACKUP_ENCRYPTION_KEY', type: 'string', secret: true, description: 'Dedicated key material for encrypting backups (#1951). When unset, ENCRYPTION_KEY is used. Should differ from ENCRYPTION_KEY' },
+  { group: G15, name: 'BACKUP_KEY_ID', type: 'string', description: 'Identifier written into each backup header (#1951). Defaults to an id derived from the key material' },
+  { group: G15, name: 'BACKUP_PREVIOUS_KEYS', type: 'string', secret: true, description: 'Comma-separated `id:material` pairs for keys that encrypted older backups (#1951). Required to restore those backups after a key rotation' },
 
   // ── SSE / WebSocket Streaming ───────────────────────────────────
   { group: G16, name: 'ENABLE_SERVER_PUSH', type: 'boolean', default: false, description: 'Enable server-sent event (SSE) and WebSocket push endpoints' },

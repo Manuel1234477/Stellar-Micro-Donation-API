@@ -15,10 +15,10 @@ const crypto = require('crypto');
 const fs = require('fs').promises;
 const path = require('path');
 const Database = require('../utils/database');
-const { getSigningSecret } = require('../utils/signingSecrets');
+const SignedUrlService = require('./SignedUrlService');
 const log = require('../utils/log');
 const timerRegistry = require('../utils/timerRegistry');
-const { ValidationError, NotFoundError } = require('../utils/errors');
+const { ValidationError, NotFoundError, ForbiddenError } = require('../utils/errors');
 const { ERROR_CODES } = require('../utils/errors');
 const { serialize: csvSerialize } = require('../utils/csvSerializer');
 
@@ -269,8 +269,7 @@ class DonationExportService {
       await fs.writeFile(filePath, buffer, { flag: 'a' });
 
       // Generate signed URL
-      const expiresAt = new Date(Date.now() + SIGNED_URL_EXPIRY_MS).toISOString();
-      const signedUrl = this.generateSignedUrl(jobId, expiresAt);
+      const { url: signedUrl, expiresAt } = this.generateSignedUrl(jobId, job.api_key_id);
 
       // Update job as completed
       await Database.run(
@@ -458,43 +457,58 @@ class DonationExportService {
   }
 
   /**
-   * Generate a signed URL for downloading an export file.
-   * @param {string} jobId - Export job ID
-   * @param {string} expiresAt - ISO expiry timestamp
-   * @returns {string} Signed URL
+   * Sign a download link for a completed export, bound to the job owner (#1950).
+   *
+   * @param {string} jobId - Export job ID.
+   * @param {string} principalId - Owner of the export (api_key_id).
+   * @returns {{ url: string, expiresAt: string }}
    */
-  static generateSignedUrl(jobId, expiresAt) {
-    const secret = getSigningSecret('EXPORT_SIGNING_SECRET', ['EXPORT_SIGNING_SECRET', 'ENCRYPTION_SECRET']);
-    const signature = crypto
-      .createHmac('sha256', secret)
-      .update(`${jobId}:${expiresAt}`)
-      .digest('hex');
-    return `/donations/export/${jobId}/download?expires=${encodeURIComponent(expiresAt)}&signature=${signature}`;
+  static generateSignedUrl(jobId, principalId) {
+    const signed = SignedUrlService.sign({ resource: 'donation-export', resourceId: jobId, principalId });
+    return {
+      url: `/donations/export/${jobId}/download?${SignedUrlService.toQueryString(signed)}`,
+      expiresAt: signed.expiresAt,
+    };
   }
 
   /**
-   * Verify a signed download URL.
-   * @param {string} jobId - Export job ID
-   * @param {string} expiresAt - ISO expiry timestamp
-   * @param {string} signature - Provided signature
-   * @returns {boolean} True if valid and not expired
+   * Verify a download request and return the file to serve.
+   *
+   * The signature must match the export owner and the requester must be that
+   * owner, so a link cannot be used by another principal or after it expires.
+   *
+   * @param {{ jobId: string, principalId: string, expires: string, signature: string }} params
+   * @returns {Promise<{ filePath: string, format: string }>}
+   * @throws {NotFoundError|ValidationError|ForbiddenError}
    */
-  static verifySignedUrl(jobId, expiresAt, signature) {
-    if (!expiresAt || !signature) {
-      return false;
-    }
-    if (new Date(expiresAt).getTime() < Date.now()) {
-      return false;
-    }
-    const secret = getSigningSecret('EXPORT_SIGNING_SECRET', ['EXPORT_SIGNING_SECRET', 'ENCRYPTION_SECRET']);
-    const expected = crypto
-      .createHmac('sha256', secret)
-      .update(`${jobId}:${expiresAt}`)
-      .digest('hex');
-    return crypto.timingSafeEqual(
-      Buffer.from(expected),
-      Buffer.from(signature)
+  static async verifyAndGetDownload({ jobId, principalId, expires, signature }) {
+    const job = await Database.get(
+      'SELECT * FROM donation_exports WHERE export_id = ?',
+      [jobId]
     );
+    if (!job) {
+      throw new NotFoundError('Export job not found', ERROR_CODES.NOT_FOUND);
+    }
+    if (job.status !== EXPORT_STATUS.COMPLETED || !job.file_path) {
+      throw new ValidationError('Export is not ready for download', null, ERROR_CODES.INVALID_REQUEST);
+    }
+
+    if (job.api_key_id !== principalId) {
+      throw new ForbiddenError('Invalid or expired download link');
+    }
+
+    const valid = SignedUrlService.verify({
+      resource: 'donation-export',
+      resourceId: jobId,
+      principalId,
+      expires,
+      signature,
+    });
+    if (!valid) {
+      throw new ForbiddenError('Invalid or expired download link');
+    }
+
+    return { filePath: job.file_path, format: job.format };
   }
 
   /**

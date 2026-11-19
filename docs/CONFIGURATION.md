@@ -110,6 +110,7 @@ npm run config:check      # what CI runs: schema covers src/, generated files ar
 | `ENCRYPTION_PUBLIC_KEY` | string | — | no | RSA/EC public key PEM used to verify asymmetric signatures |
 | `ENCRYPTION_SECRET` | string | — | no | Legacy symmetric encryption secret for non-wallet data paths Secret. |
 | `EXPORT_SIGNING_SECRET` | string | — | no | HMAC secret for signing CSV/JSON export files. Must be distinct from `ENCRYPTION_KEY` Secret. |
+| `EXPORT_SIGNING_SECRET_PREVIOUS` | string | — | no | Comma-separated previous `EXPORT_SIGNING_SECRET` values, still accepted for verifying export download links during rotation. Secret. |
 | `MEMO_REENCRYPT_BATCH_SIZE` | integer | `50` | no | Memos processed per batch by the background re-encryption job Minimum: 1. |
 | `MEMO_REENCRYPT_INTERVAL_MS` | integer | `30000` | no | Interval (ms) between memo re-encryption batches Minimum: 1. |
 | `NEW_ENCRYPTION_KEY` | string | — | no | Target key during a live re-encryption pass (`npm run migrate:reencrypt`) Secret. |
@@ -391,6 +392,9 @@ These variables control the email notifications sent when a webhook is auto-disa
 | `BACKUP_INTERVAL_MS` | integer | `86400000` | no | Interval (ms) between automatic backup runs |
 | `BACKUP_S3_BUCKET` | string | — | no | S3 bucket name for off-site backup upload. When unset, backups are local only |
 | `BACKUP_S3_PREFIX` | string | `backups/` | no | Key prefix used when uploading backup files to S3 |
+| `BACKUP_ENCRYPTION_KEY` | string | — | no | Dedicated key material for encrypting backups (#1951). When unset, `ENCRYPTION_KEY` is used. Secret. |
+| `BACKUP_KEY_ID` | string | derived | no | Identifier written into each backup header (#1951). Defaults to an id derived from the key material. |
+| `BACKUP_PREVIOUS_KEYS` | string | — | no | Comma-separated `id:material` pairs for keys that encrypted older backups (#1951). Needed to restore those after rotation. Secret. |
 
 ---
 

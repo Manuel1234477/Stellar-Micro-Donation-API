@@ -498,6 +498,19 @@ function recordSchedulerLockRelease() {
   } catch (_) { /* best-effort */ }
 }
 
+// Database error metrics (#1949): counts failed queries by SQLite code so that
+// operators can tell "database is locked" apart from "no such table".
+const dbErrorsTotal = new client.Counter({
+  name: 'db_errors_total',
+  help: 'Total number of failed database operations',
+  labelNames: ['sqlite_code', 'category', 'operation'],
+  registers: [registry],
+});
+
+const recordDatabaseError = ({ sqliteCode = 'UNKNOWN', category = 'unknown', operation = 'UNKNOWN' } = {}) => {
+  dbErrorsTotal.inc({ sqlite_code: sqliteCode, category, operation });
+};
+
 module.exports = {
   registry,
   httpRequestDuration,
@@ -544,6 +557,9 @@ module.exports = {
   schedulerLockReleasesTotal,
   recordSchedulerLockAcquisition,
   recordSchedulerLockRelease,
+  // Database error metrics (#1949)
+  dbErrorsTotal,
+  recordDatabaseError,
   // Horizon connection pool metrics
   horizonPoolSize,
   horizonPoolHealthyCount,
