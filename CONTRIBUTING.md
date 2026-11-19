@@ -43,13 +43,27 @@ npm run generate-key
 # 4. Initialise the database
 npm run init-db
 
-# 5. Start the dev server (auto-reload)
-npm run dev
+# 5. Start the API (runs validate-env, then the server)
+npm start
 ```
 
 The API will be available at `http://localhost:3000`.
 
 For development without a live Stellar network add `MOCK_STELLAR=true` to `.env`.
+
+### Verify your setup
+
+Once the server is running, confirm the baseline works. CI runs the same steps on a
+fresh runner (see the `onboarding` job in `.github/workflows/ci.yml`):
+
+```bash
+curl -i http://localhost:3000/health          # expect: HTTP/1.1 200 OK
+ONBOARDING_HEALTH_URL=http://localhost:3000/health bash scripts/validate-onboarding.sh
+                                              # expect: "All onboarding checks passed."
+```
+
+If `npm start` fails at `validate-env`, the message names the missing or invalid variable.
+Fix it in `.env` and run `npm start` again.
 
 ---
 
@@ -218,10 +232,25 @@ npm test                           # full suite passes
 npm run check-coverage             # coverage ≥ 80%
 npm run openapi:check              # spec is up to date
 npm run migrate:status             # no pending unapplied migrations
+npm run check:parse                # every src/ and scripts/ file parses
 node scripts/check-test-naming.js  # no new legacy-named test files
 ```
 
 CI enforces all of the above and will block merge if any step fails.
+
+### Required status checks
+
+A PR can merge to `main` only when these CI jobs pass (`.github/workflows/ci.yml`):
+
+| Check | Job | What it guards |
+|-------|-----|----------------|
+| Lint | `lint` | ESLint, migration ID check, example validation |
+| Parse | `parse` | `npm run check:parse`: no file in `src/` or `scripts/` fails to parse |
+| Tests | `test` | Full suite with coverage on Node 20.x and 22.x |
+| Smoke | `smoke` | `npm run test:smoke` in mock mode |
+| Onboarding | `onboarding` | Fresh install, migrate, boot, `/health`, `scripts/validate-onboarding.sh` |
+
+Branch protection on `main` that requires these checks, and requires branches to be up to date before merging, is set by a repository admin. See issue #1978.
 
 When the PR is ready:
 - Reference the issue with `Closes #<number>` in the PR description.
