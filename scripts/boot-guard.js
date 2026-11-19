@@ -1,23 +1,21 @@
 #!/usr/bin/env node
-/**
- * scripts/boot-guard.js
- *
- * Fast, dependency-free CI guard (#1927) that catches boot blockers before
- * they reach main:
- *
- * 1. `node --check` on every .js file under src/ and scripts/ (syntax parse)
- * 2. `require()` every module under src/ (excludes src/scripts/) with a minimal
- *    test environment to catch undefined exports and missing dependencies
- * 3. Boot check: require('./src/app').createApp exists and returns an object
- *
- * This complements, not replaces, the lint / typecheck / test matrix.  The job
- * is designed to complete in under a minute.
- *
- * Usage:
- *   npm run boot-guard
- *
- * Exit code 0 = all checks passed, 1 = at least one check failed.
- */
+// scripts/boot-guard.js
+//
+// Fast, dependency-free CI guard (#1927) that catches boot blockers before
+// they reach main:
+//
+// 1. `node --check` on every .js file under src/ and scripts/ (syntax parse)
+// 2. `require()` every module under src/ (excludes src/scripts/) with a minimal
+//    test environment to catch undefined exports and missing dependencies
+// 3. Boot check: require('./src/app').createApp exists and returns an object
+//
+// This complements, not replaces, the lint / typecheck / test matrix.  The job
+// is designed to complete in under a minute.
+//
+// Usage:
+//   npm run boot-guard
+//
+// Exit code 0 = all checks passed, 1 = at least one check failed.
 
 'use strict';
 
