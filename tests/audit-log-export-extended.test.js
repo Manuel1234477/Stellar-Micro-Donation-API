@@ -203,7 +203,7 @@ describe('AuditLogExportService - Issue #604', () => {
     it('regenerates expired signed URL', async () => {
       const past = new Date(Date.now() - 1000).toISOString();
       Database.get.mockResolvedValue({
-        export_id: 'job3', status: 'COMPLETED', format: 'json',
+        export_id: 'job3', api_key_id: 'key-1', status: 'COMPLETED', format: 'json',
         signed_url: '/old-url', signed_url_expires_at: past, record_count: 3
       });
       const result = await AuditLogExportService.getSignedDownloadUrl('job3');

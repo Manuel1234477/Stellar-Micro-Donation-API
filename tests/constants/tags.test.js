@@ -5,7 +5,7 @@
  *
  * Extracted from the legacy issue-numbered bundle `tests/issues-65-66-67-68.test.js`
  * (issue #65) and renamed to follow the module-based naming convention
- * described in docs/TEST_NAMING_CONVENTION.md.
+ * described in docs/test-naming-convention.md.
  */
 
 const { describe, it, beforeEach } = require('node:test');

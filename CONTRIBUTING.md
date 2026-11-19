@@ -43,13 +43,27 @@ npm run generate-key
 # 4. Initialise the database
 npm run init-db
 
-# 5. Start the dev server (auto-reload)
-npm run dev
+# 5. Start the API (runs validate-env, then the server)
+npm start
 ```
 
 The API will be available at `http://localhost:3000`.
 
 For development without a live Stellar network add `MOCK_STELLAR=true` to `.env`.
+
+### Verify your setup
+
+Once the server is running, confirm the baseline works. CI runs the same steps on a
+fresh runner (see the `onboarding` job in `.github/workflows/ci.yml`):
+
+```bash
+curl -i http://localhost:3000/health          # expect: HTTP/1.1 200 OK
+ONBOARDING_HEALTH_URL=http://localhost:3000/health bash scripts/validate-onboarding.sh
+                                              # expect: "All onboarding checks passed."
+```
+
+If `npm start` fails at `validate-env`, the message names the missing or invalid variable.
+Fix it in `.env` and run `npm start` again.
 
 ---
 
@@ -79,7 +93,7 @@ state between runs. See [Test Isolation Guide](docs/TEST_ISOLATION.md) for detai
 
 ## 3. Test Naming Convention
 
-See **[docs/TEST_NAMING_CONVENTION.md](docs/TEST_NAMING_CONVENTION.md)** for the full
+See **[docs/test-naming-convention.md](docs/test-naming-convention.md)** for the full
 convention and migration plan. The short version:
 
 - Name your test file after the **module it exercises**, not the issue or feature
@@ -218,10 +232,25 @@ npm test                           # full suite passes
 npm run check-coverage             # coverage ≥ 80%
 npm run openapi:check              # spec is up to date
 npm run migrate:status             # no pending unapplied migrations
+npm run check:parse                # every src/ and scripts/ file parses
 node scripts/check-test-naming.js  # no new legacy-named test files
 ```
 
 CI enforces all of the above and will block merge if any step fails.
+
+### Required status checks
+
+A PR can merge to `main` only when these CI jobs pass (`.github/workflows/ci.yml`):
+
+| Check | Job | What it guards |
+|-------|-----|----------------|
+| Lint | `lint` | ESLint, migration ID check, example validation |
+| Parse | `parse` | `npm run check:parse`: no file in `src/` or `scripts/` fails to parse |
+| Tests | `test` | Full suite with coverage on Node 20.x and 22.x |
+| Smoke | `smoke` | `npm run test:smoke` in mock mode |
+| Onboarding | `onboarding` | Fresh install, migrate, boot, `/health`, `scripts/validate-onboarding.sh` |
+
+Branch protection on `main` that requires these checks, and requires branches to be up to date before merging, is set by a repository admin. See issue #1978.
 
 When the PR is ready:
 - Reference the issue with `Closes #<number>` in the PR description.
@@ -276,7 +305,7 @@ from `main` after CI is green.
 - **Patch**: bug fixes, security patches — as needed
 - **Minor**: new features, backward-compatible — monthly or as features land
 - **Major**: breaking changes — planned and announced via `Sunset`/`Deprecation`
-  headers (see `docs/VERSIONING_STRATEGY.md`)
+  headers (see `docs/versioning-strategy.md`)
 
 ### Automated Flow (Future)
 
@@ -302,6 +331,7 @@ Instead:
 Do not commit:
 - TODO.md or status files at the root
 - *_IMPLEMENTATION_*.md files at the root
+- PR summaries, change logs or "issues implemented" write-ups under `docs/`. They go stale as soon as the PR merges. Put user-facing changes in `CHANGELOG.md` and reference details in the PR description
 - Tool-specific working directories (.kiro/, .memory/, etc.)
 
 This keeps documentation organized and prevents stale working notes from misleading readers.
@@ -327,8 +357,8 @@ When working on a feature, these docs will save you time:
 | Topic | Document |
 |-------|----------|
 | Quickstart (fresh clone → first request) | [docs/quickstart.md](docs/quickstart.md) |
-| Database schema & ER diagram | [docs/DATABASE_SCHEMA.md](docs/DATABASE_SCHEMA.md) |
-| SEP-10 web auth & federation | [docs/SEP_COMPLIANCE.md](docs/SEP_COMPLIANCE.md) |
-| API endpoint examples | [docs/API_EXAMPLES.md](docs/API_EXAMPLES.md) |
-| Architecture overview | [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) |
-| Troubleshooting | [docs/DEVELOPER_TROUBLESHOOTING_GUIDE.md](docs/DEVELOPER_TROUBLESHOOTING_GUIDE.md) |
+| Database schema & ER diagram | [docs/database-schema.md](docs/database-schema.md) |
+| SEP-10 web auth & federation | [docs/sep-compliance.md](docs/sep-compliance.md) |
+| API endpoint examples | [docs/api-examples.md](docs/api-examples.md) |
+| Architecture overview | [docs/architecture.md](docs/architecture.md) |
+| Troubleshooting | [docs/developer-troubleshooting-guide.md](docs/developer-troubleshooting-guide.md) |

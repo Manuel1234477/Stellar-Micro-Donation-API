@@ -11,7 +11,7 @@
  */
 
 // External modules
-require('dotenv').config();
+require('../config/loadEnv'); // single .env loader (#1943)
 
 // Internal modules
 const apiKeysModel = require('../models/apiKeys');

@@ -1,3 +1,4 @@
+const { bestEffort } = require('../utils/bestEffort');
 /**
  * Donation Receipt Routes
  *
@@ -201,7 +202,7 @@ router.post('/:id/receipt', requireApiKey, checkPermission(PERMISSIONS.DONATIONS
         emailedTo: email || null,
         messageId: emailResult ? emailResult.messageId : null,
       },
-    }).catch(() => {});
+    }).catch(bestEffort('src/routes/receipt.js:204'));
 
     res.set({
       'Content-Type': 'application/pdf',

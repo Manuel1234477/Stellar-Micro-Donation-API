@@ -24,6 +24,8 @@ services:
       - STELLAR_PUBLIC_KEY_FILE=/run/secrets/stellar_public_key
       - JWT_SECRET_FILE=/run/secrets/jwt_secret
       - NODE_ENV=production
+      # #1954: set to the address/CIDR of the reverse proxy in front of this service.
+      - TRUSTED_PROXIES=${TRUSTED_PROXIES:-loopback}
       - DB_PATH=/data/stellar_donations.db
       - LOG_LEVEL=info
       - SECURE_SECRETS=true

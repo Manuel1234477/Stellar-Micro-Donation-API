@@ -18,7 +18,7 @@
  * - merge.js: Account merging
  * - limits-config.js: Wallet limits and config
  *
- * See docs/WALLET_ROUTES_COMPOSITION.md for architecture details.
+ * See docs/wallet-routes-composition.md for architecture details.
  */
 const express = require('express');
 const { toWalletResponse, ALLOWED_WALLET_FIELDS } = require('../../utils/responseSanitizer');

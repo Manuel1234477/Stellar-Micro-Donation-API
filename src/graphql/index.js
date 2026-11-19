@@ -14,6 +14,7 @@
 const { createHandler } = require('graphql-http/lib/use/express');
 const { useServer } = require('graphql-ws/use/ws');
 const { WebSocketServer } = require('ws');
+const { upgradePathname } = require('../utils/wsUpgrade');
 const { validate } = require('graphql');
 const { createHash } = require('crypto');
 const express = require('express');
@@ -415,12 +416,11 @@ const graphqlHttpHandler = createHandler({
  * @returns {object} graphql-ws server handle (call .dispose() on shutdown)
  */
 function attachSubscriptionServer(httpServer) {
-  // Transport limits (#1981, #1983). maxPayload bounds per-frame memory; the ws
-  // default is 100 MiB. verifyClient rejects upgrades above the global cap with 503
-  // before the connection is accepted.
+  // Transport limits (#1981, #1983) and noServer upgrade routing (#1980). ws must not register
+  // its own 'upgrade' listener, because it would reject every non-/graphql upgrade (400)
+  // and break the balance WebSocket. verifyClient still runs inside handleUpgrade.
   const wss = new WebSocketServer({
-    server: httpServer,
-    path: '/graphql',
+    noServer: true,
     maxPayload: env.WS_MAX_PAYLOAD_BYTES,
     verifyClient: (_info, done) => {
       if (wss.clients.size >= env.WS_MAX_CONNECTIONS) {
@@ -429,6 +429,11 @@ function attachSubscriptionServer(httpServer) {
       }
       return done(true);
     },
+  });
+
+  httpServer.on('upgrade', (req, socket, head) => {
+    if (upgradePathname(req) !== '/graphql') return;
+    wss.handleUpgrade(req, socket, head, (ws) => wss.emit('connection', ws, req));
   });
 
   wss.on('connection', (socket) => {

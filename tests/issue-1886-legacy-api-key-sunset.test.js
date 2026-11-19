@@ -78,13 +78,13 @@ describe('Issue #1886 – Legacy API key sunset', () => {
   });
 
   describe('documentation', () => {
-    it('provides docs/MIGRATION_LEGACY_API_KEYS.md', () => {
-      expect(fs.existsSync(path.join(root, 'docs', 'MIGRATION_LEGACY_API_KEYS.md'))).toBe(true);
+    it('provides docs/migration-legacy-api-keys.md', () => {
+      expect(fs.existsSync(path.join(root, 'docs', 'migration-legacy-api-keys.md'))).toBe(true);
     });
 
     it('is linked from the README', () => {
       const readme = fs.readFileSync(path.join(root, 'README.md'), 'utf8');
-      expect(readme).toContain('docs/MIGRATION_LEGACY_API_KEYS.md');
+      expect(readme).toContain('docs/migration-legacy-api-keys.md');
     });
   });
 });

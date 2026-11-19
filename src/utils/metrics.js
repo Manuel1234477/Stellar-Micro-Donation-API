@@ -14,6 +14,7 @@
  */
 
 const client = require('prom-client');
+const v8 = require('v8');
 
 // Use a dedicated registry so tests can reset state cleanly
 const registry = new client.Registry();
@@ -22,6 +23,107 @@ const registry = new client.Registry();
 if (process.env.NODE_ENV !== 'test' && process.env.NODE_ENV !== 'testing') {
   client.collectDefaultMetrics({ register: registry });
 }
+
+/**
+ * Gauge: V8 heap size limit in bytes, read from v8.getHeapStatistics() at
+ * scrape time. prom-client's default metrics do not expose this value, and the
+ * HighMemoryUsage alert (monitoring/prometheus-alerts.yml) depends on it.
+ * @type {client.Gauge}
+ */
+const heapSizeLimitBytes = new client.Gauge({
+  name: 'nodejs_heap_size_limit_bytes',
+  help: 'V8 heap size limit in bytes',
+  registers: [registry],
+  collect() {
+    this.set(v8.getHeapStatistics().heap_size_limit);
+  },
+});
+
+/**
+ * Lag gauges (#1968).
+ *
+ * The values are computed at scrape time from persistent state rather than
+ * written on each tick. A scheduler that is stuck (for example because leader
+ * election throws before the tick does any work) therefore still shows lag that
+ * keeps growing. The database is required lazily so this module has no load-time
+ * dependency on it.
+ */
+
+/**
+ * Seconds elapsed between an ISO timestamp and now. Returns 0 for a missing or
+ * unparseable value so that "nothing to measure" never reports as lag.
+ * @param {string|null|undefined} isoTimestamp
+ * @param {number} [nowMs=Date.now()]
+ * @returns {number}
+ */
+function secondsSince(isoTimestamp, nowMs = Date.now()) {
+  if (!isoTimestamp) return 0;
+  const sinceMs = Date.parse(isoTimestamp);
+  if (Number.isNaN(sinceMs)) return 0;
+  return Math.max(0, (nowMs - sinceMs) / 1000);
+}
+
+/** Lag of the oldest due, active recurring donation (seconds). */
+async function readSchedulerLag() {
+  const Database = require('./database');
+  const { SCHEDULE_STATUS } = require('../constants');
+  const row = await Database.get(
+    `SELECT MIN(nextExecutionDate) AS oldest
+       FROM recurring_donations
+      WHERE status = ? AND nextExecutionDate <= ?`,
+    [SCHEDULE_STATUS.ACTIVE, new Date().toISOString()]
+  );
+  return secondsSince(row ? row.oldest : null);
+}
+
+/** Age of the least recently synced monitored wallet (seconds). */
+async function readTransactionSyncLag() {
+  const Database = require('./database');
+  const row = await Database.get(
+    `SELECT MIN(COALESCE(last_synced_at, createdAt)) AS oldest
+       FROM wallets
+      WHERE deletedAt IS NULL`,
+    []
+  );
+  return secondsSince(row ? row.oldest : null);
+}
+
+function createLagGauge(name, help, readLag) {
+  return new client.Gauge({
+    name,
+    help,
+    registers: [registry],
+    async collect() {
+      try {
+        this.set(await readLag());
+      } catch (_err) {
+        // Keep the previous value rather than failing the whole scrape.
+      }
+    },
+  });
+}
+
+/**
+ * Gauge: seconds the oldest due, active recurring donation has been waiting.
+ * SLO: docs/SLOs.md section 4.
+ * @type {client.Gauge}
+ */
+const schedulerLagSeconds = createLagGauge(
+  'stellar_scheduler_lag_seconds',
+  'Seconds the oldest due active recurring donation has been waiting (0 when none are overdue)',
+  readSchedulerLag
+);
+
+/**
+ * Gauge: seconds since the least recently synced monitored wallet was synced
+ * (never-synced wallets count from creation).
+ * @type {client.Gauge}
+ */
+const transactionSyncLagSeconds = createLagGauge(
+  'stellar_transaction_sync_lag_seconds',
+  'Seconds since the least recently synced monitored wallet was last synced',
+  readTransactionSyncLag
+);
 
 /**
  * Histogram tracking HTTP request duration.
@@ -248,6 +350,27 @@ function recordDonation(status) {
   stellarDonationsTotal.inc({ status });
 }
 
+// ─── SQLite single-writer (Issue #1959) ──────────────────────────────────────
+// Queue depth is read at scrape time; wait time is observed per acquisition.
+const sqliteWriter = require('./sqliteWriter');
+
+const sqliteWriterQueueDepth = new client.Gauge({
+  name: 'sqlite_writer_queue_depth',
+  help: 'Writes and transactions waiting for the single SQLite writer connection',
+  registers: [registry],
+  collect() {
+    this.set(sqliteWriter.getWriterStats().queueDepth);
+  },
+});
+
+const sqliteWriterWaitSeconds = new client.Histogram({
+  name: 'sqlite_writer_wait_seconds',
+  help: 'Time a write waited for the SQLite writer connection before it started',
+  buckets: [0.0005, 0.001, 0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1, 2.5, 5],
+  registers: [registry],
+});
+
+sqliteWriter.setWaitObserver((seconds) => sqliteWriterWaitSeconds.observe(seconds));
 // ─── Memo Collision Metrics (#1592) ──────────────────────────────────────────
 
 /**
@@ -337,7 +460,61 @@ function recordLegacyPathRequest(path, apiKeyId) {
       path: normaliseRoute(path || 'unknown'),
       api_key: apiKeyId || 'anonymous',
     });
-  } catch (_) {}
+  } catch (_) {
+    // Metrics must never break the request path; this failure is intentionally ignored.
+  }
+}
+
+/**
+ * Counter: best-effort side effects that failed and were logged instead of
+ * propagated (#1946). Label `site` is the call site ("relative/path:line").
+ * @type {client.Counter}
+ */
+const bestEffortFailuresTotal = new client.Counter({
+  name: 'best_effort_failures_total',
+  help: 'Best-effort operations (audit, webhook, cleanup) that failed and were logged',
+  labelNames: ['site'],
+  registers: [registry],
+});
+
+/**
+ * Records a failed best-effort operation.
+ * @param {string} site Call-site label
+ */
+function recordBestEffortFailure(site) {
+  try {
+    bestEffortFailuresTotal.inc({ site: String(site || 'unknown') });
+  } catch (_) {
+    // Metrics must never break the caller; the failure is already logged.
+  }
+}
+
+/**
+ * Counter: requests aborted by the request timeout middleware (#1948).
+ * Labels: route (normalised path), timeout_ms (budget that was exceeded).
+ * @type {client.Counter}
+ */
+const requestTimeoutsTotal = new client.Counter({
+  name: 'request_timeouts_total',
+  help: 'Total number of requests aborted by the request timeout middleware',
+  labelNames: ['route', 'timeout_ms'],
+  registers: [registry],
+});
+
+/**
+ * Records a request aborted by the timeout middleware.
+ * @param {string} path Request path (normalised before labelling)
+ * @param {number} timeoutMs Timeout budget that was exceeded
+ */
+function recordRequestTimeout(path, timeoutMs) {
+  try {
+    requestTimeoutsTotal.inc({
+      route: normaliseRoute(path || 'unknown'),
+      timeout_ms: String(timeoutMs),
+    });
+  } catch (_) {
+    // Metrics must never break the request path; this failure is intentionally ignored.
+  }
 }
 
 /**
@@ -359,6 +536,29 @@ const legacyApiKeyUsageTotal = new client.Counter({
 function recordLegacyKeyUsage(keyIdHash) {
   try {
     legacyApiKeyUsageTotal.inc({ key_id_hash: keyIdHash || 'unknown' });
+  } catch (_) { /* best-effort */ }
+}
+
+/**
+ * Counter: API key validations that failed for infrastructure reasons
+ * (database locked, pool exhausted, timeout). Distinct from invalid keys,
+ * which are authentication failures. Issue #1940.
+ * @type {client.Counter}
+ */
+const authValidationErrorsTotal = new client.Counter({
+  name: 'auth_validation_errors_total',
+  help: 'Total API key validations that could not complete due to an infrastructure error',
+  labelNames: ['reason'],
+  registers: [registry],
+});
+
+/**
+ * Records one API key validation that errored instead of returning a verdict.
+ * @param {string} [reason='unknown'] Short error class, e.g. 'db_error'
+ */
+function recordAuthValidationError(reason = 'unknown') {
+  try {
+    authValidationErrorsTotal.inc({ reason });
   } catch (_) { /* best-effort */ }
 }
 
@@ -471,12 +671,33 @@ function recordStellarMode(mode) {
   }
 }
 
+// Database error metrics (#1949): counts failed queries by SQLite code so that
+// operators can tell "database is locked" apart from "no such table".
+const dbErrorsTotal = new client.Counter({
+  name: 'db_errors_total',
+  help: 'Total number of failed database operations',
+  labelNames: ['sqlite_code', 'category', 'operation'],
+  registers: [registry],
+});
+
+const recordDatabaseError = ({ sqliteCode = 'UNKNOWN', category = 'unknown', operation = 'UNKNOWN' } = {}) => {
+  dbErrorsTotal.inc({ sqlite_code: sqliteCode, category, operation });
+};
+
 module.exports = {
+  sqliteWriterQueueDepth,
+  sqliteWriterWaitSeconds,
   registry,
   stellarMode,
   recordStellarMode,
   streamConnectionsActive,
   streamConnectionsRejectedTotal,
+
+  heapSizeLimitBytes,
+  // Scrape-time lag gauges (#1968)
+  schedulerLagSeconds,
+  transactionSyncLagSeconds,
+  secondsSince,
   httpRequestDuration,
   stellarDonationsTotal,
   metricsMiddleware,
@@ -498,12 +719,21 @@ module.exports = {
   recurringDonationsSkippedTotal,
   // Process error metrics (#1928)
   processUnhandledRejectionsTotal,
+  // Best-effort failure metrics (#1946)
+  bestEffortFailuresTotal,
+  recordBestEffortFailure,
+  // Request timeout metrics (#1948)
+  requestTimeoutsTotal,
+  recordRequestTimeout,
   // Legacy unversioned path metrics (#1802)
   legacyPathRequestsTotal,
   recordLegacyPathRequest,
   // Legacy API key usage (#1886)
   legacyApiKeyUsageTotal,
   recordLegacyKeyUsage,
+  // API key validation infrastructure errors (#1940)
+  authValidationErrorsTotal,
+  recordAuthValidationError,
   // Authentication failure metrics (#1887)
   authFailuresTotal,
   recordAuthFailure,
@@ -512,6 +742,9 @@ module.exports = {
   schedulerLockReleasesTotal,
   recordSchedulerLockAcquisition,
   recordSchedulerLockRelease,
+  // Database error metrics (#1949)
+  dbErrorsTotal,
+  recordDatabaseError,
   // Horizon connection pool metrics
   horizonPoolSize,
   horizonPoolHealthyCount,

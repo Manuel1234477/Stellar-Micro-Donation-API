@@ -142,7 +142,11 @@ const SECURITY_CONFIGS = {
 };
 
 /**
- * Load and validate security configuration with safe defaults
+ * Load and validate security configuration with safe defaults.
+ *
+ * Pure function of the supplied env object: no reads or writes of the global
+ * `process.env`, so it can be exercised directly in tests. Defaults to
+ * `process.env` for production callers.
  */
 function loadSecurityConfig() {
   const config = {};

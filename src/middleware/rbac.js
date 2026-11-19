@@ -1,3 +1,4 @@
+const { bestEffort } = require('../utils/bestEffort');
 /**
  * RBAC Middleware - Authorization Layer
  * 
@@ -23,10 +24,12 @@ const { verifyAccessToken } = require('../services/JwtService');
 const { hasScope, hasAnyScope, hasAllScopes } = require('../utils/scopeValidator');
 const log = require('../utils/log');
 const { getLegacyKeySunsetDate, isLegacyKeyDisabled } = require('../utils/legacyApiKeySunset');
-const { recordLegacyKeyUsage } = require('../utils/metrics');
+const { recordLegacyKeyUsage, recordAuthValidationError } = require('../utils/metrics');
 const { allowAuditEvent } = require('../utils/authAuditThrottle');
 
 const LEGACY_AUDIT_WINDOW_MS = 60 * 60 * 1000;
+// Hint for clients when API key validation is temporarily unavailable (issue #1940)
+const API_KEY_VALIDATION_RETRY_AFTER_SECONDS = 5;
 
 /**
  * Role-Based Access Control (RBAC) Configuration
@@ -104,7 +107,7 @@ const checkPermission = (permission) => {
             hasScope: !roleHasPermission ? 'N/A' : scopeHasPermission,
             apiKeyId: req.apiKey?.id,
           }
-        }).catch(() => {});
+        }).catch(bestEffort('src/middleware/rbac.js:107'));
 
         throw new ForbiddenError(`Insufficient permissions. Required: ${permission}`);
       }
@@ -126,7 +129,7 @@ const checkPermission = (permission) => {
           scopeVerified: req.apiKey?.scopes ? true : false,
           apiKeyId: req.apiKey?.id,
         }
-      }).catch(() => {});
+      }).catch(bestEffort('src/middleware/rbac.js:129'));
 
       next();
     } catch (error) {
@@ -255,7 +258,7 @@ const requireAdmin = () => {
             userRole: req.user.role,
             method: req.method
           }
-        }).catch(() => {});
+        }).catch(bestEffort('src/middleware/rbac.js:258'));
 
         throw new ForbiddenError('Admin access required');
       }
@@ -293,7 +296,7 @@ const requireAdmin = () => {
                 ipAddress: req.ip,
                 resource: req.path,
                 reason: 'Invalid TOTP code',
-              }).catch(() => {});
+              }).catch(bestEffort('src/middleware/rbac.js:296'));
               return res.status(401).json({
                 success: false,
                 error: {
@@ -326,7 +329,7 @@ const requireAdmin = () => {
           userRole: req.user.role,
           method: req.method
         }
-      }).catch(() => {});
+      }).catch(bestEffort('src/middleware/rbac.js:329'));
 
       next();
     } catch (error) {
@@ -347,6 +350,22 @@ const requireAdmin = () => {
  * 5. Legacy Fallback: Checks against process.env.API_KEYS if DB lookup fails.
  * 6. Context Injection: Populates req.user with a standardized identity object for downstream use.
  */
+/**
+ * Applies the per-key rate limit to a DB-backed API key that has been resolved
+ * for this request, then continues the chain. Legacy and anonymous requests
+ * pass straight through. Used on every success path of attachUserRole so the
+ * limit is enforced exactly once, for every authenticated /api/v1 route (#1941).
+ */
+const applyPerKeyLimit = (req, res, next) => {
+  const keyInfo = req.apiKey;
+  if (!keyInfo || keyInfo.isLegacy || !keyInfo.id) return next();
+  try {
+    return perKeyRateLimit(req, res, next);
+  } catch (err) {
+    return next(err);
+  }
+};
+
 const attachUserRole = () => {
   return (req, res, next) => {
     try {
@@ -390,12 +409,16 @@ const attachUserRole = () => {
           scopes: req.apiKey.scopes || [],
           isLegacy: req.apiKey.isLegacy || false
         };
-        return next();
+        return applyPerKeyLimit(req, res, next);
       }
       // Priority 3: x-api-key header lookup (async, non-blocking)
       else if (req.headers && req.headers['x-api-key']) {
         const apiKey = req.headers['x-api-key'];
         
+        // Record that this request's key has been looked up, so requireApiKey
+        // does not validate the same header a second time (#1941).
+        req.apiKeyLookedUp = true;
+
         // Validate API key asynchronously without blocking the request
         validateApiKey(apiKey).then((keyInfo) => {
           if (keyInfo) {
@@ -435,7 +458,7 @@ const attachUserRole = () => {
                 success: false,
                 error: {
                   code: 'LEGACY_API_KEY_DISABLED',
-                  message: `Legacy API keys were disabled on ${getLegacyKeySunsetDate()}. Create a database-backed key with "npm run keys:create". See docs/MIGRATION_LEGACY_API_KEYS.md`,
+                  message: `Legacy API keys were disabled on ${getLegacyKeySunsetDate()}. Create a database-backed key with "npm run keys:create". See docs/migration-legacy-api-keys.md`,
                   requestId: req.id,
                 },
               });
@@ -448,7 +471,7 @@ const attachUserRole = () => {
             const rlHeaders = buildRateLimitHeaders(rlResult.limit, rlResult.remaining, Math.ceil(rlResult.resetAt / 1000));
             res.set(rlHeaders);
             res.set('X-API-Key-Legacy', 'true');
-            res.set('Warning', `299 - "Legacy API key in use. Migrate to database-backed keys before ${getLegacyKeySunsetDate()}. See docs/MIGRATION_LEGACY_API_KEYS.md"`);
+            res.set('Warning', `299 - "Legacy API key in use. Migrate to database-backed keys before ${getLegacyKeySunsetDate()}. See docs/migration-legacy-api-keys.md"`);
 
             if (!rlResult.allowed && process.env.NODE_ENV !== 'test') {
               res.set('Retry-After', String(Math.ceil((rlResult.resetAt - Date.now()) / 1000)));
@@ -486,19 +509,33 @@ const attachUserRole = () => {
                   keyIdHash: legacyKeyId,
                   sunsetDate: getLegacyKeySunsetDate(),
                 },
-              }).catch(() => {});
+              }).catch(bestEffort('src/middleware/rbac.js:489'));
             }
           }
           // Default: Unauthenticated Guest access
           else {
             req.user = { id: 'guest', role: 'guest', name: 'Guest', scopes: [] };
           }
-          next();
+          return applyPerKeyLimit(req, res, next);
         }).catch((err) => {
-          // On error, default to guest access
-          log.warn('RBAC', 'Failed to validate API key, defaulting to guest', { error: err.message });
-          req.user = { id: 'guest', role: 'guest', name: 'Guest', scopes: [] };
-          next();
+          // A validation error means "could not decide", not "invalid key". Never
+          // downgrade a presented credential to guest (issue #1940): that turns a
+          // database incident into misleading 403s. Fail closed with 503 instead.
+          log.error('RBAC', 'API key validation unavailable; rejecting request', {
+            error: err.message,
+            code: err.code,
+          });
+          if (res.headersSent) return;
+          recordAuthValidationError(String(err.code || 'unknown'));
+          res.set('Retry-After', String(API_KEY_VALIDATION_RETRY_AFTER_SECONDS));
+          return res.status(503).json({
+            success: false,
+            error: {
+              code: 'SERVICE_UNAVAILABLE',
+              message: 'API key validation is temporarily unavailable. Retry shortly.',
+              requestId: req.id,
+            },
+          });
         });
         return;
       }
@@ -507,12 +544,7 @@ const attachUserRole = () => {
         req.user = { id: 'guest', role: 'guest', name: 'Guest', scopes: [] };
       }
 
-      // Apply per-key rate limiting if a DB-backed key is present
-      if (req.apiKey && !req.apiKey.isLegacy && req.apiKey.id) {
-        return perKeyRateLimit(req, res, next);
-      }
-
-      next();
+      return applyPerKeyLimit(req, res, next);
     } catch (error) {
       next(error);
     }

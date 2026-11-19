@@ -23,7 +23,7 @@
  */
 
 // Same .env as src/config/index.js; dotenv never overrides variables that are already set.
-require('dotenv').config({ path: require('path').join(__dirname, '../../.env') });
+require('./loadEnv');
 const Ajv = require('ajv');
 const { ENV_VARS, ENV_VAR_PATTERNS } = require('./envSchema');
 

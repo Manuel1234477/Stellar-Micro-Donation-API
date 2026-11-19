@@ -23,7 +23,7 @@
  *   - Failures to open throw CryptoError with code DECRYPTION_FAILED and no
  *     detail about which check failed.
  *
- * Envelope formats are documented in docs/security/ENCRYPTION.md.
+ * Envelope formats are documented in docs/security/encryption.md.
  */
 
 'use strict';

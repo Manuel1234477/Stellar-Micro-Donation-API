@@ -1,3 +1,4 @@
+const { bestEffort } = require('../utils/bestEffort');
 /**
  * Audit Log Service - Security Audit Layer
  * 
@@ -401,11 +402,13 @@ class AuditLogService {
 
     const entries = _pendingBuffer.splice(0, _pendingBuffer.length);
 
+    // One transaction on the single writer connection (Issue #1959). Manual
+    // BEGIN/COMMIT through separate db.run() calls would let other writes land
+    // inside the open transaction and make concurrent BEGINs fail.
     const writeEntries = async () => {
-      await db.run('BEGIN TRANSACTION');
-      try {
+      await db.runTransaction(async (tx) => {
         for (const entry of entries) {
-          await db.run(
+          await tx.run(
             `INSERT INTO audit_logs (
               id, timestamp, category, action, severity, result,
               userId, requestId, ipAddress, resource, reason,
@@ -420,7 +423,7 @@ class AuditLogService {
         }
         await db.run('COMMIT');
       } catch (err) {
-        await db.run('ROLLBACK').catch(() => {});
+        await db.run('ROLLBACK').catch(bestEffort('src/services/AuditLogService.js:423'));
         throw err;
       }
     };
@@ -449,7 +452,7 @@ class AuditLogService {
     if (_autoFlushTimer) return;
     _autoFlushTimer = timerRegistry.createInterval(() => {
       if (_pendingBuffer.length > 0) {
-        AuditLogService.flush().catch(() => {});
+        AuditLogService.flush().catch(bestEffort('src/services/AuditLogService.js:452'));
       }
     }, BUFFER_FLUSH_INTERVAL_MS, 'audit-log-auto-flush');
     _autoFlushTimer.unref();

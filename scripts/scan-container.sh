@@ -185,7 +185,7 @@ else
     echo -e "${YELLOW}  1. Review the findings above${NC}"
     echo -e "${YELLOW}  2. Update base image or dependencies${NC}"
     echo -e "${YELLOW}  3. If unfixable, add to .trivyignore with justification${NC}"
-    echo -e "${YELLOW}  4. See docs/CONTAINER_SECURITY.md for guidance${NC}"
+    echo -e "${YELLOW}  4. See docs/container-security.md for guidance${NC}"
   else
     echo -e "${YELLOW}⚠️  Vulnerabilities found (scan did not fail due to --exit-code not set)${NC}"
     echo ""

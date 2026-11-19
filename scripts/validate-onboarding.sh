@@ -1,111 +1,115 @@
-#!/bin/bash
+#!/usr/bin/env bash
+#
+# validate-onboarding.sh
+#
+# Verifies the README quickstart still works.
+#
+# Default (static) mode, run in CI on every change:
+#   - README and docs/quickstart.md pass scripts/check-docs.js
+#   - every file the quickstart depends on exists
+#   - every npm script the quickstart runs is defined in package.json
+#
+# Boot mode (--boot): also runs the quickstart commands against a real process:
+#   npm run init-db, npm start, then GET /api/v1/health must return HTTP 200.
+#   Requires a working install (npm ci) and uses a temporary database.
+#
+# Usage:
+#   bash scripts/validate-onboarding.sh          # static checks
+#   bash scripts/validate-onboarding.sh --boot   # static checks + live boot
 
-# Onboarding Checklist Validation Script
-# This script validates that all instructions in ONBOARDING_CHECKLIST.md work correctly
+set -euo pipefail
 
-set -e  # Exit on error
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+cd "$ROOT"
 
-echo "🔍 Validating Onboarding Checklist Instructions..."
-echo ""
+BOOT=false
+if [[ "${1:-}" == "--boot" ]]; then
+  BOOT=true
+fi
 
-# Color codes
-GREEN='\033[0;32m'
-RED='\033[0;31m'
-YELLOW='\033[1;33m'
-NC='\033[0m' # No Color
-
-# Track results
-PASSED=0
+PORT="${ONBOARDING_PORT:-3000}"
 FAILED=0
 
-# Test function
-test_check() {
-    local description=$1
-    local command=$2
-    
-    echo -n "Testing: $description... "
-    
-    if eval "$command" > /dev/null 2>&1; then
-        echo -e "${GREEN}✓${NC}"
-        ((PASSED++))
-        return 0
-    else
-        echo -e "${RED}✗${NC}"
-        ((FAILED++))
-        return 1
-    fi
+pass() { printf '  \033[0;32m✓\033[0m %s\n' "$1"; }
+fail() { printf '  \033[0;31m✗\033[0m %s\n' "$1"; FAILED=$((FAILED + 1)); }
+
+check_file() {
+  if [[ -f "$1" ]]; then pass "$1 exists"; else fail "$1 is missing"; fi
 }
 
-# File existence checks
-echo "📁 Checking file references..."
-test_check "ARCHITECTURE.md exists" "test -f ARCHITECTURE.md"
-test_check "Contributing.txt exists" "test -f Contributing.txt"
-test_check "Contributor Guide.txt exists" "test -f 'Contributor Guide.txt'"
-test_check "API workrkflow.txt exists" "test -f 'API workrkflow.txt'"
-test_check ".env.example exists" "test -f .env.example"
-echo ""
+check_npm_script() {
+  if node -e "const s=require('./package.json').scripts||{};process.exit(s[process.argv[1]]?0:1)" "$1"; then
+    pass "npm run $1 is defined"
+  else
+    fail "npm run $1 is not defined in package.json"
+  fi
+}
 
-# Directory structure checks
-echo "📂 Checking directory structure..."
-test_check "src/routes/ exists" "test -d src/routes"
-test_check "src/services/ exists" "test -d src/services"
-test_check "src/middleware/ exists" "test -d src/middleware"
-test_check "src/utils/ exists" "test -d src/utils"
-test_check "src/config/ exists" "test -d src/config"
-test_check "tests/ exists" "test -d tests"
-echo ""
+echo "Checking quickstart files..."
+check_file README.md
+check_file docs/quickstart.md
+check_file .env.example
+check_file docs/openapi.json
+check_file examples/API_CURL_EXAMPLES.md
+check_file examples/Stellar-Micro-Donation-API.postman_collection.json
 
-# Key file checks
-echo "🔑 Checking key service files..."
-test_check "DonationService.js exists" "test -f src/services/DonationService.js"
-test_check "WalletService.js exists" "test -f src/services/WalletService.js"
-test_check "stellarErrorHandler.js exists" "test -f src/utils/stellarErrorHandler.js"
-test_check "app.js exists" "test -f src/app.js"
-echo ""
+echo "Checking quickstart npm scripts..."
+for script in generate-key init-db validate-env keys:create check:docs; do
+  check_npm_script "$script"
+done
 
-# Package.json script checks
-echo "📦 Checking npm scripts..."
-test_check "npm run lint script exists" "grep -q '\"lint\"' package.json"
-test_check "npm test script exists" "grep -q '\"test\"' package.json"
-test_check "npm run keys:list script exists" "grep -q '\"keys:list\"' package.json"
-test_check "npm run keys:create script exists" "grep -q '\"keys:create\"' package.json"
-test_check "npm run init-db script exists" "grep -q '\"init-db\"' package.json"
-test_check "npm run validate:rbac script exists" "grep -q '\"validate:rbac\"' package.json"
-test_check "npm run test:coverage script exists" "grep -q '\"test:coverage\"' package.json"
-echo ""
-
-# Check if node_modules exists (dependencies installed)
-echo "📚 Checking dependencies..."
-if test -d node_modules; then
-    echo -e "Dependencies installed: ${GREEN}✓${NC}"
-    ((PASSED++))
-    
-    # If dependencies exist, test actual commands
-    echo ""
-    echo "🧪 Testing actual commands (with dependencies)..."
-    
-    if npm run lint > /dev/null 2>&1; then
-        echo -e "npm run lint works: ${GREEN}✓${NC}"
-        ((PASSED++))
-    else
-        echo -e "npm run lint works: ${YELLOW}⚠${NC} (may need .env setup)"
-        ((PASSED++))
-    fi
-    
+echo "Checking README and quickstart documentation..."
+if node scripts/check-docs.js; then
+  pass "check-docs.js passed"
 else
-    echo -e "Dependencies installed: ${YELLOW}⚠${NC} (run 'npm install' first)"
-    echo "  Skipping command execution tests..."
+  fail "check-docs.js reported problems"
+fi
+
+if [[ "$BOOT" == true ]]; then
+  echo "Booting the quickstart (mock mode, temporary database)..."
+  TMP_DIR="$(mktemp -d)"
+  SERVER_PID=""
+  cleanup() {
+    if [[ -n "$SERVER_PID" ]]; then kill "$SERVER_PID" 2>/dev/null || true; fi
+    rm -rf "$TMP_DIR"
+  }
+  trap cleanup EXIT
+
+  export MOCK_STELLAR=true
+  export PORT
+  export DB_PATH="$TMP_DIR/onboarding.db"
+  export API_KEYS="onboarding_key_$(date +%s)"
+  export ENCRYPTION_KEY="${ENCRYPTION_KEY:-$(node -e "console.log(require('crypto').randomBytes(32).toString('hex'))")}"
+
+  if npm run init-db >"$TMP_DIR/init-db.log" 2>&1; then
+    pass "npm run init-db succeeded"
+  else
+    fail "npm run init-db failed (see $TMP_DIR/init-db.log)"
+    tail -n 20 "$TMP_DIR/init-db.log" || true
+  fi
+
+  npm start >"$TMP_DIR/server.log" 2>&1 &
+  SERVER_PID=$!
+
+  HEALTH_CODE=000
+  for _ in $(seq 1 60); do
+    HEALTH_CODE="$(curl -s -o /dev/null -w '%{http_code}' "http://localhost:${PORT}/api/v1/health" || true)"
+    if [[ "$HEALTH_CODE" == "200" ]]; then break; fi
+    sleep 1
+  done
+
+  if [[ "$HEALTH_CODE" == "200" ]]; then
+    pass "GET /api/v1/health returned 200"
+  else
+    fail "GET /api/v1/health returned $HEALTH_CODE (see $TMP_DIR/server.log)"
+    tail -n 30 "$TMP_DIR/server.log" || true
+  fi
 fi
 
 echo ""
-echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-echo -e "Results: ${GREEN}${PASSED} passed${NC}, ${RED}${FAILED} failed${NC}"
-echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-
-if [ $FAILED -eq 0 ]; then
-    echo -e "${GREEN}✅ All onboarding checklist instructions are valid!${NC}"
-    exit 0
-else
-    echo -e "${RED}❌ Some checks failed. Please review ONBOARDING_CHECKLIST.md${NC}"
-    exit 1
+if [[ $FAILED -eq 0 ]]; then
+  echo "All onboarding checks passed."
+  exit 0
 fi
+echo "$FAILED onboarding check(s) failed. Update README.md or docs/quickstart.md to match."
+exit 1

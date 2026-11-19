@@ -4,7 +4,7 @@
  * Canonical home of the rate-limit header helpers. Both perKeyRateLimit.js and
  * rateLimiter.js import from here; this module imports neither, which keeps
  * the rate-limit modules free of circular dependencies (#1777).
- * See docs/RATE_LIMIT_COMPOSITION.md for the full layer description.
+ * See docs/rate-limit-composition.md for the full layer description.
  */
 
 'use strict';

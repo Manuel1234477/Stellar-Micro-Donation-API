@@ -92,7 +92,7 @@ describe('documentation checks', () => {
     expect(findUndocumented()).toEqual([]);
   });
 
-  test('.env.example and docs/CONFIGURATION.md are in sync with the schema', () => {
+  test('.env.example and docs/configuration.md are in sync with the schema', () => {
     expect(checkGeneratedFiles()).toEqual([]);
   });
 });

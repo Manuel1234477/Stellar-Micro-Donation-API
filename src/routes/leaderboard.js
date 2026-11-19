@@ -1,3 +1,4 @@
+const { bestEffort } = require('../utils/bestEffort');
 /**
  * Leaderboard Routes - API Endpoint Layer
  * 
@@ -73,7 +74,7 @@ function auditLeaderboardAccess(req, res, next) {
     ipAddress: req.ip,
     resource: req.path,
     details: { query: req.query, params: req.params }
-  }).catch(() => {});
+  }).catch(bestEffort('src/routes/leaderboard.js:76'));
   next();
 }
 

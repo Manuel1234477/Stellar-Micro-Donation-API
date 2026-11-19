@@ -14,6 +14,7 @@
  *
  * Usage:
  *   node scripts/validate-examples.js
+ *   EXAMPLES_BASE_URL=http://localhost:3000 node scripts/validate-examples.js   # also execute against a running server
  *
  * Exit codes:
  *   0 — all checks passed
@@ -26,9 +27,9 @@ const path = require('path');
 
 let StellarSdk;
 try {
-  StellarSdk = require('stellar-sdk');
+  StellarSdk = require('@stellar/stellar-sdk');
 } catch (err) {
-  console.error('stellar-sdk is required. Install it: npm install stellar-sdk');
+  console.error('@stellar/stellar-sdk is required. Install dependencies with: npm ci');
   process.exit(2);
 }
 
@@ -176,6 +177,12 @@ function checkMarkdown() {
     }
   }
 
+  md.split('\n').forEach((line, idx) => {
+    if (line.includes('$BASE_URL/') && !line.includes('$BASE_URL/api/v1/')) {
+      fail(`API_CURL_EXAMPLES.md:${idx + 1}`, 'URL must use the versioned /api/v1 prefix');
+    }
+  });
+
   const walletBody = findSectionBody(md, 'Create Wallet');
   if (walletBody) {
     if (Object.prototype.hasOwnProperty.call(walletBody, 'publicKey')) {
@@ -217,6 +224,9 @@ function walkCollectionItems(items) {
     const req = item.request;
     const url = (req.url && (typeof req.url === 'string' ? req.url : req.url.raw)) || '';
     const body = (req.body && typeof req.body.raw === 'string') ? req.body.raw : '';
+    if (url.includes('{{BASE_URL}}') && !url.includes('{{BASE_URL}}/api/v1/')) {
+      fail(`postman:${item.name || url}`, `URL must use the versioned /api/v1 prefix: ${url}`);
+    }
     if (!body.includes('{')) continue;
     let obj = null;
     try { obj = JSON.parse(body); } catch (_) { /* skip non-JSON bodies */ }
@@ -282,9 +292,92 @@ function checkPostman() {
   walkCollectionItems(collection.item);
 }
 
-function main() {
+/**
+ * Live mode (opt-in): when EXAMPLES_BASE_URL is set, every Postman request is
+ * sent to that running server (e.g. http://localhost:3000). A request fails if
+ * the route is missing (404), redirects (308, unversioned path) or the server
+ * errors (5xx). Other 4xx responses are accepted: the examples use placeholder
+ * data, so business-rule rejections are expected. SSE streams are skipped
+ * because they never complete.
+ *
+ * Refs #1964.
+ */
+function collectLiveRequests(items, out) {
+  if (!Array.isArray(items)) return out;
+  for (const item of items) {
+    if (item && item.item) {
+      collectLiveRequests(item.item, out);
+    } else if (item && item.request) {
+      out.push(item);
+    }
+  }
+  return out;
+}
+
+function substituteVars(text, vars) {
+  let result = text;
+  for (const key of Object.keys(vars)) {
+    result = result.split('{{' + key + '}}').join(vars[key]);
+  }
+  return result;
+}
+
+async function checkLive() {
+  const baseUrl = process.env.EXAMPLES_BASE_URL;
+  if (!baseUrl) return;
+  console.log(`\nExecuting Postman examples against ${baseUrl}:`);
+  let collection;
+  try {
+    collection = JSON.parse(fs.readFileSync(POSTMAN_FILE, 'utf8'));
+  } catch (err) {
+    fail('postman:live', `cannot read collection: ${err.message}`);
+    return;
+  }
+  const vars = {};
+  for (const v of Array.isArray(collection.variable) ? collection.variable : []) {
+    if (v && typeof v.key === 'string') vars[v.key] = String(v.value);
+  }
+  vars.BASE_URL = baseUrl.replace(/\/+$/, '');
+  if (process.env.EXAMPLES_API_KEY) vars.API_KEY = process.env.EXAMPLES_API_KEY;
+
+  for (const item of collectLiveRequests(collection.item, [])) {
+    const req = item.request;
+    const rawUrl = typeof req.url === 'string' ? req.url : req.url.raw;
+    const url = substituteVars(rawUrl, vars);
+    const label = `${req.method} ${item.name || url}`;
+    if (url.includes('/stream/transactions') || url.includes('/stream/leaderboard')) {
+      console.log(`  - ${label}: skipped (SSE stream)`);
+      continue;
+    }
+    const headers = {};
+    for (const h of Array.isArray(req.header) ? req.header : []) {
+      headers[h.key] = substituteVars(String(h.value), vars);
+    }
+    const init = { method: req.method, headers, redirect: 'manual', signal: AbortSignal.timeout(10000) };
+    if (req.body && typeof req.body.raw === 'string') {
+      init.body = substituteVars(req.body.raw, vars);
+    }
+    let status;
+    try {
+      const res = await fetch(url, init);
+      status = res.status;
+      await res.arrayBuffer().catch(() => {});
+    } catch (err) {
+      fail(label, `request failed: ${err.message}`);
+      continue;
+    }
+    if (status === 404 || status === 308 || status === 301 || status === 302 || status >= 500) {
+      fail(label, `HTTP ${status} from ${url}`);
+    } else {
+      console.log(`  ✓ ${label}: HTTP ${status}`);
+    }
+  }
+}
+
+async function main() {
   checkMarkdown();
   checkPostman();
+  await checkLive();
   console.log('');
   if (failures.length === 0) {
     console.log('✓ All example files pass validation');
@@ -296,4 +389,7 @@ function main() {
   }
 }
 
-main();
+main().catch((err) => {
+  console.error(err);
+  process.exit(1);
+});

@@ -1,4 +1,5 @@
 'use strict';
+const { bestEffort } = require('../utils/bestEffort');
 
 /**
  * HorizonPool — round-robin pool of Horizon.Server instances for StellarService.
@@ -194,7 +195,7 @@ class HorizonPool {
           url: member.url,
         });
 
-        this._healthCheck(member).catch(() => {});
+        this._healthCheck(member).catch(bestEffort('src/services/HorizonPool.js:197'));
       }
     }
   }

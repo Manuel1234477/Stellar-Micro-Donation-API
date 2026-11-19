@@ -50,8 +50,12 @@ const replayDetectionMiddleware = require('../middleware/replayDetection');
 const log = require('../utils/log');
 const state = require('./state');
 const timerRegistry = require('../utils/timerRegistry');
+const { attachUnknownUpgradeFallback } = require('../utils/wsUpgrade');
 
 const PORT = config.server.port;
+
+// Pathnames that own a WebSocket upgrade listener (see attachSubscriptionServer / websocketService.attach).
+const WS_UPGRADE_PATHS = ['/graphql', '/ws/balances'];
 
 /**
  * Start the HTTP server, initialise all subsystems, and register shutdown handlers.
@@ -102,6 +106,10 @@ async function startServer(app, overrideServices = {}) {
     });
 
     await new Promise((resolve) => server.once('listening', resolve));
+
+    // Reject WebSocket upgrades for unknown paths with 404 (#1980). Known paths
+    // (/graphql, /ws/balances) are handled by their own listeners, attached below.
+    attachUnknownUpgradeFallback(server, WS_UPGRADE_PATHS);
 
     log.info('APP', 'HTTP server listening', {
       port: PORT,
@@ -285,7 +293,7 @@ async function startServer(app, overrideServices = {}) {
       log.info('SHUTDOWN', `Received ${signal}, starting graceful shutdown`);
       logShutdownDiagnostics(signal);
 
-      // Clear all registered background timers (cleanupInterval, replayCleanupTimer, service intervals)
+      // Clear all registered background timers (cleanupInterval, replay cleanup, service intervals)
       timerRegistry.clearAll();
 
       const timeoutMs = parseInt(

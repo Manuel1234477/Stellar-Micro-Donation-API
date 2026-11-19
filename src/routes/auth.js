@@ -163,7 +163,10 @@ router.get('/challenge', asyncHandler(async (req, res) => {
  * Verifies a signed SEP-0010 challenge and returns a JWT access token.
  * Body: { transaction: '<signed_tx_xdr>' }
  */
-router.post('/token', bruteForce.middleware(), authTokenRateLimiter, payloadSizeLimiter(ENDPOINT_LIMITS.auth), asyncHandler(async (req, res) => {
+// SEP-10 token exchange accepts form-encoded bodies as well as JSON (#1955).
+// extended:false keeps parsing flat (no nested objects or arrays).
+const sep10FormParser = express.urlencoded({ extended: false, limit: ENDPOINT_LIMITS.auth });
+router.post('/token', bruteForce.middleware(), authTokenRateLimiter, payloadSizeLimiter(ENDPOINT_LIMITS.auth), sep10FormParser, asyncHandler(async (req, res) => {
   if (!sep10Service) {
     // 503: feature disabled by configuration, not permanently unimplemented
     return res.status(503).json({

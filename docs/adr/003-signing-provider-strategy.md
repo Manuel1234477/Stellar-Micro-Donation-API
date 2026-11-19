@@ -57,11 +57,11 @@ beyond what the local provider requires.
 
 **Follow-on tasks:**
 - [x] Document `SIGNING_PROVIDER`, `HSM_SLOT_ID`, `HSM_PIN`, `KMS_PROVIDER`,
-  `KMS_KEY_ID` in `docs/CONFIGURATION.md`
+  `KMS_KEY_ID` in `docs/configuration.md`
 - [ ] Add a `SIGNING_PROVIDER=gcp` implementation
-- [ ] Document HSM setup in `docs/SECRETS_LIFECYCLE.md`
+- [ ] Document HSM setup in `docs/secrets-lifecycle.md`
 
 ---
 
-*See also: `src/services/signing/`, `docs/CONFIGURATION.md#20-signing-providers-hsm--kms`,
-`docs/SECRETS_LIFECYCLE.md`*
+*See also: `src/services/signing/`, `docs/configuration.md#20-signing-providers-hsm--kms`,
+`docs/secrets-lifecycle.md`*

@@ -5,6 +5,7 @@ const path = require('path');
 // Internal modules
 const log = require('../utils/log');
 const { env: typedEnv } = require('../config/env');
+const { redactUrl } = require('../utils/redactUrl');
 const { maskSensitiveData } = require('../utils/dataMasker');
 
 /**
@@ -194,7 +195,7 @@ class Logger {
           timestamp,
           requestId,
           method: req.method,
-          endpoint: req.originalUrl || req.url,
+          endpoint: redactUrl(req.originalUrl || req.url), // #1942: no API keys in logs
           statusCode: res.statusCode,
           duration,
           request: {

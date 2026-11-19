@@ -90,6 +90,135 @@ const ERROR_CODES = {
   EXTERNAL_SERVICE_ERROR:{ code: 'EXTERNAL_SERVICE_ERROR',numeric: 9005 },
   RESOURCE_CONFLICT:     { code: 'RESOURCE_CONFLICT',     numeric: 4009 },
   NOT_IMPLEMENTED:       { code: 'NOT_IMPLEMENTED',       numeric: 9006 },
+  METRICS_ERROR:         { code: 'METRICS_ERROR',         numeric: 9007 },
+
+  // Request-shape errors added for the standard envelope (Issue #1957)
+  PAYLOAD_TOO_LARGE:     { code: 'PAYLOAD_TOO_LARGE',     numeric: 1010 },
+};
+
+/**
+ * Fallback error code for an HTTP status when a handler did not supply one.
+ * Used by the error-envelope normaliser so that every error response carries
+ * a catalogued `code` (see docs/ERROR_CODES.md).
+ */
+const STATUS_FALLBACK_CODES = {
+  400: 'INVALID_REQUEST',
+  401: 'UNAUTHORIZED',
+  403: 'ACCESS_DENIED',
+  404: 'NOT_FOUND',
+  405: 'METHOD_NOT_ALLOWED',
+  409: 'RESOURCE_CONFLICT',
+  413: 'PAYLOAD_TOO_LARGE',
+  422: 'INVALID_REQUEST',
+  429: 'RATE_LIMIT_EXCEEDED',
+  501: 'NOT_IMPLEMENTED',
+  503: 'SERVICE_UNAVAILABLE',
+};
+
+/**
+ * Return the fallback catalogue code for an HTTP status.
+ * @param {number} statusCode
+ * @returns {string}
+ */
+function fallbackCodeForStatus(statusCode) {
+  if (STATUS_FALLBACK_CODES[statusCode]) return STATUS_FALLBACK_CODES[statusCode];
+  return statusCode >= 500 ? ERROR_CODES.INTERNAL_ERROR.code : ERROR_CODES.INVALID_REQUEST.code;
+}
+
+/**
+ * Build the canonical error envelope used by every /api/v1 error response.
+ *
+ *   { success: false, error: { code, message, details?, requestId, numericCode?, timestamp? } }
+ *
+ * @param {object} fields
+ * @param {string} fields.code
+ * @param {string} fields.message
+ * @param {string|null} [fields.requestId]
+ * @param {*} [fields.details]
+ * @param {number} [fields.numericCode]
+ * @returns {{ success: false, error: object }}
+ */
+function buildErrorEnvelope({ code, message, requestId = null, details, numericCode, timestamp }) {
+  const error = {
+    code,
+    ...(numericCode !== undefined && { numericCode }),
+    message,
+    ...(details !== undefined && details !== null && { details }),
+    requestId: requestId ?? null,
+    timestamp: timestamp || new Date().toISOString(),
+  };
+  return { success: false, error };
+}
+
+/**
+ * Normalise any `{ success: false, error: ... }` body into the canonical envelope.
+ *
+ * - `error` as a string (legacy shape)      → `{ code: <fallback>, message: <string> }`
+ * - `error` as an object missing `code`     → fallback code added
+ * - `error` as an object missing `message`  → `message` taken from the top-level `message`
+ * - `requestId` missing                     → filled in from the request
+ * Success bodies and non-object bodies are returned untouched.
+ *
+ * @param {number} statusCode
+ * @param {*} body
+ * @param {string|null} requestId
+ * @returns {*}
+ */
+function normalizeErrorBody(statusCode, body, requestId = null) {
+  if (!body || typeof body !== 'object' || body.success !== false) return body;
+
+  const fallbackCode = fallbackCodeForStatus(statusCode);
+  const { error } = body;
+  let normalised;
+
+  if (typeof error === 'string') {
+    normalised = { code: fallbackCode, message: error };
+  } else if (error && typeof error === 'object') {
+    normalised = { ...error };
+    if (!normalised.code) normalised.code = fallbackCode;
+    if (!normalised.message) {
+      normalised.message = typeof body.message === 'string' ? body.message : 'An error occurred';
+    }
+  } else {
+    normalised = { code: fallbackCode, message: typeof body.message === 'string' ? body.message : 'An error occurred' };
+  }
+
+  normalised.requestId = normalised.requestId ?? requestId ?? null;
+  if (!normalised.timestamp) normalised.timestamp = new Date().toISOString();
+
+  // Top-level legacy fields (e.g. `message`) are folded into `error`, so the
+  // envelope has exactly one error object.
+  return { success: false, error: normalised };
+}
+
+/**
+ * JSON Schema every error response in /api/v1 must satisfy (Issue #1957).
+ * Used by the contract test that crawls invalid-input requests.
+ */
+const ERROR_ENVELOPE_SCHEMA = {
+  $id: 'https://stellar-micro-donation-api/schemas/error-envelope.json',
+  type: 'object',
+  required: ['success', 'error'],
+  additionalProperties: false,
+  properties: {
+    success: { const: false },
+    error: {
+      type: 'object',
+      required: ['code', 'message', 'requestId'],
+      additionalProperties: true,
+      properties: {
+        code: { type: 'string', pattern: '^[A-Z][A-Z0-9_]*$' },
+        numericCode: { type: 'integer' },
+        message: { type: 'string', minLength: 1 },
+        details: {},
+        requestId: { type: ['string', 'null'] },
+        timestamp: { type: 'string' },
+        debug: { type: 'object' },
+      },
+    },
+    meta: { type: 'object' },
+    data: {},
+  },
 };
 
 /**
@@ -278,6 +407,11 @@ class ConflictError extends AppError {
 
 module.exports = {
   ERROR_CODES,
+  STATUS_FALLBACK_CODES,
+  ERROR_ENVELOPE_SCHEMA,
+  fallbackCodeForStatus,
+  buildErrorEnvelope,
+  normalizeErrorBody,
   AppError,
   ValidationError,
   UnauthorizedError,

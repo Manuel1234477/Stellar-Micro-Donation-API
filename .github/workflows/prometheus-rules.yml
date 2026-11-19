@@ -1,0 +1,81 @@
+name: Prometheus Rules
+
+# Validates monitoring/prometheus-alerts.yml (issue #1967):
+#   - promtool check rules  : rule syntax
+#   - promtool test rules   : every alert fires and stays quiet as intended
+#   - check-prometheus-rules: referenced metrics are emitted by the app, and
+#                             each alert has firing and non-firing tests
+
+on:
+  push:
+    branches: ["main", "master"]
+    paths:
+      - "monitoring/**"
+      - "scripts/check-prometheus-rules.js"
+      - "src/utils/metrics.js"
+      - "package.json"
+      - "package-lock.json"
+      - ".github/workflows/prometheus-rules.yml"
+  pull_request:
+    branches: ["main", "master"]
+    paths:
+      - "monitoring/**"
+      - "scripts/check-prometheus-rules.js"
+      - "src/utils/metrics.js"
+      - "package.json"
+      - "package-lock.json"
+      - ".github/workflows/prometheus-rules.yml"
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+env:
+  # promtool ships inside the Prometheus release tarball. The version and
+  # SHA-256 are pinned so the binary run in CI is exactly the one reviewed here.
+  PROMETHEUS_VERSION: "3.5.0"
+  PROMETHEUS_SHA256: "e811827af26d822afb09a4f28314f61b618b12cff5369835a67f674d8b46f39a"
+
+jobs:
+  prometheus-rules:
+    name: Validate Prometheus alert rules
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+
+      - name: Set up Node.js
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
+        with:
+          node-version: "24"
+          cache: "npm"
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Install promtool
+        run: |
+          set -euo pipefail
+          tmp="$(mktemp -d)"
+          archive="prometheus-${PROMETHEUS_VERSION}.linux-amd64.tar.gz"
+          curl -fsSL -o "${tmp}/${archive}" \
+            "https://github.com/prometheus/prometheus/releases/download/v${PROMETHEUS_VERSION}/${archive}"
+          echo "${PROMETHEUS_SHA256}  ${tmp}/${archive}" | sha256sum --check --strict -
+          tar -xzf "${tmp}/${archive}" -C "${tmp}" \
+            "prometheus-${PROMETHEUS_VERSION}.linux-amd64/promtool"
+          sudo install -m 0755 "${tmp}/prometheus-${PROMETHEUS_VERSION}.linux-amd64/promtool" /usr/local/bin/promtool
+          promtool --version
+
+      - name: Check alert rule syntax
+        run: promtool check rules monitoring/prometheus-alerts.yml
+
+      - name: Run alert unit tests
+        run: promtool test rules monitoring/tests/prometheus-alerts.test.yml
+
+      - name: Check metric references and alert test coverage
+        run: node scripts/check-prometheus-rules.js

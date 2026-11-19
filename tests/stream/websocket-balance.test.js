@@ -14,6 +14,7 @@ const {
   _runHeartbeat: runHeartbeat,
   attach,
 } = require('../../src/services/websocketService');
+const { attachUnknownUpgradeFallback } = require('../../src/utils/wsUpgrade');
 
 // ── helpers ───────────────────────────────────────────────────────────────────
 
@@ -223,6 +224,8 @@ describe('WebSocket server integration', () => {
 
     server = http.createServer((req, res) => res.end());
     wss = attach(server);
+    // Unknown upgrade paths are rejected by the shared fallback (bootstrap/server.js). (#1980)
+    attachUnknownUpgradeFallback(server, ['/ws/balances']);
     server.listen(0, () => {
       port = server.address().port;
       done();

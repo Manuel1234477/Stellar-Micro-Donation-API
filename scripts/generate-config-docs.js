@@ -6,7 +6,7 @@
  *
  * Generates, from src/config/envSchema.js:
  *   - .env.example (whole file)
- *   - the variable reference in docs/CONFIGURATION.md (between the
+ *   - the variable reference in docs/configuration.md (between the
  *     BEGIN/END GENERATED markers; prose outside the markers is kept)
  *
  * Usage:
@@ -20,7 +20,7 @@ const { ENV_VARS, ENV_VAR_PATTERNS, GROUPS } = require('../src/config/envSchema'
 
 const ROOT = path.join(__dirname, '..');
 const ENV_EXAMPLE_PATH = path.join(ROOT, '.env.example');
-const CONFIG_MD_PATH = path.join(ROOT, 'docs', 'CONFIGURATION.md');
+const CONFIG_MD_PATH = path.join(ROOT, 'docs', 'configuration.md');
 
 const BEGIN_MARKER = '<!-- BEGIN GENERATED: env reference — edit src/config/envSchema.js, then run `npm run config:generate` -->';
 const END_MARKER = '<!-- END GENERATED: env reference -->';
@@ -93,7 +93,7 @@ function renderEnvExample() {
     '#',
     '# Variables marked REQUIRED must be set before the server will start.',
     '# Variables marked OPTIONAL have safe defaults and can be left commented.',
-    '# Full documentation: docs/CONFIGURATION.md',
+    '# Full documentation: docs/configuration.md',
     '# =====================================',
   ];
 
@@ -125,7 +125,7 @@ function renderEnvExample() {
   return out.join('\n') + '\n';
 }
 
-// ── docs/CONFIGURATION.md ────────────────────────────────────────────────────
+// ── docs/configuration.md ────────────────────────────────────────────────────
 
 function renderReference() {
   const out = [BEGIN_MARKER, '', '## Contents', ''];
@@ -159,7 +159,7 @@ function renderConfigMd(current) {
   const start = current.indexOf(BEGIN_MARKER);
   const end = current.indexOf(END_MARKER);
   if (start === -1 || end === -1 || end < start) {
-    throw new Error(`docs/CONFIGURATION.md is missing the generated-section markers:\n  ${BEGIN_MARKER}\n  ${END_MARKER}`);
+    throw new Error(`docs/configuration.md is missing the generated-section markers:\n  ${BEGIN_MARKER}\n  ${END_MARKER}`);
   }
   return current.slice(0, start) + renderReference() + current.slice(end + END_MARKER.length);
 }
@@ -192,7 +192,7 @@ function main() {
       console.error('Run `npm run config:generate` and commit the result.');
       process.exit(1);
     }
-    console.log('✔ .env.example and docs/CONFIGURATION.md match src/config/envSchema.js');
+    console.log('✔ .env.example and docs/configuration.md match src/config/envSchema.js');
     return;
   }
 
