@@ -1,18 +1,17 @@
 const path = require('path');
-const crypto = require('crypto');
 const fs = require('fs/promises');
 const db = require('../utils/database');
 const log = require('../utils/log');
 const { ValidationError, NotFoundError, ERROR_CODES } = require('../utils/errors');
 const { escapeField: csvEscape } = require('../utils/csvSerializer');
-const { getSigningSecret } = require('../utils/signingSecrets');
+const SignedUrlService = require('./SignedUrlService');
 
 const EXPORT_TYPES = ['donations', 'wallets', 'audit_logs'];
 const EXPORT_FORMATS = ['csv', 'json'];
 const EXPORT_RETENTION_MS = 24 * 60 * 60 * 1000;
-const SIGNED_URL_TTL_MS = 60 * 60 * 1000;
+// Exports created without an authenticated requester; their links are bound to this label.
+const UNOWNED_PRINCIPAL = 'unowned';
 const EXPORT_DIR = path.join(__dirname, '../../data/exports');
-const SIGNING_SECRET = getSigningSecret('EXPORT_SIGNING_SECRET', ['EXPORT_SIGNING_SECRET', 'ENCRYPTION_SECRET']);
 
 /**
  * Convert records to CSV with a header row.
@@ -53,17 +52,27 @@ function normalizeRows(rows) {
  */
 class ExportService {
   /**
-   * Build signed URL for an export ID.
+   * Build a signed download URL bound to the principal that owns the export (#1950).
    * @param {number|string} exportId - Export ID.
+   * @param {string} principalId - Owner the link is issued to.
    * @returns {string} Signed URL.
    */
-  static buildSignedUrl(exportId) {
-    const expiresAtMs = Date.now() + SIGNED_URL_TTL_MS;
-    const expires = String(expiresAtMs);
-    const payload = `${exportId}:${expires}`;
-    const signature = crypto.createHmac('sha256', SIGNING_SECRET).update(payload).digest('hex');
+  static buildSignedUrl(exportId, principalId) {
+    const signed = SignedUrlService.sign({ resource: 'export', resourceId: exportId, principalId });
     const baseUrl = process.env.API_BASE_URL || `http://localhost:${process.env.PORT || '3000'}`;
-    return `${baseUrl}/exports/${exportId}/download?expires=${encodeURIComponent(expires)}&signature=${signature}`;
+    return `${baseUrl}/exports/${exportId}/download?${SignedUrlService.toQueryString(signed)}`;
+  }
+
+  /**
+   * Verify a download request against a URL issued by buildSignedUrl.
+   * @param {number|string} exportId
+   * @param {string} principalId - Principal making the request.
+   * @param {string} expires - Expiry from the query string.
+   * @param {string} signature - Signature from the query string.
+   * @returns {boolean}
+   */
+  static verifySignedUrl(exportId, principalId, expires, signature) {
+    return SignedUrlService.verify({ resource: 'export', resourceId: exportId, principalId, expires, signature });
   }
 
   /**
@@ -170,7 +179,7 @@ class ExportService {
       throw new ValidationError('Export is not ready for download', null, ERROR_CODES.INVALID_REQUEST);
     }
 
-    return this.buildSignedUrl(job.id);
+    return this.buildSignedUrl(job.id, job.requestedBy || UNOWNED_PRINCIPAL);
   }
 
   /**
@@ -256,7 +265,7 @@ class ExportService {
       const { rows, headers } = await this.fetchRowsForJob(job);
       const content = job.format === 'json' ? JSON.stringify(rows, null, 2) : toCsv(rows, headers);
       const filePath = await this.writeExportFile(exportId, job.format, content);
-      const downloadUrl = this.buildSignedUrl(exportId);
+      const downloadUrl = this.buildSignedUrl(exportId, job.requestedBy || UNOWNED_PRINCIPAL);
       const completedAt = new Date().toISOString();
 
       await db.run(

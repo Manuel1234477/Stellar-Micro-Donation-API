@@ -61,7 +61,7 @@ const ENV_VARS = [
   { group: G0, name: 'INSTANCE_ID', type: 'string', description: 'Unique identifier for this process instance (used for scheduler/sequence leases and logs). Defaults to a random UUID' },
   { group: G0, name: 'NODE_ENV', type: 'string', default: 'development', example: 'development', description: 'Runtime environment: `development`, `test` or `production`. Controls logging verbosity, startup guards and unsafe-flag checks' },
   { group: G0, name: 'PORT', type: 'integer', default: 3000, example: '3000', description: 'TCP port the HTTP server listens on' },
-  { group: G0, name: 'REQUEST_TIMEOUT_MS', type: 'integer', default: 30000, description: 'Global per-request timeout in milliseconds. Streaming endpoints are exempt' },
+  { group: G0, name: 'REQUEST_TIMEOUT_MS', type: 'integer', default: 15000, description: 'General per-request timeout in milliseconds for non-submission routes (default 15 s). Stellar submission routes always use 30 s; streaming endpoints are exempt' },
   { group: G0, name: 'SHUTDOWN_TIMEOUT', type: 'integer', default: 30000, description: 'Alias for `SHUTDOWN_TIMEOUT_MS` (milliseconds). Time allowed for in-flight requests to drain before force-exit' },
   { group: G0, name: 'SHUTDOWN_TIMEOUT_MS', type: 'integer', default: 30000, description: 'Milliseconds to wait for graceful shutdown before force-exit' },
   { group: G0, name: 'TRUSTED_PROXIES', type: 'string', default: 'loopback', description: 'Comma-separated list of trusted proxy IPs/CIDRs. Passed to Express `trust proxy`. Set to the address of your load balancer in production' },
@@ -103,6 +103,7 @@ const ENV_VARS = [
   { group: G2, name: 'ENCRYPTION_PUBLIC_KEY', type: 'string', description: 'RSA/EC public key PEM used to verify asymmetric signatures' },
   { group: G2, name: 'ENCRYPTION_SECRET', type: 'string', secret: true, description: 'Legacy symmetric encryption secret for non-wallet data paths' },
   { group: G2, name: 'EXPORT_SIGNING_SECRET', type: 'string', secret: true, description: 'HMAC secret for signing CSV/JSON export files. Must be distinct from `ENCRYPTION_KEY`' },
+  { group: G2, name: 'EXPORT_SIGNING_SECRET_PREVIOUS', type: 'string', secret: true, description: 'Comma-separated previous `EXPORT_SIGNING_SECRET` values, still accepted for verifying export download links during rotation' },
   { group: G2, name: 'JWT_SIGNING_SECRET', type: 'string', secret: true, description: 'HMAC secret that signs access tokens (at least 32 characters). Required in production and staging. Must be distinct from `ENCRYPTION_KEY`' },
   { group: G2, name: 'JWT_SIGNING_SECRET_PREVIOUS', type: 'string', secret: true, description: 'Previous `JWT_SIGNING_SECRET`, kept during rotation so tokens issued before the change still verify' },
   { group: G2, name: 'MEMO_REENCRYPT_BATCH_SIZE', type: 'integer', default: 50, min: 1, description: 'Memos processed per batch by the background re-encryption job' },
@@ -307,6 +308,9 @@ const ENV_VARS = [
   { group: G15, name: 'BACKUP_INTERVAL_MS', type: 'integer', default: 86400000, example: '3600000', description: 'Interval (ms) between automatic backup runs' },
   { group: G15, name: 'BACKUP_S3_BUCKET', type: 'string', description: 'S3 bucket name for off-site backup upload. When unset, backups are local only' },
   { group: G15, name: 'BACKUP_S3_PREFIX', type: 'string', default: 'backups/', description: 'Key prefix used when uploading backup files to S3' },
+  { group: G15, name: 'BACKUP_ENCRYPTION_KEY', type: 'string', secret: true, description: 'Dedicated key material for encrypting backups (#1951). When unset, ENCRYPTION_KEY is used. Should differ from ENCRYPTION_KEY' },
+  { group: G15, name: 'BACKUP_KEY_ID', type: 'string', description: 'Identifier written into each backup header (#1951). Defaults to an id derived from the key material' },
+  { group: G15, name: 'BACKUP_PREVIOUS_KEYS', type: 'string', secret: true, description: 'Comma-separated `id:material` pairs for keys that encrypted older backups (#1951). Required to restore those backups after a key rotation' },
 
   // ── SSE / WebSocket Streaming ───────────────────────────────────
   { group: G16, name: 'ENABLE_SERVER_PUSH', type: 'boolean', default: false, description: 'Enable server-sent event (SSE) and WebSocket push endpoints' },

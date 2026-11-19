@@ -1,3 +1,4 @@
+const { bestEffort } = require('../utils/bestEffort');
 /**
  * Fee Bump Service - Fee Bump Orchestration Layer
  *
@@ -137,7 +138,7 @@ class FeeBumpService {
           feeBumpCount: attemptCount,
           stellarHash: result.hash,
         },
-      }).catch(() => {});
+      }).catch(bestEffort('src/services/FeeBumpService.js:140'));
 
       log.info('FEE_BUMP', 'Fee bump applied', {
         transactionId,
@@ -180,7 +181,7 @@ class FeeBumpService {
           feeBumpCount: attemptCount,
           error: error.message,
         },
-      }).catch(() => {});
+      }).catch(bestEffort('src/services/FeeBumpService.js:183'));
 
       log.error('FEE_BUMP', 'Fee bump failed', {
         transactionId,

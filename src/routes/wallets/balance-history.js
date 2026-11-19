@@ -306,16 +306,122 @@ router.get('/:id/history', checkPermission(PERMISSIONS.WALLETS_READ), walletIdSc
   });
 }));
 
+const DEPRECATED_PAGING_PARAMS = ['page', 'offset'];
+const HORIZON_PAGING_TOKEN_RE = /^\d+$/;
+
+/**
+ * Advertise that offset-style paging params are ignored (issue #1565).
+ * Clients get a Deprecation header plus an RFC 7234 Warning (299) naming the params.
+ */
+function warnOnDeprecatedPaging(req, res) {
+  const used = DEPRECATED_PAGING_PARAMS.filter((p) => req.query[p] !== undefined);
+  if (used.length === 0) return;
+  res.set('Deprecation', 'true');
+  res.set('Warning', `299 - "${used.join(', ')} are deprecated and ignored; use cursor"`);
+}
+
+const encodePagingToken = (token) => Buffer.from(String(token)).toString('base64');
+
+/**
+ * source=live: forward Horizon's native paging_token cursor (issue #1565).
+ *   - cursor (base64 paging_token) + dir=next (default) → older records, Horizon order=desc
+ *   - cursor + dir=prev → newer records, Horizon order=asc (returned newest-first)
+ * Responses are always newest-first. nextCursor/prevCursor are opaque base64 tokens
+ * to pass back as `cursor` with the matching `dir`.
+ */
+async function handleLiveWalletTransactions(req, res, publicKey, limit) {
+  const wallet = await Database.get('SELECT id FROM users WHERE publicKey = ?', [publicKey]);
+  if (!wallet) {
+    return res.status(404).json({ error: 'Wallet not found' });
+  }
+
+  const dir = req.query.dir || 'next';
+  if (dir !== 'next' && dir !== 'prev') {
+    return res.status(400).json({
+      success: false,
+      error: { code: 'INVALID_DIRECTION', message: "dir must be 'next' or 'prev'" },
+    });
+  }
+
+  let horizonCursor;
+  if (req.query.cursor) {
+    const decoded = Buffer.from(String(req.query.cursor), 'base64').toString('utf8');
+    if (!HORIZON_PAGING_TOKEN_RE.test(decoded)) {
+      return res.status(400).json({
+        success: false,
+        error: { code: 'INVALID_CURSOR', message: 'Invalid cursor parameter' },
+      });
+    }
+    horizonCursor = decoded;
+  }
+
+  const syncService = new TransactionSyncService(getStellarService());
+  const records = await syncService.fetchTransactionPage(publicKey, {
+    limit,
+    cursor: horizonCursor,
+    order: dir === 'prev' ? 'asc' : 'desc',
+  });
+
+  // Normalise to newest-first regardless of the Horizon order used.
+  const page = dir === 'prev' ? [...records].reverse() : records;
+  const newest = page[0];
+  const oldest = page[page.length - 1];
+  const fullPage = page.length === limit;
+
+  let nextCursor = null;
+  let prevCursor = null;
+  if (dir === 'next') {
+    if (fullPage && oldest) nextCursor = encodePagingToken(oldest.paging_token);
+    if (horizonCursor && newest) prevCursor = encodePagingToken(newest.paging_token);
+  } else {
+    // Came from a cursor, so older records always exist beyond this page.
+    if (horizonCursor && oldest) nextCursor = encodePagingToken(oldest.paging_token);
+    if (fullPage && newest) prevCursor = encodePagingToken(newest.paging_token);
+  }
+
+  return res.json({
+    success: true,
+    source: 'live',
+    data: page.map((tx) => ({
+      id: tx.id,
+      pagingToken: tx.paging_token,
+      sender: tx.source_account,
+      memo: tx.memo || null,
+      timestamp: toISOStringUTC(tx.created_at),
+      successful: tx.successful !== false,
+    })),
+    pagination: {
+      nextCursor,
+      prevCursor,
+      hasMore: nextCursor !== null,
+    },
+  });
+}
+
 /**
  * GET /wallets/:publicKey/transactions
  * Get all transactions (sent and received) for a wallet with cursor-based pagination.
  * Query params:
+ *   - source: 'db' (default) — local DB, id-ordered cursor;
+ *             'live' — Horizon, native paging_token cursor (issue #1565)
  *   - limit: number of results per page (default 20, max 100)
- *   - cursor: opaque base64-encoded pagination cursor (transaction ID)
+ *   - cursor: opaque base64-encoded cursor (DB id for source=db, Horizon paging_token for source=live)
+ *   - dir: 'next' (default, older records) or 'prev' (newer records); source=live only
+ *   - page / offset: deprecated and ignored; a Warning header is returned when sent
  */
 router.get('/:publicKey/transactions', checkPermission(PERMISSIONS.WALLETS_READ), walletPublicKeySchema, asyncHandler(async (req, res, next) => {
   try {
     const { publicKey } = req.params;
+
+    warnOnDeprecatedPaging(req, res);
+
+    const source = req.query.source || 'db';
+    if (source !== 'db' && source !== 'live') {
+      return res.status(400).json({
+        success: false,
+        error: { code: 'INVALID_SOURCE', message: "source must be 'db' or 'live'" },
+      });
+    }
 
     // Validate limit
     const rawLimit = req.query.limit;
@@ -329,6 +435,10 @@ router.get('/:publicKey/transactions', checkPermission(PERMISSIONS.WALLETS_READ)
         });
       }
       limit = parsed;
+    }
+
+    if (source === 'live') {
+      return await handleLiveWalletTransactions(req, res, publicKey, limit);
     }
 
     // Decode opaque cursor (base64-encoded numeric ID)

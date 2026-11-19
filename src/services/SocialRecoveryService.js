@@ -9,6 +9,7 @@
  */
 
 'use strict';
+const { bestEffort } = require('../utils/bestEffort');
 
 const Database = require('../utils/database');
 const { NotFoundError, ValidationError, DuplicateError, ERROR_CODES } = require('../utils/errors');
@@ -306,7 +307,7 @@ class SocialRecoveryService {
     await Database.run(
       'UPDATE recovery_requests SET notifiedAt = ? WHERE id = ?',
       [new Date().toISOString(), request.id]
-    ).catch(() => {});
+    ).catch(bestEffort('src/services/SocialRecoveryService.js:309'));
   }
 
   /**

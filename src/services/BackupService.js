@@ -23,41 +23,153 @@ const DB_PATH = path.join(__dirname, '../../data/stellar_donations.db');
 const BACKUP_DIR = env.BACKUP_DIR
   ? path.resolve(__dirname, '../..', env.BACKUP_DIR)
   : (process.env.BACKUP_DIR || path.join(__dirname, '../../data/backups'));
-const ALGORITHM = 'aes-256-gcm';
-const IV_LENGTH = 12;
+
+// ─── Backup file format and key management (#1951) ───────────────────────────
+//
+// v2 (current):  "SBK2" | keyIdLength (1 byte) | keyId (utf8) | iv (12) | authTag (16) | ciphertext
+//   - The key is HKDF-SHA256(material, info="stellar-backup-v1"), never a bare hash.
+//   - keyId names the key that encrypted the file, so restore can pick the right one.
+// v1 (legacy):   iv (12) | authTag (16) | ciphertext, key = SHA-256(ENCRYPTION_KEY).
+//   Written before #1951. Still readable so existing backups stay restorable.
+//
+// Keys come from the environment:
+//   BACKUP_ENCRYPTION_KEY  dedicated backup key material (optional; falls back to ENCRYPTION_KEY)
+//   BACKUP_KEY_ID          id written into new backups (optional; derived from the material by default)
+//   BACKUP_PREVIOUS_KEYS   "id:material,id:material" keys kept so older backups can be restored
+
+const BACKUP_MAGIC = Buffer.from('SBK2', 'ascii');
+const BACKUP_KDF_INFO = 'stellar-backup-v1';
+const BACKUP_KEY_ID_INFO = 'stellar-backup-key-id';
 
 /**
- * Derive a 32-byte key from the ENCRYPTION_KEY env var (same approach as encryption.js).
+ * Derive the 32-byte AES key for a backup from key material.
+ * @param {string} material
  * @returns {Buffer}
  */
-function getKey() {
-  const raw = process.env.ENCRYPTION_KEY;
-  if (!raw) throw new Error('ENCRYPTION_KEY is required for backup encryption');
-  return cryptoCore.deriveKey(raw);
+function deriveBackupKey(material) {
+  return Buffer.from(crypto.hkdfSync('sha256', material, Buffer.alloc(0), BACKUP_KDF_INFO, 32));
 }
 
 /**
- * Encrypt a Buffer using AES-256-GCM (shared core, #1776).
+ * Stable identifier for key material, written into backup headers.
+ * Derived with HKDF so the header does not expose a bare hash of the key.
+ * @param {string} material
+ * @returns {string} 16 hex characters
+ */
+function deriveBackupKeyId(material) {
+  return Buffer.from(crypto.hkdfSync('sha256', material, Buffer.alloc(0), BACKUP_KEY_ID_INFO, 8)).toString('hex');
+}
+
+/**
+ * Parse BACKUP_PREVIOUS_KEYS ("id:material,id:material").
+ * @returns {Array<{id: string, material: string}>}
+ */
+function parsePreviousKeys() {
+  const raw = process.env.BACKUP_PREVIOUS_KEYS || '';
+  return raw
+    .split(',')
+    .map((entry) => entry.trim())
+    .filter(Boolean)
+    .map((entry) => {
+      const idx = entry.indexOf(':');
+      if (idx <= 0 || idx === entry.length - 1) {
+        throw new Error('BACKUP_PREVIOUS_KEYS entries must be "id:material"');
+      }
+      return { id: entry.slice(0, idx).trim(), material: entry.slice(idx + 1).trim() };
+    });
+}
+
+/**
+ * Keys available to this process.
+ * @returns {{ active: {id: string, key: Buffer}, byId: Map<string, Buffer>, legacyMaterials: string[] }}
+ */
+function getBackupKeyring() {
+  const encryptionKey = process.env.ENCRYPTION_KEY;
+  const activeMaterial = process.env.BACKUP_ENCRYPTION_KEY || encryptionKey;
+  if (!activeMaterial) throw new Error('ENCRYPTION_KEY is required for backup encryption');
+
+  const activeId = (process.env.BACKUP_KEY_ID || '').trim() || deriveBackupKeyId(activeMaterial);
+  const byId = new Map();
+  const previous = parsePreviousKeys();
+  for (const { id, material } of previous) {
+    byId.set(id, deriveBackupKey(material));
+  }
+  const active = { id: activeId, key: deriveBackupKey(activeMaterial) };
+  byId.set(activeId, active.key);
+
+  // Unversioned files were encrypted with SHA-256(ENCRYPTION_KEY) (or a previous ENCRYPTION_KEY).
+  const legacyMaterials = [encryptionKey, ...previous.map((p) => p.material)]
+    .filter((m, i, all) => m && all.indexOf(m) === i);
+
+  return { active, byId, legacyMaterials };
+}
+
+/**
+ * Encrypt backup bytes with the active key (v2 format).
  * @param {Buffer} data
- * @returns {Buffer} iv (12) + authTag (16) + ciphertext
+ * @returns {Buffer}
  */
 function encryptBuffer(data) {
-  const { iv, tag, ciphertext } = cryptoCore.seal(getKey(), data);
-  return Buffer.concat([iv, tag, ciphertext]);
+  const { active } = getBackupKeyring();
+  const { iv, tag, ciphertext } = cryptoCore.seal(active.key, data);
+  const id = Buffer.from(active.id, 'utf8');
+  if (id.length > 255) throw new Error('BACKUP_KEY_ID is too long');
+  const header = Buffer.concat([BACKUP_MAGIC, Buffer.from([id.length]), id]);
+  return Buffer.concat([header, iv, tag, ciphertext]);
 }
 
 /**
- * Decrypt a Buffer produced by encryptBuffer.
+ * Read the key id from a v2 backup, or null for legacy files.
+ * @param {Buffer} data
+ * @returns {string|null}
+ */
+function readBackupKeyId(data) {
+  if (!Buffer.isBuffer(data) || data.length < BACKUP_MAGIC.length + 1) return null;
+  if (!data.subarray(0, BACKUP_MAGIC.length).equals(BACKUP_MAGIC)) return null;
+  const idLen = data[BACKUP_MAGIC.length];
+  const start = BACKUP_MAGIC.length + 1;
+  if (data.length < start + idLen) return null;
+  return data.subarray(start, start + idLen).toString('utf8');
+}
+
+/**
+ * Decrypt a backup produced by encryptBuffer (v2) or by the legacy scheme (v1).
  * @param {Buffer} data
  * @returns {Buffer}
+ * @throws {Error} when no configured key can decrypt the file
  */
 function decryptBuffer(data) {
   const { IV_BYTES, TAG_BYTES } = cryptoCore;
-  return cryptoCore.open(getKey(), {
-    iv: data.slice(0, IV_BYTES),
-    tag: data.slice(IV_BYTES, IV_BYTES + TAG_BYTES),
-    ciphertext: data.slice(IV_BYTES + TAG_BYTES),
-  });
+  const keyring = getBackupKeyring();
+  const keyId = readBackupKeyId(data);
+
+  if (keyId !== null) {
+    const headerLength = BACKUP_MAGIC.length + 1 + Buffer.byteLength(keyId, 'utf8');
+    const key = keyring.byId.get(keyId);
+    if (!key) {
+      throw new Error(`No backup key configured for key id "${keyId}". Add it to BACKUP_PREVIOUS_KEYS.`);
+    }
+    const body = data.subarray(headerLength);
+    return cryptoCore.open(key, {
+      iv: body.subarray(0, IV_BYTES),
+      tag: body.subarray(IV_BYTES, IV_BYTES + TAG_BYTES),
+      ciphertext: body.subarray(IV_BYTES + TAG_BYTES),
+    });
+  }
+
+  // Legacy (v1) file: no header, SHA-256 key derivation.
+  for (const material of keyring.legacyMaterials) {
+    try {
+      return cryptoCore.open(cryptoCore.deriveKey(material), {
+        iv: data.subarray(0, IV_BYTES),
+        tag: data.subarray(IV_BYTES, IV_BYTES + TAG_BYTES),
+        ciphertext: data.subarray(IV_BYTES + TAG_BYTES),
+      });
+    } catch (_err) {
+      // Try the next configured key.
+    }
+  }
+  throw new Error('Backup could not be decrypted with any configured key');
 }
 
 class BackupService {
@@ -111,6 +223,7 @@ class BackupService {
       backupId,
       filePath,
       size: encrypted.length,
+      keyId: readBackupKeyId(encrypted),
       createdAt: new Date().toISOString(),
     };
 
@@ -277,7 +390,7 @@ class BackupService {
 
     fs.renameSync(tmpPath, this.dbPath);
 
-    const result = { backupId, restoredAt: new Date().toISOString() };
+    const result = { backupId, keyId: readBackupKeyId(encrypted), restoredAt: new Date().toISOString() };
     log.info('BACKUP', 'Database restore completed', result);
     return result;
   }

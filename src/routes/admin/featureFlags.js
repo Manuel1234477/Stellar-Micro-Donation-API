@@ -1,3 +1,4 @@
+const { bestEffort } = require('../../utils/bestEffort');
 /**
  * Feature Flags Admin Routes - Feature Flag Management API
  * 
@@ -74,7 +75,7 @@ router.get('/', checkPermission(PERMISSIONS.ADMIN_ALL), asyncHandler(async (req,
         filterCount: Object.keys(req.query).length,
         resultCount: flags.length
       }
-    }).catch(() => {});
+    }).catch(bestEffort('src/routes/admin/featureFlags.js:77'));
 
     const flagData = flags.map(f => ({
       id: f.id,
@@ -218,7 +219,7 @@ router.get('/:name', checkPermission(PERMISSIONS.ADMIN_ALL), asyncHandler(async 
       ipAddress: req.ip,
       resource: req.path,
       details: { flagName: name, scopeCount: matchingFlags.length }
-    }).catch(() => {});
+    }).catch(bestEffort('src/routes/admin/featureFlags.js:221'));
 
     res.json({
       success: true,
@@ -312,7 +313,7 @@ router.post('/', checkPermission(PERMISSIONS.ADMIN_ALL), createFlagSchema, paylo
         scope,
         scope_value
       }
-    }).catch(() => {});
+    }).catch(bestEffort('src/routes/admin/featureFlags.js:315'));
 
     res.status(201).json({
       success: true,
@@ -411,7 +412,7 @@ router.patch('/:name', checkPermission(PERMISSIONS.ADMIN_ALL), updateFlagSchema,
           description: description !== undefined ? 'updated' : 'unchanged'
         }
       }
-    }).catch(() => {});
+    }).catch(bestEffort('src/routes/admin/featureFlags.js:414'));
 
     res.json({
       success: true,
@@ -478,7 +479,7 @@ router.delete('/:name', checkPermission(PERMISSIONS.ADMIN_ALL), asyncHandler(asy
         scope,
         scope_value
       }
-    }).catch(() => {});
+    }).catch(bestEffort('src/routes/admin/featureFlags.js:481'));
 
     res.json({
       success: true,
@@ -535,7 +536,7 @@ router.post('/:flag/enable', checkPermission(PERMISSIONS.ADMIN_ALL), payloadSize
       ipAddress: req.ip,
       resource: req.path,
       details: { flagName: flag, action: 'enable' }
-    }).catch(() => {});
+    }).catch(bestEffort('src/routes/admin/featureFlags.js:538'));
 
     res.json({
       success: true,
@@ -597,7 +598,7 @@ router.post('/:flag/disable', checkPermission(PERMISSIONS.ADMIN_ALL), payloadSiz
       ipAddress: req.ip,
       resource: req.path,
       details: { flagName: flag, action: 'disable' }
-    }).catch(() => {});
+    }).catch(bestEffort('src/routes/admin/featureFlags.js:600'));
 
     res.json({
       success: true,
@@ -674,7 +675,7 @@ router.post('/:flag/override',
           targetApiKeyId: api_key_id,
           enabled
         }
-      }).catch(() => {});
+      }).catch(bestEffort('src/routes/admin/featureFlags.js:677'));
 
       res.status(201).json({
         success: true,

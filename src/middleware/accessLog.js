@@ -27,6 +27,7 @@
  */
 
 const log = require('../utils/log');
+const { redactUrl } = require('../utils/redactUrl');
 
 const EXCLUDED_PATHS = ['/health', '/health/live', '/health/ready'];
 
@@ -59,7 +60,7 @@ function accessLogMiddleware(options = {}) {
         type: 'access',
         requestId: req.id,
         method: req.method,
-        path: req.originalUrl || req.url,
+        path: redactUrl(req.originalUrl || req.url), // never log API keys from query strings (#1942)
         statusCode,
         responseTimeMs,
         userId: req.apiKeyId || req.userId || null,

@@ -63,7 +63,7 @@ npm run config:check      # what CI runs: schema covers src/, generated files ar
 | `INSTANCE_ID` | string | — | no | Unique identifier for this process instance (used for scheduler/sequence leases and logs). Defaults to a random UUID |
 | `NODE_ENV` | string | `development` | no | Runtime environment: `development`, `test` or `production`. Controls logging verbosity, startup guards and unsafe-flag checks |
 | `PORT` | integer | `3000` | no | TCP port the HTTP server listens on |
-| `REQUEST_TIMEOUT_MS` | integer | `30000` | no | Global per-request timeout in milliseconds. Streaming endpoints are exempt |
+| `REQUEST_TIMEOUT_MS` | integer | `15000` | no | General per-request timeout in milliseconds for non-submission routes. Stellar submission routes (donations, batch, cross-asset, refunds, channels) always use 30 s. Streaming endpoints are exempt |
 | `SHUTDOWN_TIMEOUT` | integer | `30000` | no | Alias for `SHUTDOWN_TIMEOUT_MS` (milliseconds). Time allowed for in-flight requests to drain before force-exit |
 | `SHUTDOWN_TIMEOUT_MS` | integer | `30000` | no | Milliseconds to wait for graceful shutdown before force-exit |
 | `TRUSTED_PROXIES` | string | `loopback` | no | Comma-separated list of trusted proxy IPs/CIDRs. Passed to Express `trust proxy`. Set to the address of your load balancer in production |
@@ -113,8 +113,7 @@ npm run config:check      # what CI runs: schema covers src/, generated files ar
 | `ENCRYPTION_PUBLIC_KEY` | string | — | no | RSA/EC public key PEM used to verify asymmetric signatures |
 | `ENCRYPTION_SECRET` | string | — | no | Legacy symmetric encryption secret for non-wallet data paths Secret. |
 | `EXPORT_SIGNING_SECRET` | string | — | no | HMAC secret for signing CSV/JSON export files. Must be distinct from `ENCRYPTION_KEY` Secret. |
-| `JWT_SIGNING_SECRET` | string | — | no | HMAC secret that signs access tokens (at least 32 characters). Required in production and staging. Must be distinct from `ENCRYPTION_KEY` Secret. |
-| `JWT_SIGNING_SECRET_PREVIOUS` | string | — | no | Previous `JWT_SIGNING_SECRET`, kept during rotation so tokens issued before the change still verify Secret. |
+| `EXPORT_SIGNING_SECRET_PREVIOUS` | string | — | no | Comma-separated previous `EXPORT_SIGNING_SECRET` values, still accepted for verifying export download links during rotation. Secret. |
 | `MEMO_REENCRYPT_BATCH_SIZE` | integer | `50` | no | Memos processed per batch by the background re-encryption job Minimum: 1. |
 | `MEMO_REENCRYPT_INTERVAL_MS` | integer | `30000` | no | Interval (ms) between memo re-encryption batches Minimum: 1. |
 | `NEW_ENCRYPTION_KEY` | string | — | no | Target key during a live re-encryption pass (`npm run migrate:reencrypt`) Secret. |
@@ -383,6 +382,9 @@ npm run config:check      # what CI runs: schema covers src/, generated files ar
 | `BACKUP_INTERVAL_MS` | integer | `86400000` | no | Interval (ms) between automatic backup runs |
 | `BACKUP_S3_BUCKET` | string | — | no | S3 bucket name for off-site backup upload. When unset, backups are local only |
 | `BACKUP_S3_PREFIX` | string | `backups/` | no | Key prefix used when uploading backup files to S3 |
+| `BACKUP_ENCRYPTION_KEY` | string | — | no | Dedicated key material for encrypting backups (#1951). When unset, `ENCRYPTION_KEY` is used. Secret. |
+| `BACKUP_KEY_ID` | string | derived | no | Identifier written into each backup header (#1951). Defaults to an id derived from the key material. |
+| `BACKUP_PREVIOUS_KEYS` | string | — | no | Comma-separated `id:material` pairs for keys that encrypted older backups (#1951). Needed to restore those after rotation. Secret. |
 
 ---
 

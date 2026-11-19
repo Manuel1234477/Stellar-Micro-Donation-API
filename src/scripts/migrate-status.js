@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 'use strict';
 
-require('dotenv').config({ path: require('path').join(__dirname, '../../.env') });
+require('../config/loadEnv'); // single .env loader (#1943)
 
 const { migrationStatus } = require('../utils/migrationRunner');
 
