@@ -427,7 +427,12 @@ const CrowdfundingService = require('../services/CrowdfundingService');
 
 /**
  * POST /campaigns/:id/pledge
- * Pledge a donation to an all-or-nothing campaign (held in escrow).
+ * Pledge a donation to an all-or-nothing campaign.
+ * How funds are held: the pledged XLM is paid on the Stellar network from the
+ * donor's account to the service escrow account (a regular Stellar account, not
+ * a Soroban contract). Pledge state is stored in the database. The service
+ * releases funds to the recipient only if the goal is met by the deadline, and
+ * otherwise refunds each donor. (Issue #1939)
  * Body: { donor_id: number, amount: number }
  */
 router.post('/:id/pledge', requireApiKey, payloadSizeLimiter(ENDPOINT_LIMITS.campaign), asyncHandler(async (req, res, next) => {
@@ -470,6 +475,9 @@ router.post('/:id/settle', requireApiKey, checkPermission(PERMISSIONS.ADMIN), pa
 /**
  * GET /campaigns/:id/escrow
  * Get escrow state: all pledges, total held, goal met status.
+ * Funds sit in the service escrow Stellar account and pledge state is read from
+ * the database (see POST /campaigns/:id/pledge for the full model). This endpoint
+ * does not use the in-memory EscrowContract simulation. (Issue #1939)
  */
 router.get('/:id/escrow', requireApiKey, asyncHandler(async (req, res, next) => {
   try {

@@ -18,7 +18,8 @@
  *   - 404 not found
  *   - 400 missing params
  *   - 400 invalid address format
- *   - 501 unsupported type
+ *   - 400 type=id with a non-account value
+ *   - 501 unknown lookup type
  *
  *  POST /donations (federation integration):
  *   - resolves federation address before creating donation
@@ -283,9 +284,14 @@ describe('GET /federation', () => {
     expect(res.status).toBe(400);
   });
 
-  it('returns 501 for unsupported type', async () => {
-    const res = await request(app).get('/federation?q=alice*example.com&type=id');
+  it('returns 501 for an unknown lookup type', async () => {
+    const res = await request(app).get('/federation?q=alice*example.com&type=txid');
     expect(res.status).toBe(501);
+  });
+
+  it('returns 400 for type=id when q is not an account id', async () => {
+    const res = await request(app).get('/federation?q=alice*example.com&type=id');
+    expect(res.status).toBe(400);
   });
 
   it('sets Access-Control-Allow-Origin: * on success', async () => {
