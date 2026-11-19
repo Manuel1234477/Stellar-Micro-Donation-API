@@ -47,6 +47,17 @@ updates:
           # Exclude dev-only scopes from this group
           - "@types/*"
 
+      # Babel toolchain — always updated together (all update types, including
+      # majors). @babel/preset-env 8 requires @babel/core 8, while babel-jest
+      # (via Jest 30) still pins @babel/core 7, so a lone major bump of one
+      # Babel package breaks `npm ci` with ERESOLVE. Grouping keeps the whole
+      # toolchain in a single PR that can be validated as a unit.
+      babel:
+        applies-to: version-updates
+        patterns:
+          - "@babel/*"
+          - "babel-jest"
+
       # Dev / tooling dependencies — all minor and patch updates grouped.
       # Major bumps (ESLint, TypeScript, Jest, ...) open as individual PRs.
       dev-deps:
@@ -57,6 +68,10 @@ updates:
           - "patch"
         patterns:
           - "*"
+        exclude-patterns:
+          # Handled by the "babel" group above
+          - "@babel/*"
+          - "babel-jest"
 
   # ────────────────────────────────────────────────────────────────────────────
   # GitHub Actions

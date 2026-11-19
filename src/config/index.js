@@ -540,20 +540,53 @@ const buildConfig = (env, isProduction, isTest) => {
   return configObj;
 };
 
-// Load configuration once at module initialization
-let config;
-try {
-  config = loadConfig();
-} catch (error) {
-  if (error instanceof ConfigurationError) {
-    console.error('\n' + error.message + '\n');
-    process.exit(1);
-  }
-  throw error;
-}
+// Cached configuration object. Built lazily on first access so that callers
+// which mutate process.env before requiring this module (tests, scripts) see
+// their changes, while still returning a single stable object afterwards.
+let cachedConfig = null;
 
-// Export configuration object
+/**
+ * Get the fully built configuration object.
+ * Builds (and caches) the config on first call.
+ */
+const getConfig = () => {
+  if (cachedConfig) return cachedConfig;
+
+  try {
+    cachedConfig = loadConfig();
+  } catch (error) {
+    if (error instanceof ConfigurationError) {
+      console.error('\n' + error.message + '\n');
+      process.exit(1);
+    }
+    throw error;
+  }
+
+  return cachedConfig;
+};
+
+/**
+ * Reset the cached configuration (primarily for tests).
+ */
+const resetConfig = () => {
+  cachedConfig = null;
+};
+
+// Export the fully built configuration object so that every caller that does
+// `require('../config')` receives the nested sections it expects
+// (server, logging, database, stellar, rateLimit, geoBlocking, app, ...).
+const config = getConfig();
 module.exports = config;
 
-// Export ConfigurationError for testing
+// Attach helper functions and classes as properties so both old-shape callers
+// (config.server.port) and new helper users (config.getConfig()) work.
+module.exports.getConfig = getConfig;
+module.exports.resetConfig = resetConfig;
+module.exports.loadConfig = loadConfig;
+module.exports.buildConfig = buildConfig;
+module.exports.parseBoolean = parseBoolean;
+module.exports.parseInteger = parseInteger;
+module.exports.parseFloat = parseFloat;
+module.exports.validateUrl = validateUrl;
+module.exports.isValidIPOrCIDR = isValidIPOrCIDR;
 module.exports.ConfigurationError = ConfigurationError;

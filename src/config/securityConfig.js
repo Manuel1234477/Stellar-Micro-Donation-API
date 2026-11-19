@@ -227,6 +227,30 @@ function loadSecurityConfig() {
       throw new Error('ENCRYPTION_KEY is not set');
     }
 
+    // ENCRYPTION_KEY length and format validation
+    if (key === 'ENCRYPTION_KEY' && finalValue) {
+      const keyStr = String(finalValue).trim();
+      const isHex = /^[0-9a-fA-F]+$/.test(keyStr);
+      const isBase64 = /^[A-Za-z0-9+/]+={0,2}$/.test(keyStr);
+      const validLength = isHex ? keyStr.length === 64 : keyStr.length >= 32;
+
+      if (!validLength || (!isHex && !isBase64)) {
+        misconfigurations.push({
+          config: key,
+          issue: 'Invalid ENCRYPTION_KEY length or format',
+          severity: 'ERROR'
+        });
+        log.error('SECURITY_CONFIG', 'Invalid ENCRYPTION_KEY length or format', {
+          expected: '64 hex characters or at least 32 base64 characters',
+          receivedLength: keyStr.length
+        });
+        if (isProduction) {
+          process.exit(1);
+        }
+        throw new Error('Invalid ENCRYPTION_KEY length or format');
+      }
+    }
+
     config[key] = finalValue;
 
     // Log configuration loading (without sensitive values)
