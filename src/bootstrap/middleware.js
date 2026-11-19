@@ -26,7 +26,7 @@ const { metricsMiddleware, registry } = require('../utils/metrics');
 const { createDeduplicationMiddleware } = require('../middleware/deduplication');
 const { createCompressionMiddleware } = require('../middleware/compression');
 const { fieldFilterMiddleware } = require('../middleware/fieldFilter');
-const { requestTimeout, TIMEOUTS } = require('../middleware/requestTimeout');
+const { requestTimeout, resolveRouteTimeout, TIMEOUTS } = require('../middleware/requestTimeout');
 const schemaVersionMiddleware = require('../middleware/schemaVersion');
 const requireApiKey = require('../middleware/apiKey');
 const { validatePayloadFields } = require('../middleware/validation');
@@ -169,17 +169,19 @@ function applyMiddleware(app) {
   app.use(fieldFilterMiddleware());
 
   // ─── Global request timeout (exempt streaming endpoints) ─────────────────────
-  // Health checks get their own tight budget (TIMEOUTS.health); everything else
-  // falls back to the configured global timeout unless a route sets its own
-  // explicit, tighter requestTimeout() (e.g. donation submission, balance
-  // lookups, exports — see those route files).
-  const GLOBAL_TIMEOUT_MS = parseInt(process.env.REQUEST_TIMEOUT_MS, 10) || TIMEOUTS.donation;
+  // Health checks get their own tight budget (TIMEOUTS.health). Stellar
+  // submission routes (donations, batch, cross-asset, refunds, channels) get
+  // TIMEOUTS.donation. Everything else gets the general fallback
+  // (REQUEST_TIMEOUT_MS, default TIMEOUTS.default = 15 s) so that slow reads
+  // cannot hold a connection and DB slot for the full submission budget (#1948).
+  // Routes may still set a tighter explicit requestTimeout() of their own.
+  const GENERAL_TIMEOUT_MS = parseInt(process.env.REQUEST_TIMEOUT_MS, 10) || TIMEOUTS.default;
   app.use((req, res, next) => {
     if (STREAMING_PATH_RE.test(req.path)) return next();
     if (req.path.startsWith('/health') || req.path.startsWith('/api/v1/health')) {
       return requestTimeout(TIMEOUTS.health)(req, res, next);
     }
-    return requestTimeout(GLOBAL_TIMEOUT_MS)(req, res, next);
+    return requestTimeout(resolveRouteTimeout(req.method, req.path, GENERAL_TIMEOUT_MS))(req, res, next);
   });
 
   // ─── Mass-assignment protection: reject unknown fields on registered routes ───

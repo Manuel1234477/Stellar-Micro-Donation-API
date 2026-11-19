@@ -74,6 +74,7 @@ const ADMIN_ROUTES = [
   ['/admin/pledges',                  require('../routes/admin/pledges')],
   ['/admin/disputes',                 require('../routes/disputes')],
   ['/admin/geo-rules',                require('../routes/admin/geoRules')],
+  ['/admin/federation',               require('../routes/admin/federation')],
   ['/admin/payment-channels',         require('../routes/admin/paymentChannels')],
   ['/admin/system-info',              require('../routes/admin/systemInfo')],
   ['/admin/feature-flags',            require('../routes/admin/featureFlags')],

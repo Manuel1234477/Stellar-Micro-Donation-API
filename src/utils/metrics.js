@@ -337,7 +337,61 @@ function recordLegacyPathRequest(path, apiKeyId) {
       path: normaliseRoute(path || 'unknown'),
       api_key: apiKeyId || 'anonymous',
     });
-  } catch (_) {}
+  } catch (_) {
+    // Metrics must never break the request path; this failure is intentionally ignored.
+  }
+}
+
+/**
+ * Counter: best-effort side effects that failed and were logged instead of
+ * propagated (#1946). Label `site` is the call site ("relative/path:line").
+ * @type {client.Counter}
+ */
+const bestEffortFailuresTotal = new client.Counter({
+  name: 'best_effort_failures_total',
+  help: 'Best-effort operations (audit, webhook, cleanup) that failed and were logged',
+  labelNames: ['site'],
+  registers: [registry],
+});
+
+/**
+ * Records a failed best-effort operation.
+ * @param {string} site Call-site label
+ */
+function recordBestEffortFailure(site) {
+  try {
+    bestEffortFailuresTotal.inc({ site: String(site || 'unknown') });
+  } catch (_) {
+    // Metrics must never break the caller; the failure is already logged.
+  }
+}
+
+/**
+ * Counter: requests aborted by the request timeout middleware (#1948).
+ * Labels: route (normalised path), timeout_ms (budget that was exceeded).
+ * @type {client.Counter}
+ */
+const requestTimeoutsTotal = new client.Counter({
+  name: 'request_timeouts_total',
+  help: 'Total number of requests aborted by the request timeout middleware',
+  labelNames: ['route', 'timeout_ms'],
+  registers: [registry],
+});
+
+/**
+ * Records a request aborted by the timeout middleware.
+ * @param {string} path Request path (normalised before labelling)
+ * @param {number} timeoutMs Timeout budget that was exceeded
+ */
+function recordRequestTimeout(path, timeoutMs) {
+  try {
+    requestTimeoutsTotal.inc({
+      route: normaliseRoute(path || 'unknown'),
+      timeout_ms: String(timeoutMs),
+    });
+  } catch (_) {
+    // Metrics must never break the request path; this failure is intentionally ignored.
+  }
 }
 
 /**
@@ -359,6 +413,29 @@ const legacyApiKeyUsageTotal = new client.Counter({
 function recordLegacyKeyUsage(keyIdHash) {
   try {
     legacyApiKeyUsageTotal.inc({ key_id_hash: keyIdHash || 'unknown' });
+  } catch (_) { /* best-effort */ }
+}
+
+/**
+ * Counter: API key validations that failed for infrastructure reasons
+ * (database locked, pool exhausted, timeout). Distinct from invalid keys,
+ * which are authentication failures. Issue #1940.
+ * @type {client.Counter}
+ */
+const authValidationErrorsTotal = new client.Counter({
+  name: 'auth_validation_errors_total',
+  help: 'Total API key validations that could not complete due to an infrastructure error',
+  labelNames: ['reason'],
+  registers: [registry],
+});
+
+/**
+ * Records one API key validation that errored instead of returning a verdict.
+ * @param {string} [reason='unknown'] Short error class, e.g. 'db_error'
+ */
+function recordAuthValidationError(reason = 'unknown') {
+  try {
+    authValidationErrorsTotal.inc({ reason });
   } catch (_) { /* best-effort */ }
 }
 
@@ -457,12 +534,21 @@ module.exports = {
   recurringDonationsSkippedTotal,
   // Process error metrics (#1928)
   processUnhandledRejectionsTotal,
+  // Best-effort failure metrics (#1946)
+  bestEffortFailuresTotal,
+  recordBestEffortFailure,
+  // Request timeout metrics (#1948)
+  requestTimeoutsTotal,
+  recordRequestTimeout,
   // Legacy unversioned path metrics (#1802)
   legacyPathRequestsTotal,
   recordLegacyPathRequest,
   // Legacy API key usage (#1886)
   legacyApiKeyUsageTotal,
   recordLegacyKeyUsage,
+  // API key validation infrastructure errors (#1940)
+  authValidationErrorsTotal,
+  recordAuthValidationError,
   // Authentication failure metrics (#1887)
   authFailuresTotal,
   recordAuthFailure,

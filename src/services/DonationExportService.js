@@ -9,6 +9,7 @@
  */
 
 'use strict';
+const { bestEffort } = require('../utils/bestEffort');
 
 const crypto = require('crypto');
 const fs = require('fs').promises;
@@ -294,7 +295,7 @@ class DonationExportService {
 
       // Schedule deletion of export file after SIGNED_URL_EXPIRY_MS
       const cleanupTimer = timerRegistry.createTimeout(() => {
-        fs.unlink(filePath).catch(() => {});
+        fs.unlink(filePath).catch(bestEffort('src/services/DonationExportService.js:298'));
       }, SIGNED_URL_EXPIRY_MS, 'export-file-cleanup');
       cleanupTimer.unref();
 

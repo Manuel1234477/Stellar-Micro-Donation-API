@@ -14,7 +14,7 @@
 
 'use strict';
 
-require('dotenv').config();
+require('../src/config/loadEnv'); // single .env loader (#1943)
 
 let errors = 0;
 let warnings = 0;

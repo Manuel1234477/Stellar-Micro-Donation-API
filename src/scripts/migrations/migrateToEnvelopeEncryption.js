@@ -9,7 +9,7 @@
 
 'use strict';
 
-require('dotenv').config();
+require('../../config/loadEnv'); // single .env loader (#1943)
 const path = require('path');
 const sqlite3 = require('sqlite3').verbose();
 const { encryptWithDEK, decrypt } = require('../../utils/encryption');

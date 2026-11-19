@@ -61,7 +61,7 @@ const ENV_VARS = [
   { group: G0, name: 'INSTANCE_ID', type: 'string', description: 'Unique identifier for this process instance (used for scheduler/sequence leases and logs). Defaults to a random UUID' },
   { group: G0, name: 'NODE_ENV', type: 'string', default: 'development', example: 'development', description: 'Runtime environment: `development`, `test` or `production`. Controls logging verbosity, startup guards and unsafe-flag checks' },
   { group: G0, name: 'PORT', type: 'integer', default: 3000, example: '3000', description: 'TCP port the HTTP server listens on' },
-  { group: G0, name: 'REQUEST_TIMEOUT_MS', type: 'integer', default: 30000, description: 'Global per-request timeout in milliseconds. Streaming endpoints are exempt' },
+  { group: G0, name: 'REQUEST_TIMEOUT_MS', type: 'integer', default: 15000, description: 'General per-request timeout in milliseconds for non-submission routes (default 15 s). Stellar submission routes always use 30 s; streaming endpoints are exempt' },
   { group: G0, name: 'SHUTDOWN_TIMEOUT', type: 'integer', default: 30000, description: 'Alias for `SHUTDOWN_TIMEOUT_MS` (milliseconds). Time allowed for in-flight requests to drain before force-exit' },
   { group: G0, name: 'SHUTDOWN_TIMEOUT_MS', type: 'integer', default: 30000, description: 'Milliseconds to wait for graceful shutdown before force-exit' },
   { group: G0, name: 'TRUSTED_PROXIES', type: 'string', default: 'loopback', description: 'Comma-separated list of trusted proxy IPs/CIDRs. Passed to Express `trust proxy`. Set to the address of your load balancer in production' },
