@@ -13,6 +13,7 @@
 const Database = require('../utils/database');
 const log = require('../utils/log');
 const WebhookService = require('./WebhookService');
+const { toStroops, fromStroops } = require('../utils/money');
 
 /**
  * Lazily resolve the Stellar service so this module can be required in test
@@ -134,17 +135,19 @@ async function pledge(campaignId, donorId, amount, options = {}) {
     });
   }
 
-  // Persist the pledge (include the Stellar tx hash if we have one).
+  // Persist the pledge in integer stroops (ADR-004) so campaign totals never
+  // accumulate floating-point error.
+  const amountStroops = toStroops(amount);
   const result = await Database.run(
-    `INSERT INTO escrow_pledges (campaign_id, donor_id, amount, status)
-     VALUES (?, ?, ?, 'held')`,
-    [campaignId, donorId, amount]
+    `INSERT INTO escrow_pledges (campaign_id, donor_id, amount, amount_stroops, status)
+     VALUES (?, ?, ?, ?, 'held')`,
+    [campaignId, donorId, amount, amountStroops]
   );
 
-  // Update campaign current_amount.
+  // Update campaign current_amount in stroops.
   await Database.run(
-    'UPDATE campaigns SET current_amount = current_amount + ?, updatedAt = CURRENT_TIMESTAMP WHERE id = ?',
-    [amount, campaignId]
+    'UPDATE campaigns SET current_amount = current_amount + ?, current_amount_stroops = current_amount_stroops + ?, updatedAt = CURRENT_TIMESTAMP WHERE id = ?',
+    [amount, amountStroops, campaignId]
   );
 
   // Check for milestone achievements
@@ -217,11 +220,18 @@ async function settle(campaignId, options = {}) {
       'SELECT * FROM escrow_pledges WHERE campaign_id = ?',
       [campaignId]
     );
-    const total = pledges.reduce((s, p) => s + p.amount, 0);
-    return { outcome: campaign.status, campaignId, totalAmount: total, count: pledges.length };
+    const totalStroops = pledges.reduce((s, p) => s + toStroops(p.amount_stroops ?? p.amount), 0);
+    return {
+      outcome: campaign.status,
+      campaignId,
+      totalAmount: fromStroops(totalStroops),
+      count: pledges.length,
+    };
   }
 
-  const goalMet = campaign.current_amount >= campaign.goal_amount;
+  const goalMet =
+    toStroops(campaign.current_amount_stroops ?? campaign.current_amount) >=
+    toStroops(campaign.goal_amount_stroops ?? campaign.goal_amount);
   const newStatus = goalMet ? 'released' : 'refunded';
   const pledgeStatus = goalMet ? 'released' : 'refunded';
 
@@ -240,7 +250,8 @@ async function settle(campaignId, options = {}) {
     [campaignId]
   );
 
-  const totalAmount = pledges.reduce((s, p) => s + p.amount, 0);
+  const totalStroops = pledges.reduce((s, p) => s + toStroops(p.amount_stroops ?? p.amount), 0);
+  const totalAmount = fromStroops(totalStroops);
 
   if (goalMet) {
     // ── Release: pay the full collected amount to the campaign recipient ──────
@@ -343,7 +354,11 @@ async function settle(campaignId, options = {}) {
     'SELECT * FROM escrow_pledges WHERE campaign_id = ?',
     [campaignId]
   );
-  const finalTotal = allPledges.reduce((s, p) => s + p.amount, 0);
+  const finalTotalStroops = allPledges.reduce(
+    (s, p) => s + toStroops(p.amount_stroops ?? p.amount),
+    0
+  );
+  const finalTotal = fromStroops(finalTotalStroops);
 
   log.info('CrowdfundingService', 'Campaign settled', {
     campaignId,
@@ -369,19 +384,21 @@ async function getEscrowState(campaignId) {
   if (!campaign) throw Object.assign(new Error('Campaign not found'), { status: 404 });
 
   const pledges = await Database.query(
-    'SELECT id, donor_id, amount, status, created_at FROM escrow_pledges WHERE campaign_id = ? ORDER BY created_at ASC',
+    'SELECT id, donor_id, amount, amount_stroops, status, created_at FROM escrow_pledges WHERE campaign_id = ? ORDER BY created_at ASC',
     [campaignId]
   );
 
-  const totalHeld = pledges
+  const totalHeldStroops = pledges
     .filter(p => p.status === 'held')
-    .reduce((s, p) => s + p.amount, 0);
+    .reduce((s, p) => s + toStroops(p.amount_stroops ?? p.amount), 0);
 
   return {
     campaign,
     pledges,
-    totalHeld,
-    goalMet: campaign.current_amount >= campaign.goal_amount,
+    totalHeld: fromStroops(totalHeldStroops),
+    goalMet:
+      toStroops(campaign.current_amount_stroops ?? campaign.current_amount) >=
+      toStroops(campaign.goal_amount_stroops ?? campaign.goal_amount),
   };
 }
 
@@ -414,12 +431,13 @@ async function checkAndReleaseMilestones(campaignId, currentAmount, options = {}
     return { releasedMilestones: [] };
   }
 
-  // Get pending milestones that have been reached
+  // Get pending milestones that have been reached (compare in stroops).
+  const currentAmountStroops = toStroops(currentAmount);
   const milestones = await Database.query(
     `SELECT * FROM campaign_milestones 
-     WHERE campaign_id = ? AND status = 'pending' AND target_amount <= ?
-     ORDER BY target_amount ASC`,
-    [campaignId, currentAmount]
+     WHERE campaign_id = ? AND status = 'pending' AND target_amount_stroops <= ?
+     ORDER BY target_amount_stroops ASC`,
+    [campaignId, currentAmountStroops]
   );
 
   if (milestones.length === 0) {
@@ -451,9 +469,13 @@ async function checkAndReleaseMilestones(campaignId, currentAmount, options = {}
 
   // Release funds for each milestone
   for (const milestone of milestones) {
-    // Calculate release amount as percentage of milestone target
+    // Calculate release amount as percentage of milestone target, in stroops.
     const releasePercentage = milestone.release_percentage || 100; // default to 100%
-    const releaseAmount = (milestone.target_amount * releasePercentage) / 100;
+    const targetAmountStroops = toStroops(
+      milestone.target_amount_stroops ?? milestone.target_amount
+    );
+    const releaseAmountStroops = Math.round((targetAmountStroops * releasePercentage) / 100);
+    const releaseAmount = fromStroops(releaseAmountStroops);
 
     try {
       // Submit payment to recipient
@@ -480,7 +502,7 @@ async function checkAndReleaseMilestones(campaignId, currentAmount, options = {}
       releasedMilestones.push({
         milestoneId: milestone.id,
         title: milestone.title,
-        targetAmount: milestone.target_amount,
+        targetAmount: fromStroops(targetAmountStroops),
         releaseAmount,
         releasePercentage,
         txHash,
@@ -493,7 +515,7 @@ async function checkAndReleaseMilestones(campaignId, currentAmount, options = {}
           campaign_name: campaign.name,
           milestone_id: milestone.id,
           milestone_title: milestone.title,
-          target_amount: milestone.target_amount,
+          target_amount: fromStroops(targetAmountStroops),
           release_amount: releaseAmount,
           release_percentage: releasePercentage,
           tx_hash: txHash,

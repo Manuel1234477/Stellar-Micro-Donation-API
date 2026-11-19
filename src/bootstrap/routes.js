@@ -25,6 +25,26 @@ const { registerMethod, clearRegistry, assertNoDuplicateRoutes } = require('../m
 const { optionsHandler, methodNotAllowedHandler } = require('../middleware/methodNotAllowedHandler');
 const { createHealthHandlers } = require('../routes/health');
 const operations = require('../routes/operations');
+const { registerWebhookSourcesFromConfig } = require('../middleware/inboundWebhookVerification');
+const { router: networkRoutes, setService: setNetworkService } = require('../routes/network');
+const corporateMatchingRoutes = require('../routes/corporateMatching');
+const { router: federationLookupRoutes } = require('../routes/federationLookup');
+const { requireAdminTOTP } = require('../middleware/adminTOTP');
+const apiKeysRoutes = require('../routes/apiKeys');
+const apiKeyUsageRoutes = require('../routes/apiKeyUsage');
+const auditLogExportRoutes = require('../routes/auditLogExport');
+const exportsRoutes = require('../routes/exports');
+const v2Routes = require('../routes/v2');
+const { router: federationProtocolRoutes } = require('../routes/federation');
+const { createGraphQLRouter } = require('../graphql/index');
+const { spec, swaggerUiMiddleware, swaggerUiSetup } = require('../config/openapi');
+const serviceContainer = require('../config/serviceContainer');
+const { createFeeBumpRouter } = require('../routes/admin/feeBump');
+const totpRoutes = require('../routes/admin/totp');
+const changelogRoutes = require('../routes/changelog');
+const env = require('../config/env');
+const priceOracle = require('../services/PriceOracleService');
+=======
 
 // ── Versioned API v1 routes ────────────────────────────────────────────────────
 const V1_ROUTES = [
@@ -78,12 +98,12 @@ const ADMIN_ROUTES = [
   ['/admin/payment-channels',         require('../routes/admin/paymentChannels')],
   ['/admin/system-info',              require('../routes/admin/systemInfo')],
   ['/admin/feature-flags',            require('../routes/admin/featureFlags')],
-  ['/admin',                          require('../routes/admin')],
+  ['/admin',                          require('../routes/admin/index')],
   ['/admin/backups',                  require('../routes/admin/backup')],
-  ['/admin/audit-logs/export',        require('../routes/auditLogExport').adminRouter],
+  ['/admin/audit-logs/export',        auditLogExportRoutes.adminRouter],
   ['/admin/security/scan',            require('../routes/admin/securityScan')],
   ['/admin/analytics',                require('../routes/admin/analytics')],
-  ['/admin/api-keys',                 require('../routes/apiKeyUsage').adminRouter],
+  ['/admin/api-keys',                 apiKeyUsageRoutes.adminRouter],
   ['/admin/circuit-breaker',          require('../routes/admin/circuitBreaker')],
   ['/admin/corporate-matching',       require('../routes/corporateMatching').adminRouter],
   ['/admin/encryption',               require('../routes/admin/encryption')],
@@ -307,10 +327,9 @@ function mountRoutes(app, services = {}) {
   const { networkStatusService, feeBumpService } = services;
 
   // Every replica registers the same inbound webhook sources from config (#1786).
-  require('../middleware/inboundWebhookVerification').registerWebhookSourcesFromConfig();
+  registerWebhookSourcesFromConfig();
 
   // Network route needs a service reference injected at mount time
-  const { router: networkRoutes, setService: setNetworkService } = require('../routes/network');
   if (networkStatusService) setNetworkService(networkStatusService);
 
   // ── /api/v1 versioned router ────────────────────────────────────────────────
@@ -324,25 +343,23 @@ function mountRoutes(app, services = {}) {
   apiV1.use('/network', networkRoutes);
 
   // Corporate matching member endpoints (admin + v2 routers live in the same module)
-  apiV1.use('/', require('../routes/corporateMatching'));
+  apiV1.use('/', corporateMatchingRoutes);
 
   // Federation lookup (has named export)
-  const { router: federationLookupRoutes } = require('../routes/federationLookup');
   apiV1.use('/federation', federationLookupRoutes);
 
   // API-key routes require TOTP 2FA
-  const { requireAdminTOTP } = require('../middleware/adminTOTP');
-  apiV1.use('/api-keys', requireAdminTOTP(), require('../routes/apiKeys'));
-  apiV1.use('/api-keys', require('../routes/apiKeyUsage'));
+  apiV1.use('/api-keys', requireAdminTOTP(), apiKeysRoutes);
+  // User-facing API key usage router, scoped to the caller's own keys (#1987).
+  apiV1.use('/api-keys', apiKeyUsageRoutes.router);
   // Audit log export (issue #1547) — route-level RBAC (see auditExportAccess()
   // in routes/auditLogExport.js) gates admin vs. self-service non-admin access,
   // so this is intentionally NOT behind requireAdminTOTP() at the mount point.
-  apiV1.use('/api-keys', require('../routes/auditLogExport'));
+  apiV1.use('/api-keys', auditLogExportRoutes.router);
 
   // Exchange rates
   apiV1.get('/exchange-rates', asyncHandler(async (req, res) => {
     try {
-      const priceOracle = require('../services/PriceOracleService');
       const rates = await priceOracle.getRates();
       const priceSource = typeof priceOracle.getPriceSourceStatus === 'function'
         ? priceOracle.getPriceSourceStatus().source
@@ -367,29 +384,27 @@ function mountRoutes(app, services = {}) {
   }));
 
   // Donation and entity export endpoints (#1596)
-  apiV1.use('/exports', require('../routes/exports'));
+  apiV1.use('/exports', exportsRoutes);
 
   app.use('/api/v1', apiV1);
 
   // ── /api/v2 standardized response envelope (Issue #1553) ─────────────────
   // Additive: /api/v1 above is untouched for backward compatibility.
-  app.use('/api/v2', require('../routes/v2'));
+  app.use('/api/v2', v2Routes);
 
   // Unversioned export endpoints (#1596); the versioned router is in V1_ROUTES.
-  app.use('/exports', require('../routes/exports'));
+  app.use('/exports', exportsRoutes);
 
   // Stellar federation protocol server (SEP-0002).
   // The versioned lookup router above is for consumers; this router serves
   // this application's own /.well-known and /federation protocol endpoints,
   // including GET /.well-known/stellar.toml (federation + SEP-0010 hints).
-  const { router: federationProtocolRoutes } = require('../routes/federation');
   app.use('/', federationProtocolRoutes);
 
   // ── GraphQL endpoint (Issue #1366) ────────────────────────────────────────
   // Auth (requireApiKey), depth-limiting, and introspection rules are all applied
   // inside the router itself.
   mountOptional('GraphQL HTTP endpoint (/graphql)', () => {
-    const { createGraphQLRouter } = require('../graphql/index');
     app.use('/graphql', createGraphQLRouter());
   });
 
@@ -402,7 +417,6 @@ function mountRoutes(app, services = {}) {
 
   // ── OpenAPI / Swagger UI (Issue #634, #740) ───────────────────────────────
   mountOptional('OpenAPI / Swagger UI', () => {
-    const { spec, swaggerUiMiddleware, swaggerUiSetup } = require('../config/openapi');
     const serveSpec = (req, res) => res.json(spec);
     app.use('/api/docs', swaggerUiMiddleware, swaggerUiSetup);
     app.get('/api/openapi.json', serveSpec);
@@ -426,23 +440,21 @@ function mountRoutes(app, services = {}) {
     app.use(path, router);
   }
 
-  const serviceContainer = require('../config/serviceContainer');
   const effectiveFeeBumpService = feeBumpService
     || (typeof serviceContainer.getFeeBumpService === 'function' ? serviceContainer.getFeeBumpService() : null);
   if (effectiveFeeBumpService) {
-    const createFeeBumpRouter = require('../routes/admin/feeBump');
     app.use('/admin/transactions', createFeeBumpRouter(effectiveFeeBumpService));
   }
 
   // Already behind the /admin guard above (requireApiKey + requireAdmin).
-  app.use('/admin/totp', require('../routes/admin/totp'));
+  app.use('/admin/totp', totpRoutes);
 
   // ── Audit logs, reconciliation & sync (admin) ─────────────────────────────
   mountEndpoints(app, endpoints.afterAdminGuard);
 
   // ── Optional changelog endpoint (ENABLE_CHANGELOG_ENDPOINT=true) ───────────
-  if (require('../config/env').readEnv('ENABLE_CHANGELOG_ENDPOINT')) {
-    app.use('/api/v1/changelog', require('../routes/changelog'));
+  if (env.readEnv('ENABLE_CHANGELOG_ENDPOINT')) {
+    app.use('/api/v1/changelog', changelogRoutes);
   }
 
   // ── Method registry population ────────────────────────────────────────────

@@ -131,7 +131,7 @@ router.get('/:id/merge/eligibility', checkPermission(PERMISSIONS.WALLETS_READ), 
  * /wallets/{id}/merge:
  *   post:
  *     summary: Merge a wallet into a destination account
- *     description: >
+ *     description: |
  *       Transfers all XLM from the source wallet to the destination, closes the
  *       source account on the Stellar network, and soft-deletes the wallet record.
  *       Requires explicit confirmation via `confirm: true`.

@@ -34,6 +34,34 @@ const { validateSchema } = require('../middleware/schemaValidation');
 const log = require('../utils/log');
 const asyncHandler = require('../utils/asyncHandler');
 const { payloadSizeLimiter, ENDPOINT_LIMITS } = require('../middleware/payloadSizeLimiter');
+const { toStroops, fromStroops } = require('../utils/money');
+
+/**
+ * Serialize a corporate matching program row for API responses.
+ * Monetary columns are stored as integer stroops (ADR-004); expose XLM
+ * values alongside the raw stroop columns so clients can migrate.
+ */
+function serializeProgram(program) {
+  if (!program || typeof program !== 'object') return program;
+  return {
+    ...program,
+    per_employee_limit: fromStroops(program.per_employee_limit_stroops),
+    total_limit: fromStroops(program.total_limit_stroops),
+    remaining_total_limit: fromStroops(program.remaining_total_limit_stroops),
+    match_ratio: program.match_ratio_bps != null ? program.match_ratio_bps / 10000 : null
+  };
+}
+
+/**
+ * Serialize a matching activity row for API responses.
+ */
+function serializeActivity(row) {
+  if (!row || typeof row !== 'object') return row;
+  return {
+    ...row,
+    matched_amount: fromStroops(row.matched_amount_stroops)
+  };
+}
 
 /**
  * GET /corporate-matching/programs
@@ -41,7 +69,7 @@ const { payloadSizeLimiter, ENDPOINT_LIMITS } = require('../middleware/payloadSi
  */
 router.get('/corporate-matching/programs', requireApiKey, asyncHandler(async (req, res) => {
   const programs = await CorporateMatchingService.getAll({ status: 'active' });
-  res.json({ success: true, data: programs });
+  res.json({ success: true, data: programs.map(serializeProgram) });
 }));
 
 /**
@@ -92,7 +120,7 @@ router.get('/corporate-matching/:id/my-matches', requireApiKey, asyncHandler(asy
 
   const activity = await CorporateMatchingService.getMatchingActivity({ programId });
   const mine = activity.filter((row) => row.employee_wallet_id === employeeWalletId);
-  res.json({ success: true, data: mine });
+  res.json({ success: true, data: mine.map(serializeActivity) });
 }));
 
 // ─── Admin endpoints (/admin/corporate-matching) ─────────────────────────────
@@ -102,9 +130,12 @@ const createCorporateMatchingSchema = validateSchema({
   body: {
     fields: {
       sponsor_id: { type: 'integer', required: true, min: 1 },
-      match_ratio: { type: 'number', required: true, min: 0.01, max: 10 },
-      per_employee_limit: { type: 'number', required: true, min: 0.0000001 },
-      total_limit: { type: 'number', required: true, min: 0.0000001 }
+      // Rational match ratio in basis points (10000 bps = 1.0x). Kept as an
+      // integer per ADR-004 instead of a REAL ratio.
+      match_ratio_bps: { type: 'integer', required: true, min: 100, max: 100000 },
+      // Monetary limits are integer stroops (1 XLM = 10,000,000 stroops).
+      per_employee_limit_stroops: { type: 'integer', required: true, min: 1 },
+      total_limit_stroops: { type: 'integer', required: true, min: 1 }
     }
   }
 });
@@ -123,18 +154,18 @@ const updateStatusSchema = validateSchema({
  */
 adminRouter.post('/', requireApiKey, requireAdmin(), createCorporateMatchingSchema, payloadSizeLimiter(ENDPOINT_LIMITS.admin), asyncHandler(async (req, res, next) => {
   try {
-    const { sponsor_id, match_ratio, per_employee_limit, total_limit } = req.body;
+    const { sponsor_id, match_ratio_bps, per_employee_limit_stroops, total_limit_stroops } = req.body;
 
     const program = await CorporateMatchingService.create({
       sponsor_id,
-      match_ratio,
-      per_employee_limit,
-      total_limit
+      match_ratio_bps,
+      per_employee_limit_stroops,
+      total_limit_stroops
     });
 
     res.status(201).json({
       success: true,
-      data: program
+      data: serializeProgram(program)
     });
   } catch (error) {
     log.error('CORPORATE_MATCHING_ADMIN', 'Failed to create corporate matching program', { error: error.message });
@@ -157,7 +188,7 @@ adminRouter.get('/', requireApiKey, requireAdmin(), asyncHandler(async (req, res
 
     res.json({
       success: true,
-      data: programs
+      data: programs.map(serializeProgram)
     });
   } catch (error) {
     log.error('CORPORATE_MATCHING_ADMIN', 'Failed to get corporate matching programs', { error: error.message });
@@ -176,7 +207,7 @@ adminRouter.get('/:id', requireApiKey, requireAdmin(), asyncHandler(async (req, 
 
     res.json({
       success: true,
-      data: program
+      data: serializeProgram(program)
     });
   } catch (error) {
     log.error('CORPORATE_MATCHING_ADMIN', 'Failed to get corporate matching program', { error: error.message });
@@ -197,7 +228,7 @@ adminRouter.patch('/:id/status', requireApiKey, requireAdmin(), updateStatusSche
 
     res.json({
       success: true,
-      data: program
+      data: serializeProgram(program)
     });
   } catch (error) {
     log.error('CORPORATE_MATCHING_ADMIN', 'Failed to update corporate matching program status', { error: error.message });
@@ -269,7 +300,7 @@ adminRouter.get('/:id/activity', requireApiKey, requireAdmin(), asyncHandler(asy
 
     res.json({
       success: true,
-      data: { program: utilization, activity }
+      data: { program: serializeProgram(utilization), activity: activity.map(serializeActivity) }
     });
   } catch (error) {
     log.error('CORPORATE_MATCHING_ADMIN', 'Failed to get matching activity', { error: error.message });
@@ -290,7 +321,7 @@ adminRouter.get('/:id/activity/export', requireApiKey, requireAdmin(), asyncHand
     await CorporateMatchingService.getById(parseInt(id)); // 404 if program doesn't exist
     const activity = await CorporateMatchingService.getMatchingActivity({ programId: parseInt(id), from, to });
 
-    const header = 'id,corporate_matching_id,original_donation_id,matched_donation_id,employee_wallet_id,matched_amount,year,status,stellar_tx_hash,created_at';
+    const header = 'id,corporate_matching_id,original_donation_id,matched_donation_id,employee_wallet_id,matched_amount_stroops,matched_amount,year,status,stellar_tx_hash,created_at';
     const escape = (v) => {
       if (v === null || v === undefined) return '';
       const s = String(v);
@@ -298,7 +329,8 @@ adminRouter.get('/:id/activity/export', requireApiKey, requireAdmin(), asyncHand
     };
     const rows = activity.map((row) => [
       row.id, row.corporate_matching_id, row.original_donation_id, row.matched_donation_id,
-      row.employee_wallet_id, row.matched_amount, row.year, row.status, row.stellar_tx_hash, row.created_at
+      row.employee_wallet_id, row.matched_amount_stroops, fromStroops(row.matched_amount_stroops),
+      row.year, row.status, row.stellar_tx_hash, row.created_at
     ].map(escape).join(','));
     const csv = [header, ...rows].join('\n');
 
@@ -384,7 +416,8 @@ v2Router.get('/', requireApiKey, requireAdmin(), asyncHandler(async (req, res) =
   if (sponsor_id) filters.sponsor_id = parseInt(sponsor_id, 10);
 
   const programs = await CorporateMatchingService.getAll(filters);
-  res.v2List(programs, { total: programs.length, page: 1, pageSize: programs.length || null, cursor: null });
+  const data = programs.map(serializeProgram);
+  res.v2List(data, { total: data.length, page: 1, pageSize: data.length || null, cursor: null });
 }));
 
 /**
@@ -393,7 +426,7 @@ v2Router.get('/', requireApiKey, requireAdmin(), asyncHandler(async (req, res) =
  */
 v2Router.get('/:id', requireApiKey, requireAdmin(), asyncHandler(async (req, res) => {
   const program = await CorporateMatchingService.getById(parseInt(req.params.id, 10));
-  res.v2Data(program);
+  res.v2Data(serializeProgram(program));
 }));
 
 

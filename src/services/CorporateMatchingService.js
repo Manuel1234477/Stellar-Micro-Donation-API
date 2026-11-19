@@ -28,9 +28,9 @@ class CorporateMatchingService {
    * Create a new corporate matching program.
    * @param {object} params
    * @param {number} params.sponsor_id - users.id of the corporate sponsor account
-   * @param {number} params.match_ratio - e.g. 1.0 for 1:1, 0.5 for 0.5:1
-   * @param {number} params.per_employee_limit - max total matched per employee per year
-   * @param {number} params.total_limit - max total matched across the whole program
+   * @param {number} params.match_ratio - e.g. 1.0 for 1:1, 0.5 for 0.5:1 (converted to basis points)
+   * @param {number} params.per_employee_limit - max total matched per employee per year (XLM)
+   * @param {number} params.total_limit - max total matched across the whole program (XLM)
    * @returns {Promise<object>} Created program
    */
   static async create({ sponsor_id, match_ratio, per_employee_limit, total_limit }) {
@@ -55,15 +55,30 @@ class CorporateMatchingService {
       throw new NotFoundError('Sponsor account not found', ERROR_CODES.NOT_FOUND);
     }
 
+    // match_ratio is stored as an integer number of basis points (1/100 of a
+    // percent) so no floating-point value ever reaches the database.
+    const matchRatioBps = Math.round(match_ratio * 10_000);
+    const perEmployeeLimitStroops = toStroops(String(per_employee_limit));
+    const totalLimitStroops = toStroops(String(total_limit));
+
     const result = await Database.run(
-      `INSERT INTO corporate_matching (sponsor_id, match_ratio, per_employee_limit, total_limit, remaining_total_limit, status)
+      `INSERT INTO corporate_matching
+         (sponsor_id, match_ratio_bps, per_employee_limit_stroops, total_limit_stroops, remaining_total_limit_stroops, status)
        VALUES (?, ?, ?, ?, ?, 'active')`,
-      [sponsor_id, match_ratio, per_employee_limit, total_limit, total_limit]
+      [
+        sponsor_id,
+        matchRatioBps,
+        Number(perEmployeeLimitStroops),
+        Number(totalLimitStroops),
+        Number(totalLimitStroops),
+      ]
     );
 
     const program = await Database.get('SELECT * FROM corporate_matching WHERE id = ?', [result.id]);
     log.info('CORPORATE_MATCHING', 'Created corporate matching program', {
-      id: result.id, sponsor_id, match_ratio, per_employee_limit, total_limit,
+      id: result.id, sponsor_id, match_ratio_bps: matchRatioBps,
+      per_employee_limit_stroops: Number(perEmployeeLimitStroops),
+      total_limit_stroops: Number(totalLimitStroops),
     });
     return program;
   }
@@ -198,10 +213,10 @@ class CorporateMatchingService {
    */
   static async _getEmployeeYearlyMatched(programId, employeeWalletId, year) {
     const row = await Database.get(
-      'SELECT matched_amount FROM employee_matching_history WHERE corporate_matching_id = ? AND employee_wallet_id = ? AND year = ?',
+      'SELECT matched_amount_stroops FROM employee_matching_history WHERE corporate_matching_id = ? AND employee_wallet_id = ? AND year = ?',
       [programId, employeeWalletId, year]
     );
-    return row ? row.matched_amount : 0;
+    return row ? BigInt(row.matched_amount_stroops || 0) : 0n;
   }
 
   // ─── Automatic matching on employee donation ─────────────────────────────────
@@ -232,7 +247,7 @@ class CorporateMatchingService {
     const programs = await Database.query(
       `SELECT cm.* FROM corporate_matching cm
        JOIN matching_employees me ON me.corporate_matching_id = cm.id
-       WHERE me.employee_wallet_id = ? AND cm.status = 'active' AND cm.remaining_total_limit > 0
+       WHERE me.employee_wallet_id = ? AND cm.status = 'active' AND cm.remaining_total_limit_stroops > 0
        ORDER BY cm.created_at ASC`,
       [senderId]
     );
@@ -254,11 +269,13 @@ class CorporateMatchingService {
   /** @private */
   static async _matchSingleProgram(program, donationId, amount, senderId) {
     const year = new Date().getFullYear();
-    const rawMatchStroops = toStroops(String(amount)) * toStroops(String(program.match_ratio)) / 10_000_000n;
+    // match_ratio_bps is an integer: matched = amount * bps / 10000, all in stroops.
+    const matchRatioBps = BigInt(program.match_ratio_bps);
+    const rawMatchStroops = (toStroops(String(amount)) * matchRatioBps) / 10_000n;
 
-    const alreadyMatched = await this._getEmployeeYearlyMatched(program.id, senderId, year);
-    const employeeRemainingStroops = toStroops(String(program.per_employee_limit)) - toStroops(String(alreadyMatched));
-    const programRemainingStroops = toStroops(String(program.remaining_total_limit));
+    const alreadyMatchedStroops = await this._getEmployeeYearlyMatched(program.id, senderId, year);
+    const employeeRemainingStroops = BigInt(program.per_employee_limit_stroops) - alreadyMatchedStroops;
+    const programRemainingStroops = BigInt(program.remaining_total_limit_stroops);
     if (employeeRemainingStroops <= 0n) return null;
 
     const matchStroops = [rawMatchStroops, employeeRemainingStroops, programRemainingStroops]
@@ -276,34 +293,33 @@ class CorporateMatchingService {
     let linkRowId;
     let newRemainingStroops;
     await Database.runTransaction(async (tx) => {
-      const fresh = await tx.get('SELECT remaining_total_limit FROM corporate_matching WHERE id = ?', [program.id]);
-      const freshRemainingStroops = fresh ? toStroops(String(fresh.remaining_total_limit)) : 0n;
+      const fresh = await tx.get('SELECT remaining_total_limit_stroops FROM corporate_matching WHERE id = ?', [program.id]);
+      const freshRemainingStroops = fresh ? BigInt(fresh.remaining_total_limit_stroops || 0) : 0n;
       if (!fresh || freshRemainingStroops < matchStroops) {
         throw new ValidationError(`Per-program match cap exceeded for program ${program.id}`, null, ERROR_CODES.VALIDATION_ERROR);
       }
 
       newRemainingStroops = freshRemainingStroops - matchStroops;
-      const newRemaining = fromStroops(newRemainingStroops);
       await tx.run(
-        `UPDATE corporate_matching SET remaining_total_limit = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?`,
-        [newRemaining, program.id]
+        `UPDATE corporate_matching SET remaining_total_limit_stroops = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?`,
+        [Number(newRemainingStroops), program.id]
       );
 
       /* eslint-disable no-secrets/no-secrets -- SQL conflict-target column list, not a credential */
       await tx.run(
-        `INSERT INTO employee_matching_history (corporate_matching_id, employee_wallet_id, year, matched_amount, updated_at)
+        `INSERT INTO employee_matching_history (corporate_matching_id, employee_wallet_id, year, matched_amount_stroops, updated_at)
          VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP)
          ON CONFLICT(corporate_matching_id, employee_wallet_id, year)
-         DO UPDATE SET matched_amount = matched_amount + excluded.matched_amount, updated_at = CURRENT_TIMESTAMP`,
-        [program.id, senderId, year, matchAmount]
+         DO UPDATE SET matched_amount_stroops = matched_amount_stroops + excluded.matched_amount_stroops, updated_at = CURRENT_TIMESTAMP`,
+        [program.id, senderId, year, Number(matchStroops)]
       );
       /* eslint-enable no-secrets/no-secrets */
 
       const insertResult = await tx.run(
         `INSERT INTO corporate_matching_donations
-           (corporate_matching_id, original_donation_id, employee_wallet_id, matched_amount, year, status)
+           (corporate_matching_id, original_donation_id, employee_wallet_id, matched_amount_stroops, year, status)
          VALUES (?, ?, ?, ?, ?, 'pending')`,
-        [program.id, donationId, senderId, matchAmount, year]
+        [program.id, donationId, senderId, Number(matchStroops), year]
       );
       linkRowId = insertResult.id;
 
@@ -392,8 +408,8 @@ class CorporateMatchingService {
   static async getMatchingActivity({ programId, sponsor_id, from, to } = {}) {
     let sql = `
       SELECT cmd.id, cmd.corporate_matching_id, cmd.original_donation_id, cmd.matched_donation_id,
-             cmd.employee_wallet_id, cmd.matched_amount, cmd.year, cmd.status, cmd.stellar_tx_hash,
-             cmd.created_at, cm.sponsor_id, cm.match_ratio
+             cmd.employee_wallet_id, cmd.matched_amount_stroops, cmd.year, cmd.status, cmd.stellar_tx_hash,
+             cmd.created_at, cm.sponsor_id, cm.match_ratio_bps
       FROM corporate_matching_donations cmd
       JOIN corporate_matching cm ON cm.id = cmd.corporate_matching_id
     `;
@@ -432,8 +448,8 @@ class CorporateMatchingService {
   static async getUtilization(id) {
     const program = await this.getById(id);
     const activity = await this.getMatchingActivity({ programId: id });
-    const totalLimitStroops = toStroops(String(program.total_limit));
-    const remainingStroops = toStroops(String(program.remaining_total_limit));
+    const totalLimitStroops = BigInt(program.total_limit_stroops);
+    const remainingStroops = BigInt(program.remaining_total_limit_stroops);
     const totalMatchedStroops = totalLimitStroops - remainingStroops;
     const totalMatched = fromStroops(totalMatchedStroops);
     const utilizationPercentage = totalLimitStroops > 0n
@@ -443,11 +459,16 @@ class CorporateMatchingService {
     return {
       program_id: id,
       sponsor_id: program.sponsor_id,
-      match_ratio: program.match_ratio,
-      per_employee_limit: program.per_employee_limit,
-      total_limit: program.total_limit,
-      remaining_total_limit: program.remaining_total_limit,
+      match_ratio_bps: program.match_ratio_bps,
+      match_ratio: program.match_ratio_bps / 10_000,
+      per_employee_limit: fromStroops(BigInt(program.per_employee_limit_stroops)),
+      per_employee_limit_stroops: Number(program.per_employee_limit_stroops),
+      total_limit: fromStroops(totalLimitStroops),
+      total_limit_stroops: Number(totalLimitStroops),
+      remaining_total_limit: fromStroops(remainingStroops),
+      remaining_total_limit_stroops: Number(remainingStroops),
       total_matched: totalMatched,
+      total_matched_stroops: Number(totalMatchedStroops),
       utilization_percentage: utilizationPercentage,
       matching_donations_count: activity.length,
       status: program.status,
