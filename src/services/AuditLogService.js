@@ -402,11 +402,13 @@ class AuditLogService {
 
     const entries = _pendingBuffer.splice(0, _pendingBuffer.length);
 
+    // One transaction on the single writer connection (Issue #1959). Manual
+    // BEGIN/COMMIT through separate db.run() calls would let other writes land
+    // inside the open transaction and make concurrent BEGINs fail.
     const writeEntries = async () => {
-      await db.run('BEGIN TRANSACTION');
-      try {
+      await db.runTransaction(async (tx) => {
         for (const entry of entries) {
-          await db.run(
+          await tx.run(
             `INSERT INTO audit_logs (
               id, timestamp, category, action, severity, result,
               userId, requestId, ipAddress, resource, reason,

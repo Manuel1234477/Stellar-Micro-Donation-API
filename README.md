@@ -213,44 +213,13 @@ For detailed request/response examples with error handling, see the **[Complete 
 
 ## 🗄️ Database Schema
 
-### Users Table
-```sql
-CREATE TABLE users (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    publicKey TEXT NOT NULL UNIQUE,
-    createdAt DATETIME DEFAULT CURRENT_TIMESTAMP
-);
-```
+The schema is defined by the numbered migrations in `src/migrations/`. The full,
+generated reference (tables, columns, foreign keys, indexes and an entity diagram) is
+in **[docs/DATABASE_SCHEMA.md](docs/DATABASE_SCHEMA.md)**. Regenerate it with
+`npm run docs:db-schema`.
 
-### Transactions Table
-```sql
-CREATE TABLE transactions (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    senderId INTEGER NOT NULL,
-    receiverId INTEGER NOT NULL,
-    amount REAL NOT NULL,
-    memo TEXT,
-    timestamp DATETIME DEFAULT CURRENT_TIMESTAMP,
-    FOREIGN KEY (senderId) REFERENCES users(id),
-    FOREIGN KEY (receiverId) REFERENCES users(id)
-);
-```
-
-### Recurring Donations Table
-```sql
-CREATE TABLE recurring_donations (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    donorId INTEGER NOT NULL,
-    recipientId INTEGER NOT NULL,
-    amount REAL NOT NULL,
-    frequency TEXT NOT NULL,
-    nextExecutionDate DATETIME NOT NULL,
-    status TEXT DEFAULT 'active',
-    executionCount INTEGER DEFAULT 0,
-    FOREIGN KEY (donorId) REFERENCES users(id),
-    FOREIGN KEY (recipientId) REFERENCES users(id)
-);
-```
+Monetary columns are stored as integer stroops (see [ADR-004](docs/adr/004-money-as-stroops.md)),
+not as floating-point XLM.
 
 ## 🛠️ Development
 

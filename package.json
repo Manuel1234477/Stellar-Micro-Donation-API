@@ -66,6 +66,12 @@
     "scan:container": "bash scripts/scan-container.sh",
     "scan:container:all": "bash scripts/scan-container.sh --severity CRITICAL,HIGH,MEDIUM,LOW",
     "scan:container:json": "bash scripts/scan-container.sh --format json --output trivy-results.json",
+    "docs:error-codes:check": "node scripts/generate-error-codes.js --check",
+    "check:error-codes": "node scripts/check-error-codes.js",
+    "docs:api-matrix": "node scripts/generate-api-version-matrix.js",
+    "docs:api-matrix:check": "node scripts/generate-api-version-matrix.js --check",
+    "docs:db-schema": "node scripts/generate-database-schema.js",
+    "docs:db-schema:check": "node scripts/generate-database-schema.js --check",
     "check:isolation": "node scripts/check-test-isolation.js",
     "check:orphans": "node scripts/check-src-orphans.js",
     "test:ci": "npm run check:isolation && jest --ci --maxWorkers=2"

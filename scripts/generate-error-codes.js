@@ -83,6 +83,10 @@ const HTTP_STATUS = {
   STELLAR_NETWORK_ERROR:     503,
   EXTERNAL_SERVICE_ERROR:    503,
   NOT_IMPLEMENTED:           501,
+  METRICS_ERROR:             503,
+
+  // Request shape (added with the standard envelope, Issue #1957)
+  PAYLOAD_TOO_LARGE:         413,
 };
 
 // ── Human-readable descriptions & remediation ─────────────────────────────────
@@ -143,6 +147,9 @@ const DESCRIPTIONS = {
   STELLAR_NETWORK_ERROR:     { meaning: 'Communication with the Stellar Horizon API failed.', remediation: 'Check Stellar network status at https://status.stellar.org. Retry with exponential back-off.' },
   EXTERNAL_SERVICE_ERROR:    { meaning: 'A call to an external service (e.g. price oracle, IPFS, SMTP) failed.', remediation: 'Check the optional-integrations status in `GET /health`. The feature requiring the external service is temporarily unavailable.' },
   NOT_IMPLEMENTED:           { meaning: 'This endpoint or feature is not yet implemented.', remediation: 'Check the roadmap or use an alternative endpoint.' },
+  METRICS_ERROR:             { meaning: 'The Prometheus metrics snapshot could not be generated.', remediation: 'Retry `GET /metrics` after a moment. If it persists, check the server logs for the `requestId`.' },
+
+  PAYLOAD_TOO_LARGE:         { meaning: 'The request body exceeds the maximum allowed size.', remediation: 'Reduce the payload size, or split the request into several smaller requests.' },
 };
 
 // ── Category grouping ─────────────────────────────────────────────────────────
@@ -312,11 +319,12 @@ Every error response uses this envelope:
 `;
 
 // ── Build the markdown ────────────────────────────────────────────────────────
-const now = new Date().toISOString();
+// No wall-clock timestamp: output must be byte-identical for identical sources so
+// `--check` can detect drift in CI (Issue #1957).
 let md = `<!-- AUTO-GENERATED — do not edit by hand.
      Regenerate with: node scripts/generate-error-codes.js
      Source of truth: src/utils/errors.js
-     Last generated: ${now} -->
+     CI verifies this file with: node scripts/generate-error-codes.js --check -->
 
 # Error Code Reference
 
@@ -363,5 +371,16 @@ md += `\n---\n\n*Source: [\`src/utils/errors.js\`](../src/utils/errors.js)*\n`;
 
 // ── Write output ──────────────────────────────────────────────────────────────
 const outPath = path.resolve(__dirname, '../docs/ERROR_CODES.md');
+
+if (process.argv.includes('--check')) {
+  const current = fs.existsSync(outPath) ? fs.readFileSync(outPath, 'utf8') : '';
+  if (current !== md) {
+    console.error(`✗ ${path.relative(process.cwd(), outPath)} is out of date. Run: npm run docs:error-codes`);
+    process.exit(1);
+  }
+  console.log(`✓ ${path.relative(process.cwd(), outPath)} is up to date`);
+  process.exit(0);
+}
+
 fs.writeFileSync(outPath, md, 'utf8');
 console.log(`✓ Generated ${outPath}`);

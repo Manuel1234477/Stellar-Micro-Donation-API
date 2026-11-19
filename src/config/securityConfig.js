@@ -221,7 +221,7 @@ function loadSecurityConfig(env = process.env) {
     // throw a catchable error instead of killing the process/worker.
     if (key === 'ENCRYPTION_KEY' && !finalValue) {
       log.error('SECURITY_CONFIG', 'ENCRYPTION_KEY is not set. Run `npm run generate-key` to create one, then add it to your .env file.');
-      if (isProduction) {
+      if (process.env.NODE_ENV === 'production') {
         process.exit(1);
       }
       throw new Error('ENCRYPTION_KEY is not set');

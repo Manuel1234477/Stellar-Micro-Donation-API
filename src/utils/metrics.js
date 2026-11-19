@@ -248,6 +248,27 @@ function recordDonation(status) {
   stellarDonationsTotal.inc({ status });
 }
 
+// ─── SQLite single-writer (Issue #1959) ──────────────────────────────────────
+// Queue depth is read at scrape time; wait time is observed per acquisition.
+const sqliteWriter = require('./sqliteWriter');
+
+const sqliteWriterQueueDepth = new client.Gauge({
+  name: 'sqlite_writer_queue_depth',
+  help: 'Writes and transactions waiting for the single SQLite writer connection',
+  registers: [registry],
+  collect() {
+    this.set(sqliteWriter.getWriterStats().queueDepth);
+  },
+});
+
+const sqliteWriterWaitSeconds = new client.Histogram({
+  name: 'sqlite_writer_wait_seconds',
+  help: 'Time a write waited for the SQLite writer connection before it started',
+  buckets: [0.0005, 0.001, 0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1, 2.5, 5],
+  registers: [registry],
+});
+
+sqliteWriter.setWaitObserver((seconds) => sqliteWriterWaitSeconds.observe(seconds));
 // ─── Memo Collision Metrics (#1592) ──────────────────────────────────────────
 
 /**
@@ -512,6 +533,8 @@ const recordDatabaseError = ({ sqliteCode = 'UNKNOWN', category = 'unknown', ope
 };
 
 module.exports = {
+  sqliteWriterQueueDepth,
+  sqliteWriterWaitSeconds,
   registry,
   httpRequestDuration,
   stellarDonationsTotal,
