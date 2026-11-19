@@ -5,7 +5,7 @@
  *
  * Extracted from the legacy bundle `tests/issues-65-66-67-68.test.js`
  * (issue #67) and renamed to follow the module-based test naming
- * convention (docs/TEST_NAMING_CONVENTION.md).
+ * convention (docs/test-naming-convention.md).
  */
 
 const request = require('supertest');

@@ -153,14 +153,14 @@ describe('Issue #1767 — SQLite topology documented in ADR and K8s manifests', 
     expect(k8sHasConfig || composeHasConfig).toBe(true);
   });
 
-  test('docs/FILE_SIZE_BUDGET.md exists and is referenced', () => {
-    const budgetPath = path.join(__dirname, '../docs/FILE_SIZE_BUDGET.md');
+  test('docs/file-size-budget.md exists and is referenced', () => {
+    const budgetPath = path.join(__dirname, '../docs/file-size-budget.md');
     expect(fs.existsSync(budgetPath)).toBe(true);
   });
 
   test('Database respects file size budget constraints', () => {
     const dbFile = path.join(__dirname, '../src/utils/database.js');
-    const budgetFile = path.join(__dirname, '../docs/FILE_SIZE_BUDGET.md');
+    const budgetFile = path.join(__dirname, '../docs/file-size-budget.md');
 
     if (fs.existsSync(dbFile) && fs.existsSync(budgetFile)) {
       const dbContent = fs.readFileSync(dbFile, 'utf8');

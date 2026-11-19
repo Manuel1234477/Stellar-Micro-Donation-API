@@ -78,4 +78,4 @@ For local development and all automated tests, set `MOCK_STELLAR=true`. This act
 - Never makes network calls
 - Supports simulated failures via `SIMULATE_FAILURE` env var
 
-See [Mock Stellar Guide](./guides/MOCK_STELLAR_GUIDE.md) for details.
+See [Mock Stellar Guide](./guides/mock-stellar-guide.md) for details.

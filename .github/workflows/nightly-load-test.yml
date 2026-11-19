@@ -12,7 +12,7 @@ name: Load Tests
 #     p95<200ms) and files a single tracking issue when any scenario's p95
 #     latency exceeds its target by more than 20%.
 #
-# See docs/LOAD_TESTING.md for the harness and how to reproduce locally.
+# See docs/load-testing.md for the harness and how to reproduce locally.
 on:
   push:
     branches: [main]
@@ -112,7 +112,7 @@ jobs:
               `Checked at: ${data.checkedAt}`,
               `Workflow run: ${runUrl}`,
               '',
-              'Targets are defined in `tests/load/PerformanceBaselines.js` (`NIGHTLY_TARGET_BASELINES`). See `docs/LOAD_TESTING.md` for how to reproduce locally with `npm run test:load`.',
+              'Targets are defined in `tests/load/PerformanceBaselines.js` (`NIGHTLY_TARGET_BASELINES`). See `docs/load-testing.md` for how to reproduce locally with `npm run test:load`.',
             ].join('\n');
 
             // Single tracking issue: update the existing open one if present,

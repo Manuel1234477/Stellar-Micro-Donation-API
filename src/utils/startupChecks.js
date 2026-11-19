@@ -133,7 +133,7 @@ function checkEncryptionKey() {
         'ENCRYPTION_KEY',
         'placeholder or example key detected in production. ' +
         'Generate a real key with `npm run generate-key` and supply it via a secrets manager. ' +
-        'See docs/SECRETS_LIFECYCLE.md for the recommended provisioning path.'
+        'See docs/secrets-lifecycle.md for the recommended provisioning path.'
       );
       return false;
     }
@@ -165,7 +165,7 @@ function checkApiKeys() {
         'API_KEYS',
         `${exampleKeys.length} example/placeholder key(s) detected in production. ` +
         'Remove example keys (e.g. dev_key_1234567890) and provision real secrets. ' +
-        'See docs/SECRETS_LIFECYCLE.md.'
+        'See docs/secrets-lifecycle.md.'
       );
       return false;
     }
@@ -174,7 +174,7 @@ function checkApiKeys() {
       `${keys.length} legacy key(s) detected in production. ` +
       'Legacy keys bypass quota tracking and cannot be revoked without a restart. ' +
       `Legacy keys are rejected after ${getLegacyKeySunsetDate()}. ` +
-      'Migrate to database-backed keys. See docs/MIGRATION_LEGACY_API_KEYS.md'
+      'Migrate to database-backed keys. See docs/migration-legacy-api-keys.md'
     );
   } else {
     pass('API_KEYS', `${keys.length} legacy key(s) configured (non-production)`);

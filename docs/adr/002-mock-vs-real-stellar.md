@@ -69,4 +69,4 @@ timeout and retry paths without real network round-trips.
 ---
 
 *See also: `src/services/MockStellarService.js`, `src/services/StellarService.js`,
-`src/config/serviceContainer.js`, `docs/CONFIGURATION.md#4-stellar--horizon`*
+`src/config/serviceContainer.js`, `docs/configuration.md#4-stellar--horizon`*

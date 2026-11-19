@@ -4,7 +4,7 @@
  * Tests for DonationService custodial donation handling.
  *
  * Extracted from tests/issues/issues-1311-1312-1313-1314.test.js to follow
- * docs/TEST_NAMING_CONVENTION.md. Issue numbers are preserved in describe
+ * docs/test-naming-convention.md. Issue numbers are preserved in describe
  * titles for traceability.
  */
 

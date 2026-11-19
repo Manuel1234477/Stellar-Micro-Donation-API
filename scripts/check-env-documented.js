@@ -7,7 +7,7 @@
  * CI gate. Fails when:
  *   1. code under src/ reads an environment variable that is not declared in
  *      src/config/envSchema.js, or
- *   2. .env.example / docs/CONFIGURATION.md are out of date with the schema
+ *   2. .env.example / docs/configuration.md are out of date with the schema
  *      (so every declared variable is listed in .env.example).
  *
  * Usage: node scripts/check-env-documented.js

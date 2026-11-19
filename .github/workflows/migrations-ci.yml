@@ -152,21 +152,21 @@ jobs:
 
       - name: Check migration documentation
         run: |
-          test -f docs/MIGRATION_TESTING.md || exit 1
+          test -f docs/migration-testing.md || exit 1
           test -f src/utils/migrationRunner.js || exit 1
           echo "✓ Migration documentation and utilities are present"
 
       - name: Verify documentation completeness
         run: |
-          if ! grep -q "Fresh Database" docs/MIGRATION_TESTING.md; then
+          if ! grep -q "Fresh Database" docs/migration-testing.md; then
             echo "✗ Documentation missing fresh database testing section"
             exit 1
           fi
-          if ! grep -q "Rollback" docs/MIGRATION_TESTING.md; then
+          if ! grep -q "Rollback" docs/migration-testing.md; then
             echo "✗ Documentation missing rollback information"
             exit 1
           fi
-          if ! grep -q "Best Practices" docs/MIGRATION_TESTING.md; then
+          if ! grep -q "Best Practices" docs/migration-testing.md; then
             echo "✗ Documentation missing best practices"
             exit 1
           fi

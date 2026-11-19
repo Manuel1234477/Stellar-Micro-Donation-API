@@ -665,8 +665,8 @@ describe('CI integration', () => {
     expect(pkg.scripts['test:load']).toBeDefined();
   });
 
-  test('docs/LOAD_TESTING.md exists', () => {
-    const docPath = path.join(__dirname, '..', '..', 'docs', 'LOAD_TESTING.md');
+  test('docs/load-testing.md exists', () => {
+    const docPath = path.join(__dirname, '..', '..', 'docs', 'load-testing.md');
     expect(fs.existsSync(docPath)).toBe(true);
   });
 });

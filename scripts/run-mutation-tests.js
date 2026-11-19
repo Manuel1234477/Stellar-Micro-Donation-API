@@ -29,7 +29,7 @@ if (!fs.existsSync(strykerPath)) {
   console.error('Then run mutation tests:');
   console.error('  npm run mutation:test');
   console.error('');
-  console.error('For more info, see: MUTATION_TESTING_GUIDE.md');
+  console.error('For more info, see: mutation-testing-guide.md');
   process.exit(1);
 }
 

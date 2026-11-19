@@ -53,7 +53,7 @@ describe('Issue #1754 – Deprecate plaintext legacy API keys', () => {
   });
 
   it('API key rotation documentation should mention migration', () => {
-    const apiKeyRotationPath = path.join(__dirname, '../docs/API_KEY_ROTATION.md');
+    const apiKeyRotationPath = path.join(__dirname, '../docs/api-key-rotation.md');
     if (fs.existsSync(apiKeyRotationPath)) {
       const content = fs.readFileSync(apiKeyRotationPath, 'utf8');
       expect(typeof content).toBe('string');

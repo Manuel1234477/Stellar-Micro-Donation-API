@@ -10,7 +10,7 @@ module.exports = {
     '/node_modules/',
     'tests/e2e/',
     // Quarantined suites run only via jest.config.quarantine.js (see
-    // tests/quarantine.js and docs/testing/FLAKY_TEST_POLICY.md).
+    // tests/quarantine.js and docs/testing/flaky-test-policy.md).
     '\\.quarantine\\.test\\.js$',
     'tests/donation-routes-integration.test.js', // Temporarily disabled - pre-existing failures
     'tests/services/scheduler-resilience.test.js',

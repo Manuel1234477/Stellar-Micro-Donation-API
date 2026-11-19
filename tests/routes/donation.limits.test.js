@@ -4,7 +4,7 @@
  * Tests for the /donations/limits endpoint caching behaviour.
  *
  * Extracted from the legacy issue bundle `tests/issues-764-765-766-767.test.js`
- * (issue #767) and renamed to follow docs/TEST_NAMING_CONVENTION.md.
+ * (issue #767) and renamed to follow docs/test-naming-convention.md.
  */
 
 const request = require('supertest');

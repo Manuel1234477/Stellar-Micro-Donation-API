@@ -6,7 +6,7 @@
  * Acceptance criteria:
  * - 10,000 unauthenticated requests produce a bounded number of audit rows (at most one per IP per minute).
  * - Metrics expose authentication failure reasons.
- * - Severity mapping is documented in docs/AUDIT_LOGGING.md.
+ * - Severity mapping is documented in docs/audit-logging.md.
  */
 
 const fs = require('fs');
@@ -103,8 +103,8 @@ describe('Issue #1887 – Auth failure audit throttling', () => {
   });
 
   describe('documentation', () => {
-    it('documents the severity mapping in docs/AUDIT_LOGGING.md', () => {
-      const doc = fs.readFileSync(path.join(__dirname, '..', 'docs', 'AUDIT_LOGGING.md'), 'utf8');
+    it('documents the severity mapping in docs/audit-logging.md', () => {
+      const doc = fs.readFileSync(path.join(__dirname, '..', 'docs', 'audit-logging.md'), 'utf8');
       expect(doc).toContain('Authentication Event Severity and Sampling');
       expect(doc).toContain('auth_failures_total');
     });

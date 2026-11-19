@@ -11,7 +11,7 @@
  *
  * This file is the source of truth for:
  *   - startup validation (src/config/env.js)
- *   - .env.example and docs/CONFIGURATION.md (scripts/generate-config-docs.js)
+ *   - .env.example and docs/configuration.md (scripts/generate-config-docs.js)
  *   - the CI check that every environment variable read in src/ is declared here
  *     (scripts/check-env-documented.js)
  *
@@ -355,7 +355,7 @@ const ENV_VARS = [
   { group: G20, name: 'CSP_REPORT_ONLY', type: 'boolean', default: false, description: 'When `true`, CSP violations are reported but not enforced' },
   { group: G20, name: 'CSP_REPORT_URI', type: 'string', default: '/csp-report', description: 'URI to which CSP violation reports are sent' },
   { group: G20, name: 'ENABLE_CHANGELOG_ENDPOINT', type: 'boolean', default: false, description: 'Mount the public `/changelog` endpoint' },
-  { group: G20, name: 'FEATURE_FLAGS', type: 'string', description: 'JSON object of feature-flag overrides, e.g. `{"newDonationFlow":true}`. See [docs/FEATURE_FLAGS_RUNTIME.md](./FEATURE_FLAGS_RUNTIME.md)' },
+  { group: G20, name: 'FEATURE_FLAGS', type: 'string', description: 'JSON object of feature-flag overrides, e.g. `{"newDonationFlow":true}`. See [docs/feature-flags-runtime.md](./feature-flags-runtime.md)' },
   { group: G20, name: 'FEDERATION_DOMAIN', type: 'string', description: 'Domain used for Stellar federation lookups' },
   { group: G20, name: 'FEDERATION_RECORDS', type: 'string', description: 'JSON-encoded static federation records for local development, bypassing live federation lookups' },
   { group: G20, name: 'WEBHOOK_ALLOW_TLS_SKIP_VERIFY', type: 'string', example: 'false', description: 'Set to `break-glass` to allow webhooks with TLS verification disabled in production. Any other value is ignored' },
