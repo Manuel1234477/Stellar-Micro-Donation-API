@@ -349,6 +349,22 @@ const requireAdmin = () => {
  * 5. Legacy Fallback: Checks against process.env.API_KEYS if DB lookup fails.
  * 6. Context Injection: Populates req.user with a standardized identity object for downstream use.
  */
+/**
+ * Applies the per-key rate limit to a DB-backed API key that has been resolved
+ * for this request, then continues the chain. Legacy and anonymous requests
+ * pass straight through. Used on every success path of attachUserRole so the
+ * limit is enforced exactly once, for every authenticated /api/v1 route (#1941).
+ */
+const applyPerKeyLimit = (req, res, next) => {
+  const keyInfo = req.apiKey;
+  if (!keyInfo || keyInfo.isLegacy || !keyInfo.id) return next();
+  try {
+    return perKeyRateLimit(req, res, next);
+  } catch (err) {
+    return next(err);
+  }
+};
+
 const attachUserRole = () => {
   return (req, res, next) => {
     try {
@@ -392,12 +408,16 @@ const attachUserRole = () => {
           scopes: req.apiKey.scopes || [],
           isLegacy: req.apiKey.isLegacy || false
         };
-        return next();
+        return applyPerKeyLimit(req, res, next);
       }
       // Priority 3: x-api-key header lookup (async, non-blocking)
       else if (req.headers && req.headers['x-api-key']) {
         const apiKey = req.headers['x-api-key'];
         
+        // Record that this request's key has been looked up, so requireApiKey
+        // does not validate the same header a second time (#1941).
+        req.apiKeyLookedUp = true;
+
         // Validate API key asynchronously without blocking the request
         validateApiKey(apiKey).then((keyInfo) => {
           if (keyInfo) {
@@ -495,7 +515,7 @@ const attachUserRole = () => {
           else {
             req.user = { id: 'guest', role: 'guest', name: 'Guest', scopes: [] };
           }
-          next();
+          return applyPerKeyLimit(req, res, next);
         }).catch((err) => {
           // A validation error means "could not decide", not "invalid key". Never
           // downgrade a presented credential to guest (issue #1940): that turns a
@@ -523,12 +543,7 @@ const attachUserRole = () => {
         req.user = { id: 'guest', role: 'guest', name: 'Guest', scopes: [] };
       }
 
-      // Apply per-key rate limiting if a DB-backed key is present
-      if (req.apiKey && !req.apiKey.isLegacy && req.apiKey.id) {
-        return perKeyRateLimit(req, res, next);
-      }
-
-      next();
+      return applyPerKeyLimit(req, res, next);
     } catch (error) {
       next(error);
     }

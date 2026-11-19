@@ -34,6 +34,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Transaction model no longer queries `donations_store` at require time; the store loads after migrations in the bootstrap sequence and `/health/ready` reports not-ready until it has loaded (#1696)
 - `rotationLockMiddleware` caches rotation status (`ROTATION_LOCK_CACHE_TTL_MS`), fails open with a rate-limited warning when the lock is unreadable, and migration 040 now actually creates `rotation_locks` (#1697)
 - Admin backup routes are mounted at `/admin/backups` as documented; added `POST /admin/backups/:backupId/verify` and OpenAPI/RBAC coverage (#1698)
+- API keys are validated once per request, and a key's `rate_limit` applies to every authenticated `/api/v1` route; the route-level per-key limiter on `POST /donations` was removed because the global one now covers it (#1941)
+- `src/config/loadEnv.js` is the only loader of the repository-root `.env`; `src/utils/database.js` no longer reads `src/.env`, and a stray `src/.env` is ignored with a startup warning (#1943)
+- `src/utils/database.js` is a facade over `src/utils/database/*.js` (connection, pool, query, transaction, errors, diagnostics, health, lifecycle). The public API is unchanged; `Database.exec()`, `Database.transaction()` and `Database.isHealthy()` were added (#1944)
+- Restored configuration sections that `db0f0e69` and `4040f2d8` dropped (`buildConfig` and `securityConfig.js`); the logger, the migrations and the test harness could not start without them
+- Migration 041 issues its statements through `db.run()`; it previously called `db.exec()`, which did not exist
 
 ### Deprecated
 - Unversioned API paths now redirect to their versioned equivalents with `308 Permanent Redirect` and carry `Deprecation: true`, `Sunset: Sat, 01 Jan 2027 00:00:00 GMT` and `Link: </api/v1/...>; rel="successor-version"` headers (#1802, #1803):
@@ -43,6 +48,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - **Removal date: 2027-01-01.** After this date the unversioned redirects (including `/channels`) will be removed. Migrate all clients to `/api/v1/*` before then; see `docs/VERSIONING_STRATEGY.md`.
 
 ### Security
+- WebSocket balance streams read the API key from the `x-api-key` header or the `apikey.<key>` subprotocol first; the `?apiKey=` query form still works but is deprecated and logs a warning. Set `WS_ALLOW_QUERY_API_KEY=false` to reject it. Legacy keys are compared in constant time, and access and request logs redact `apiKey`-style query values (#1942)
 - Remove `clientIp` and `protocol` from `GET /health` response to prevent IP enumeration (#758)
 - Add allowlist validation for `category` and `severity` filter parameters in `GET /admin/audit-logs` to prevent SQL injection (#760)
 - Add container image vulnerability scanning to CI pipeline with Trivy (#1233)

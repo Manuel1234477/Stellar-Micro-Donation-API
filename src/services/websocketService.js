@@ -4,7 +4,11 @@
  * WebSocketService — real-time balance streaming (Issue #410)
  *
  * Protocol:
- *   connect  ws://host/ws/balances?apiKey=<key>
+ *   connect  ws://host/ws/balances
+ *            with the key in one of (preferred first):
+ *              - header            x-api-key: <key>
+ *              - subprotocol       Sec-WebSocket-Protocol: apikey.<key>
+ *              - query (DEPRECATED) ?apiKey=<key>   (#1942)
  *   → send   {"action":"subscribe","wallets":["GA...","GB..."]}
  *   → recv   {"event":"balance_update","wallet":"GA...","new_balance":"100.00","asset":"XLM"}
  *   → send   {"action":"unsubscribe","wallets":["GA..."]}
@@ -28,6 +32,19 @@ const { validateKey } = require('../models/apiKeys');
 const { securityConfig } = require('../config/securityConfig');
 const donationEvents = require('../events/donationEvents');
 const log = require('../utils/log');
+const { safeEqual } = require('../utils/safeEqual');
+
+// Subprotocol prefix that carries an API key in the WebSocket handshake (#1942).
+// Subprotocol values are not written to request URLs, so they stay out of access
+// logs, proxy logs and Referer headers. Clients should also offer BALANCE_SUBPROTOCOL,
+// which the server selects so the key is not echoed back in the handshake response.
+const API_KEY_SUBPROTOCOL_PREFIX = 'apikey.';
+const BALANCE_SUBPROTOCOL = 'balances.v1';
+
+// Deprecation switch for the ?apiKey= query parameter (#1942). Defaults to
+// accepting it, with a warning, so existing clients keep working. Set to
+// "false" to reject query-string keys.
+const queryApiKeyAllowed = () => process.env.WS_ALLOW_QUERY_API_KEY !== 'false';
 
 const MAX_WALLETS = parseInt(process.env.WS_MAX_WALLETS || '50', 10);
 const HEARTBEAT_MS = parseInt(process.env.WS_HEARTBEAT_MS || '30000', 10);
@@ -173,11 +190,37 @@ async function authenticate(apiKey) {
     if (info) return info;
   } catch (_) { /* fall through */ }
 
-  // Legacy env keys
+  // Legacy env keys (constant-time comparison, #1942)
   const legacyKeys = securityConfig.API_KEYS || [];
-  if (legacyKeys.includes(apiKey)) return { role: 'user', id: null };
+  if (legacyKeys.some((legacyKey) => safeEqual(apiKey, legacyKey))) return { role: 'user', id: null };
 
   return null;
+}
+
+/**
+ * Reads the API key from the upgrade request, preferring non-URL transports.
+ *
+ * @returns {{ apiKey: string|null, source: 'header'|'subprotocol'|'query'|null }}
+ */
+function extractCredentials(req) {
+  const headerKey = req.headers['x-api-key'];
+  if (typeof headerKey === 'string' && headerKey.trim()) {
+    return { apiKey: headerKey.trim(), source: 'header' };
+  }
+
+  const offered = String(req.headers['sec-websocket-protocol'] || '')
+    .split(',')
+    .map((p) => p.trim());
+  const keyProtocol = offered.find((p) => p.startsWith(API_KEY_SUBPROTOCOL_PREFIX));
+  if (keyProtocol && keyProtocol.length > API_KEY_SUBPROTOCOL_PREFIX.length) {
+    return { apiKey: keyProtocol.slice(API_KEY_SUBPROTOCOL_PREFIX.length), source: 'subprotocol' };
+  }
+
+  const url = new URL(req.url, 'http://localhost');
+  const queryKey = url.searchParams.get('apiKey');
+  if (queryKey) return { apiKey: queryKey, source: 'query' };
+
+  return { apiKey: null, source: null };
 }
 
 // ── message handler ───────────────────────────────────────────────────────────
@@ -262,7 +305,14 @@ function runHeartbeat(clients) {
 // ── server factory ────────────────────────────────────────────────────────────
 
 function attach(server) {
-  const wss = new WebSocketServer({ noServer: true });
+  // Prefer the fixed balances.v1 token. If the client offered only apikey.<key>,
+  // RFC 6455 requires selecting one of the offered tokens, so that one is echoed.
+  const wss = new WebSocketServer({
+    noServer: true,
+    handleProtocols: (protocols) => (protocols.has(BALANCE_SUBPROTOCOL)
+      ? BALANCE_SUBPROTOCOL
+      : protocols.values().next().value),
+  });
 
   server.on('upgrade', async (req, socket, head) => {
     if (req.url && !req.url.startsWith('/ws/balances')) {
@@ -270,11 +320,26 @@ function attach(server) {
       return;
     }
 
-    const url = new URL(req.url, 'http://localhost');
-    const apiKey = url.searchParams.get('apiKey') ||
-                   (req.headers['x-api-key']);
+    let credentials;
+    try {
+      credentials = extractCredentials(req);
+    } catch (_) {
+      socket.write('HTTP/1.1 400 Bad Request\r\n\r\n');
+      socket.destroy();
+      return;
+    }
 
-    const keyInfo = await authenticate(apiKey);
+    if (credentials.source === 'query') {
+      if (!queryApiKeyAllowed()) {
+        log.warn('WS', 'Rejected WebSocket connection: API key in query string is disabled (WS_ALLOW_QUERY_API_KEY=false)');
+        socket.write('HTTP/1.1 401 Unauthorized\r\n\r\n');
+        socket.destroy();
+        return;
+      }
+      log.warn('WS', 'Deprecated: API key sent in WebSocket URL. Use the x-api-key header or the apikey.<key> subprotocol.');
+    }
+
+    const keyInfo = await authenticate(credentials.apiKey);
     if (!keyInfo) {
       socket.write('HTTP/1.1 401 Unauthorized\r\n\r\n');
       socket.destroy();

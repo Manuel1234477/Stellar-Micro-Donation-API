@@ -26,7 +26,6 @@ const { PERMISSIONS } = require('../../utils/permissions');
 const { ValidationError, ERROR_CODES } = require('../../utils/errors');
 const log = require('../../utils/log');
 const { donationRateLimiter, batchRateLimiter } = require('../../middleware/rateLimiter');
-const perKeyRateLimit = require('../../middleware/perKeyRateLimit');
 const { validateFloat, validateXLMAmount, validateInteger } = require('../../utils/validationHelpers');
 const { validateRequiredFields } = require('../../utils/validationHelpers');
 const { payloadSizeLimiter, ENDPOINT_LIMITS } = require('../../middleware/payloadSizeLimiter');
@@ -299,7 +298,7 @@ async function processCustodialDonation(req, res, next) {
  * both senderId and receiverId are present.
  * Requires Idempotency-Key header (UUID v4) to prevent duplicate donations.
  */
-router.post('/', rotationLockMiddleware(), payloadSizeLimiter(ENDPOINT_LIMITS.singleDonation), donationRateLimiter, perKeyRateLimit, requireApiKey, requireIdempotency, createDonationSchema, asyncHandler(async (req, res, next) => {
+router.post('/', rotationLockMiddleware(), payloadSizeLimiter(ENDPOINT_LIMITS.singleDonation), donationRateLimiter, requireApiKey, requireIdempotency, createDonationSchema, asyncHandler(async (req, res, next) => {
   try {
     if (req.body.senderId != null && req.body.receiverId != null) {
       return await processCustodialDonation(req, res, next);

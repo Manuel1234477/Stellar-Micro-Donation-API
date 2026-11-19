@@ -16,7 +16,7 @@
 
 const fs = require('fs');
 const path = require('path');
-require('dotenv').config({ path: path.join(__dirname, '../../.env') });
+require('../config/loadEnv'); // single .env loader (#1943)
 
 const { runMigrations } = require('../utils/migrationRunner');
 
