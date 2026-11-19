@@ -17,7 +17,7 @@ const log = require('../utils/log');
 const { ValidationError, NotFoundError, ERROR_CODES } = require('../utils/errors');
 const crypto = require('crypto');
 const { serialize: csvSerialize } = require('../utils/csvSerializer');
-const { getSigningSecret } = require('../utils/signingSecrets');
+const SignedUrlService = require('./SignedUrlService');
 
 /**
  * Export status constants
@@ -746,13 +746,8 @@ class AuditLogExportService {
           content = this.convertToJSON(logs);
         }
 
-        // Generate signed URL token (HMAC-based, expires in configured duration)
-        const expiryMs = parseInt(process.env.SIGNED_URL_EXPIRY_MS || String(60 * 60 * 1000));
-        const expiresAt = new Date(Date.now() + expiryMs).toISOString();
-        const token = crypto.createHmac('sha256', getSigningSecret('ENCRYPTION_KEY', ['ENCRYPTION_KEY']))
-          .update(`${jobId}:${expiresAt}`)
-          .digest('hex');
-        const signedUrl = `/admin/audit-logs/export/${jobId}/download?token=${token}&expires=${encodeURIComponent(expiresAt)}&format=${format}`;
+        // Signed download link bound to the export owner (#1950)
+        const { url: signedUrl, expiresAt } = this.buildSignedDownloadUrl(jobId, apiKeyId, format);
 
         // Store content in memory cache keyed by jobId
         if (!AuditLogExportService._contentCache) AuditLogExportService._contentCache = new Map();
@@ -799,6 +794,25 @@ class AuditLogExportService {
   }
 
   /**
+   * Build a signed admin download URL for an audit export (#1950).
+   * The signature is bound to the export owner and expires after
+   * SIGNED_URL_EXPIRY_MS (default 1 hour).
+   *
+   * @param {string} jobId - Export job ID.
+   * @param {string} principalId - Export owner (api_key_id).
+   * @param {string} format - csv | json
+   * @returns {{ url: string, expiresAt: string }}
+   */
+  static buildSignedDownloadUrl(jobId, principalId, format) {
+    const ttlMs = parseInt(process.env.SIGNED_URL_EXPIRY_MS || String(SignedUrlService.DEFAULT_TTL_MS), 10);
+    const signed = SignedUrlService.sign({ resource: 'audit-export', resourceId: jobId, principalId, ttlMs });
+    return {
+      url: `/admin/audit-logs/export/${jobId}/download?${SignedUrlService.toQueryString(signed)}&format=${format}`,
+      expiresAt: signed.expiresAt,
+    };
+  }
+
+  /**
    * Get a signed download URL for a completed export job (Issue #604).
    * Returns { pending: true } if the job is not yet complete.
    * @param {string} jobId
@@ -808,7 +822,7 @@ class AuditLogExportService {
    */
   static async getSignedDownloadUrl(jobId, options = {}) {
     const row = await Database.get(
-      `SELECT export_id, status, format, signed_url, signed_url_expires_at, record_count
+      `SELECT export_id, api_key_id, status, format, signed_url, signed_url_expires_at, record_count
        FROM audit_log_exports WHERE export_id = ?`,
       [jobId]
     );
@@ -821,13 +835,8 @@ class AuditLogExportService {
 
     // Check if signed URL has expired; regenerate if so
     if (row.signed_url_expires_at && new Date(row.signed_url_expires_at) < new Date()) {
-      const expiryMs = parseInt(process.env.SIGNED_URL_EXPIRY_MS || String(60 * 60 * 1000));
-      const expiresAt = new Date(Date.now() + expiryMs).toISOString();
       const fmt = options.format || row.format;
-      const token = crypto.createHmac('sha256', getSigningSecret('ENCRYPTION_KEY', ['ENCRYPTION_KEY']))
-        .update(`${jobId}:${expiresAt}`)
-        .digest('hex');
-      const signedUrl = `/admin/audit-logs/export/${jobId}/download?token=${token}&expires=${encodeURIComponent(expiresAt)}&format=${fmt}`;
+      const { url: signedUrl, expiresAt } = this.buildSignedDownloadUrl(jobId, row.api_key_id, fmt);
 
       await Database.run(
         `UPDATE audit_log_exports SET signed_url = ?, signed_url_expires_at = ?, updated_at = ? WHERE export_id = ?`,

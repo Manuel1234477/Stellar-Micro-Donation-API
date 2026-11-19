@@ -133,6 +133,9 @@ class BackupRestoreTestSuite {
 
         // Test 4: List backups
         await this.testListBackups();
+
+        // Test 5: Restore a pre-rotation backup after the encryption key changes (#1951)
+        await this.testRestoreAfterRotation(backup);
       }
 
       await this.cleanup();
@@ -144,6 +147,39 @@ class BackupRestoreTestSuite {
     } catch (error) {
       log.error('BACKUP_TEST', 'Test suite error', { error: error.message, stack: error.stack });
       process.exit(1);
+    }
+  }
+
+  async testRestoreAfterRotation(backup) {
+    log.info('BACKUP_TEST', 'Test: Restore backup created before key rotation');
+
+    const saved = {
+      ENCRYPTION_KEY: process.env.ENCRYPTION_KEY,
+      BACKUP_KEY_ID: process.env.BACKUP_KEY_ID,
+      BACKUP_PREVIOUS_KEYS: process.env.BACKUP_PREVIOUS_KEYS,
+    };
+    const originalKey = process.env.ENCRYPTION_KEY;
+
+    try {
+      // Rotate: new root key; the key that encrypted `backup` is kept as a previous key.
+      process.env.ENCRYPTION_KEY = `rotated-${originalKey}`;
+      delete process.env.BACKUP_KEY_ID;
+      delete process.env.BACKUP_ENCRYPTION_KEY;
+      process.env.BACKUP_PREVIOUS_KEYS = `${backup.keyId}:${originalKey}`;
+
+      await this.assertAsync(async () => {
+        const restored = await this.backupService.restore(backup.backupId);
+        return restored.backupId === backup.backupId && restored.keyId === backup.keyId;
+      }, 'Backup made before key rotation should restore after rotation');
+    } catch (error) {
+      this.failed++;
+      this.errors.push({ test: 'restore after rotation', error: error.message });
+      log.error('BACKUP_TEST', 'Restore after rotation failed', { error: error.message });
+    } finally {
+      for (const [k, v] of Object.entries(saved)) {
+        if (v === undefined) delete process.env[k];
+        else process.env[k] = v;
+      }
     }
   }
 

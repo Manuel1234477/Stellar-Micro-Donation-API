@@ -18,7 +18,10 @@ describe('RBAC Middleware - Authorization Tests', () => {
     };
     res = {
       status: jest.fn().mockReturnThis(),
-      json: jest.fn()
+      json: jest.fn(),
+      // Per-key rate-limit headers are written on every DB-backed key request (#1941)
+      set: jest.fn().mockReturnThis(),
+      setHeader: jest.fn(),
     };
     next = jest.fn();
   });

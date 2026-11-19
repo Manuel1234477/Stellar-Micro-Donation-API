@@ -74,16 +74,19 @@ This document defines the Service Level Objectives (SLOs) for the Stellar Micro 
 
 **Measurement**:
 - Metric: `stellar_scheduler_lag_seconds` (gauge)
-- Calculation: `current_timestamp - oldest_due_schedule_timestamp`
-- Updated on each scheduler tick
+- Calculation: `current_timestamp - MIN(nextExecutionDate)` over active schedules that are due (0 when none are overdue)
+- Computed at scrape time from the database, not on each tick, so the value keeps growing when the scheduler is stuck (for example when leader election throws before the tick does any work)
 
 **Components Tracked**:
-- Recurring donation scheduler
-- Transaction sync scheduler
+- Recurring donation scheduler: `stellar_scheduler_lag_seconds`
+- Transaction sync scheduler: `stellar_transaction_sync_lag_seconds`
+  - Calculation: `current_timestamp - MIN(COALESCE(last_synced_at, createdAt))` over non-deleted wallets (0 when there are none). A wallet that has never synced is measured from its creation.
 
 **Alert Thresholds**:
-- Warning: scheduler_lag > 60 seconds for 5 minutes
-- Critical: scheduler_lag > 300 seconds for 2 minutes
+- Recurring donations: warning when `stellar_scheduler_lag_seconds` > 60 seconds for 5 minutes; critical when > 300 seconds for 2 minutes
+- Transaction sync: warning when `stellar_transaction_sync_lag_seconds` > 1800 seconds (2x the 15-minute default sync interval) for 5 minutes; critical when > 3600 seconds (4x) for 5 minutes
+
+The alert rules are in `monitoring/prometheus-alerts.yml`. The skip-rate and Horizon pool acquire-latency alerts remain as secondary signals.
 
 ### 5. Background Job Success Rate
 

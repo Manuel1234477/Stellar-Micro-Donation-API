@@ -96,6 +96,7 @@ The production deployment uses file-based secret injection. Configure these envi
 | `LOG_LEVEL` | Logging level | `info`, `debug`, `error` |
 | `SECURE_SECRETS` | Enable secure secret file handling | `true` |
 | `SHUTDOWN_TIMEOUT_MS` | Graceful-shutdown budget in milliseconds | `30000` |
+| `TRUSTED_PROXIES` | Addresses/CIDRs of the reverse proxy or ingress (never `true`). See [Trusted proxies](#trusted-proxies-trusted_proxies) | `10.244.0.0/16` |
 
 ## Resource Configuration
 
@@ -230,6 +231,23 @@ Logs are mounted to the `logs` volume for external log aggregation. Configure yo
 - Use TLS/SSL for all external connections
 - Implement rate limiting on public endpoints
 - Use API key authentication for all requests
+
+#### Trusted proxies (`TRUSTED_PROXIES`)
+
+When the API sits behind an ingress controller or load balancer, set `TRUSTED_PROXIES` to the address ranges of those proxies. Without it, Express trusts only loopback, so `req.ip` is the proxy address for every client. Per-IP rate limiting, abuse detection and brute-force protection on `/auth` would then apply to all users together. In production, startup logs a warning when the variable is unset.
+
+Do **not** set it to `true`. That lets clients forge `X-Forwarded-For` and bypass IP-based controls.
+
+| Deployment | Value |
+|------------|-------|
+| Single reverse proxy on the same host (Nginx, Caddy) | `loopback` (default) or `127.0.0.1` |
+| Docker Compose proxy container on a user-defined network | The proxy container's subnet, e.g. `172.18.0.0/16` |
+| Kubernetes ingress controller | The ingress controller pod CIDR, e.g. `10.244.0.0/16` (check with `kubectl get nodes -o jsonpath='{.items[*].spec.podCIDR}'`) |
+| AWS Application Load Balancer or GCP/Azure load balancer | The load balancer's private subnet CIDRs (or the VPC CIDR if the load balancer is inside it) |
+
+Comma-separate multiple entries, for example `TRUSTED_PROXIES=10.244.0.0/16,10.0.1.0/24`.
+
+After deploying, confirm the setting with a request that sends `X-Forwarded-For` from a test client and check that the rate-limit or access log shows the client address, not the proxy address.
 
 ### 3. Database Security
 

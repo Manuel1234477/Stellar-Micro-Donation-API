@@ -1,3 +1,4 @@
+const { bestEffort } = require('../utils/bestEffort');
 /**
  * Disputes Routes
  *
@@ -171,7 +172,7 @@ router.post('/:id/dispute', checkPermission(PERMISSIONS.DONATIONS_WRITE), payloa
         disputeId: dispute.id,
         reason: reason.substring(0, 100),
       },
-    }).catch(() => {});
+    }).catch(bestEffort('src/routes/disputes.js:174'));
 
     // Emit webhook event
     WebhookService.deliver('donation.disputed', {
@@ -180,7 +181,7 @@ router.post('/:id/dispute', checkPermission(PERMISSIONS.DONATIONS_WRITE), payloa
       reason,
       recipientPublicKey: recipient.publicKey,
       timestamp: new Date().toISOString(),
-    }).catch(() => {});
+    }).catch(bestEffort('src/routes/disputes.js:183'));
 
     res.status(201).json({
       success: true,
@@ -267,7 +268,7 @@ router.patch('/:id', checkPermission(PERMISSIONS.ADMIN_ALL), payloadSizeLimiter(
           reason: 'Dispute resolution - refund approved',
           amount: donation.amount,
           timestamp: new Date().toISOString(),
-        }).catch(() => {});
+        }).catch(bestEffort('src/routes/disputes.js:270'));
       }
     }
 
@@ -285,7 +286,7 @@ router.patch('/:id', checkPermission(PERMISSIONS.ADMIN_ALL), payloadSizeLimiter(
         status,
         resolutionNotes: resolutionNotes ? resolutionNotes.substring(0, 100) : null,
       },
-    }).catch(() => {});
+    }).catch(bestEffort('src/routes/disputes.js:288'));
 
     res.json({
       success: true,

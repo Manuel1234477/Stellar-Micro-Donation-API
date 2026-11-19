@@ -158,6 +158,12 @@ const ROUTE_PERMISSIONS = [
   { method: 'POST', path: '/admin/geo-rules', permission: PERMISSIONS.ADMIN_ALL, unversioned: true },
   { method: 'PATCH', path: '/admin/geo-rules/:id', permission: PERMISSIONS.ADMIN_ALL, unversioned: true },
   { method: 'DELETE', path: '/admin/geo-rules/:id', permission: PERMISSIONS.ADMIN_ALL, unversioned: true },
+  // Federation records admin (#1938)
+  { method: 'GET', path: '/admin/federation', permission: PERMISSIONS.ADMIN_ALL, unversioned: true },
+  { method: 'GET', path: '/admin/federation/:name', permission: PERMISSIONS.ADMIN_ALL, unversioned: true },
+  { method: 'POST', path: '/admin/federation', permission: PERMISSIONS.ADMIN_ALL, unversioned: true },
+  { method: 'PATCH', path: '/admin/federation/:name', permission: PERMISSIONS.ADMIN_ALL, unversioned: true },
+  { method: 'DELETE', path: '/admin/federation/:name', permission: PERMISSIONS.ADMIN_ALL, unversioned: true },
   { method: 'POST', path: '/admin/geo-rules/test', permission: PERMISSIONS.ADMIN_ALL, unversioned: true },
   { method: 'GET', path: '/admin/geo-rules/active', permission: PERMISSIONS.ADMIN_ALL, unversioned: true },
   { method: 'GET', path: '/admin/geo-rules/config', permission: PERMISSIONS.ADMIN_ALL, unversioned: true },

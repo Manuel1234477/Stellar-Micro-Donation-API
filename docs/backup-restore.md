@@ -43,9 +43,23 @@ The backup system provides:
 ### Security
 
 - **Encryption**: AES-256-GCM with random IV per backup
-- **Key derivation**: SHA-256 hash of ENCRYPTION_KEY environment variable
+- **Key derivation**: HKDF-SHA256 (info `stellar-backup-v1`) of `BACKUP_ENCRYPTION_KEY`, or of `ENCRYPTION_KEY` when that is unset
+- **File header**: each backup starts with `SBK2`, a key id and the key id length, so restore knows which key to use
 - **Authentication**: GCM auth tag prevents tampering
 - **Secrets management**: Encryption key from environment variables
+
+### Key Rotation
+
+Each backup records the id of the key that encrypted it. To rotate:
+
+1. Note the current key id (`BACKUP_KEY_ID`, or the id shown in backup metadata as `keyId`).
+2. Set the new key material in `BACKUP_ENCRYPTION_KEY` (or `ENCRYPTION_KEY`) and, optionally, a new `BACKUP_KEY_ID`.
+3. Add the old key to `BACKUP_PREVIOUS_KEYS` as `old-key-id:old-key-material`. Separate several entries with commas. Materials must not contain commas.
+4. Keep the previous key listed for as long as backups made with it must remain restorable.
+
+Backups written before the header format (no `SBK2` prefix) are decrypted with `SHA-256(key)` and try every key listed in `BACKUP_PREVIOUS_KEYS` and `ENCRYPTION_KEY`. Restoring a backup whose key id is not configured fails with `No backup key configured for key id "..."`.
+
+`npm run test:backup-restore` covers restoring a backup after a key rotation.
 
 ## Automated Backup Configuration
 

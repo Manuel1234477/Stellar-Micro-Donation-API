@@ -1,3 +1,4 @@
+const { bestEffort } = require('./bestEffort');
 /**
  * Timeout Handler Utility - Defensive Timeout Management
  * 
@@ -73,7 +74,7 @@ function withTimeout(promise, timeoutMs, operation = 'operation', abortControlle
           () => clearTimeout(timer),
           () => clearTimeout(timer)
         )
-        .catch(() => {});
+        .catch(bestEffort('src/utils/timeoutHandler.js:76'));
     })
   ]);
 }

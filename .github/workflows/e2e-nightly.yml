@@ -10,8 +10,14 @@ on:
   workflow_dispatch:
 
 # ─── Job ───────────────────────────────────────────────────────────────────────
+permissions:
+  contents: read
+
 jobs:
   e2e-testnet:
+    permissions:
+      contents: read
+      issues: write
     name: E2E — Stellar Testnet
     runs-on: ubuntu-latest
     # Hard wall-clock limit; individual tests have a 60 s Jest timeout
@@ -19,10 +25,10 @@ jobs:
 
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
 
       - name: Set up Node.js 18
-        uses: actions/setup-node@v7
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
         with:
           node-version: '24'
           cache: 'npm'

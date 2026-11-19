@@ -99,20 +99,22 @@ router.get('/export/:jobId/status', requireApiKey, checkPermission(PERMISSIONS.A
 router.get('/export/:jobId/download', requireApiKey, checkPermission(PERMISSIONS.ADMIN_ALL), asyncHandler(async (req, res, next) => {
   try {
     const DonationExportService = require('../../services/DonationExportService');
-    const { token, expires } = req.query;
+    const { expires } = req.query;
+    const signature = req.query.signature || req.query.token;
 
-    if (!token || !expires) {
+    if (!signature || !expires) {
       return res.status(400).json({
         success: false,
-        error: { code: 'MISSING_PARAMS', message: 'token and expires parameters are required' },
+        error: { code: 'MISSING_PARAMS', message: 'signature and expires parameters are required' },
       });
     }
 
-    const { filePath, format } = await DonationExportService.verifyAndGetDownload(
-      req.params.jobId,
-      token,
-      expires
-    );
+    const { filePath, format } = await DonationExportService.verifyAndGetDownload({
+      jobId: req.params.jobId,
+      principalId: req.apiKey.id,
+      expires,
+      signature,
+    });
 
     const fs = require('fs');
 

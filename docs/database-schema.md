@@ -1,551 +1,757 @@
-# Database Schema Reference
+# Database Schema
 
-This document describes the current SQLite database schema for the Stellar Micro-Donation API. It covers every table, its columns (type, nullability, default, purpose), indexes, and foreign-key relationships. An ASCII ER diagram shows entity relationships at a glance.
+<!-- AUTO-GENERATED — do not edit by hand.
+     Regenerate with: npm run docs:db-schema
+     Source: every migration in src/migrations, applied to an empty SQLite database.
+     CI verifies this file with: npm run docs:db-schema:check -->
 
-**Source of truth:** migrations in `src/migrations/` applied in numerical order.  
-**Last reviewed:** 2026-06-30
+This document is generated from the migrations the application runs. The
+hand-written schema that used to live in the README drifted from the code, so it
+has been removed. For the amounts column rules see [ADR-004](adr/004-money-as-stroops.md).
 
----
+Limitation: a few tables are created lazily by model code at runtime rather than by a
+migration (for example `webhooks` and `matching_programs`). They are not listed here.
 
-## How to regenerate this diagram
+**Tables:** 39 · **Indexes:** 48 · **Foreign keys:** 18
 
-The schema is derived from the migration files. To inspect the live schema after running migrations:
+## Entity relationships
 
-```bash
-# 1. Run all migrations against a fresh database
-npm run init-db && npm run migrate
-
-# 2. Dump the schema from SQLite
-sqlite3 data/stellar_donations.db .schema
-
-# 3. (Optional) generate a visual ER diagram with a tool such as:
-#    - SchemaSpy:  https://schemaspy.org
-#    - dbdiagram.io (paste CREATE TABLE DDL)
-#    - sqlite-utils: sqlite-utils schema data/stellar_donations.db
+```mermaid
+erDiagram
+    users ||--o{ campaigns : "created_by"
+    transactions ||--o{ disputes : "donationId"
+    api_keys ||--o{ donation_exports : "api_key_id"
+    users ||--o{ donation_velocity : "recipientId"
+    users ||--o{ donation_velocity : "donorId"
+    student_fees ||--o{ fee_payments : "feeId"
+    campaigns ||--o{ pledges : "campaign_id"
+    users ||--o{ recipient_velocity_limits : "recipientId"
+    recovery_requests ||--o{ recovery_approvals : "recoveryRequestId"
+    users ||--o{ recovery_guardians : "walletId"
+    users ||--o{ recovery_requests : "walletId"
+    recurring_donations ||--o{ recurring_donation_executions : "scheduleId"
+    users ||--o{ recurring_donations : "recipientId"
+    users ||--o{ recurring_donations : "donorId"
+    transactions ||--o{ refunds : "original_donation_id"
+    users ||--o{ transactions : "receiverId"
+    users ||--o{ transactions : "senderId"
+    campaigns ||--o{ transactions : "campaign_id"
 ```
-
-When you add a migration, update this document to reflect the new or altered tables.
-
----
-
-## ER Diagram
-
-```
-users ──────────────────────────────────────────────────────┐
-  │ 1                                                        │
-  │◄── transactions (senderId, receiverId)                   │
-  │◄── recurring_donations (donorId, recipientId)            │
-  │◄── donation_velocity (donorId, recipientId)              │
-  │◄── recipient_velocity_limits (recipientId)               │
-  │◄── recovery_guardians (walletId)                         │
-  │◄── recovery_requests (walletId)                          │
-  │                                                          │
-transactions ──────────────────────────────────────────────►│
-  │◄── campaigns (created_by → users)                        │
-  │◄── disputes (donationId)                                 │
-  │    idempotencyKey (UNIQUE)                               │
-  │    stellar_tx_id  (UNIQUE)                               │
-  │                                                          │
-api_keys ──────────────────────────────────────────────────►│
-  │◄── donation_exports (api_key_id)                         │
-  │◄── api_key_usage   (api_key TEXT — not FK)               │
-  │                                                          │
-sep10_challenges  (standalone — challengeId PK)             │
-wallets           (standalone — id TEXT PK)                 │
-audit_logs        (standalone)                              │
-nonce_store       (standalone)                              │
-donation_totals         (recipient_id TEXT PK)             │
-donation_totals_global  (id INTEGER PK, single row)        │
-corporate_employers     (id TEXT PK)                        │
-corporate_claims        (id TEXT PK)                        │
-anomaly_history         (id INTEGER PK)                     │
-anomaly_records         (id INTEGER PK)                     │
-recovery_approvals ◄── recovery_requests (recoveryRequestId)│
-student_fees / fee_payments (legacy fee-installment tables) │
-```
-
----
 
 ## Tables
 
-### `users`
-
-Central identity table. Each row represents a Stellar wallet/account known to the platform.
-
-| Column | Type | Nullable | Default | Description |
-|--------|------|----------|---------|-------------|
-| `id` | INTEGER | NO | AUTOINCREMENT PK | Internal surrogate key |
-| `publicKey` | TEXT | NO | — | Stellar public key (Ed25519, 56 chars). UNIQUE |
-| `encryptedSecret` | TEXT | YES | NULL | AES-256 encrypted Stellar secret key (optional, stored only when key custody is enabled) |
-| `createdAt` | DATETIME | YES | CURRENT_TIMESTAMP | Row creation time |
-| `deleted_at` | DATETIME | YES | NULL | Soft-delete timestamp; NULL = active |
-| `daily_limit` | REAL | YES | NULL | Per-user daily donation cap in XLM; NULL = use global default |
-| `monthly_limit` | REAL | YES | NULL | Per-user monthly donation cap in XLM |
-| `per_transaction_limit` | REAL | YES | NULL | Per-transaction cap in XLM |
-| `tenant_id` | TEXT | NO | `'default'` | Multi-tenancy discriminator |
-
-**Indexes:** UNIQUE on `publicKey`.
-
----
-
-### `transactions`
-
-Records every donation/payment processed through the API.
-
-| Column | Type | Nullable | Default | Description |
-|--------|------|----------|---------|-------------|
-| `id` | INTEGER | NO | AUTOINCREMENT PK | Internal surrogate key |
-| `senderId` | INTEGER | NO | — | FK → `users.id` |
-| `receiverId` | INTEGER | NO | — | FK → `users.id` |
-| `amount` | REAL | NO | — | Amount in XLM (stroops stored as TEXT in some contexts via migration 021) |
-| `memo` | TEXT | YES | NULL | Plaintext or encrypted memo |
-| `notes` | TEXT | YES | NULL | Free-text donor notes |
-| `tags` | TEXT | YES | NULL | JSON array of tag strings |
-| `timestamp` | DATETIME | YES | CURRENT_TIMESTAMP | When the transaction was recorded |
-| `deleted_at` | DATETIME | YES | NULL | Soft-delete timestamp |
-| `idempotencyKey` | TEXT | YES | NULL | Client-supplied idempotency key. UNIQUE (partial index, non-NULL only) |
-| `stellar_tx_id` | TEXT | YES | NULL | Stellar network transaction hash. UNIQUE |
-| `is_orphan` | INTEGER | NO | `0` | 1 = transaction exists on-chain but no matching local record was found during sync |
-| `campaign_id` | INTEGER | YES | NULL | FK → `campaigns.id` |
-| `validAfter` | INTEGER | YES | `0` | Unix timestamp — transaction not valid before this time |
-| `validBefore` | INTEGER | YES | `0` | Unix timestamp — transaction not valid after this time (time-bound) |
-| `tenant_id` | TEXT | NO | `'default'` | Multi-tenancy discriminator |
-
-**Indexes:**
-- `idx_transactions_idempotency` on `(idempotencyKey)`
-- `idx_transactions_idempotency_key_unique` UNIQUE on `(idempotencyKey) WHERE idempotencyKey IS NOT NULL`
-
----
-
-### `campaigns`
-
-Crowdfunding campaigns that donations can be attributed to.
-
-| Column | Type | Nullable | Default | Description |
-|--------|------|----------|---------|-------------|
-| `id` | INTEGER | NO | AUTOINCREMENT PK | Internal surrogate key |
-| `name` | TEXT | NO | — | Campaign display name |
-| `description` | TEXT | YES | NULL | Long-form description |
-| `goal_amount` | REAL | NO | — | Fundraising target in XLM |
-| `current_amount` | REAL | YES | `0` | Running total donated so far |
-| `start_date` | DATETIME | YES | NULL | Campaign start; NULL = starts immediately |
-| `end_date` | DATETIME | YES | NULL | Campaign end; NULL = no deadline |
-| `status` | TEXT | YES | `'active'` | `active` \| `completed` \| `cancelled` |
-| `created_by` | INTEGER | YES | NULL | FK → `users.id` |
-| `createdAt` | DATETIME | YES | CURRENT_TIMESTAMP | Row creation time |
-| `updatedAt` | DATETIME | YES | CURRENT_TIMESTAMP | Last update time |
-| `deleted_at` | DATETIME | YES | NULL | Soft-delete timestamp |
-| `tenant_id` | TEXT | NO | `'default'` | Multi-tenancy discriminator |
-
----
-
-### `recurring_donations`
-
-Schedules for automated periodic donations.
-
-| Column | Type | Nullable | Default | Description |
-|--------|------|----------|---------|-------------|
-| `id` | INTEGER | NO | AUTOINCREMENT PK | Internal surrogate key |
-| `donorId` | INTEGER | NO | — | FK → `users.id` |
-| `recipientId` | INTEGER | NO | — | FK → `users.id` |
-| `amount` | REAL | NO | — | Amount per execution in XLM |
-| `frequency` | TEXT | NO | — | `daily` \| `weekly` \| `monthly` \| `custom` |
-| `nextExecutionDate` | DATETIME | NO | — | When the scheduler will next fire this donation |
-| `status` | TEXT | YES | `'active'` | `active` \| `paused` \| `cancelled` \| `completed` |
-| `executionCount` | INTEGER | YES | `0` | Number of times successfully executed |
-| `customIntervalDays` | INTEGER | YES | NULL | Used when `frequency = 'custom'`; interval in days |
-| `maxExecutions` | INTEGER | YES | NULL | Cap on total executions; NULL = unlimited |
-| `webhookUrl` | TEXT | YES | NULL | Optional per-schedule webhook URL |
-| `failureCount` | INTEGER | YES | `0` | Consecutive execution failures |
-| `lastExecutionDate` | DATETIME | YES | NULL | Timestamp of the most recent execution |
-| `tenant_id` | TEXT | NO | `'default'` | Multi-tenancy discriminator |
-
----
-
-### `api_keys`
-
-Database-backed API keys with role, quota, rotation, and expiry support.
-
-| Column | Type | Nullable | Default | Description |
-|--------|------|----------|---------|-------------|
-| `id` | INTEGER | NO | AUTOINCREMENT PK | Internal surrogate key |
-| `key_hash` | TEXT | NO | — | SHA-256 hash of the raw key. UNIQUE |
-| `key_prefix` | TEXT | NO | — | First 8 chars of raw key (for display/lookup) |
-| `name` | TEXT | NO | — | Human-readable label |
-| `role` | TEXT | NO | `'user'` | `admin` \| `user` \| `guest` |
-| `status` | TEXT | NO | `'active'` | `active` \| `deprecated` \| `revoked` |
-| `created_by` | TEXT | YES | NULL | Identifier of the admin who created the key |
-| `metadata` | TEXT | YES | NULL | JSON blob for arbitrary key metadata |
-| `expires_at` | INTEGER | YES | NULL | Unix ms expiry; NULL = never expires |
-| `last_used_at` | INTEGER | YES | NULL | Unix ms of most recent authenticated request |
-| `deprecated_at` | INTEGER | YES | NULL | Unix ms when key was deprecated |
-| `revoked_at` | INTEGER | YES | NULL | Unix ms when key was revoked |
-| `created_at` | INTEGER | NO | — | Unix ms creation timestamp |
-| `grace_period_days` | INTEGER | NO | `30` | Days after deprecation before forced revocation |
-| `rotated_to_id` | INTEGER | YES | NULL | FK → `api_keys.id` of the replacement key |
-| `signing_required` | INTEGER | NO | `0` | 1 = requests with this key must be HMAC-signed |
-| `key_secret` | TEXT | YES | NULL | HMAC signing secret (stored encrypted) |
-| `allowed_ips` | TEXT | YES | NULL | JSON array of CIDR ranges; NULL = all IPs allowed |
-| `monthly_quota` | INTEGER | YES | NULL | Max requests per calendar month; NULL = unlimited |
-| `quota_used` | INTEGER | NO | `0` | Requests used in the current quota window |
-| `quota_reset_at` | INTEGER | YES | NULL | Unix ms when quota resets |
-| `tenant_id` | TEXT | NO | `'default'` | Multi-tenancy discriminator |
-| `notification_email` | TEXT | YES | NULL | Email for expiry notifications |
-| `last_expiry_notification_sent_at` | INTEGER | YES | NULL | Unix ms of last expiry warning email |
-
-**Indexes:**
-- `idx_api_keys_key_hash` on `(key_hash)`
-- `idx_api_keys_status` on `(status)`
-
----
-
-### `audit_logs`
-
-Immutable, integrity-protected log of security-relevant events.
-
-| Column | Type | Nullable | Default | Description |
-|--------|------|----------|---------|-------------|
-| `id` | INTEGER | NO | AUTOINCREMENT PK | Internal surrogate key |
-| `timestamp` | TEXT | NO | — | ISO-8601 event timestamp |
-| `category` | TEXT | NO | — | Event category (e.g. `AUTH`, `DONATION`, `KEY_ROTATION`) |
-| `action` | TEXT | NO | — | Specific action (e.g. `LOGIN`, `CREATE`, `REVOKE`) |
-| `severity` | TEXT | NO | — | `INFO` \| `WARN` \| `ERROR` \| `CRITICAL` |
-| `result` | TEXT | NO | — | `success` \| `failure` |
-| `userId` | TEXT | YES | NULL | Stellar public key or API key identifier of the actor |
-| `requestId` | TEXT | YES | NULL | Correlation ID from the HTTP request |
-| `ipAddress` | TEXT | YES | NULL | Client IP address |
-| `resource` | TEXT | YES | NULL | Resource affected (e.g. `donations/42`) |
-| `reason` | TEXT | YES | NULL | Human-readable reason for the event |
-| `details` | TEXT | YES | NULL | JSON blob with additional context |
-| `integrityHash` | TEXT | NO | — | HMAC of the row contents for tamper detection |
-| `createdAt` | DATETIME | YES | CURRENT_TIMESTAMP | Row insertion time |
-
-**Indexes:** on `timestamp`, `category`, `action`, `severity`, `userId`, `requestId`.
-
----
-
-### `wallets`
-
-Wallet metadata records (separate from `users` — wallets are address-labelled containers, users are identity rows).
-
-| Column | Type | Nullable | Default | Description |
-|--------|------|----------|---------|-------------|
-| `id` | TEXT | NO | PK | UUID string |
-| `address` | TEXT | NO | — | Stellar public key. UNIQUE |
-| `label` | TEXT | YES | NULL | Display name for the wallet |
-| `ownerName` | TEXT | YES | NULL | Wallet owner's name |
-| `notes` | TEXT | YES | NULL | Free-text notes |
-| `leaderboard_visibility` | INTEGER | YES | `1` | 1 = visible on public leaderboard |
-| `last_synced_at` | TEXT | YES | NULL | ISO-8601 timestamp of last Horizon sync |
-| `last_cursor` | TEXT | YES | NULL | Horizon paging cursor for incremental sync |
-| `createdAt` | TEXT | NO | — | ISO-8601 creation timestamp |
-| `updatedAt` | TEXT | YES | NULL | ISO-8601 last-updated timestamp |
-| `deletedAt` | TEXT | YES | NULL | Soft-delete timestamp |
-
-**Indexes:** `idx_wallets_address` on `(address)`.
-
----
-
-### `sep10_challenges`
-
-Tracks issued SEP-0010 web auth challenges. Used to enforce expiry and single-use.
-
-| Column | Type | Nullable | Default | Description |
-|--------|------|----------|---------|-------------|
-| `challengeId` | TEXT | NO | PK | Random 32-char hex identifier |
-| `account` | TEXT | NO | — | Stellar public key the challenge was issued to |
-| `expiresAt` | INTEGER | NO | — | Unix ms expiry timestamp |
-| `issuedAt` | INTEGER | NO | — | Unix ms when challenge was created |
-| `used` | INTEGER | NO | `0` | 1 = challenge has been consumed (single-use) |
-| `usedAt` | INTEGER | YES | NULL | Unix ms when challenge was verified |
-
-**Indexes:** `idx_sep10_challenges_expires` on `(expiresAt)`.
-
----
-
-### `donation_velocity`
-
-Rolling window counters used to enforce per-donor/recipient rate limits.
-
-| Column | Type | Nullable | Default | Description |
-|--------|------|----------|---------|-------------|
-| `id` | INTEGER | NO | AUTOINCREMENT PK | Internal surrogate key |
-| `donorId` | INTEGER | NO | — | FK → `users.id` |
-| `recipientId` | INTEGER | NO | — | FK → `users.id` |
-| `windowStart` | DATETIME | NO | — | Start of the velocity window |
-| `totalAmount` | REAL | NO | `0` | Total donated in this window |
-| `count` | INTEGER | NO | `0` | Number of donations in this window |
-| `updatedAt` | DATETIME | YES | CURRENT_TIMESTAMP | Last update time |
-
-**Indexes:** UNIQUE on `(donorId, recipientId, windowStart)`.
-
----
-
-### `recipient_velocity_limits`
-
-Per-recipient configurable donation rate limits.
-
-| Column | Type | Nullable | Default | Description |
-|--------|------|----------|---------|-------------|
-| `id` | INTEGER | NO | AUTOINCREMENT PK | Internal surrogate key |
-| `recipientId` | INTEGER | NO | — | FK → `users.id`. UNIQUE |
-| `maxAmount` | REAL | YES | NULL | Max total XLM receivable per window |
-| `maxCount` | INTEGER | YES | NULL | Max donations receivable per window |
-| `windowType` | TEXT | NO | `'daily'` | `daily` \| `weekly` \| `monthly` |
-| `createdAt` | DATETIME | YES | CURRENT_TIMESTAMP | Row creation time |
-| `updatedAt` | DATETIME | YES | CURRENT_TIMESTAMP | Last update time |
-
----
-
-### `disputes`
-
-Donation disputes raised by recipients.
-
-| Column | Type | Nullable | Default | Description |
-|--------|------|----------|---------|-------------|
-| `id` | INTEGER | NO | AUTOINCREMENT PK | Internal surrogate key |
-| `donationId` | INTEGER | NO | — | FK → `transactions.id`. UNIQUE per donation |
-| `recipientPublicKey` | TEXT | NO | — | Stellar public key of the disputing recipient |
-| `reason` | TEXT | NO | — | Free-text reason for dispute |
-| `evidence` | TEXT | YES | NULL | Supporting evidence (JSON or text) |
-| `status` | TEXT | YES | `'open'` | `open` \| `resolved` \| `rejected` |
-| `createdAt` | DATETIME | YES | CURRENT_TIMESTAMP | Dispute creation time |
-| `updatedAt` | DATETIME | YES | CURRENT_TIMESTAMP | Last update time |
-| `resolvedAt` | DATETIME | YES | NULL | When dispute was closed |
-| `resolutionNotes` | TEXT | YES | NULL | Admin notes on resolution |
-
-**Indexes:** on `(status)`, on `(recipientPublicKey)`.
-
----
-
-### `donation_exports`
-
-Tracks async CSV/JSON export jobs.
-
-| Column | Type | Nullable | Default | Description |
-|--------|------|----------|---------|-------------|
-| `id` | INTEGER | NO | AUTOINCREMENT PK | Internal surrogate key |
-| `export_id` | TEXT | NO | — | UUID for the export job. UNIQUE |
-| `api_key_id` | TEXT | NO | — | FK → `api_keys.id` (which key triggered export) |
-| `start_date` | TEXT | YES | NULL | Filter: donations on or after this date |
-| `end_date` | TEXT | YES | NULL | Filter: donations on or before this date |
-| `status_filter` | TEXT | YES | NULL | Filter: donation status |
-| `sender_public_key` | TEXT | YES | NULL | Filter: sender account |
-| `recipient_public_key` | TEXT | YES | NULL | Filter: recipient account |
-| `format` | TEXT | NO | — | `csv` \| `json` |
-| `status` | TEXT | NO | — | `pending` \| `processing` \| `completed` \| `failed` |
-| `record_count` | INTEGER | YES | `0` | Rows in the exported file |
-| `file_path` | TEXT | YES | NULL | Server-side file path of the completed export |
-| `error_message` | TEXT | YES | NULL | Error detail if `status = failed` |
-| `signed_url` | TEXT | YES | NULL | Temporary download URL |
-| `signed_url_expires_at` | TEXT | YES | NULL | Expiry timestamp of the signed URL |
-| `created_at` | TEXT | NO | — | ISO-8601 creation timestamp |
-| `updated_at` | TEXT | YES | NULL | ISO-8601 last-updated timestamp |
-
----
-
-### `corporate_employers`
-
-Registered employers for the corporate donation-matching programme.
-
-| Column | Type | Nullable | Default | Description |
-|--------|------|----------|---------|-------------|
-| `id` | TEXT | NO | PK | UUID string |
-| `name` | TEXT | NO | — | Employer display name |
-| `matchRatio` | INTEGER | NO | — | Match multiplier percentage (e.g. `100` = 1:1 match) |
-| `annualCap` | REAL | NO | — | Annual XLM cap on total matching payouts |
-| `addedAt` | TEXT | NO | — | ISO-8601 registration timestamp |
-
----
-
-### `corporate_claims`
-
-Individual match claims by donors against a registered employer.
-
-| Column | Type | Nullable | Default | Description |
-|--------|------|----------|---------|-------------|
-| `id` | TEXT | NO | PK | UUID string |
-| `donorId` | TEXT | NO | — | Stellar public key of the donor |
-| `employerId` | TEXT | NO | — | FK → `corporate_employers.id` |
-| `donationAmount` | REAL | NO | — | Original donation amount in XLM |
-| `matchAmount` | REAL | NO | — | Calculated match amount in XLM |
-| `status` | TEXT | NO | `'pending'` | `pending` \| `approved` \| `rejected` \| `paid` |
-| `createdAt` | TEXT | NO | — | ISO-8601 claim creation timestamp |
-| `reviewedAt` | TEXT | YES | NULL | ISO-8601 review timestamp |
-| `rejectReason` | TEXT | YES | NULL | Reason for rejection |
-| `txId` | TEXT | YES | NULL | Stellar transaction ID for the match payment |
-
-**Indexes:** on `(employerId, donorId, status, createdAt)`.
-
----
-
-### `nonce_store`
-
-Single-use nonces for replay-attack prevention on signed requests.
-
-| Column | Type | Nullable | Default | Description |
-|--------|------|----------|---------|-------------|
-| `nonce` | TEXT | NO | PK | The nonce value |
-| `usedAt` | DATETIME | YES | CURRENT_TIMESTAMP | When the nonce was first seen |
-| `expiresAt` | DATETIME | NO | — | After this time the nonce record may be purged |
-
-**Indexes:** `idx_nonce_store_expiresAt` on `(expiresAt)`.
-
----
-
-### `donation_totals`
-
-Pre-aggregated per-recipient donation totals for fast leaderboard and stats queries.
-
-| Column | Type | Nullable | Default | Description |
-|--------|------|----------|---------|-------------|
-| `recipient_id` | TEXT | NO | PK | Stellar public key of the recipient |
-| `total_stroops` | TEXT | NO | `'0'` | Cumulative donated amount in stroops (stored as TEXT to avoid JS integer overflow) |
-| `donation_count` | INTEGER | NO | `0` | Number of donations received |
-| `updated_at` | DATETIME | YES | CURRENT_TIMESTAMP | Last aggregation time |
-
----
-
-### `donation_totals_global`
-
-Single-row global aggregate (enforced via `CHECK (id = 1)`).
-
-| Column | Type | Nullable | Default | Description |
-|--------|------|----------|---------|-------------|
-| `id` | INTEGER | NO | PK — must be `1` | Singleton row identifier |
-| `total_stroops` | TEXT | NO | `'0'` | Platform-wide cumulative donated stroops |
-| `donation_count` | INTEGER | NO | `0` | Platform-wide total donation count |
-| `updated_at` | DATETIME | YES | CURRENT_TIMESTAMP | Last aggregation time |
-
----
-
-### `api_key_usage`
-
-Per-request usage records for analytics and per-key rate limiting.
-
-| Column | Type | Nullable | Default | Description |
-|--------|------|----------|---------|-------------|
-| `id` | INTEGER | NO | AUTOINCREMENT PK | Internal surrogate key |
-| `api_key` | TEXT | NO | — | Raw key prefix (not a FK — for performance) |
-| `timestamp` | INTEGER | NO | — | Unix ms request timestamp |
-| `latency_ms` | INTEGER | NO | — | End-to-end request latency in milliseconds |
-| `status_code` | INTEGER | NO | — | HTTP response status code |
-| `path` | TEXT | NO | `'/'` | Request path |
-| `method` | TEXT | NO | `'GET'` | HTTP method |
-
-**Indexes:** on `(api_key)`, on `(api_key, timestamp)`.
-
----
-
 ### `anomaly_history`
 
-Raw request events used by the anomaly detection service to compute baselines.
-
-| Column | Type | Nullable | Default | Description |
+| Column | Type | Not null | Default | Primary key |
 |--------|------|----------|---------|-------------|
-| `id` | INTEGER | NO | AUTOINCREMENT PK | Internal surrogate key |
-| `key_id` | TEXT | NO | — | API key identifier |
-| `ip` | TEXT | YES | NULL | Client IP address |
-| `country` | TEXT | YES | NULL | ISO country code (if geo-lookup is enabled) |
-| `hour` | INTEGER | YES | NULL | Hour-of-day (0–23) for pattern analysis |
-| `request_timestamp` | INTEGER | NO | — | Unix ms |
-| `endpoint` | TEXT | YES | NULL | API endpoint path |
-| `created_at` | INTEGER | NO | — | Unix ms row insertion time |
+| `id` | INTEGER | no | — | yes |
+| `key_id` | TEXT | yes | — | no |
+| `ip` | TEXT | no | — | no |
+| `country` | TEXT | no | — | no |
+| `hour` | INTEGER | no | — | no |
+| `request_timestamp` | INTEGER | yes | — | no |
+| `endpoint` | TEXT | no | — | no |
+| `created_at` | INTEGER | yes | — | no |
 
-**Indexes:** on `(key_id)`, on `(request_timestamp)`.
+**Indexes**
 
----
+- `idx_anomaly_history_key_id` (index on `key_id`)
+- `idx_anomaly_history_request_timestamp` (index on `request_timestamp`)
 
 ### `anomaly_records`
 
-Detected anomaly events for alerting and audit.
-
-| Column | Type | Nullable | Default | Description |
+| Column | Type | Not null | Default | Primary key |
 |--------|------|----------|---------|-------------|
-| `id` | INTEGER | NO | AUTOINCREMENT PK | Internal surrogate key |
-| `key_id` | TEXT | NO | — | API key that triggered the anomaly |
-| `type` | TEXT | NO | — | Anomaly type (e.g. `UNUSUAL_VOLUME`, `NEW_COUNTRY`) |
-| `detail` | TEXT | YES | NULL | Human-readable description |
-| `timestamp` | INTEGER | NO | — | Unix ms when anomaly was detected |
-| `created_at` | INTEGER | NO | — | Unix ms row insertion time |
+| `id` | INTEGER | no | — | yes |
+| `key_id` | TEXT | yes | — | no |
+| `type` | TEXT | yes | — | no |
+| `detail` | TEXT | no | — | no |
+| `timestamp` | INTEGER | yes | — | no |
+| `created_at` | INTEGER | yes | — | no |
 
-**Indexes:** on `(key_id)`, on `(timestamp)`.
+**Indexes**
 
----
+- `idx_anomaly_records_key_id` (index on `key_id`)
+- `idx_anomaly_records_timestamp` (index on `timestamp`)
 
-### `recovery_guardians`
+### `api_key_usage`
 
-Social-recovery guardians associated with a wallet.
-
-| Column | Type | Nullable | Default | Description |
+| Column | Type | Not null | Default | Primary key |
 |--------|------|----------|---------|-------------|
-| `id` | INTEGER | NO | AUTOINCREMENT PK | Internal surrogate key |
-| `walletId` | INTEGER | NO | — | FK → `users.id` |
-| `guardianPublicKey` | TEXT | NO | — | Guardian's Stellar public key |
-| `threshold` | INTEGER | YES | NULL | Minimum approvals required (overrides request threshold if set) |
-| `createdAt` | DATETIME | YES | CURRENT_TIMESTAMP | Registration time |
+| `id` | INTEGER | no | — | yes |
+| `api_key` | TEXT | yes | — | no |
+| `timestamp` | INTEGER | yes | — | no |
+| `latency_ms` | INTEGER | yes | — | no |
+| `status_code` | INTEGER | yes | — | no |
+| `path` | TEXT | yes | '/' | no |
+| `method` | TEXT | yes | 'GET' | no |
 
-**Constraints:** UNIQUE on `(walletId, guardianPublicKey)`.
+**Indexes**
 
----
+- `idx_api_key_usage_api_key` (index on `api_key`)
+- `idx_api_key_usage_api_key_timestamp` (index on `api_key`, `timestamp`)
 
-### `recovery_requests`
+### `api_keys`
 
-Pending requests to replace a wallet's public key via social recovery.
-
-| Column | Type | Nullable | Default | Description |
+| Column | Type | Not null | Default | Primary key |
 |--------|------|----------|---------|-------------|
-| `id` | INTEGER | NO | AUTOINCREMENT PK | Internal surrogate key |
-| `walletId` | INTEGER | NO | — | FK → `users.id` |
-| `newPublicKey` | TEXT | NO | — | Replacement Stellar public key |
-| `status` | TEXT | NO | `'pending'` | `pending` \| `approved` \| `rejected` \| `executed` |
-| `threshold` | INTEGER | NO | — | Number of guardian approvals required |
-| `executeAfter` | DATETIME | NO | — | Earliest time the recovery may be executed (time-lock) |
-| `createdAt` | DATETIME | YES | CURRENT_TIMESTAMP | Request creation time |
-| `executedAt` | DATETIME | YES | NULL | When the recovery was executed |
+| `id` | INTEGER | no | — | yes |
+| `key_hash` | TEXT | yes | — | no |
+| `key_prefix` | TEXT | yes | — | no |
+| `name` | TEXT | yes | — | no |
+| `role` | TEXT | yes | 'user' | no |
+| `status` | TEXT | yes | 'active' | no |
+| `created_by` | TEXT | no | — | no |
+| `metadata` | TEXT | no | — | no |
+| `expires_at` | INTEGER | no | — | no |
+| `last_used_at` | INTEGER | no | — | no |
+| `deprecated_at` | INTEGER | no | — | no |
+| `revoked_at` | INTEGER | no | — | no |
+| `created_at` | INTEGER | yes | — | no |
+| `grace_period_days` | INTEGER | yes | 30 | no |
+| `rotated_to_id` | INTEGER | no | — | no |
+| `signing_required` | INTEGER | yes | 0 | no |
+| `key_secret` | TEXT | no | — | no |
+| `scopes` | TEXT | no | — | no |
+| `allowed_ips` | TEXT | no | — | no |
+| `monthly_quota` | INTEGER | no | — | no |
+| `quota_used` | INTEGER | yes | 0 | no |
+| `quota_reset_at` | INTEGER | no | — | no |
+| `tenant_id` | TEXT | yes | 'default' | no |
+| `notification_email` | TEXT | no | — | no |
+| `last_expiry_notification_sent_at` | INTEGER | no | — | no |
+| `rate_limit_per_minute` | INTEGER | no | NULL | no |
 
----
+**Indexes**
+
+- `idx_api_keys_key_hash` (index on `key_hash`)
+- `idx_api_keys_status` (index on `status`)
+
+### `audit_logs`
+
+| Column | Type | Not null | Default | Primary key |
+|--------|------|----------|---------|-------------|
+| `id` | INTEGER | no | — | yes |
+| `timestamp` | TEXT | yes | — | no |
+| `category` | TEXT | yes | — | no |
+| `action` | TEXT | yes | — | no |
+| `severity` | TEXT | yes | — | no |
+| `result` | TEXT | yes | — | no |
+| `userId` | TEXT | no | — | no |
+| `requestId` | TEXT | no | — | no |
+| `ipAddress` | TEXT | no | — | no |
+| `resource` | TEXT | no | — | no |
+| `reason` | TEXT | no | — | no |
+| `details` | TEXT | no | — | no |
+| `integrityHash` | TEXT | yes | — | no |
+| `createdAt` | DATETIME | no | CURRENT_TIMESTAMP | no |
+
+**Indexes**
+
+- `idx_audit_logs_action` (index on `action`)
+- `idx_audit_logs_category` (index on `category`)
+- `idx_audit_logs_requestId` (index on `requestId`)
+- `idx_audit_logs_severity` (index on `severity`)
+- `idx_audit_logs_timestamp` (index on `timestamp`)
+- `idx_audit_logs_userId` (index on `userId`)
+
+### `campaigns`
+
+| Column | Type | Not null | Default | Primary key |
+|--------|------|----------|---------|-------------|
+| `id` | INTEGER | no | — | yes |
+| `name` | TEXT | yes | — | no |
+| `description` | TEXT | no | — | no |
+| `goal_amount` | REAL | yes | — | no |
+| `current_amount` | REAL | no | 0 | no |
+| `start_date` | DATETIME | no | — | no |
+| `end_date` | DATETIME | no | — | no |
+| `status` | TEXT | no | 'active' | no |
+| `created_by` | INTEGER | no | — | no |
+| `createdAt` | DATETIME | no | CURRENT_TIMESTAMP | no |
+| `updatedAt` | DATETIME | no | CURRENT_TIMESTAMP | no |
+| `deleted_at` | DATETIME | no | NULL | no |
+| `tenant_id` | TEXT | yes | 'default' | no |
+
+**Foreign keys**
+
+- `created_by` → `users`(`id`)
+
+### `circuit_breaker_state`
+
+| Column | Type | Not null | Default | Primary key |
+|--------|------|----------|---------|-------------|
+| `name` | TEXT | no | — | yes |
+| `state` | TEXT | yes | 'closed' | no |
+| `failureCount` | INTEGER | yes | 0 | no |
+| `lastFailureAt` | INTEGER | no | — | no |
+| `openedAt` | INTEGER | no | — | no |
+| `probeHolder` | TEXT | no | NULL | no |
+
+### `corporate_claims`
+
+| Column | Type | Not null | Default | Primary key |
+|--------|------|----------|---------|-------------|
+| `id` | TEXT | no | — | yes |
+| `donorId` | TEXT | yes | — | no |
+| `employerId` | TEXT | yes | — | no |
+| `donationAmount` | REAL | yes | — | no |
+| `matchAmount` | REAL | yes | — | no |
+| `status` | TEXT | yes | 'pending' | no |
+| `createdAt` | TEXT | yes | — | no |
+| `reviewedAt` | TEXT | no | — | no |
+| `rejectReason` | TEXT | no | — | no |
+| `txId` | TEXT | no | — | no |
+
+**Indexes**
+
+- `idx_corporate_claims_employer_donor` (index on `employerId`, `donorId`, `status`, `createdAt`)
+
+### `corporate_employers`
+
+| Column | Type | Not null | Default | Primary key |
+|--------|------|----------|---------|-------------|
+| `id` | TEXT | no | — | yes |
+| `name` | TEXT | yes | — | no |
+| `matchRatio` | REAL | yes | — | no |
+| `annualCap` | REAL | yes | — | no |
+| `addedAt` | TEXT | yes | — | no |
+
+**Indexes**
+
+- `idx_corporate_employers_id` (index on `id`)
+
+### `dedup_cache`
+
+| Column | Type | Not null | Default | Primary key |
+|--------|------|----------|---------|-------------|
+| `fingerprint` | TEXT | yes | — | yes |
+| `apiKeyId` | TEXT | no | — | no |
+| `api_key_scope` | TEXT | yes | '' | yes |
+| `status_code` | INTEGER | yes | — | no |
+| `body` | TEXT | yes | — | no |
+| `created_at` | DATETIME | no | CURRENT_TIMESTAMP | no |
+| `expires_at` | DATETIME | yes | — | no |
+
+**Indexes**
+
+- `idx_dedup_expires` (index on `expires_at`)
+
+### `disputes`
+
+| Column | Type | Not null | Default | Primary key |
+|--------|------|----------|---------|-------------|
+| `id` | INTEGER | no | — | yes |
+| `donationId` | INTEGER | yes | — | no |
+| `recipientPublicKey` | TEXT | yes | — | no |
+| `reason` | TEXT | yes | — | no |
+| `evidence` | TEXT | no | — | no |
+| `status` | TEXT | no | 'open' | no |
+| `createdAt` | DATETIME | no | CURRENT_TIMESTAMP | no |
+| `updatedAt` | DATETIME | no | CURRENT_TIMESTAMP | no |
+| `resolvedAt` | DATETIME | no | — | no |
+| `resolutionNotes` | TEXT | no | — | no |
+
+**Foreign keys**
+
+- `donationId` → `transactions`(`id`)
+
+**Indexes**
+
+- `idx_disputes_recipientPublicKey` (index on `recipientPublicKey`)
+- `idx_disputes_status` (index on `status`)
+
+### `donation_exports`
+
+| Column | Type | Not null | Default | Primary key |
+|--------|------|----------|---------|-------------|
+| `id` | INTEGER | no | — | yes |
+| `export_id` | TEXT | yes | — | no |
+| `api_key_id` | TEXT | yes | — | no |
+| `start_date` | TEXT | no | — | no |
+| `end_date` | TEXT | no | — | no |
+| `status_filter` | TEXT | no | — | no |
+| `sender_public_key` | TEXT | no | — | no |
+| `recipient_public_key` | TEXT | no | — | no |
+| `format` | TEXT | yes | — | no |
+| `status` | TEXT | yes | — | no |
+| `record_count` | INTEGER | no | 0 | no |
+| `file_path` | TEXT | no | — | no |
+| `error_message` | TEXT | no | — | no |
+| `signed_url` | TEXT | no | — | no |
+| `signed_url_expires_at` | TEXT | no | — | no |
+| `created_at` | TEXT | yes | — | no |
+| `updated_at` | TEXT | no | — | no |
+
+**Foreign keys**
+
+- `api_key_id` → `api_keys`(`id`)
+
+### `donation_totals`
+
+| Column | Type | Not null | Default | Primary key |
+|--------|------|----------|---------|-------------|
+| `recipient_id` | TEXT | yes | — | yes |
+| `total_stroops` | TEXT | yes | '0' | no |
+| `donation_count` | INTEGER | yes | 0 | no |
+| `updated_at` | DATETIME | no | CURRENT_TIMESTAMP | no |
+
+### `donation_totals_global`
+
+| Column | Type | Not null | Default | Primary key |
+|--------|------|----------|---------|-------------|
+| `id` | INTEGER | no | — | yes |
+| `total_stroops` | TEXT | yes | '0' | no |
+| `donation_count` | INTEGER | yes | 0 | no |
+| `updated_at` | DATETIME | no | CURRENT_TIMESTAMP | no |
+
+### `donation_velocity`
+
+| Column | Type | Not null | Default | Primary key |
+|--------|------|----------|---------|-------------|
+| `id` | INTEGER | no | — | yes |
+| `donorId` | INTEGER | yes | — | no |
+| `recipientId` | INTEGER | yes | — | no |
+| `windowStart` | DATETIME | yes | — | no |
+| `totalAmount` | REAL | yes | 0 | no |
+| `count` | INTEGER | yes | 0 | no |
+| `updatedAt` | DATETIME | no | CURRENT_TIMESTAMP | no |
+
+**Foreign keys**
+
+- `recipientId` → `users`(`id`)
+- `donorId` → `users`(`id`)
+
+**Indexes**
+
+- `idx_velocity_donor_recipient_window` (unique index on `donorId`, `recipientId`, `windowStart`)
+
+### `donations_store`
+
+| Column | Type | Not null | Default | Primary key |
+|--------|------|----------|---------|-------------|
+| `id` | TEXT | no | — | yes |
+| `donor` | TEXT | no | — | no |
+| `recipient` | TEXT | no | — | no |
+| `amount_stroops` | INTEGER | no | — | no |
+| `amount_text` | TEXT | yes | — | no |
+| `status` | TEXT | yes | 'pending' | no |
+| `idempotency_key` | TEXT | no | — | no |
+| `stellar_tx_id` | TEXT | no | — | no |
+| `timestamp` | TEXT | yes | — | no |
+| `status_updated_at` | TEXT | no | — | no |
+| `deleted_at` | TEXT | no | — | no |
+| `data` | TEXT | yes | — | no |
+
+**Indexes**
+
+- `idx_donations_store_donor` (index on `donor`)
+- `idx_donations_store_idempotency` (index on `idempotency_key`)
+- `idx_donations_store_recipient` (index on `recipient`)
+- `idx_donations_store_status` (index on `status`)
+- `idx_donations_store_stellar_tx` (index on `stellar_tx_id`)
+
+### `fee_payments`
+
+| Column | Type | Not null | Default | Primary key |
+|--------|------|----------|---------|-------------|
+| `id` | INTEGER | no | — | yes |
+| `feeId` | INTEGER | yes | — | no |
+| `amount` | REAL | yes | — | no |
+| `note` | TEXT | no | — | no |
+| `paidAt` | DATETIME | no | CURRENT_TIMESTAMP | no |
+| `deleted_at` | DATETIME | no | NULL | no |
+| `tenant_id` | TEXT | yes | 'default' | no |
+
+**Foreign keys**
+
+- `feeId` → `student_fees`(`id`)
+
+### `geo_rules`
+
+| Column | Type | Not null | Default | Primary key |
+|--------|------|----------|---------|-------------|
+| `id` | INTEGER | no | — | yes |
+| `countryCode` | TEXT | yes | — | no |
+| `ruleType` | TEXT | yes | — | no |
+| `createdAt` | DATETIME | no | CURRENT_TIMESTAMP | no |
+| `createdBy` | TEXT | no | — | no |
+
+**Indexes**
+
+- `idx_geo_rules_type_country` (index on `ruleType`, `countryCode`)
+
+### `idempotency_keys`
+
+| Column | Type | Not null | Default | Primary key |
+|--------|------|----------|---------|-------------|
+| `id` | INTEGER | no | — | yes |
+| `apiKeyId` | INTEGER | no | — | no |
+| `idempotencyKey` | VARCHAR(255) | yes | — | no |
+| `requestHash` | VARCHAR(64) | yes | — | no |
+| `response` | TEXT | yes | '' | no |
+| `status` | TEXT | yes | 'completed' | no |
+| `userId` | INTEGER | no | — | no |
+| `createdAt` | DATETIME | yes | CURRENT_TIMESTAMP | no |
+| `expiresAt` | DATETIME | yes | — | no |
+
+**Indexes**
+
+- `idx_idempotency_expires` (index on `expiresAt`)
+- `idx_idempotency_key_lookup` (index on `apiKeyId`, `idempotencyKey`)
+
+### `migration_lock`
+
+| Column | Type | Not null | Default | Primary key |
+|--------|------|----------|---------|-------------|
+| `id` | INTEGER | no | — | yes |
+| `instance_id` | TEXT | yes | — | no |
+| `acquired_at` | DATETIME | no | CURRENT_TIMESTAMP | no |
+
+### `nonce_store`
+
+| Column | Type | Not null | Default | Primary key |
+|--------|------|----------|---------|-------------|
+| `nonce` | TEXT | no | — | yes |
+| `usedAt` | DATETIME | no | CURRENT_TIMESTAMP | no |
+| `expiresAt` | DATETIME | yes | — | no |
+
+**Indexes**
+
+- `idx_nonce_store_expiresAt` (index on `expiresAt`)
+
+### `payment_streams`
+
+| Column | Type | Not null | Default | Primary key |
+|--------|------|----------|---------|-------------|
+| `id` | INTEGER | no | — | yes |
+| `public_key` | TEXT | yes | — | no |
+| `webhook_url` | TEXT | no | — | no |
+| `cursor` | TEXT | no | — | no |
+| `created_at` | DATETIME | no | CURRENT_TIMESTAMP | no |
+| `updated_at` | DATETIME | no | CURRENT_TIMESTAMP | no |
+
+**Indexes**
+
+- `idx_payment_streams_public_key` (index on `public_key`)
+
+### `pledges`
+
+| Column | Type | Not null | Default | Primary key |
+|--------|------|----------|---------|-------------|
+| `id` | TEXT | no | — | yes |
+| `campaign_id` | INTEGER | yes | — | no |
+| `donor_wallet_id` | TEXT | yes | — | no |
+| `amount` | INTEGER | yes | — | no |
+| `status` | TEXT | yes | 'pending' | no |
+| `expires_at` | DATETIME | yes | — | no |
+| `cancel_reason` | TEXT | no | — | no |
+| `cancelled_at` | DATETIME | no | — | no |
+| `created_at` | DATETIME | no | CURRENT_TIMESTAMP | no |
+
+**Foreign keys**
+
+- `campaign_id` → `campaigns`(`id`)
+
+**Indexes**
+
+- `idx_pledges_campaign` (index on `campaign_id`)
+- `idx_pledges_expires` (index on `expires_at`)
+- `idx_pledges_status` (index on `status`)
+
+### `recipient_velocity_limits`
+
+| Column | Type | Not null | Default | Primary key |
+|--------|------|----------|---------|-------------|
+| `id` | INTEGER | no | — | yes |
+| `recipientId` | INTEGER | yes | — | no |
+| `maxAmount` | REAL | no | — | no |
+| `maxCount` | INTEGER | no | — | no |
+| `windowType` | TEXT | yes | 'daily' | no |
+| `createdAt` | DATETIME | no | CURRENT_TIMESTAMP | no |
+| `updatedAt` | DATETIME | no | CURRENT_TIMESTAMP | no |
+
+**Foreign keys**
+
+- `recipientId` → `users`(`id`)
 
 ### `recovery_approvals`
 
-Guardian approval records for an active recovery request.
-
-| Column | Type | Nullable | Default | Description |
+| Column | Type | Not null | Default | Primary key |
 |--------|------|----------|---------|-------------|
-| `id` | INTEGER | NO | AUTOINCREMENT PK | Internal surrogate key |
-| `recoveryRequestId` | INTEGER | NO | — | FK → `recovery_requests.id` |
-| `guardianPublicKey` | TEXT | NO | — | Approving guardian's Stellar public key |
-| `approvedAt` | DATETIME | YES | CURRENT_TIMESTAMP | Approval timestamp |
+| `id` | INTEGER | no | — | yes |
+| `recoveryRequestId` | INTEGER | yes | — | no |
+| `guardianPublicKey` | TEXT | yes | — | no |
+| `approvedAt` | DATETIME | no | CURRENT_TIMESTAMP | no |
 
-**Constraints:** UNIQUE on `(recoveryRequestId, guardianPublicKey)`.
+**Foreign keys**
 
----
+- `recoveryRequestId` → `recovery_requests`(`id`)
 
-### `student_fees` / `fee_payments`
+**Indexes**
 
-Legacy fee-installment tables from early development. Kept for schema compatibility.
+- `idx_recovery_approvals_requestId` (index on `recoveryRequestId`)
 
-**`student_fees`**
+### `recovery_guardians`
 
-| Column | Type | Description |
-|--------|------|-------------|
-| `id` | INTEGER PK | Surrogate key |
-| `studentId` | TEXT | Student identifier |
-| `description` | TEXT | Fee description |
-| `totalAmount` | REAL | Total amount due |
-| `paidAmount` | REAL | Amount paid so far |
-| `createdAt` / `updatedAt` | DATETIME | Timestamps |
-| `deleted_at` | DATETIME | Soft-delete |
-| `tenant_id` | TEXT | Multi-tenancy |
+| Column | Type | Not null | Default | Primary key |
+|--------|------|----------|---------|-------------|
+| `id` | INTEGER | no | — | yes |
+| `walletId` | INTEGER | yes | — | no |
+| `guardianPublicKey` | TEXT | yes | — | no |
+| `threshold` | INTEGER | no | — | no |
+| `createdAt` | DATETIME | no | CURRENT_TIMESTAMP | no |
 
-**`fee_payments`**
+**Foreign keys**
 
-| Column | Type | Description |
-|--------|------|-------------|
-| `id` | INTEGER PK | Surrogate key |
-| `feeId` | INTEGER | FK → `student_fees.id` |
-| `amount` | REAL | Payment amount |
-| `note` | TEXT | Optional note |
-| `paidAt` | DATETIME | Payment timestamp |
-| `deleted_at` | DATETIME | Soft-delete |
-| `tenant_id` | TEXT | Multi-tenancy |
+- `walletId` → `users`(`id`)
+
+**Indexes**
+
+- `idx_recovery_guardians_walletId` (index on `walletId`)
+
+### `recovery_requests`
+
+| Column | Type | Not null | Default | Primary key |
+|--------|------|----------|---------|-------------|
+| `id` | INTEGER | no | — | yes |
+| `walletId` | INTEGER | yes | — | no |
+| `newPublicKey` | TEXT | yes | — | no |
+| `status` | TEXT | yes | 'pending' | no |
+| `threshold` | INTEGER | yes | — | no |
+| `executeAfter` | DATETIME | yes | — | no |
+| `createdAt` | DATETIME | no | CURRENT_TIMESTAMP | no |
+| `executedAt` | DATETIME | no | — | no |
+
+**Foreign keys**
+
+- `walletId` → `users`(`id`)
+
+**Indexes**
+
+- `idx_recovery_requests_walletId` (index on `walletId`)
+
+### `recurring_donation_executions`
+
+| Column | Type | Not null | Default | Primary key |
+|--------|------|----------|---------|-------------|
+| `id` | INTEGER | no | — | yes |
+| `scheduleId` | INTEGER | yes | — | no |
+| `executedAt` | TEXT | yes | — | no |
+| `status` | TEXT | yes | — | no |
+| `transactionHash` | TEXT | no | — | no |
+| `errorMessage` | TEXT | no | — | no |
+| `createdAt` | TEXT | yes | datetime('now') | no |
+| `retryCount` | INTEGER | no | 0 | no |
+| `durationMs` | INTEGER | no | 0 | no |
+
+**Foreign keys**
+
+- `scheduleId` → `recurring_donations`(`id`)
+
+**Indexes**
+
+- `idx_rde_scheduleId` (index on `scheduleId`, `executedAt`)
+
+### `recurring_donations`
+
+| Column | Type | Not null | Default | Primary key |
+|--------|------|----------|---------|-------------|
+| `id` | INTEGER | no | — | yes |
+| `donorId` | INTEGER | yes | — | no |
+| `recipientId` | INTEGER | yes | — | no |
+| `amount` | REAL | yes | — | no |
+| `frequency` | TEXT | yes | — | no |
+| `nextExecutionDate` | DATETIME | yes | — | no |
+| `status` | TEXT | no | 'active' | no |
+| `executionCount` | INTEGER | no | 0 | no |
+| `customIntervalDays` | INTEGER | no | NULL | no |
+| `maxExecutions` | INTEGER | no | NULL | no |
+| `webhookUrl` | TEXT | no | NULL | no |
+| `failureCount` | INTEGER | no | 0 | no |
+| `lastExecutionDate` | DATETIME | no | NULL | no |
+| `tenant_id` | TEXT | yes | 'default' | no |
+| `cancelledAt` | DATETIME | no | NULL | no |
+
+**Foreign keys**
+
+- `recipientId` → `users`(`id`)
+- `donorId` → `users`(`id`)
+
+**Indexes**
+
+- `idx_recurring_donations_status_nextExecution` (index on `status`, `nextExecutionDate`)
+
+### `refresh_tokens`
+
+| Column | Type | Not null | Default | Primary key |
+|--------|------|----------|---------|-------------|
+| `id` | INTEGER | no | — | yes |
+| `token_hash` | TEXT | yes | — | no |
+| `api_key_id` | INTEGER | yes | — | no |
+| `family_id` | TEXT | yes | — | no |
+| `expires_at` | INTEGER | yes | — | no |
+| `used_at` | INTEGER | no | — | no |
+| `revoked` | INTEGER | yes | 0 | no |
+| `revoked_at` | INTEGER | no | — | no |
+| `revoke_reason` | TEXT | no | — | no |
+| `created_at` | INTEGER | yes | — | no |
+
+**Indexes**
+
+- `idx_refresh_tokens_api_key_id` (index on `api_key_id`)
+- `idx_refresh_tokens_family_id` (index on `family_id`)
+
+### `refunds`
+
+| Column | Type | Not null | Default | Primary key |
+|--------|------|----------|---------|-------------|
+| `id` | INTEGER | no | — | yes |
+| `original_donation_id` | TEXT | yes | — | no |
+| `reverse_transaction_id` | TEXT | yes | — | no |
+| `amount` | REAL | yes | — | no |
+| `reason` | TEXT | no | — | no |
+| `notes` | TEXT | no | — | no |
+| `idempotency_key` | TEXT | no | — | no |
+| `refunded_at` | DATETIME | yes | — | no |
+| `stellar_ledger` | INTEGER | no | — | no |
+| `status` | TEXT | no | 'completed' | no |
+| `created_at` | DATETIME | no | CURRENT_TIMESTAMP | no |
+
+**Foreign keys**
+
+- `original_donation_id` → `transactions`(`id`)
+
+**Indexes**
+
+- `idx_refunds_idempotency_key` (index on `idempotency_key`)
+- `idx_refunds_original_donation_id` (index on `original_donation_id`)
+- `idx_refunds_status` (index on `status`)
+
+### `rotation_locks`
+
+| Column | Type | Not null | Default | Primary key |
+|--------|------|----------|---------|-------------|
+| `name` | TEXT | no | — | yes |
+| `status` | TEXT | yes | 'idle' | no |
+| `startedAt` | TEXT | no | — | no |
+| `completedAt` | TEXT | no | — | no |
+| `error` | TEXT | no | — | no |
+| `createdAt` | TEXT | yes | CURRENT_TIMESTAMP | no |
+| `updatedAt` | TEXT | yes | CURRENT_TIMESTAMP | no |
+
+### `scheduler_locks`
+
+| Column | Type | Not null | Default | Primary key |
+|--------|------|----------|---------|-------------|
+| `name` | TEXT | no | — | yes |
+| `holder_id` | TEXT | yes | — | no |
+| `acquired_at` | INTEGER | yes | — | no |
+| `expires_at` | INTEGER | yes | — | no |
+
+### `schema_migrations`
+
+| Column | Type | Not null | Default | Primary key |
+|--------|------|----------|---------|-------------|
+| `id` | INTEGER | no | — | yes |
+| `name` | TEXT | yes | — | no |
+| `applied_at` | DATETIME | no | CURRENT_TIMESTAMP | no |
+| `checksum` | TEXT | yes | '' | no |
+
+### `sep10_challenges`
+
+| Column | Type | Not null | Default | Primary key |
+|--------|------|----------|---------|-------------|
+| `challengeId` | TEXT | no | — | yes |
+| `account` | TEXT | yes | — | no |
+| `expiresAt` | INTEGER | yes | — | no |
+| `issuedAt` | INTEGER | yes | — | no |
+| `used` | INTEGER | yes | 0 | no |
+| `usedAt` | INTEGER | no | — | no |
+
+**Indexes**
+
+- `idx_sep10_challenges_expires` (index on `expiresAt`)
+
+### `student_fees`
+
+| Column | Type | Not null | Default | Primary key |
+|--------|------|----------|---------|-------------|
+| `id` | INTEGER | no | — | yes |
+| `studentId` | TEXT | yes | — | no |
+| `description` | TEXT | yes | — | no |
+| `totalAmount` | REAL | yes | — | no |
+| `paidAmount` | REAL | yes | 0 | no |
+| `createdAt` | DATETIME | no | CURRENT_TIMESTAMP | no |
+| `updatedAt` | DATETIME | no | CURRENT_TIMESTAMP | no |
+| `deleted_at` | DATETIME | no | NULL | no |
+| `tenant_id` | TEXT | yes | 'default' | no |
+
+### `transactions`
+
+| Column | Type | Not null | Default | Primary key |
+|--------|------|----------|---------|-------------|
+| `id` | INTEGER | no | — | yes |
+| `senderId` | INTEGER | yes | — | no |
+| `receiverId` | INTEGER | yes | — | no |
+| `amount` | INTEGER | yes | — | no |
+| `memo` | TEXT | no | — | no |
+| `notes` | TEXT | no | — | no |
+| `tags` | TEXT | no | — | no |
+| `timestamp` | DATETIME | no | CURRENT_TIMESTAMP | no |
+| `deleted_at` | DATETIME | no | NULL | no |
+| `idempotencyKey` | TEXT | no | — | no |
+| `stellar_tx_id` | TEXT | no | — | no |
+| `is_orphan` | INTEGER | yes | 0 | no |
+| `campaign_id` | INTEGER | no | — | no |
+| `validAfter` | INTEGER | no | 0 | no |
+| `validBefore` | INTEGER | no | 0 | no |
+| `tenant_id` | TEXT | yes | 'default' | no |
+
+**Foreign keys**
+
+- `receiverId` → `users`(`id`)
+- `senderId` → `users`(`id`)
+- `campaign_id` → `campaigns`(`id`)
+
+**Indexes**
+
+- `idx_transactions_idempotency` (index on `idempotencyKey`)
+- `idx_transactions_idempotency_key_unique` (unique index on `idempotencyKey`)
+
+### `users`
+
+| Column | Type | Not null | Default | Primary key |
+|--------|------|----------|---------|-------------|
+| `id` | INTEGER | no | — | yes |
+| `publicKey` | TEXT | yes | — | no |
+| `encryptedSecret` | TEXT | no | — | no |
+| `createdAt` | DATETIME | no | CURRENT_TIMESTAMP | no |
+| `deleted_at` | DATETIME | no | NULL | no |
+| `daily_limit` | REAL | no | NULL | no |
+| `monthly_limit` | REAL | no | NULL | no |
+| `per_transaction_limit` | REAL | no | NULL | no |
+| `tenant_id` | TEXT | yes | 'default' | no |
+
+### `wallets`
+
+| Column | Type | Not null | Default | Primary key |
+|--------|------|----------|---------|-------------|
+| `id` | TEXT | no | — | yes |
+| `address` | TEXT | yes | — | no |
+| `label` | TEXT | no | — | no |
+| `ownerName` | TEXT | no | — | no |
+| `notes` | TEXT | no | — | no |
+| `leaderboard_visibility` | INTEGER | no | 1 | no |
+| `last_synced_at` | TEXT | no | — | no |
+| `last_cursor` | TEXT | no | — | no |
+| `createdAt` | TEXT | yes | — | no |
+| `updatedAt` | TEXT | no | — | no |
+| `deletedAt` | TEXT | no | — | no |
+| `donation_limit_min` | INTEGER | no | — | no |
+| `donation_limit_max` | INTEGER | no | — | no |
+
+**Indexes**
+
+- `idx_wallets_address` (index on `address`)
+- `idx_wallets_donation_limits` (index on `donation_limit_min`, `donation_limit_max`)

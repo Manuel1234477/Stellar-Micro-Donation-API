@@ -13,6 +13,7 @@
 const log = require('../utils/log');
 const timerRegistry = require('../utils/timerRegistry');
 const { runWithAbortController } = require('../utils/abortContext');
+const { recordRequestTimeout } = require('../utils/metrics');
 
 /**
  * Per-endpoint timeout presets in milliseconds.
@@ -27,6 +28,37 @@ const TIMEOUTS = {
   stream: 60_000,     // 60 s — recurring-donation schedule creation
   sync: 45_000,       // 45 s — Horizon transaction sync operations
 };
+
+/**
+ * Paths that submit transactions to Stellar and therefore need the longer
+ * donation budget (#1948). Every other route falls back to TIMEOUTS.default.
+ * Matches both the bare and the versioned (/api/v1) mount.
+ */
+const SUBMISSION_PATH_RE = new RegExp(
+  '^(?:/api/v1)?(?:' + [
+    '/donations/?$',                              // POST /donations (single donation)
+    '/donations/(?:send|batch|bulk|cross-asset)/?$',
+    '/donations/[^/]+/refund/?$',                  // POST /donations/:id/refund
+    '/channels/(?:open|[^/]+/(?:update|close|settle|dispute))/?$',
+  ].join('|') + ')$'
+);
+
+/**
+ * Returns the timeout budget for a request that is not handled by an explicit
+ * route-level requestTimeout(). Submission paths get TIMEOUTS.donation; all
+ * other paths get the supplied general fallback.
+ *
+ * @param {string} method - HTTP method
+ * @param {string} path - Request path (req.path)
+ * @param {number} [generalMs=TIMEOUTS.default] - Budget for non-submission routes
+ * @returns {number} Timeout in milliseconds
+ */
+function resolveRouteTimeout(method, path, generalMs = TIMEOUTS.default) {
+  if (String(method).toUpperCase() === 'POST' && SUBMISSION_PATH_RE.test(path || '')) {
+    return TIMEOUTS.donation;
+  }
+  return generalMs;
+}
 
 /**
  * Create a request timeout middleware.
@@ -74,6 +106,7 @@ function requestTimeout(ms = TIMEOUTS.default) {
       }
 
       const elapsed = Date.now() - startTime;
+      try { recordRequestTimeout(req.path, ms); } catch (_) { /* metrics are best-effort */ }
       log.warn('REQUEST_TIMEOUT', 'Request timed out', {
         requestId: req.id,
         method: req.method,
@@ -106,4 +139,4 @@ function requestTimeout(ms = TIMEOUTS.default) {
   };
 }
 
-module.exports = { requestTimeout, TIMEOUTS };
+module.exports = { requestTimeout, resolveRouteTimeout, SUBMISSION_PATH_RE, TIMEOUTS };

@@ -19,7 +19,7 @@
 
 'use strict';
 
-require('dotenv').config();
+require('../config/loadEnv'); // single .env loader (#1943)
 
 const Database = require('../utils/database');
 const EncryptionService = require('../services/EncryptionService');

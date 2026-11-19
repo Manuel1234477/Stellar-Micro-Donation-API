@@ -178,6 +178,37 @@ class TransactionSyncService {
     }
   }
 
+  /**
+   * Fetch exactly one page of an account's transactions using Horizon's native
+   * cursor pagination. Used by the public wallet listing (source=live).
+   *
+   * @param {string} publicKey - Account to query
+   * @param {Object} [options]
+   * @param {number} [options.limit=20] - Records per page (Horizon max is 200)
+   * @param {string} [options.cursor] - Horizon paging_token to continue from
+   * @param {'asc'|'desc'} [options.order='desc'] - Direction from the cursor
+   * @returns {Promise<Array<Object>>} Records in the requested order
+   */
+  async fetchTransactionPage(publicKey, { limit = 20, cursor, order = 'desc' } = {}) {
+    const pageSize = Math.min(200, Math.max(1, limit));
+    let builder = this.server.transactions()
+      .forAccount(publicKey)
+      .limit(pageSize)
+      .order(order);
+    if (cursor) {
+      builder = builder.cursor(cursor);
+    }
+    try {
+      const response = await builder.call();
+      return response.records || [];
+    } catch (error) {
+      if (error.response && error.response.status === 404) {
+        return [];
+      }
+      throw error;
+    }
+  }
+
   _extractAmount(tx) {
     return (tx.operations && tx.operations[0] && tx.operations[0].amount) || '0';
   }

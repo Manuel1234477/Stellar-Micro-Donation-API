@@ -411,7 +411,7 @@ curl -sf http://localhost:3000/health | jq .dependencies.horizon
 
 Acquiring a Horizon server from the pool is taking longer than expected. This delays all operations that require Horizon (transaction submission, sync, balance checks). Transaction sync will fall behind as a result.
 
-> Note: The application does not emit a dedicated `transaction_sync_lag_seconds` metric. Pool acquire latency is the best available proxy for sync health.
+> Note: `stellar_transaction_sync_lag_seconds` reports the age of the least recently synced wallet and is the primary sync-health signal (see docs/SLOs.md). Pool acquire latency is a secondary signal that often explains a rising lag.
 
 ### Diagnosis
 

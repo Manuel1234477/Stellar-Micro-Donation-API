@@ -8,6 +8,26 @@
  */
 
 /**
+ * Extract the literal mount path from an Express 4 layer regexp source.
+ *   "^\\/api\\/v1\\/?(?=\\/|$)"  -> "/api/v1"
+ *   "^\\/?(?=\\/|$)"             -> ""
+ * Parsing stops at the first regex metacharacter (groups, params, etc.).
+ * @param {string} source - RegExp.source of layer.regexp
+ * @returns {string}
+ */
+function mountPathFromRegexp(source) {
+  const body = source.startsWith('^') ? source.slice(1) : source;
+  const segments = [];
+  // Each literal segment is written as "\/<name>"; stop at the first token that is not one.
+  for (const piece of body.split('\\/').slice(1)) {
+    const literal = piece.match(/^[A-Za-z0-9._~-]+/);
+    if (!literal) break;
+    segments.push(literal[0]);
+  }
+  return segments.length ? '/' + segments.join('/') : '';
+}
+
+/**
  * Recursively walk the Express router stack and collect all routes.
  * @param {ExpressRouter} router - The Express router or app
  * @param {string} prefix - Current path prefix
@@ -31,19 +51,9 @@ function collectRoutes(router, prefix = '') {
     } else if (layer.regexp) {
       // Try to extract path from regexp for nested routers
       // Improved regex to handle various path patterns
-      const source = layer.regexp.source;
-      let match = source.match(/^\\\/(.+?)(\\\/|$|\?|\|)/);
-      if (!match) {
-        match = source.match(/^\\\/(.+?)$/);
-      }
-      if (match) {
-        routePath = '/' + match[1]
-          .replace(/\\\//g, '/')
-          .replace(/\\\./g, '.')
-          .replace(/\\-/g, '-')
-          .replace(/\(\?:/g, '')
-          .replace(/\)/g, '');
-      }
+      // Express 4 mount regexps look like  ^\/wallets\/?(?=\/|$)  (note the
+      // leading "^"). Take the literal leading segments before any regex syntax.
+      routePath = mountPathFromRegexp(layer.regexp.source);
     }
 
     const fullPath = prefix + routePath;
@@ -107,4 +117,8 @@ function main() {
   }
 }
 
-main();
+if (require.main === module) {
+  main();
+}
+
+module.exports = { collectRoutes };
