@@ -63,7 +63,7 @@ npm run config:check      # what CI runs: schema covers src/, generated files ar
 | `INSTANCE_ID` | string | — | no | Unique identifier for this process instance (used for scheduler/sequence leases and logs). Defaults to a random UUID |
 | `NODE_ENV` | string | `development` | no | Runtime environment: `development`, `test` or `production`. Controls logging verbosity, startup guards and unsafe-flag checks |
 | `PORT` | integer | `3000` | no | TCP port the HTTP server listens on |
-| `REQUEST_TIMEOUT_MS` | integer | `30000` | no | Global per-request timeout in milliseconds. Streaming endpoints are exempt |
+| `REQUEST_TIMEOUT_MS` | integer | `15000` | no | General per-request timeout in milliseconds for non-submission routes. Stellar submission routes (donations, batch, cross-asset, refunds, channels) always use 30 s. Streaming endpoints are exempt |
 | `SHUTDOWN_TIMEOUT` | integer | `30000` | no | Alias for `SHUTDOWN_TIMEOUT_MS` (milliseconds). Time allowed for in-flight requests to drain before force-exit |
 | `SHUTDOWN_TIMEOUT_MS` | integer | `30000` | no | Milliseconds to wait for graceful shutdown before force-exit |
 | `TRUSTED_PROXIES` | string | `loopback` | no | Comma-separated list of trusted proxy IPs/CIDRs. Passed to Express `trust proxy`. Set to the address of your load balancer in production |

@@ -1,4 +1,5 @@
 'use strict';
+const { bestEffort } = require('../../utils/bestEffort');
 
 /**
  * Admin Pledge Routes
@@ -129,7 +130,7 @@ router.patch(
         ipAddress: req.ip,
         resource: `/admin/pledges/${id}/fulfil`,
         details: { pledgeId: id, campaignId: pledge.campaign_id },
-      }).catch(() => {});
+      }).catch(bestEffort('src/routes/admin/pledges.js:132'));
 
       log.info('ADMIN_PLEDGES', `Admin fulfilled pledge ${id}`);
 
@@ -193,7 +194,7 @@ router.patch(
 
       const updated = await Pledge.findById(id);
 
-      WebhookService.deliver('pledge.cancelled', { pledge: updated }).catch(() => {});
+      WebhookService.deliver('pledge.cancelled', { pledge: updated }).catch(bestEffort('src/routes/admin/pledges.js:196'));
 
       AuditLogService.log({
         category: AuditLogService.CATEGORY.SYSTEM,
@@ -204,7 +205,7 @@ router.patch(
         ipAddress: req.ip,
         resource: `/admin/pledges/${id}/cancel`,
         details: { pledgeId: id, reason: reason || null },
-      }).catch(() => {});
+      }).catch(bestEffort('src/routes/admin/pledges.js:207'));
 
       log.info('ADMIN_PLEDGES', `Admin cancelled pledge ${id}`, { reason });
 

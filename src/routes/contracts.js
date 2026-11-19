@@ -1,3 +1,4 @@
+const { bestEffort } = require('../utils/bestEffort');
 /**
  * Contracts Route
  * Exposes endpoints for Soroban smart contract invocation, simulation, state, and event monitoring.
@@ -62,7 +63,7 @@ router.post('/:contractId/invoke', requireApiKey, requireAdmin(), payloadSizeLim
       ipAddress: req.ip || null,
       resource: `contract:${contractId}`,
       details: { contractId, method, argCount: args.length },
-    }).catch(() => {});
+    }).catch(bestEffort('src/routes/contracts.js:60'));
 
     return res.status(200).json({ success: true, data: result });
   } catch (err) {

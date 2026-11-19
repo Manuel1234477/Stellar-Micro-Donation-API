@@ -1,3 +1,4 @@
+const { bestEffort } = require('../utils/bestEffort');
 /**
  * Recurring Donation Scheduler - Background Service
  *
@@ -210,7 +211,7 @@ class RecurringDonationScheduler {
 
       const { correlationId, traceId } = getCorrelationSummary();
       log.info('RECURRING_SCHEDULER', 'Scheduler stopped', { correlationId, traceId });
-      this.leaderElection.releaseLease('recurring_donation_scheduler').catch(() => {});
+      this.leaderElection.releaseLease('recurring_donation_scheduler').catch(bestEffort('src/services/RecurringDonationScheduler.js:213'));
     });
   }
 
@@ -302,7 +303,7 @@ class RecurringDonationScheduler {
       traceId,
     });
 
-    await this.leaderElection.releaseLease('recurring_donation_scheduler').catch(() => {});
+    await this.leaderElection.releaseLease('recurring_donation_scheduler').catch(bestEffort('src/services/RecurringDonationScheduler.js:305'));
 
     return { waited, interrupted };
   }

@@ -1,3 +1,4 @@
+const { bestEffort } = require('../../utils/bestEffort');
 /**
  * Admin Scheduler Routes
  *
@@ -57,7 +58,7 @@ router.post('/pause', checkPermission(PERMISSIONS.ADMIN_ALL), payloadSizeLimiter
       details: {
         wasPaused,
       },
-    }).catch(() => {});
+    }).catch(bestEffort('src/routes/admin/scheduler.js:60'));
 
     res.json({
       success: true,
@@ -96,7 +97,7 @@ router.post('/resume', checkPermission(PERMISSIONS.ADMIN_ALL), payloadSizeLimite
       details: {
         wasPaused,
       },
-    }).catch(() => {});
+    }).catch(bestEffort('src/routes/admin/scheduler.js:99'));
 
     res.json({
       success: true,

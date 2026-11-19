@@ -1,4 +1,5 @@
 'use strict';
+const { bestEffort } = require('../utils/bestEffort');
 
 /**
  * Per-API-key rate limiting.
@@ -77,7 +78,7 @@ function checkRateLimit(key, limit = DEFAULT_RATE_LIMIT, windowSeconds = DEFAULT
   if (result && typeof result.then === 'function') {
     // Async store (Redis): this synchronous path cannot wait for it. Fail open
     // and swallow the eventual result; the store logs its own errors.
-    result.catch(() => {});
+    result.catch(bestEffort('src/middleware/perKeyRateLimit.js:66'));
     return { allowed: true, limit, remaining: limit, resetAt: Date.now() + windowSeconds * 1000 };
   }
   return {

@@ -1,3 +1,4 @@
+const { bestEffort } = require('../utils/bestEffort');
 /**
  * RBAC Middleware - Authorization Layer
  * 
@@ -106,7 +107,7 @@ const checkPermission = (permission) => {
             hasScope: !roleHasPermission ? 'N/A' : scopeHasPermission,
             apiKeyId: req.apiKey?.id,
           }
-        }).catch(() => {});
+        }).catch(bestEffort('src/middleware/rbac.js:107'));
 
         throw new ForbiddenError(`Insufficient permissions. Required: ${permission}`);
       }
@@ -128,7 +129,7 @@ const checkPermission = (permission) => {
           scopeVerified: req.apiKey?.scopes ? true : false,
           apiKeyId: req.apiKey?.id,
         }
-      }).catch(() => {});
+      }).catch(bestEffort('src/middleware/rbac.js:129'));
 
       next();
     } catch (error) {
@@ -257,7 +258,7 @@ const requireAdmin = () => {
             userRole: req.user.role,
             method: req.method
           }
-        }).catch(() => {});
+        }).catch(bestEffort('src/middleware/rbac.js:258'));
 
         throw new ForbiddenError('Admin access required');
       }
@@ -295,7 +296,7 @@ const requireAdmin = () => {
                 ipAddress: req.ip,
                 resource: req.path,
                 reason: 'Invalid TOTP code',
-              }).catch(() => {});
+              }).catch(bestEffort('src/middleware/rbac.js:296'));
               return res.status(401).json({
                 success: false,
                 error: {
@@ -328,7 +329,7 @@ const requireAdmin = () => {
           userRole: req.user.role,
           method: req.method
         }
-      }).catch(() => {});
+      }).catch(bestEffort('src/middleware/rbac.js:329'));
 
       next();
     } catch (error) {
@@ -508,7 +509,7 @@ const attachUserRole = () => {
                   keyIdHash: legacyKeyId,
                   sunsetDate: getLegacyKeySunsetDate(),
                 },
-              }).catch(() => {});
+              }).catch(bestEffort('src/middleware/rbac.js:489'));
             }
           }
           // Default: Unauthenticated Guest access

@@ -17,6 +17,7 @@
  */
 
 'use strict';
+const { bestEffort } = require('../utils/bestEffort');
 
 const express = require('express');
 const StellarSdk = require('../services/stellar/sdk.js');
@@ -64,7 +65,7 @@ async function seedFederationRecordsFromEnv() {
 }
 
 // Seed on module load (best-effort; errors are swallowed)
-seedFederationRecordsFromEnv().catch(() => {});
+seedFederationRecordsFromEnv().catch(bestEffort('src/routes/federation.js:53'));
 
 // Keep a backward-compatible in-memory Map for modules that import federationRegistry directly.
 // It is populated from the env var for compatibility but the GET /federation route reads from the DB.

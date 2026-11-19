@@ -1,3 +1,4 @@
+const { bestEffort } = require('../../utils/bestEffort');
 /**
  * Admin Payment Channel Routes
  *
@@ -202,7 +203,7 @@ router.post('/:id/close', checkPermission(PERMISSIONS.ADMIN_ALL), payloadSizeLim
       receiverKey: channelBefore.receiverKey,
       stellarTxId: closedChannel.metadata?.stellarTxId || null,
     },
-  }).catch(() => {});
+  }).catch(bestEffort('src/routes/admin/paymentChannels.js:205'));
 
   res.json({
     success: true,
