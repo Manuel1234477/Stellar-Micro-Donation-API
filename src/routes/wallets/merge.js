@@ -34,7 +34,7 @@ const walletIdSchema = validateSchema({
  * /wallets/{id}/merge/eligibility:
  *   get:
  *     summary: Check wallet merge eligibility
- *     description: >
+ *     description: >-
  *       Returns whether a wallet account is eligible for merging, along with all
  *       blocking conditions (open offers, non-zero trustlines, data entries, or an
  *       already-merged wallet).
@@ -131,10 +131,10 @@ router.get('/:id/merge/eligibility', checkPermission(PERMISSIONS.WALLETS_READ), 
  * /wallets/{id}/merge:
  *   post:
  *     summary: Merge a wallet into a destination account
- *     description: >
+ *     description: >-
  *       Transfers all XLM from the source wallet to the destination, closes the
  *       source account on the Stellar network, and soft-deletes the wallet record.
- *       Requires explicit confirmation via `confirm: true`.
+ *       Requires explicit confirmation via confirm set to true.
  *     tags:
  *       - Wallets
  *     security:
@@ -165,7 +165,8 @@ router.get('/:id/merge/eligibility', checkPermission(PERMISSIONS.WALLETS_READ), 
  *                 description: Secret key of the wallet being merged
  *               confirm:
  *                 type: boolean
- *                 enum: [true]
+ *                 enum:
+ *                   - true
  *                 description: Must be exactly true to proceed
  *     responses:
  *       200:
@@ -217,7 +218,7 @@ router.get('/:id/merge/eligibility', checkPermission(PERMISSIONS.WALLETS_READ), 
  * @requires wallets:delete permission
  * @body {string}  destinationPublicKey - Stellar public key of the receiving account
  * @body {string}  sourceSecret         - Secret key of the wallet being merged
- * @body {boolean} confirm              - Must be exactly `true` to proceed
+ * @body {boolean} confirm              - Must be exactly true to proceed
  */
 router.post('/:id/merge', checkPermission(PERMISSIONS.WALLETS_DELETE), payloadSizeLimiter(ENDPOINT_LIMITS.wallet), asyncHandler(async (req, res, next) => {
   try {

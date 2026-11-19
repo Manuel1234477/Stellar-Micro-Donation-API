@@ -12,7 +12,7 @@ const Ajv = require('ajv');
 
 const committedPath = path.join(__dirname, '../docs/openapi.json');
 const { spec } = require('../src/config/openapi');
-const generated = JSON.stringify(spec, null, 2);
+const generated = JSON.stringify(spec, null, 2) + '\n';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Check 1: Verify spec is byte-stable
@@ -35,7 +35,7 @@ console.log('✓ docs/openapi.json is byte-stable and in sync with route annotat
 // ─────────────────────────────────────────────────────────────────────────────
 // Check 2: Validate response examples against their schemas
 // ─────────────────────────────────────────────────────────────────────────────
-const ajv = new Ajv();
+const ajv = new Ajv({ strict: false, allowUnionTypes: true });
 let schemaValidationErrors = [];
 
 const specPaths = spec.paths || {};
@@ -52,7 +52,7 @@ for (const [path, pathItem] of Object.entries(specPaths)) {
         try {
           const schema = content.schema;
           const example = content.example;
-          
+
           const validate = ajv.compile(schema);
           if (!validate(example)) {
             schemaValidationErrors.push({

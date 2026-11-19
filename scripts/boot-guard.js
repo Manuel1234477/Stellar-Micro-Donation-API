@@ -21,7 +21,7 @@
 
 'use strict';
 
-const { execSync, spawnSync } = require('child_process');
+const { spawnSync } = require('child_process');
 const fs = require('fs');
 const path = require('path');
 
@@ -95,9 +95,19 @@ if (requireAllResult.status !== 0) {
 
 // ── 3. Boot check: createApp is callable ─────────────────────────────────────
 
+const bootCheckScript = [
+  "const app = require('./src/app');",
+  "if (typeof app.createApp === 'function') {",
+  "  console.log('✅ boot-check: createApp() is callable.');",
+  '} else {',
+  "  console.error('❌ boot-check: createApp() missing or not callable.');",
+  '  process.exit(1);',
+  '}',
+].join('\n');
+
 const bootCheckResult = spawnSync(
   process.execPath,
-  ['-e', "require('./src/app').createApp ? console.log('✅ boot-check: createApp() is callable.') : (console.error('❌ boot-check: createApp() missing or not callable.'), process.exit(1))"],
+  ['-e', bootCheckScript],
   {
     encoding: 'utf8',
     cwd: ROOT,

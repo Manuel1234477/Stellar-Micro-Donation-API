@@ -53,14 +53,19 @@ const AS_JSON = process.argv.includes('--json');
  * Validate literal Jest ignore paths while allowing regex-style patterns and
  * intentional dependency directories. A stale file entry silently removes
  * coverage from the test run, so it is a blocking finding.
+ *
+ * The config is read as source text rather than `require`d: requiring it pulls
+ * in the whole Jest config (and any module it references) inside the guard
+ * process, which is both slow and a source of unrelated crashes.
  * @returns {Array<object>} Findings
  */
 function checkIgnoredTestPaths() {
   const configPath = path.join(REPO_ROOT, 'jest.config.js');
-  const config = require(configPath);
+  if (!fs.existsSync(configPath)) return [];
   const source = fs.readFileSync(configPath, 'utf8');
+  const patterns = readIgnorePatterns(source);
   const findings = [];
-  for (const pattern of config.testPathIgnorePatterns || []) {
+  for (const pattern of patterns) {
     const literal = pattern.replace(/^\^?\//, '').replace(/\/$/, '');
     const isRegexPattern = /[\\^$*+?()[\]{}|]/.test(pattern);
     if (isRegexPattern || literal === 'node_modules') continue;
@@ -76,6 +81,27 @@ function checkIgnoredTestPaths() {
   }
   return findings;
 }
+
+/**
+ * Extracts the string entries of the `testPathIgnorePatterns` array from the
+ * Jest config source. Handles both single- and double-quoted literals and
+ * ignores comments.
+ * @param {string} source
+ * @returns {string[]} Patterns
+ */
+function readIgnorePatterns(source) {
+  const match = source.match(/testPathIgnorePatterns\s*:\s*\[([\s\S]*?)\]/);
+  if (!match) return [];
+  const patterns = [];
+  const literal = /(['"])((?:\\.|(?!\1).)*)\1/g;
+  let entry = literal.exec(match[1]);
+  while (entry !== null) {
+    patterns.push(entry[2]);
+    entry = literal.exec(match[1]);
+  }
+  return patterns;
+}
+=======
 
 /**
  * Find nested suites using one-level repository-relative paths. Paths such as
@@ -468,4 +494,5 @@ module.exports = {
   keyOf,
   checkIgnoredTestPaths,
   checkFragileRepositoryPaths,
+  readIgnorePatterns,
 };

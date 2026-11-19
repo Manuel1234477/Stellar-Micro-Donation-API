@@ -25,15 +25,7 @@ const builtins = new Set(builtinModules);
  * Each one must be declared (or the require removed) and deleted from this
  * list. New entries need a reviewed reason, so new gaps still fail CI.
  */
-const KNOWN_GAPS = new Set([
-  '@aws-sdk/client-kms',
-  '@aws-sdk/client-s3',
-  '@opentelemetry/auto-instrumentations-node',
-  '@opentelemetry/semantic-conventions',
-  'axios',
-  'ioredis',
-  'redis',
-]);
+const KNOWN_GAPS = new Set([]);
 
 const REQUIRE_RE = /require\(\s*['"]([^'"]+)['"]\s*\)/g;
 
