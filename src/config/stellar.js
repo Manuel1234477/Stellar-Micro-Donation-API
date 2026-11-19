@@ -9,7 +9,7 @@
  * Stellar service instances. Uses ServiceContainer for dependency injection.
  */
 
-require('dotenv').config({ path: require('path').join(__dirname, '../../.env') });
+require('./loadEnv');
 const log = require('../utils/log');
 
 const serviceContainer = require('./serviceContainer');

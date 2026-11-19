@@ -957,7 +957,7 @@ module.exports = { run, results, checkMainnetProductionGuard, checkGeoBlocking, 
 // Allow running directly: `node src/utils/startupChecks.js`
 if (require.main === module) {
   // Load .env when run standalone
-  require('dotenv').config({ path: require('path').join(__dirname, '../../.env') });
+  require('../config/loadEnv');
   run({ exitOnFailure: true }).catch((err) => {
     print('error', `Startup checks threw an unexpected error: ${err.message}`);
     process.exit(1);

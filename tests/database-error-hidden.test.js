@@ -15,6 +15,17 @@ const fs = require('fs');
 const { DatabaseError } = require('../src/utils/errors');
 const Database = require('../src/utils/database');
 
+/**
+ * The database implementation lives in the facade plus src/utils/database/*.js (#1944).
+ * Source-level assertions read all of it.
+ */
+function readDatabaseSource() {
+  const dir = path.join(__dirname, '../src/utils/database');
+  const files = [path.join(__dirname, '../src/utils/database.js')]
+    .concat(fs.readdirSync(dir).map((f) => path.join(dir, f)));
+  return files.map((f) => fs.readFileSync(f, 'utf8')).join('\n');
+}
+
 describe('Issue #1765 — DatabaseError includes underlying SQLite error code and message', () => {
   test('DatabaseError constructor accepts originalError parameter', () => {
     const sqliteError = new Error('no such table: donations');
@@ -60,30 +71,21 @@ describe('Issue #1765 — DatabaseError includes underlying SQLite error code an
   });
 
   test('Database error logs include SQLite error code', () => {
-    const source = fs.readFileSync(
-      path.join(__dirname, '../src/utils/database.js'),
-      'utf8'
-    );
+    const source = readDatabaseSource();
 
     // Verify that logging includes err.cause.code or originalError.code
     expect(source).toMatch(/err\.code|originalError\.code|cause\.code/);
   });
 
   test('Database error logs include SQLite error message', () => {
-    const source = fs.readFileSync(
-      path.join(__dirname, '../src/utils/database.js'),
-      'utf8'
-    );
+    const source = readDatabaseSource();
 
     // Verify that logging includes err.message or originalError.message
     expect(source).toMatch(/err\.message|originalError\.message|cause\.message/);
   });
 
   test('db_errors_total metric labeled by SQLite error code exists', () => {
-    const source = fs.readFileSync(
-      path.join(__dirname, '../src/utils/database.js'),
-      'utf8'
-    );
+    const source = readDatabaseSource();
 
     // Verify that there's a metric tracking database errors by code
     expect(source).toMatch(/db_errors|databaseErrors|database.*error.*metric|metrics.*error/i);

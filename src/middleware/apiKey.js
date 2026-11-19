@@ -181,8 +181,13 @@ const requireApiKey = async (req, res, next) => {
     // Stage 1: Attempt Database-backed validation (Supports key rotation & granular roles)
     // Results are memoized per key for a short TTL to avoid re-querying the
     // api_keys table on every request (see issue #1796).
+    // When attachUserRole already looked this header up for the request (#1941),
+    // reuse that outcome: a DB-backed key would have set req.apiKey and returned
+    // above, so reaching here with the flag set means the lookup found nothing.
     let keyInfo = getCachedKeyInfo(apiKey);
-    if (keyInfo === undefined) {
+    if (keyInfo === undefined && req.apiKeyLookedUp) {
+      keyInfo = null;
+    } else if (keyInfo === undefined) {
       keyInfo = await validateKey(apiKey);
       if (keyInfo) {
         setCachedKeyInfo(apiKey, keyInfo);

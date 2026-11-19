@@ -417,6 +417,29 @@ function recordLegacyKeyUsage(keyIdHash) {
 }
 
 /**
+ * Counter: API key validations that failed for infrastructure reasons
+ * (database locked, pool exhausted, timeout). Distinct from invalid keys,
+ * which are authentication failures. Issue #1940.
+ * @type {client.Counter}
+ */
+const authValidationErrorsTotal = new client.Counter({
+  name: 'auth_validation_errors_total',
+  help: 'Total API key validations that could not complete due to an infrastructure error',
+  labelNames: ['reason'],
+  registers: [registry],
+});
+
+/**
+ * Records one API key validation that errored instead of returning a verdict.
+ * @param {string} [reason='unknown'] Short error class, e.g. 'db_error'
+ */
+function recordAuthValidationError(reason = 'unknown') {
+  try {
+    authValidationErrorsTotal.inc({ reason });
+  } catch (_) { /* best-effort */ }
+}
+
+/**
  * Counter: rejected authentication attempts, by reason.
  * Labels: reason (missing_key|invalid_key)
  * @type {client.Counter}
@@ -510,6 +533,9 @@ module.exports = {
   // Legacy API key usage (#1886)
   legacyApiKeyUsageTotal,
   recordLegacyKeyUsage,
+  // API key validation infrastructure errors (#1940)
+  authValidationErrorsTotal,
+  recordAuthValidationError,
   // Authentication failure metrics (#1887)
   authFailuresTotal,
   recordAuthFailure,

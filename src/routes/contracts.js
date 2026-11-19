@@ -2,6 +2,11 @@ const { bestEffort } = require('../utils/bestEffort');
 /**
  * Contracts Route
  * Exposes endpoints for Soroban smart contract invocation, simulation, state, and event monitoring.
+ *
+ * These endpoints are a thin proxy over the configured Stellar service. They do
+ * not hold or escrow funds, and they do not use the in-memory EscrowContract
+ * simulation (src/contracts/EscrowContract.js, issue #1939). Campaign escrow is
+ * documented on /campaigns/:id/pledge and /campaigns/:id/escrow.
  */
 
 const express = require('express');
