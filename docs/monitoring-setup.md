@@ -99,8 +99,55 @@ The application exports metrics at `/metrics` endpoint automatically via prom-cl
 Verify metrics are exported:
 
 ```bash
-curl http://localhost:3000/metrics | head -20
+curl -H "x-api-key: $METRICS_API_KEY" http://localhost:3000/metrics | head -20
 ```
+
+### Scrape authentication (#1982)
+
+`/metrics` requires the `metrics:read` permission. Do not give Prometheus an admin key.
+Create a dedicated scrape-only key with the `metrics` role, which grants `metrics:read` and nothing else:
+
+```bash
+npm run keys -- create --role metrics --name prometheus-scraper
+```
+
+A `metrics` key can scrape `/metrics` and is refused (403) by every other endpoint.
+Admin keys still work because the admin role holds the `*` permission.
+
+For Kubernetes-style deployments you can instead serve metrics on a second port that needs no application auth:
+
+```bash
+METRICS_PORT=9100            # 0 (default) disables the separate listener
+METRICS_HOST=0.0.0.0         # default; bind address inside the pod
+```
+
+The separate listener only answers `GET /metrics` (everything else returns 404). Expose it only on the pod or cluster network, never through a public Service or Ingress. The main port keeps `/metrics` behind `metrics:read` either way.
+
+Prometheus scrape config for the scrape-only key:
+
+```yaml
+  - job_name: 'stellar-donation-api'
+    metrics_path: '/metrics'
+    static_configs:
+      - targets: ['localhost:3000']
+    http_headers:
+      x-api-key:
+        files: ['/etc/prometheus/secrets/metrics-api-key']   # Prometheus >= 2.44
+```
+
+Or, with the separate port:
+
+```yaml
+  - job_name: 'stellar-donation-api'
+    static_configs:
+      - targets: ['stellar-api-pod:9100']
+```
+
+New stream gauges and counters for capacity planning:
+
+- `stream_connections_active{transport="sse"|"ws_balances"|"ws_graphql"}`: open long-lived streams per instance
+- `stream_connections_rejected_total{transport=...}`: connections refused by a global cap (`SSE_MAX_CONNECTIONS`, `WS_MAX_CONNECTIONS`)
+- `stellar_mode{mode="mock"|"testnet"|"public"}`: active Stellar mode (the active label is 1)
 
 Expected output:
 ```

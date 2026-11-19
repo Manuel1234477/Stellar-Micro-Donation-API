@@ -51,7 +51,7 @@ npm run config:check      # what CI runs: schema covers src/, generated files ar
 22. [Shared State (Multi-Instance)](#22-shared-state-multi-instance)
 23. [GraphQL](#23-graphql)
 
-266 variables are declared. Further topics follow the reference below.
+279 variables are declared. Further topics follow the reference below.
 
 ---
 
@@ -63,7 +63,7 @@ npm run config:check      # what CI runs: schema covers src/, generated files ar
 | `INSTANCE_ID` | string | — | no | Unique identifier for this process instance (used for scheduler/sequence leases and logs). Defaults to a random UUID |
 | `NODE_ENV` | string | `development` | no | Runtime environment: `development`, `test` or `production`. Controls logging verbosity, startup guards and unsafe-flag checks |
 | `PORT` | integer | `3000` | no | TCP port the HTTP server listens on |
-| `REQUEST_TIMEOUT_MS` | integer | `15000` | no | General per-request timeout in milliseconds for non-submission routes. Stellar submission routes (donations, batch, cross-asset, refunds, channels) always use 30 s. Streaming endpoints are exempt |
+| `REQUEST_TIMEOUT_MS` | integer | `15000` | no | General per-request timeout in milliseconds for non-submission routes (default 15 s). Stellar submission routes always use 30 s; streaming endpoints are exempt |
 | `SHUTDOWN_TIMEOUT` | integer | `30000` | no | Alias for `SHUTDOWN_TIMEOUT_MS` (milliseconds). Time allowed for in-flight requests to drain before force-exit |
 | `SHUTDOWN_TIMEOUT_MS` | integer | `30000` | no | Milliseconds to wait for graceful shutdown before force-exit |
 | `TRUSTED_PROXIES` | string | `loopback` | no | Comma-separated list of trusted proxy IPs/CIDRs. Passed to Express `trust proxy`. Set to the address of your load balancer in production |
@@ -113,7 +113,9 @@ npm run config:check      # what CI runs: schema covers src/, generated files ar
 | `ENCRYPTION_PUBLIC_KEY` | string | — | no | RSA/EC public key PEM used to verify asymmetric signatures |
 | `ENCRYPTION_SECRET` | string | — | no | Legacy symmetric encryption secret for non-wallet data paths Secret. |
 | `EXPORT_SIGNING_SECRET` | string | — | no | HMAC secret for signing CSV/JSON export files. Must be distinct from `ENCRYPTION_KEY` Secret. |
-| `EXPORT_SIGNING_SECRET_PREVIOUS` | string | — | no | Comma-separated previous `EXPORT_SIGNING_SECRET` values, still accepted for verifying export download links during rotation. Secret. |
+| `EXPORT_SIGNING_SECRET_PREVIOUS` | string | — | no | Comma-separated previous `EXPORT_SIGNING_SECRET` values, still accepted for verifying export download links during rotation Secret. |
+| `JWT_SIGNING_SECRET` | string | — | no | HMAC secret that signs access tokens (at least 32 characters). Required in production and staging. Must be distinct from `ENCRYPTION_KEY` Secret. |
+| `JWT_SIGNING_SECRET_PREVIOUS` | string | — | no | Previous `JWT_SIGNING_SECRET`, kept during rotation so tokens issued before the change still verify Secret. |
 | `MEMO_REENCRYPT_BATCH_SIZE` | integer | `50` | no | Memos processed per batch by the background re-encryption job Minimum: 1. |
 | `MEMO_REENCRYPT_INTERVAL_MS` | integer | `30000` | no | Interval (ms) between memo re-encryption batches Minimum: 1. |
 | `NEW_ENCRYPTION_KEY` | string | — | no | Target key during a live re-encryption pass (`npm run migrate:reencrypt`) Secret. |
@@ -173,7 +175,8 @@ npm run config:check      # what CI runs: schema covers src/, generated files ar
 | `SYNC_MAX_PAGES` | integer | `100` | no | Maximum number of Horizon history pages fetched during a transaction sync pass Maximum: 1000. |
 | `TX_SYNC_INTERVAL_MS` | integer | `900000` | no | Interval (ms) between automatic transaction reconciliation runs Minimum: 60000. |
 | `TX_SYNC_LEASE_MULTIPLIER` | integer | `2` | no | Sync lease length as a multiple of `TX_SYNC_INTERVAL_MS` Range: 1–10. |
-| `USE_MOCK_STELLAR` | boolean | `false` | no | Alias for `MOCK_STELLAR` in some service modules |
+| `ALLOW_MOCK_STELLAR_IN_PRODUCTION` | boolean | `false` | no | Explicit override that lets `MOCK_STELLAR=true` start with `NODE_ENV=production`. Mock mode records transfers that never happen on-chain, so leave this unset in real deployments |
+| `USE_MOCK_STELLAR` | boolean | `false` | no | DEPRECATED and ignored. `MOCK_STELLAR` is the only variable that controls mock mode; startup logs a warning if this is set |
 
 ---
 
@@ -382,9 +385,9 @@ npm run config:check      # what CI runs: schema covers src/, generated files ar
 | `BACKUP_INTERVAL_MS` | integer | `86400000` | no | Interval (ms) between automatic backup runs |
 | `BACKUP_S3_BUCKET` | string | — | no | S3 bucket name for off-site backup upload. When unset, backups are local only |
 | `BACKUP_S3_PREFIX` | string | `backups/` | no | Key prefix used when uploading backup files to S3 |
-| `BACKUP_ENCRYPTION_KEY` | string | — | no | Dedicated key material for encrypting backups (#1951). When unset, `ENCRYPTION_KEY` is used. Secret. |
-| `BACKUP_KEY_ID` | string | derived | no | Identifier written into each backup header (#1951). Defaults to an id derived from the key material. |
-| `BACKUP_PREVIOUS_KEYS` | string | — | no | Comma-separated `id:material` pairs for keys that encrypted older backups (#1951). Needed to restore those after rotation. Secret. |
+| `BACKUP_ENCRYPTION_KEY` | string | — | no | Dedicated key material for encrypting backups (#1951). When unset, ENCRYPTION_KEY is used. Should differ from ENCRYPTION_KEY Secret. |
+| `BACKUP_KEY_ID` | string | — | no | Identifier written into each backup header (#1951). Defaults to an id derived from the key material |
+| `BACKUP_PREVIOUS_KEYS` | string | — | no | Comma-separated `id:material` pairs for keys that encrypted older backups (#1951). Required to restore those backups after a key rotation Secret. |
 
 ---
 
@@ -399,6 +402,12 @@ npm run config:check      # what CI runs: schema covers src/, generated files ar
 | `SSE_MAX_CONNECTIONS_PER_KEY` | integer | `5` | no | Maximum concurrent SSE streams per API key. Enforced cluster-wide when `SHARED_STATE_BACKEND=redis` Minimum: 1. |
 | `WS_HEARTBEAT_MS` | integer | `30000` | no | Interval (ms) between WebSocket ping frames |
 | `WS_MAX_WALLETS` | integer | `50` | no | Maximum number of wallet subscriptions per WebSocket connection |
+| `SSE_MAX_CONNECTIONS` | integer | `1000` | no | Global cap on concurrent SSE streams across all API keys on this instance. Excess connections receive 503 with `Retry-After` Minimum: 1. |
+| `WS_MAX_CONNECTIONS` | integer | `1000` | no | Global cap on concurrent WebSocket connections (balance stream and GraphQL subscriptions) on this instance. Excess upgrades receive 503 with `Retry-After` Minimum: 1. |
+| `WS_MAX_PAYLOAD_BYTES` | integer | `16384` | no | Maximum size (bytes) of a single inbound WebSocket frame. Larger frames close the connection with code 1009 Minimum: 1024. |
+| `WS_AUTH_TIMEOUT_MS` | integer | `10000` | no | Deadline (ms) for a GraphQL WebSocket client to send `connection_init` with a valid API key before the socket is closed Minimum: 1000. |
+| `WS_MAX_MESSAGES_PER_SECOND` | integer | `20` | no | Maximum inbound WebSocket messages per connection per second. Excess messages are dropped and the client is sent an error Minimum: 1. |
+| `WS_MAX_SUBSCRIPTIONS` | integer | `20` | no | Maximum concurrent GraphQL subscriptions per WebSocket connection Minimum: 1. |
 
 ---
 
@@ -408,6 +417,8 @@ npm run config:check      # what CI runs: schema covers src/, generated files ar
 |---|---|---|---|---|
 | `ANOMALY_WEBHOOK_URL` | string | — | no | URL to POST anomaly-detection alerts to. When unset, alerts are logged only |
 | `ORPHAN_ALERT_THRESHOLD` | integer | `1` | no | Number of orphaned transactions before an alert is triggered |
+| `METRICS_PORT` | integer | `0` | no | When non-zero, serve `GET /metrics` without application auth on this separate port (intended for pod-internal scraping). `0` disables it and keeps `/metrics` on the main port behind `metrics:read` Minimum: 0. |
+| `METRICS_HOST` | string | `0.0.0.0` | no | Bind address for the separate metrics port. Do not expose it outside the pod or cluster network |
 | `OTEL_ENABLED` | boolean | `true` | no | Enable OpenTelemetry tracing. Set `false` to disable |
 | `OTEL_EXPORTER_OTLP_ENDPOINT` | url | — | no | OTLP exporter endpoint URL (e.g. `http://collector:4318`) |
 | `OTEL_EXPORTER_OTLP_HEADERS` | string | — | no | Comma-separated `key=value` pairs added as headers to OTLP export requests |

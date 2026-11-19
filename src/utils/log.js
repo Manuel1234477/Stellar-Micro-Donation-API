@@ -11,11 +11,23 @@
 
 const { sanitizeForLogging } = require('./sanitizer');
 const { maskSensitiveData } = require('./dataMasker');
-const config = require('../config');
+// Logging settings come from the typed env schema (src/config/envSchema.js, #1784).
+// log.js previously read a `config.logging` / `config.app` / `config.server` shape that
+// src/config/index.js no longer provides, so requiring this module threw at import time.
+const { env } = require('../config/env');
+const logConfig = {
+  level: env.LOG_LEVEL,
+  format: env.LOG_FORMAT,
+  sampleRate: env.LOG_SAMPLE_RATE,
+  toFile: env.LOG_TO_FILE,
+  directory: env.LOG_DIR,
+};
+const appConfig = { name: env.OTEL_SERVICE_NAME, version: require('../../package.json').version };
+const serverConfig = { env: env.NODE_ENV };
 const fs = require('fs');
 const path = require('path');
 
-const isDebugMode = config.logging.debugMode;
+const isDebugMode = env.DEBUG_MODE;
 
 const LEVELS = {
   DEBUG: 10,
@@ -24,19 +36,19 @@ const LEVELS = {
   ERROR: 40
 };
 
-const LOG_LEVEL = config.logging.level ? config.logging.level.toUpperCase() : 'INFO';
+const LOG_LEVEL = logConfig.level ? logConfig.level.toUpperCase() : 'INFO';
 const CURRENT_LEVEL = LEVELS[LOG_LEVEL] || LEVELS.INFO;
-const LOG_FORMAT = config.logging.format || 'text'; // json | text
-const SAMPLE_RATE = typeof config.logging.sampleRate === 'number' ? config.logging.sampleRate : 1.0;
+const LOG_FORMAT = logConfig.format || 'text'; // json | text
+const SAMPLE_RATE = typeof logConfig.sampleRate === 'number' ? logConfig.sampleRate : 1.0;
 
 /**
  * Standard log fields for structured logging
  * These fields provide consistent context across all logs
  */
 const STANDARD_FIELDS = {
-  SERVICE_NAME: config.app.name,
-  ENVIRONMENT: config.server.env,
-  VERSION: config.app.version
+  SERVICE_NAME: appConfig.name,
+  ENVIRONMENT: serverConfig.env,
+  VERSION: appConfig.version
 };
 
 /**
@@ -61,18 +73,18 @@ const MAX_BACKUP_FILES = parseInt(process.env.LOG_MAX_BACKUPS, 10) || 10; // Ret
 let logRotations = 0;
 
 function ensureLogDirectory() {
-  if (config.logging.toFile) {
-    if (!fs.existsSync(config.logging.directory)) {
-      fs.mkdirSync(config.logging.directory, { recursive: true });
+  if (logConfig.toFile) {
+    if (!fs.existsSync(logConfig.directory)) {
+      fs.mkdirSync(logConfig.directory, { recursive: true });
     }
   }
 }
 
 function cleanupOldLogFiles() {
-  if (!config.logging.toFile) return;
+  if (!logConfig.toFile) return;
 
   try {
-    const logDir = config.logging.directory;
+    const logDir = logConfig.directory;
     if (!fs.existsSync(logDir)) return;
 
     const files = fs.readdirSync(logDir)
@@ -100,7 +112,7 @@ function cleanupOldLogFiles() {
 }
 
 function rotateLogStream(forceSizeRotate = false) {
-  if (!config.logging.toFile) return;
+  if (!logConfig.toFile) return;
 
   const now = new Date();
   const dateStr = now.toISOString().split('T')[0];
@@ -126,7 +138,7 @@ function rotateLogStream(forceSizeRotate = false) {
     ? `app-${dateStr}.${logRotations}.log`
     : `app-${dateStr}.log`;
 
-  const filepath = path.join(config.logging.directory, filename);
+  const filepath = path.join(logConfig.directory, filename);
 
   // Initialize size tracker
   if (fs.existsSync(filepath)) {
@@ -143,7 +155,7 @@ function rotateLogStream(forceSizeRotate = false) {
 }
 
 function writeToFile(output) {
-  if (!config.logging.toFile) return;
+  if (!logConfig.toFile) return;
   
   const msg = output + '\n';
   const size = Buffer.byteLength(msg, 'utf8');
@@ -350,7 +362,7 @@ function dispatchLog(levelsKey, scope, message, meta = {}) {
   }
 
   // File logging
-  if (config.logging.toFile) {
+  if (logConfig.toFile) {
     writeToFile(formattedOutput);
   }
 }

@@ -333,7 +333,8 @@ router.get('/:id/progress/stream', requireApiKey, asyncHandler(async (req, res, 
   // Register with the SSE manager up front: addClient checks the per-key
   // connection limit and registers atomically, so concurrent connects can't
   // all slip past a separate count check while this handler awaits.
-  const { limitExceeded } = SseManager.addClient(clientId, keyId, { campaignId }, res);
+  const { limitExceeded, globalLimit } = SseManager.addClient(clientId, keyId, { campaignId }, res);
+  if (globalLimit) return SseManager.sendGlobalLimitResponse(res);
   if (limitExceeded) {
     return res.status(429).json({
       success: false,

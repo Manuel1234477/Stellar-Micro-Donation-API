@@ -37,8 +37,8 @@ const commands = {
       process.exit(1);
     }
 
-    if (!['admin', 'user', 'signer', 'guest'].includes(role)) {
-      console.error('Error: --role must be one of: admin, user, signer, guest');
+    if (!['admin', 'user', 'signer', 'metrics', 'guest'].includes(role)) {
+      console.error('Error: --role must be one of: admin, user, signer, metrics, guest');
       process.exit(1);
     }
 

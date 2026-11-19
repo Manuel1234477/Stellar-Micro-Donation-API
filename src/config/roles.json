@@ -2,7 +2,9 @@
   "roles": [
     {
       "name": "admin",
-      "permissions": ["*"]
+      "permissions": [
+        "*"
+      ]
     },
     {
       "name": "user",
@@ -51,6 +53,12 @@
       "permissions": [
         "donations:read",
         "donations:approve"
+      ]
+    },
+    {
+      "name": "metrics",
+      "permissions": [
+        "metrics:read"
       ]
     },
     {

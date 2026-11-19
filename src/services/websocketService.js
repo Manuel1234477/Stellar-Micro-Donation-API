@@ -33,6 +33,9 @@ const { validateKey } = require('../models/apiKeys');
 const { securityConfig } = require('../config/securityConfig');
 const donationEvents = require('../events/donationEvents');
 const log = require('../utils/log');
+const { env } = require('../config/env');
+const { streamConnectionsActive, streamConnectionsRejectedTotal } = require('../utils/metrics');
+const { createTokenBucket } = require('../utils/tokenBucket');
 const { safeEqual } = require('../utils/safeEqual');
 
 // Subprotocol prefix that carries an API key in the WebSocket handshake (#1942).
@@ -49,9 +52,15 @@ const queryApiKeyAllowed = () => process.env.WS_ALLOW_QUERY_API_KEY !== 'false';
 
 const MAX_WALLETS = parseInt(process.env.WS_MAX_WALLETS || '50', 10);
 const HEARTBEAT_MS = parseInt(process.env.WS_HEARTBEAT_MS || '30000', 10);
+// Abuse limits (#1981, #1983)
+const MAX_PAYLOAD_BYTES = env.WS_MAX_PAYLOAD_BYTES;
+const MAX_CONNECTIONS = env.WS_MAX_CONNECTIONS;
+const MAX_MESSAGES_PER_SECOND = env.WS_MAX_MESSAGES_PER_SECOND;
+const CAPACITY_RETRY_AFTER_SECONDS = 30;
 const STREAMS = new Map();
 
 // Map<walletAddress, Set<WebSocket>> — local subscriber routing for this instance
+const activeServers = new Set();
 const subscriptions = new Map();
 
 // ── Pub/sub channel abstraction ───────────────────────────────────────────────
@@ -310,10 +319,25 @@ function attach(server) {
   // RFC 6455 requires selecting one of the offered tokens, so that one is echoed.
   const wss = new WebSocketServer({
     noServer: true,
+    maxPayload: MAX_PAYLOAD_BYTES,
     handleProtocols: (protocols) => (protocols.has(BALANCE_SUBPROTOCOL)
       ? BALANCE_SUBPROTOCOL
       : protocols.values().next().value),
   });
+
+  // maxPayload: ws buffers whole frames in memory; the default is 100 MiB (#1981).
+  // Frames above the limit close the socket with code 1009.
+
+  const updateGauge = () => streamConnectionsActive.set({ transport: 'ws_balances' }, wss.clients.size);
+
+  // Reject early, before doing any authentication work, when at the global cap (#1983).
+  const rejectAtCapacity = (socket) => {
+    streamConnectionsRejectedTotal.inc({ transport: 'ws_balances' });
+    socket.write(
+      `HTTP/1.1 503 Service Unavailable\r\nRetry-After: ${CAPACITY_RETRY_AFTER_SECONDS}\r\nConnection: close\r\n\r\n`
+    );
+    socket.destroy();
+  };
 
   server.on('upgrade', async (req, socket, head) => {
     // Only handle our own path. Other upgrades belong to other transports (GraphQL)
@@ -326,6 +350,11 @@ function attach(server) {
     } catch (_) {
       socket.write('HTTP/1.1 400 Bad Request\r\n\r\n');
       socket.destroy();
+      return;
+    }
+
+    if (wss.clients.size >= MAX_CONNECTIONS) {
+      rejectAtCapacity(socket);
       return;
     }
 
@@ -347,15 +376,32 @@ function attach(server) {
     }
 
     wss.handleUpgrade(req, socket, head, (ws) => {
+      // Re-check: concurrent upgrades can pass the first check while authenticating.
+      // ws adds this socket to wss.clients before invoking the callback, so the
+      // count already includes it and the comparison must be strict (#1983).
+      if (wss.clients.size > MAX_CONNECTIONS) {
+        streamConnectionsRejectedTotal.inc({ transport: 'ws_balances' });
+        ws.close(1013, 'Server at capacity');
+        return;
+      }
+
       ws._wallets = new Set();
       ws._keyInfo = keyInfo;
       ws._alive = true;
+      ws._msgBucket = createTokenBucket(MAX_MESSAGES_PER_SECOND);
 
       ws.on('pong', () => { ws._alive = true; });
-      ws.on('message', (raw) => handleMessage(ws, raw));
-      ws.on('close', () => removeAllSubs(ws));
+      ws.on('message', (raw) => {
+        if (!ws._msgBucket.take()) {
+          send(ws, { type: 'error', event: 'error', message: 'Rate limit exceeded; message dropped' });
+          return;
+        }
+        handleMessage(ws, raw);
+      });
+      ws.on('close', () => { removeAllSubs(ws); updateGauge(); });
       ws.on('error', () => removeAllSubs(ws));
 
+      updateGauge();
       send(ws, { type: 'connected', event: 'connected', message: 'Authenticated. Send subscribe action.' });
     });
   });
@@ -365,8 +411,27 @@ function attach(server) {
 
   wss.on('close', () => clearInterval(heartbeat)); // eslint-disable-line local/no-bare-timers
 
+  activeServers.add(wss);
+  wss.on('close', () => activeServers.delete(wss));
+
   log.info('WS', 'WebSocket balance streaming attached at /ws/balances');
   return wss;
 }
 
-module.exports = { attach, broadcast, subscriptions, _handleMessage: handleMessage, _authenticate: authenticate, _runHeartbeat: runHeartbeat, _createChannel };
+/**
+ * Close every balance WebSocket with 1001 (going away) so graceful shutdown
+ * drains promptly instead of waiting on idle clients (#1983).
+ * @param {string} [reason]
+ * @returns {number} number of sockets signalled
+ */
+function closeAll(reason = 'server_shutdown') {
+  let count = 0;
+  for (const wss of activeServers) {
+    for (const ws of wss.clients) {
+      try { ws.close(1001, reason); count++; } catch (_) { /* already closing */ }
+    }
+  }
+  return count;
+}
+
+module.exports = { attach, broadcast, closeAll, subscriptions, _handleMessage: handleMessage, _authenticate: authenticate, _runHeartbeat: runHeartbeat, _createChannel };

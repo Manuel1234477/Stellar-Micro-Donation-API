@@ -17,8 +17,12 @@ const { getPubSubAdapter } = require('./PubSubAdapter');
 const timerRegistry = require('../utils/timerRegistry');
 const log = require('../utils/log');
 const { env } = require('../config/env');
+const { streamConnectionsActive, streamConnectionsRejectedTotal } = require('../utils/metrics');
 
 const MAX_CONNECTIONS_PER_KEY = env.SSE_MAX_CONNECTIONS_PER_KEY;
+/** Global cap across all keys on this instance (#1983). */
+const MAX_CONNECTIONS = env.SSE_MAX_CONNECTIONS;
+const GLOBAL_LIMIT_RETRY_AFTER_SECONDS = 30;
 const HEARTBEAT_INTERVAL_MS = 30_000;
 const EVENT_BUFFER_SIZE = env.SSE_EVENT_BUFFER_SIZE;
 const SSE_CHANNEL = 'sse:broadcast';
@@ -36,6 +40,7 @@ class SseManager {
     this._eventBuffer = [];
     this._nextEventId = 1;
     this.MAX_CONNECTIONS_PER_KEY = MAX_CONNECTIONS_PER_KEY;
+    this.MAX_CONNECTIONS = MAX_CONNECTIONS;
     this.HEARTBEAT_INTERVAL_MS = HEARTBEAT_INTERVAL_MS;
     this.EVENT_BUFFER_SIZE = EVENT_BUFFER_SIZE;
 
@@ -99,12 +104,19 @@ class SseManager {
       res = null;
     }
 
+    // Global cap first: protects file descriptors and memory regardless of key (#1983)
+    if (this._clients.size >= MAX_CONNECTIONS) {
+      streamConnectionsRejectedTotal.inc({ transport: 'sse' });
+      return { added: false, limitExceeded: true, globalLimit: true };
+    }
+
     if (this.connectionCountForKey(apiKey) >= MAX_CONNECTIONS_PER_KEY) {
       return { added: false, limitExceeded: true };
     }
 
     const client = { clientId, apiKey, res, filters: filters || {} };
     this._clients.set(clientId, client);
+    this._updateConnectionGauge();
 
     if (res && typeof res.on === 'function') {
       res.on('close', () => this.removeClient(clientId, client));
@@ -178,6 +190,7 @@ class SseManager {
       const client = this._clients.get(clientId);
       this._clients.delete(clientId);
       this._unregisterShared(client);
+      this._updateConnectionGauge();
       return;
     }
     if (clientRef) {
@@ -185,10 +198,32 @@ class SseManager {
         if (c === clientRef || c.apiKey === clientId) {
           this._clients.delete(id);
           this._unregisterShared(c);
+          this._updateConnectionGauge();
           break;
         }
       }
     }
+  }
+
+  /**
+   * Respond to a stream refused by the global cap (#1983): 503 with Retry-After
+   * so well-behaved clients back off instead of hammering the endpoint.
+   * @param {import('http').ServerResponse} res
+   */
+  sendGlobalLimitResponse(res) {
+    res.setHeader('Retry-After', String(GLOBAL_LIMIT_RETRY_AFTER_SECONDS));
+    return res.status(503).json({
+      success: false,
+      error: {
+        code: 'STREAM_CAPACITY_EXCEEDED',
+        message: 'Server is at its streaming connection capacity; retry later',
+      },
+    });
+  }
+
+  /** Publish the current local stream count as a gauge (#1983). @private */
+  _updateConnectionGauge() {
+    streamConnectionsActive.set({ transport: 'sse' }, this._clients.size);
   }
 
   /**

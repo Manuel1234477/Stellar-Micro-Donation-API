@@ -84,12 +84,12 @@ const SECURITY_CONFIGS = {
   HORIZON_URL: {
     required: false,
     safeDefault: null, // Use network defaults
-    validator: (value, env = process.env) => {
+    validator: (value) => {
       try {
         if (!value || !value.trim()) return null;
         const url = new URL(value.trim());
         // Only allow HTTPS in production
-        if (env.NODE_ENV === 'production' && url.protocol !== 'https:') {
+        if (process.env.NODE_ENV === 'production' && url.protocol !== 'https:') {
           log.warn('SECURITY_CONFIG', 'Insecure Horizon URL protocol detected, using default', {
             url: value.trim(),
             protocol: url.protocol
@@ -148,29 +148,29 @@ const SECURITY_CONFIGS = {
  * `process.env`, so it can be exercised directly in tests. Defaults to
  * `process.env` for production callers.
  */
-function loadSecurityConfig(env = process.env) {
+function loadSecurityConfig() {
   const config = {};
   const misconfigurations = [];
-  const isProduction = env.NODE_ENV === 'production';
+  const isProduction = process.env.NODE_ENV === 'production';
 
   log.info('SECURITY_CONFIG', 'Loading security configuration', { 
-    environment: env.NODE_ENV || 'development' 
+    environment: process.env.NODE_ENV || 'development' 
   });
 
-  if (env.KMS_KEY_ID && !env.ENCRYPTED_ENCRYPTION_KEY && !env.ENCRYPTION_KEY) {
+  if (process.env.KMS_KEY_ID && !process.env.ENCRYPTED_ENCRYPTION_KEY && !process.env.ENCRYPTION_KEY) {
     throw new Error('KMS_KEY_ID is set, but ENCRYPTED_ENCRYPTION_KEY is missing. Use the KMS wrapping script before startup.');
   }
 
-  if (env.KMS_KEY_ID && env.ENCRYPTED_ENCRYPTION_KEY && !env.ENCRYPTION_KEY) {
+  if (process.env.KMS_KEY_ID && process.env.ENCRYPTED_ENCRYPTION_KEY && !process.env.ENCRYPTION_KEY) {
     try {
-      env.ENCRYPTION_KEY = unwrapEncryptionKey();
+      process.env.ENCRYPTION_KEY = unwrapEncryptionKey();
     } catch (error) {
       throw new Error(`KMS key unwrapping failed at startup: ${error.message}`);
     }
   }
 
   Object.entries(SECURITY_CONFIGS).forEach(([key, configDef]) => {
-    const envValue = env[key];
+    const envValue = process.env[key];
     let finalValue;
 
     // Check if required in production
@@ -190,7 +190,7 @@ function loadSecurityConfig(env = process.env) {
       }
     } else if (envValue) {
       // Validate provided value
-      const validatedValue = configDef.validator(envValue, env);
+      const validatedValue = configDef.validator(envValue);
       if (validatedValue === null || validatedValue === undefined) {
         misconfigurations.push({
           config: key,

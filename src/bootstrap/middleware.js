@@ -18,12 +18,13 @@ const requestId = require('../middleware/requestId');
 const errorEnvelopeMiddleware = require('../middleware/errorEnvelope');
 const { attachLifecycleTracking } = require('../middleware/requestLifecycle');
 const logger = require('../middleware/logger');
-const { attachUserRole, requireAdmin } = require('../middleware/rbac');
+const { attachUserRole, checkPermission } = require('../middleware/rbac');
 const abuseDetectionMiddleware = require('../middleware/abuseDetection');
 const replayDetectionMiddleware = require('../middleware/replayDetection');
 const { createRequestSigningMiddleware } = require('../middleware/requestSigning');
 const trackQuotaUsage = require('../middleware/quotaTracker');
 const { metricsMiddleware, registry } = require('../utils/metrics');
+const { PERMISSIONS } = require('../utils/permissions');
 const { createDeduplicationMiddleware } = require('../middleware/deduplication');
 const { createCompressionMiddleware } = require('../middleware/compression');
 const { fieldFilterMiddleware } = require('../middleware/fieldFilter');
@@ -220,7 +221,8 @@ function applyMiddleware(app) {
 
   // ─── Metrics ─────────────────────────────────────────────────────────────────
   app.use(metricsMiddleware);
-  app.get('/metrics', requireApiKey, requireAdmin(), asyncHandler(async (req, res) => {
+  // Scrape-only access via the metrics:read permission (#1982). Admin keys hold '*' and still pass.
+  app.get('/metrics', requireApiKey, checkPermission(PERMISSIONS.METRICS_READ), asyncHandler(async (req, res) => {
     try {
       res.set('Content-Type', registry.contentType);
       res.end(await registry.metrics());
