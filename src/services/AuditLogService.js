@@ -308,10 +308,16 @@ class AuditLogService {
           resource TEXT,
           reason TEXT,
           details TEXT,
+          prevHash TEXT,
           integrityHash TEXT NOT NULL,
           createdAt DATETIME DEFAULT CURRENT_TIMESTAMP
         )
       `);
+      // Backfill column for pre-existing databases (issue #2096).
+      const columns = await db.all('PRAGMA table_info(audit_logs)');
+      if (!columns.some((c) => c.name === 'prevHash')) {
+        await db.run('ALTER TABLE audit_logs ADD COLUMN prevHash TEXT');
+      }
       tableInitialized = true;
     } finally {
       tableInitPromise = null;
@@ -354,25 +360,35 @@ class AuditLogService {
         details: JSON.stringify(sanitizedDetails)
       };
 
-      // Generate integrity hash
-      const hash = this.generateHash(auditEntry);
-      auditEntry.integrityHash = hash;
-
       // Write directly to DB for immediate persistence
       await AuditLogService.initializeTable();
+
+      // Chain to the previous row (issue #2096): prev_hash + keyed HMAC.
+      const prevRow = await db.get(
+        'SELECT integrityHash FROM audit_logs ORDER BY id DESC LIMIT 1'
+      );
+      auditEntry.prevHash = prevRow ? prevRow.integrityHash : null;
+
       const dbResult = await db.run(
         `INSERT INTO audit_logs (
           timestamp, category, action, severity, result,
           userId, requestId, ipAddress, resource, reason,
-          details, integrityHash
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          details, prevHash, integrityHash
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         [
           auditEntry.timestamp, auditEntry.category, auditEntry.action, auditEntry.severity, auditEntry.result,
           auditEntry.userId, auditEntry.requestId, auditEntry.ipAddress, auditEntry.resource, auditEntry.reason,
-          auditEntry.details, auditEntry.integrityHash
+          auditEntry.details, auditEntry.prevHash, ''
         ]
       );
       auditEntry.id = dbResult.id;
+
+      // Generate integrity hash over all fields plus prev_hash, then persist it.
+      auditEntry.integrityHash = this.generateHash(auditEntry);
+      await db.run(
+        'UPDATE audit_logs SET integrityHash = ? WHERE id = ?',
+        [auditEntry.integrityHash, auditEntry.id]
+      );
 
       // Log to application logs for real-time monitoring
       const logLevel = severity === AUDIT_SEVERITY.HIGH ? 'warn' : 'info';
@@ -471,23 +487,95 @@ class AuditLogService {
   }
 
   /**
-   * Generate cryptographic hash for integrity verification
-   * @param {Object} entry - Audit log entry
-   * @returns {string} SHA-256 hash
+   * Resolve the dedicated audit-log HMAC key (issue #2096).
+   * Must be distinct from the encryption and JWT keys.
+   * @returns {string} HMAC key
    */
-  static generateHash(entry) {
-    const data = `${entry.timestamp}|${entry.category}|${entry.action}|${entry.result}|${entry.userId}|${entry.details}`;
-    return crypto.createHash('sha256').update(data).digest('hex');
+  static getHmacKey() {
+    const key = process.env.AUDIT_LOG_HMAC_KEY;
+    if (!key) {
+      throw new Error('AUDIT_LOG_HMAC_KEY is not configured');
+    }
+    return key;
   }
 
   /**
-   * Verify integrity of an audit log entry
+   * Canonical serialisation of every auditable field plus prev_hash.
+   * Field order is fixed and values are JSON-encoded so that separators inside
+   * a value cannot be used to shift data between fields.
+   * @param {Object} entry - Audit log entry
+   * @returns {string} Canonical string
+   */
+  static canonicalize(entry) {
+    const fields = [
+      'id',
+      'timestamp',
+      'category',
+      'action',
+      'severity',
+      'result',
+      'userId',
+      'requestId',
+      'ipAddress',
+      'resource',
+      'reason',
+      'details',
+      'prevHash'
+    ];
+    return JSON.stringify(fields.map((f) => (entry[f] === undefined ? null : entry[f])));
+  }
+
+  /**
+   * Generate the keyed integrity hash (HMAC-SHA256) for an audit entry.
+   * @param {Object} entry - Audit log entry (including prevHash)
+   * @returns {string} HMAC hex digest
+   */
+  static generateHash(entry) {
+    return crypto
+      .createHmac('sha256', AuditLogService.getHmacKey())
+      .update(AuditLogService.canonicalize(entry))
+      .digest('hex');
+  }
+
+  /**
+   * Verify integrity of a single audit log entry.
    * @param {Object} entry - Audit log entry from database
    * @returns {boolean} True if integrity check passes
    */
   static verifyIntegrity(entry) {
+    if (!entry || !entry.integrityHash) return false;
     const expectedHash = this.generateHash(entry);
-    return expectedHash === entry.integrityHash;
+    const a = Buffer.from(expectedHash, 'hex');
+    const b = Buffer.from(String(entry.integrityHash), 'hex');
+    return a.length === b.length && crypto.timingSafeEqual(a, b);
+  }
+
+  /**
+   * Verify the whole audit chain in id order: every row's HMAC must match and
+   * every row's prev_hash must equal the previous row's integrityHash.
+   * Detects modified rows, deleted rows and broken links.
+   * @param {Object} [options]
+   * @param {number} [options.limit] - Max rows to scan (default: all)
+   * @returns {Promise<{ valid: boolean, checked: number, brokenAt: (number|null), reason: (string|null) }>}
+   */
+  static async verifyChain({ limit } = {}) {
+    const sql = limit
+      ? 'SELECT * FROM audit_logs ORDER BY id ASC LIMIT ?'
+      : 'SELECT * FROM audit_logs ORDER BY id ASC';
+    const rows = await db.all(sql, limit ? [limit] : []);
+
+    let prevHash = null;
+    for (const row of rows) {
+      const rowPrev = row.prevHash === undefined ? null : row.prevHash;
+      if (rowPrev !== prevHash) {
+        return { valid: false, checked: rows.length, brokenAt: row.id, reason: 'prev_hash mismatch' };
+      }
+      if (!AuditLogService.verifyIntegrity(row)) {
+        return { valid: false, checked: rows.length, brokenAt: row.id, reason: 'integrity hash mismatch' };
+      }
+      prevHash = row.integrityHash;
+    }
+    return { valid: true, checked: rows.length, brokenAt: null, reason: null };
   }
 
   /**

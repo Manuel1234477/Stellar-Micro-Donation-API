@@ -2,11 +2,17 @@
  * Transaction Model - Data Access Layer (SQLite-backed)
  * No longer reads from or writes to data/donations.json.
  *
- * Uses an in-memory store loaded from SQLite by Transaction.initialize(),
- * which the server bootstrap calls after migrations have run. Requiring this
- * module performs no database I/O.
- * All mutations are persisted to SQLite (fire-and-forget with error logging).
- * The synchronous public API is preserved for backward compatibility.
+ * Reads go straight to SQLite (donations_store) — no module-level Map holds the
+ * full donation set, so a write on one instance is visible to a read on another
+ * immediately and boot time does not depend on table size.
+ *
+ * Transaction.initialize() (called by the server bootstrap after migrations)
+ * only verifies the table is reachable; it does not load rows.
+ *
+ * Writes are awaited: the async API (createAsync/updateStatusAsync/...) is the
+ * supported path. The legacy synchronous methods are retained as thin
+ * compatibility shims that delegate to the async path and return the
+ * pre-write snapshot; new code must use the async variants.
  */
 
 'use strict';
@@ -23,16 +29,33 @@ const {
 const log = require('../utils/log');
 const { toStroops } = require('../utils/money');
 
-// ── In-memory store ──────────────────────────────────────────────────────────
+// ── Store state ──────────────────────────────────────────────────────────────
 
-/** @type {Map<string, object>} id -> transaction object */
-const _store = new Map();
-/** @type {Map<string, object>} idempotencyKey -> transaction object */
-const _idempotencyIndex = new Map();
 let _loaded = false;
 let _loading = null; // Promise<void> | null
 /** @type {Error|null} Error from the most recent failed load, if any. */
 let _loadError = null;
+
+/** Parse a donations_store row into a transaction object. */
+function _rowToTx(row) {
+  if (!row || !row.data) return null;
+  try {
+    return JSON.parse(row.data);
+  } catch (err) {
+    log.warn('TRANSACTION_MODEL', 'Skipping corrupt donations_store row', { error: err.message });
+    return null;
+  }
+}
+
+/** Read a single transaction by id (or idempotency key) from SQLite. */
+async function _readOne(where, value) {
+  const Database = require('../utils/database');
+  const row = await Database.get(
+    `SELECT data FROM donations_store WHERE ${where} = ? LIMIT 1`,
+    [value]
+  );
+  return _rowToTx(row);
+}
 
 /**
  * Persist a single record to SQLite.

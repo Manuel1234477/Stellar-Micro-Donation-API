@@ -13,13 +13,72 @@ const { parse } = require('csv-parse/sync');
 const StellarSdk = require('./stellar/sdk.js');
 const crypto = require('crypto');
 const Wallet = require('../models/wallet');
+const Database = require('../utils/database');
 const log = require('../utils/log');
 
 const DEFAULT_MAX_ROWS = 1000;
 const DEFAULT_BATCH_SIZE = 50;
 
-/** In-memory store for bulk import jobs: jobId -> job */
-const _jobs = new Map();
+/** Job type used in the shared admin_jobs table. */
+const JOB_TYPE = 'bulk_wallet_import';
+
+/**
+ * Persist a job snapshot into the admin_jobs table (issue #2099).
+ * @param {Object} job
+ * @returns {Promise<void>}
+ */
+async function persistJob(job) {
+  const startedAt = job.startedAt ? Date.parse(job.startedAt) : Date.parse(job.createdAt);
+  const durationMs = job.completedAt ? Date.parse(job.completedAt) - startedAt : null;
+  const resultJson = JSON.stringify({
+    total: job.total,
+    processed: job.processed,
+    succeeded: job.succeeded,
+    failed: job.failed,
+    errors: job.errors,
+    batchSize: job.batchSize,
+    apiKeyId: job.apiKeyId,
+    createdAt: job.createdAt,
+    completedAt: job.completedAt,
+  });
+
+  await Database.run(
+    `INSERT INTO admin_jobs (job_id, type, status, started_at, duration_ms, result_json, error)
+     VALUES (?, ?, ?, ?, ?, ?, ?)
+     ON CONFLICT(job_id) DO UPDATE SET
+       status = excluded.status,
+       duration_ms = excluded.duration_ms,
+       result_json = excluded.result_json,
+       error = excluded.error`,
+    [job.jobId, JOB_TYPE, job.status, startedAt, durationMs, resultJson, job.error || null]
+  );
+}
+
+/**
+ * Rebuild a job object from an admin_jobs row.
+ * @param {Object} row
+ * @returns {Object}
+ */
+function rowToJob(row) {
+  let result = {};
+  if (row.result_json) {
+    try { result = JSON.parse(row.result_json); } catch (_) { result = {}; }
+  }
+  return {
+    jobId: row.job_id,
+    status: row.status,
+    total: result.total || 0,
+    processed: result.processed || 0,
+    succeeded: result.succeeded || 0,
+    failed: result.failed || 0,
+    errors: result.errors || [],
+    createdAt: result.createdAt || new Date(row.started_at).toISOString(),
+    completedAt: result.completedAt || null,
+    batchSize: result.batchSize || DEFAULT_BATCH_SIZE,
+    apiKeyId: result.apiKeyId || null,
+    error: row.error || null,
+  };
+}
 
 /**
  * Parse a Buffer/string as JSON, returning an array of wallet objects.
