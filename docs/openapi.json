@@ -2146,6 +2146,58 @@
         ]
       }
     },
+    "/wallets/merge": {
+      "post": {
+        "description": "Merges the balance of the source account into the destination account on the Stellar network, and soft-deletes the wallet record.",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "properties": {
+                  "destinationPublicKey": {
+                    "description": "Stellar public key of the destination account",
+                    "type": "string"
+                  },
+                  "sourcePublicKey": {
+                    "description": "Stellar public key of the source account to merge",
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "sourcePublicKey",
+                  "destinationPublicKey"
+                ],
+                "type": "object"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Wallet merged successfully"
+          },
+          "400": {
+            "$ref": "#/components/responses/ValidationError"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          }
+        },
+        "security": [
+          {
+            "ApiKeyAuth": []
+          }
+        ],
+        "summary": "Merge a wallet into another Stellar account",
+        "tags": [
+          "Wallets"
+        ]
+      }
+    },
     "/stats/daily": {
       "get": {
         "responses": {

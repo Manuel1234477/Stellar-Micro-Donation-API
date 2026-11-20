@@ -31,6 +31,7 @@
 const Database = require('../utils/database');
 const { AppError, NotFoundError, ERROR_CODES } = require('../utils/errors');
 const { DONATION_FREQUENCIES, MS_PER_DAY, MS_PER_WEEK, MONTHLY_WINDOW_DAY } = require('../constants');
+const { toStroops, fromStroops } = require('../utils/money');
 
 // ── Constants ─────────────────────────────────────────────────────────────────
 
@@ -238,15 +239,18 @@ async function setLimits(recipientId, { maxAmount, maxCount, windowType = WINDOW
   const recipient = await Database.get('SELECT id FROM users WHERE id = ?', [recipientId]);
   if (!recipient) throw new NotFoundError('Recipient not found', ERROR_CODES.USER_NOT_FOUND);
 
+  // Monetary limits are stored as INTEGER stroops (ADR-004).
+  const maxAmountStroops = maxAmount == null ? null : toStroops(maxAmount);
+
   await Database.run(
-    `INSERT INTO recipient_velocity_limits (recipientId, maxAmount, maxCount, windowType, updatedAt)
+    `INSERT INTO recipient_velocity_limits (recipientId, maxAmount_stroops, maxCount, windowType, updatedAt)
      VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP)
      ON CONFLICT(recipientId) DO UPDATE SET
-       maxAmount  = excluded.maxAmount,
-       maxCount   = excluded.maxCount,
-       windowType = excluded.windowType,
-       updatedAt  = CURRENT_TIMESTAMP`,
-    [recipientId, maxAmount ?? null, maxCount ?? null, windowType]
+       maxAmount_stroops = excluded.maxAmount_stroops,
+       maxCount          = excluded.maxCount,
+       windowType        = excluded.windowType,
+       updatedAt         = CURRENT_TIMESTAMP`,
+    [recipientId, maxAmountStroops, maxCount ?? null, windowType]
   );
 }
 
@@ -256,7 +260,12 @@ async function getLimits(recipientId) {
     'SELECT * FROM recipient_velocity_limits WHERE recipientId = ?',
     [recipientId]
   );
-  return row || null;
+  if (!row) return null;
+  return {
+    ...row,
+    maxAmount: row.maxAmount_stroops == null ? null : fromStroops(row.maxAmount_stroops),
+    maxAmount_stroops: row.maxAmount_stroops == null ? null : row.maxAmount_stroops,
+  };
 }
 
 /**
@@ -283,22 +292,33 @@ async function checkVelocityLimits(donorId, recipientId, amount) {
   const windowEnd = getWindowEnd(windowType);
 
   const row = await Database.get(
-    `SELECT totalAmount, count FROM donation_velocity
+    `SELECT totalAmount_stroops, count FROM donation_velocity
      WHERE donorId = ? AND recipientId = ? AND windowStart = ?`,
     [donorId, recipientId, windowStart]
   );
 
-  const currentTotal = row ? row.totalAmount : 0;
+  // All monetary comparisons are performed in integer stroops (ADR-004).
+  const currentTotalStroops = row && row.totalAmount_stroops != null ? row.totalAmount_stroops : 0;
   const currentCount = row ? row.count : 0;
+  const amountStroops = toStroops(amount);
+  const limitStroops = limits.maxAmount_stroops == null ? null : limits.maxAmount_stroops;
 
-  if (limits.maxAmount != null && currentTotal + amount > limits.maxAmount) {
+  if (limitStroops != null && currentTotalStroops + amountStroops > limitStroops) {
     const resetAt = windowEnd.toISOString();
     const err = new AppError(
       'VELOCITY_LIMIT_EXCEEDED',
-      `Donation would exceed the per-recipient amount limit of ${limits.maxAmount} per ` +
-      `${windowType} window. Used: ${currentTotal}, Requested: ${amount}`,
+      `Donation would exceed the per-recipient amount limit of ${fromStroops(limitStroops)} per ` +
+      `${windowType} window. Used: ${fromStroops(currentTotalStroops)}, Requested: ${amount}`,
       429,
-      { limit: limits.maxAmount, used: currentTotal, amount, resetAt }
+      {
+        limit: fromStroops(limitStroops),
+        limitStroops,
+        used: fromStroops(currentTotalStroops),
+        usedStroops: currentTotalStroops,
+        amount,
+        amountStroops,
+        resetAt,
+      }
     );
     err.resetAt = resetAt;
     throw err;
@@ -337,13 +357,13 @@ async function recordDonation(donorId, recipientId, amount, windowType = WINDOW_
   const windowStart = getWindowStart(wt);
 
   await Database.run(
-    `INSERT INTO donation_velocity (donorId, recipientId, windowStart, totalAmount, count, updatedAt)
+    `INSERT INTO donation_velocity (donorId, recipientId, windowStart, totalAmount_stroops, count, updatedAt)
      VALUES (?, ?, ?, ?, 1, CURRENT_TIMESTAMP)
      ON CONFLICT(donorId, recipientId, windowStart) DO UPDATE SET
-       totalAmount = totalAmount + excluded.totalAmount,
-       count       = count + 1,
-       updatedAt   = CURRENT_TIMESTAMP`,
-    [donorId, recipientId, windowStart, amount]
+       totalAmount_stroops = totalAmount_stroops + excluded.totalAmount_stroops,
+       count               = count + 1,
+       updatedAt           = CURRENT_TIMESTAMP`,
+    [donorId, recipientId, windowStart, toStroops(amount)]
   );
 }
 
@@ -371,10 +391,14 @@ async function getVelocityUsage(donorId, recipientId) {
   const legacyWindowStart = getWindowStart(legacyWindowType);
 
   const legacyRow = await Database.get(
-    `SELECT totalAmount, count FROM donation_velocity
+    `SELECT totalAmount_stroops, count FROM donation_velocity
      WHERE donorId = ? AND recipientId = ? AND windowStart = ?`,
     [donorId, recipientId, legacyWindowStart]
   );
+
+  const totalAmountStroops = legacyRow && legacyRow.totalAmount_stroops != null
+    ? legacyRow.totalAmount_stroops
+    : 0;
 
   return {
     donorId,
@@ -387,7 +411,8 @@ async function getVelocityUsage(donorId, recipientId) {
     // Legacy fields
     windowType: legacyWindowType,
     windowStart: legacyWindowStart,
-    totalAmount: legacyRow ? legacyRow.totalAmount : 0,
+    totalAmount: fromStroops(totalAmountStroops),
+    totalAmountStroops,
     count: legacyRow ? legacyRow.count : 0,
     limits: limits || null,
   };

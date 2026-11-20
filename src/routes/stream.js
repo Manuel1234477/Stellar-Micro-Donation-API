@@ -264,19 +264,20 @@ router.post('/create', payloadSizeLimiter(ENDPOINT_LIMITS.stream), requestTimeou
         break;
     }
 
-    // Insert recurring donation schedule
+    // Insert recurring donation schedule (ADR-004: amount stored as integer stroops)
+    const amountStroops = toStroops(amountValidation.xlm);
     const result = await Database.run(
       `INSERT INTO recurring_donations
-       (donorId, recipientId, amount, frequency, nextExecutionDate, status)
+       (donorId, recipientId, amount_stroops, frequency, nextExecutionDate, status)
        VALUES (?, ?, ?, ?, ?, ?)`,
-      [donor.id, recipient.id, amountValidation.xlm, frequency.toLowerCase(), nextExecutionDate.toISOString(), SCHEDULE_STATUS.ACTIVE]
+      [donor.id, recipient.id, amountStroops, frequency.toLowerCase(), nextExecutionDate.toISOString(), SCHEDULE_STATUS.ACTIVE]
     );
 
     // Fetch the created schedule
     const schedule = await Database.get(
       `SELECT
         rd.id,
-        rd.amount,
+        rd.amount_stroops,
         rd.frequency,
         rd.startDate,
         rd.nextExecutionDate,
@@ -298,7 +299,8 @@ router.post('/create', payloadSizeLimiter(ENDPOINT_LIMITS.stream), requestTimeou
         scheduleId: schedule.id,
         donor: schedule.donorPublicKey,
         recipient: schedule.recipientPublicKey,
-        amount: schedule.amount,
+        amount: fromStroops(schedule.amount_stroops),
+        amountStroops: schedule.amount_stroops,
         frequency: schedule.frequency,
         nextExecution: schedule.nextExecutionDate,
         status: schedule.status,
@@ -356,7 +358,7 @@ router.get('/schedules', checkPermission(PERMISSIONS.STREAM_READ), asyncHandler(
 
     let query = `SELECT
         rd.id,
-        rd.amount,
+        rd.amount_stroops,
         rd.frequency,
         rd.startDate,
         rd.nextExecutionDate,
@@ -397,7 +399,11 @@ router.get('/schedules', checkPermission(PERMISSIONS.STREAM_READ), asyncHandler(
 
     res.json({
       success: true,
-      data: schedules,
+      data: schedules.map(s => ({
+        ...s,
+        amount: fromStroops(s.amount_stroops),
+        amountStroops: s.amount_stroops,
+      })),
       count: schedules.length
     });
   } catch (error) {
@@ -551,7 +557,7 @@ router.get('/schedules/:id', checkPermission(PERMISSIONS.STREAM_READ), streamSch
     const schedule = await Database.get(
       `SELECT
         rd.id,
-        rd.amount,
+        rd.amount_stroops,
         rd.frequency,
         rd.startDate,
         rd.nextExecutionDate,
@@ -578,7 +584,11 @@ router.get('/schedules/:id', checkPermission(PERMISSIONS.STREAM_READ), streamSch
 
     res.json({
       success: true,
-      data: schedule
+      data: {
+        ...schedule,
+        amount: fromStroops(schedule.amount_stroops),
+        amountStroops: schedule.amount_stroops,
+      }
     });
   } catch (error) {
     log.error('STREAM_ROUTE', 'Failed to fetch recurring donation schedule', { error: error.message });
@@ -744,7 +754,7 @@ router.patch('/schedules/:id', checkPermission(PERMISSIONS.STREAM_UPDATE), strea
     }
 
     const schedule = await Database.get(
-      `SELECT rd.id, rd.status, rd.amount, rd.frequency FROM recurring_donations rd WHERE rd.id = ?`,
+      `SELECT rd.id, rd.status, rd.amount_stroops, rd.frequency FROM recurring_donations rd WHERE rd.id = ?`,
       [req.params.id]
     );
 
@@ -759,10 +769,10 @@ router.patch('/schedules/:id', checkPermission(PERMISSIONS.STREAM_UPDATE), strea
       });
     }
 
-    const oldValues = { amount: schedule.amount, frequency: schedule.frequency };
-    const newAmount = amount !== undefined
-      ? fromStroops(toStroops(String(amount).trim()))
-      : String(schedule.amount);
+    const oldValues = { amount: fromStroops(schedule.amount_stroops), frequency: schedule.frequency };
+    const newAmountStroops = amount !== undefined
+      ? toStroops(String(amount).trim())
+      : schedule.amount_stroops;
     const newFrequency = frequency !== undefined ? frequency.toLowerCase() : schedule.frequency;
 
     // Recalculate nextExecutionDate if frequency changed
@@ -779,13 +789,13 @@ router.patch('/schedules/:id', checkPermission(PERMISSIONS.STREAM_UPDATE), strea
 
     if (nextExecutionDate) {
       await Database.run(
-        'UPDATE recurring_donations SET amount = ?, frequency = ?, nextExecutionDate = ? WHERE id = ?',
-        [newAmount, newFrequency, nextExecutionDate.toISOString(), req.params.id]
+        'UPDATE recurring_donations SET amount_stroops = ?, frequency = ?, nextExecutionDate = ? WHERE id = ?',
+        [newAmountStroops, newFrequency, nextExecutionDate.toISOString(), req.params.id]
       );
     } else {
       await Database.run(
-        'UPDATE recurring_donations SET amount = ?, frequency = ? WHERE id = ?',
-        [newAmount, newFrequency, req.params.id]
+        'UPDATE recurring_donations SET amount_stroops = ?, frequency = ? WHERE id = ?',
+        [newAmountStroops, newFrequency, req.params.id]
       );
     }
 
@@ -802,19 +812,23 @@ router.patch('/schedules/:id', checkPermission(PERMISSIONS.STREAM_UPDATE), strea
       details: {
         scheduleId: req.params.id,
         oldValues,
-        newValues: { amount: newAmount, frequency: newFrequency },
+        newValues: { amount: fromStroops(newAmountStroops), amountStroops: newAmountStroops, frequency: newFrequency },
       },
     });
 
     const updated = await Database.get(
-      `SELECT rd.id, rd.amount, rd.frequency, rd.nextExecutionDate, rd.status FROM recurring_donations rd WHERE rd.id = ?`,
+      `SELECT rd.id, rd.amount_stroops, rd.frequency, rd.nextExecutionDate, rd.status FROM recurring_donations rd WHERE rd.id = ?`,
       [req.params.id]
     );
 
     res.json({
       success: true,
       message: 'Schedule updated successfully',
-      data: updated,
+      data: {
+        ...updated,
+        amount: fromStroops(updated.amount_stroops),
+        amountStroops: updated.amount_stroops,
+      },
     });
   } catch (error) {
     next(error);
@@ -967,15 +981,18 @@ router.get('/feed', checkPermission(PERMISSIONS.STREAM_READ), (req, res) => {
   const filter = {};
   if (req.query.walletAddress) filter.walletAddress = req.query.walletAddress;
   if (req.query.status) filter.status = req.query.status;
+  // ADR-004: monetary filters are converted to integer stroops for comparison
   if (req.query.minAmount !== undefined) {
     const v = Number(req.query.minAmount);
     if (!Number.isFinite(v)) return res.status(400).json({ success: false, error: { code: 'INVALID_FILTER', message: 'minAmount must be a number' } });
     filter.minAmount = v;
+    filter.minAmountStroops = toStroops(String(req.query.minAmount).trim());
   }
   if (req.query.maxAmount !== undefined) {
     const v = Number(req.query.maxAmount);
     if (!Number.isFinite(v)) return res.status(400).json({ success: false, error: { code: 'INVALID_FILTER', message: 'maxAmount must be a number' } });
     filter.maxAmount = v;
+    filter.maxAmountStroops = toStroops(String(req.query.maxAmount).trim());
   }
 
   const clientId = crypto.randomUUID ? crypto.randomUUID() : crypto.randomBytes(16).toString('hex');

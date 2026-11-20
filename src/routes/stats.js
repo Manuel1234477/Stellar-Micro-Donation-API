@@ -81,6 +81,7 @@ const Cache = require('../utils/cache');
 const { isValidStellarPublicKey } = require('../utils/validators');
 const { statsRateLimiter } = require('../middleware/rateLimiter');
 const donationEvents = require('../events/donationEvents');
+const { deprecation } = require('../middleware/deprecation');
 
 // Stats cache TTL in milliseconds — configurable via STATS_CACHE_TTL_SECONDS env var (default: 60s)
 const STATS_CACHE_TTL_MS = parseInt(process.env.STATS_CACHE_TTL_SECONDS || '60', 10) * 1000;
@@ -488,6 +489,218 @@ router.get('/wallet/:walletAddress', checkPermission(PERMISSIONS.STATS_READ), au
         endDate: endDate || null,
         generatedAt: new Date().toISOString()
       }
+    });
+  } catch (error) {
+    next(error);
+  }
+});
+
+/**
+ * GET /stats/wallet/:walletAddress/analytics
+ * Get detailed analytics for a specific wallet (restored from bd149179).
+ * Anonymisation is enforced via getStatsAccessContext for non-admin callers.
+ */
+router.get('/wallet/:walletAddress/analytics', checkPermission(PERMISSIONS.STATS_READ), auditStatsAccess, walletAnalyticsSchema, (req, res, next) => {
+  try {
+    const { walletAddress } = req.params;
+    const { startDate, endDate } = req.query;
+    const start = startDate ? new Date(startDate) : null;
+    const end = endDate ? new Date(endDate) : null;
+
+    const access = getStatsAccessContext(req);
+    const analytics = StatsService.getWalletAnalytics(walletAddress, start, end, access);
+
+    res.json({
+      success: true,
+      data: analytics,
+      metadata: {
+        walletAddress,
+        startDate: startDate || null,
+        endDate: endDate || null,
+        generatedAt: new Date().toISOString()
+      }
+    });
+  } catch (error) {
+    next(error);
+  }
+});
+
+/**
+ * GET /stats/analytics-fees
+ * Get fee analytics (restored from bd149179).
+ */
+router.get('/analytics-fees', checkPermission(PERMISSIONS.STATS_READ), auditStatsAccess, optionalDateRangeQuerySchema, normaliseDateAliases, validateDateRange, (req, res, next) => {
+  try {
+    const { startDate, endDate } = req.query;
+    const start = startDate ? new Date(startDate) : null;
+    const end = endDate ? new Date(endDate) : null;
+
+    const access = getStatsAccessContext(req);
+    const fees = StatsService.getFeeAnalytics(start, end, access);
+
+    res.json({
+      success: true,
+      data: fees,
+      metadata: {
+        startDate: startDate || null,
+        endDate: endDate || null,
+        generatedAt: new Date().toISOString()
+      }
+    });
+  } catch (error) {
+    next(error);
+  }
+});
+
+/**
+ * GET /stats/memo-collisions
+ * Detect memo collisions (restored from bd149179).
+ */
+router.get('/memo-collisions', checkPermission(PERMISSIONS.STATS_READ), auditStatsAccess, optionalDateRangeQuerySchema, normaliseDateAliases, validateDateRange, (req, res, next) => {
+  try {
+    const { startDate, endDate } = req.query;
+    const start = startDate ? new Date(startDate) : null;
+    const end = endDate ? new Date(endDate) : null;
+
+    const access = getStatsAccessContext(req);
+    const collisions = StatsService.getMemoCollisions(start, end, access);
+
+    res.json({
+      success: true,
+      data: collisions,
+      metadata: {
+        startDate: startDate || null,
+        endDate: endDate || null,
+        generatedAt: new Date().toISOString()
+      }
+    });
+  } catch (error) {
+    next(error);
+  }
+});
+
+/**
+ * GET /stats/overpayments
+ * Detect overpayments (restored from bd149179).
+ */
+router.get('/overpayments', checkPermission(PERMISSIONS.STATS_READ), auditStatsAccess, optionalDateRangeQuerySchema, normaliseDateAliases, validateDateRange, (req, res, next) => {
+  try {
+    const { startDate, endDate } = req.query;
+    const start = startDate ? new Date(startDate) : null;
+    const end = endDate ? new Date(endDate) : null;
+
+    const access = getStatsAccessContext(req);
+    const overpayments = StatsService.getOverpayments(start, end, access);
+
+    res.json({
+      success: true,
+      data: overpayments,
+      metadata: {
+        startDate: startDate || null,
+        endDate: endDate || null,
+        generatedAt: new Date().toISOString()
+      }
+    });
+  } catch (error) {
+    next(error);
+  }
+});
+
+/**
+ * GET /stats/orphaned-transactions
+ * Detect orphaned transactions (restored from bd149179).
+ */
+router.get('/orphaned-transactions', checkPermission(PERMISSIONS.STATS_READ), auditStatsAccess, optionalDateRangeQuerySchema, normaliseDateAliases, validateDateRange, (req, res, next) => {
+  try {
+    const { startDate, endDate } = req.query;
+    const start = startDate ? new Date(startDate) : null;
+    const end = endDate ? new Date(endDate) : null;
+
+    const access = getStatsAccessContext(req);
+    const orphaned = StatsService.getOrphanedTransactions(start, end, access);
+
+    res.json({
+      success: true,
+      data: orphaned,
+      metadata: {
+        startDate: startDate || null,
+        endDate: endDate || null,
+        generatedAt: new Date().toISOString()
+      }
+    });
+  } catch (error) {
+    next(error);
+  }
+});
+
+/**
+ * GET /stats/anonymous-breakdown
+ * Get anonymous donation breakdown (restored from bd149179).
+ * Non-admin callers receive anonymised data via getStatsAccessContext.
+ */
+router.get('/anonymous-breakdown', checkPermission(PERMISSIONS.STATS_READ), auditStatsAccess, optionalDateRangeQuerySchema, normaliseDateAliases, validateDateRange, (req, res, next) => {
+  try {
+    const { startDate, endDate } = req.query;
+    const start = startDate ? new Date(startDate) : null;
+    const end = endDate ? new Date(endDate) : null;
+
+    const access = getStatsAccessContext(req);
+    const breakdown = StatsService.getAnonymousBreakdown(start, end, access);
+
+    res.json({
+      success: true,
+      data: breakdown,
+      metadata: {
+        startDate: startDate || null,
+        endDate: endDate || null,
+        generatedAt: new Date().toISOString()
+      }
+    });
+  } catch (error) {
+    next(error);
+  }
+});
+
+/**
+ * GET /stats/impact
+ * Get impact statistics (restored from bd149179).
+ */
+router.get('/impact', checkPermission(PERMISSIONS.STATS_READ), auditStatsAccess, optionalDateRangeQuerySchema, normaliseDateAliases, validateDateRange, (req, res, next) => {
+  try {
+    const { startDate, endDate } = req.query;
+    const start = startDate ? new Date(startDate) : null;
+    const end = endDate ? new Date(endDate) : null;
+
+    const access = getStatsAccessContext(req);
+    const impact = StatsService.getImpactStats(start, end, access);
+
+    res.json({
+      success: true,
+      data: impact,
+      metadata: {
+        startDate: startDate || null,
+        endDate: endDate || null,
+        generatedAt: new Date().toISOString()
+      }
+    });
+  } catch (error) {
+    next(error);
+  }
+});
+
+/**
+ * POST /stats/cache/invalidate
+ * Invalidate stats caches (restored from bd149179).
+ * Requires admin-level permission.
+ */
+router.post('/cache/invalidate', checkPermission(PERMISSIONS.STATS_READ), auditStatsAccess, (req, res, next) => {
+  try {
+    Cache.clearPrefix('stats_cache:');
+    Cache.clearPrefix(SUMMARY_CACHE_PREFIX);
+    res.json({
+      success: true,
+      data: { invalidated: true },
+      metadata: { generatedAt: new Date().toISOString() }
     });
   } catch (error) {
     next(error);

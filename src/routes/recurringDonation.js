@@ -29,6 +29,7 @@ const log = require('../utils/log');
 const serviceContainer = require('../config/serviceContainer');
 const asyncHandler = require('../utils/asyncHandler');
 const { payloadSizeLimiter, ENDPOINT_LIMITS } = require('../middleware/payloadSizeLimiter');
+const { toStroops, fromStroops } = require('../utils/money');
 
 // ─────────────────────────────────────────────────────────────────────────────
 // POST /donations/recurring
@@ -152,15 +153,17 @@ router.post('/', checkPermission(PERMISSIONS.STREAM_CREATE), payloadSizeLimiter(
     }
 
     // ── Persist ──────────────────────────────────────────────────────────────
+    // Monetary values are stored as integer stroops (ADR-004).
+    const amountStroops = toStroops(amountResult.xlm);
     const result = await Database.run(
       `INSERT INTO recurring_donations
-         (donorId, recipientId, amount, frequency, customIntervalDays,
+         (donorId, recipientId, amount_stroops, frequency, customIntervalDays,
           maxExecutions, webhookUrl, nextExecutionDate, status)
        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [
         donor.id,
         recipient.id,
-        amountResult.xlm,
+        amountStroops,
         normalizedFreq,
         intervalDays ? parseInt(intervalDays, 10) : null,
         maxExecutions ? parseInt(maxExecutions, 10) : null,
@@ -171,7 +174,7 @@ router.post('/', checkPermission(PERMISSIONS.STREAM_CREATE), payloadSizeLimiter(
     );
 
     const schedule = await Database.get(
-      `SELECT rd.id, rd.amount, rd.frequency, rd.customIntervalDays,
+      `SELECT rd.id, rd.amount_stroops, rd.frequency, rd.customIntervalDays,
               rd.maxExecutions, rd.webhookUrl, rd.nextExecutionDate,
               rd.status, rd.executionCount, rd.failureCount,
               donor.publicKey AS donorPublicKey,
@@ -186,7 +189,7 @@ router.post('/', checkPermission(PERMISSIONS.STREAM_CREATE), payloadSizeLimiter(
     log.info('RECURRING_DONATION_ROUTE', 'Schedule created', {
       scheduleId: schedule.id,
       frequency: normalizedFreq,
-      amount: amountResult.xlm,
+      amountStroops,
     });
 
     return res.status(201).json({
@@ -214,7 +217,7 @@ router.get('/', checkPermission(PERMISSIONS.STREAM_READ), asyncHandler(async (re
     const { status } = req.query;
 
     let sql = `
-      SELECT rd.id, rd.amount, rd.frequency, rd.customIntervalDays,
+      SELECT rd.id, rd.amount_stroops, rd.frequency, rd.customIntervalDays,
              rd.maxExecutions, rd.webhookUrl, rd.nextExecutionDate,
              rd.lastExecutionDate, rd.status, rd.executionCount,
              rd.failureCount, rd.lastFailureReason, rd.createdAt,
@@ -264,7 +267,7 @@ router.get('/', checkPermission(PERMISSIONS.STREAM_READ), asyncHandler(async (re
 router.get('/:id', checkPermission(PERMISSIONS.STREAM_READ), asyncHandler(async (req, res, next) => {
   try {
     const schedule = await Database.get(
-      `SELECT rd.id, rd.amount, rd.frequency, rd.customIntervalDays,
+      `SELECT rd.id, rd.amount_stroops, rd.frequency, rd.customIntervalDays,
               rd.maxExecutions, rd.webhookUrl, rd.nextExecutionDate,
               rd.lastExecutionDate, rd.status, rd.executionCount,
               rd.failureCount, rd.lastFailureReason, rd.createdAt,
@@ -398,7 +401,8 @@ function formatSchedule(row) {
     id: row.id,
     donorPublicKey: row.donorPublicKey,
     recipientPublicKey: row.recipientPublicKey,
-    amount: row.amount,
+    amount: fromStroops(row.amount_stroops),
+    amountStroops: row.amount_stroops,
     frequency: row.frequency,
     customIntervalDays: row.customIntervalDays || null,
     intervalDays: row.customIntervalDays || null,
