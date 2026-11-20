@@ -65,6 +65,7 @@ jobs:
       # ADR-004: no float arithmetic on money. Fails on findings beyond the
       # KNOWN_FLOAT_MONEY baseline in the script.
       - run: npm run check:no-float-money
+      # #2045: every package required from src/ must be declared in package.json.
       - run: npm run check:declared-deps
       # docs/test-naming-convention.md: no new issue-numbered test files.
       - run: npm run check:test-naming
@@ -220,6 +221,26 @@ jobs:
       - run: npm ci
       - run: ENCRYPTION_KEY=0000000000000000000000000000000000000000000000000000000000000000 API_KEYS=ci_key npm run predeploy:check
       - run: npm run test:coverage:ci
+      # #2046: fail loudly when Jest runs zero suites (e.g. globalSetup crash)
+      # instead of letting an empty run pass silently.
+      - name: Assert Jest executed at least one suite
+        if: always()
+        run: |
+          node -e '
+            const fs = require("fs");
+            const p = "coverage/jest-results.json";
+            if (!fs.existsSync(p)) {
+              console.error(`Jest JSON report not found at ${p} — no tests ran.`);
+              process.exit(1);
+            }
+            const report = JSON.parse(fs.readFileSync(p, "utf8"));
+            const suites = report.numTotalTestSuites || 0;
+            console.log(`numTotalTestSuites = ${suites}`);
+            if (suites <= 0) {
+              console.error("Jest executed zero test suites — see globalSetup error above.");
+              process.exit(1);
+            }
+          '
       - run: npm run check-coverage
       - run: npm run openapi:check
       # Generated docs must match the code they describe (#1957, #1958, #1960)
@@ -325,6 +346,7 @@ jobs:
         with:
           name: jest-results-node-${{ matrix.node-version }}
           path: coverage/jest-results.json
+          if-no-files-found: warn
           retention-days: 30
 
       # Save LCOV as a base artifact so future PRs can diff against it.
