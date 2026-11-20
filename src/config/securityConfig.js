@@ -147,30 +147,33 @@ const SECURITY_CONFIGS = {
  * Pure function of the supplied env object: no reads or writes of the global
  * `process.env`, so it can be exercised directly in tests. Defaults to
  * `process.env` for production callers.
+ *
+ * @param {Object} [env=process.env] - Environment variables to read from
+ * @returns {Object} Validated security configuration
  */
-function loadSecurityConfig() {
+function loadSecurityConfig(env = process.env) {
   const config = {};
   const misconfigurations = [];
-  const isProduction = process.env.NODE_ENV === 'production';
+  const isProduction = env.NODE_ENV === 'production';
 
   log.info('SECURITY_CONFIG', 'Loading security configuration', { 
-    environment: process.env.NODE_ENV || 'development' 
+    environment: env.NODE_ENV || 'development' 
   });
 
-  if (process.env.KMS_KEY_ID && !process.env.ENCRYPTED_ENCRYPTION_KEY && !process.env.ENCRYPTION_KEY) {
+  if (env.KMS_KEY_ID && !env.ENCRYPTED_ENCRYPTION_KEY && !env.ENCRYPTION_KEY) {
     throw new Error('KMS_KEY_ID is set, but ENCRYPTED_ENCRYPTION_KEY is missing. Use the KMS wrapping script before startup.');
   }
 
-  if (process.env.KMS_KEY_ID && process.env.ENCRYPTED_ENCRYPTION_KEY && !process.env.ENCRYPTION_KEY) {
+  if (env.KMS_KEY_ID && env.ENCRYPTED_ENCRYPTION_KEY && !env.ENCRYPTION_KEY) {
     try {
-      process.env.ENCRYPTION_KEY = unwrapEncryptionKey();
+      env.ENCRYPTION_KEY = unwrapEncryptionKey();
     } catch (error) {
       throw new Error(`KMS key unwrapping failed at startup: ${error.message}`);
     }
   }
 
   Object.entries(SECURITY_CONFIGS).forEach(([key, configDef]) => {
-    const envValue = process.env[key];
+    const envValue = env[key];
     let finalValue;
 
     // Check if required in production
@@ -221,10 +224,34 @@ function loadSecurityConfig() {
     // throw a catchable error instead of killing the process/worker.
     if (key === 'ENCRYPTION_KEY' && !finalValue) {
       log.error('SECURITY_CONFIG', 'ENCRYPTION_KEY is not set. Run `npm run generate-key` to create one, then add it to your .env file.');
-      if (process.env.NODE_ENV === 'production') {
+      if (isProduction) {
         process.exit(1);
       }
       throw new Error('ENCRYPTION_KEY is not set');
+    }
+
+    // ENCRYPTION_KEY length and format validation
+    if (key === 'ENCRYPTION_KEY' && finalValue) {
+      const keyStr = String(finalValue).trim();
+      const isHex = /^[0-9a-fA-F]+$/.test(keyStr);
+      const isBase64 = /^[A-Za-z0-9+/]+={0,2}$/.test(keyStr);
+      const validLength = isHex ? keyStr.length === 64 : keyStr.length >= 32;
+
+      if (!validLength || (!isHex && !isBase64)) {
+        misconfigurations.push({
+          config: key,
+          issue: 'Invalid ENCRYPTION_KEY length or format',
+          severity: 'ERROR'
+        });
+        log.error('SECURITY_CONFIG', 'Invalid ENCRYPTION_KEY length or format', {
+          expected: '64 hex characters or at least 32 base64 characters',
+          receivedLength: keyStr.length
+        });
+        if (isProduction) {
+          process.exit(1);
+        }
+        throw new Error('Invalid ENCRYPTION_KEY length or format');
+      }
     }
 
     config[key] = finalValue;
@@ -304,9 +331,12 @@ function logSecurityRecommendations(config, isProduction) {
 
 /**
  * Get security configuration summary (safe for logging)
+ *
+ * @param {Object} [env=process.env] - Environment variables to read from
+ * @returns {Object} Redacted configuration summary
  */
-function getSecuritySummary() {
-  const config = loadSecurityConfig();
+function getSecuritySummary(env = process.env) {
+  const config = loadSecurityConfig(env);
   const summary = {};
 
   Object.entries(config).forEach(([key, value]) => {

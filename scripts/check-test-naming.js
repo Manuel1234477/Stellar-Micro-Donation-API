@@ -46,6 +46,10 @@ const LEGACY_PATTERNS = [
 // The whitelist is intentionally empty: every legacy-named file must be
 // migrated (see issues #1791 / #1792).  Add entries here only as a temporary
 // escape hatch while a migration PR is in flight.
+//
+// NOTE (#2058): the 40 pre-existing legacy-named files were migrated to the
+// documented convention, so this list stays empty and the guard is green on
+// main.  Do not add entries here to silence new violations.
 const KNOWN_LEGACY = new Set([]);
 
 // ─── Root-level test files ────────────────────────────────────────────────────

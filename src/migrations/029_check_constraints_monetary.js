@@ -18,7 +18,13 @@
  *   users.daily_limit         >= 0  (NULL means "no limit"; 0 is a valid sentinel)
  *   users.monthly_limit       >= 0
  *   users.per_transaction_limit >= 0
+ *
+ * ADR-004 (issue #1985): monetary columns are stored as INTEGER stroops.
+ * The campaigns and users rebuilds below therefore use *_stroops columns and
+ * convert any legacy REAL values with CAST(ROUND(col * 10000000) AS INTEGER).
  */
+
+const STROOPS_PER_UNIT = 10000000;
 
 exports.name = '029_check_constraints_monetary';
 
@@ -71,27 +77,42 @@ exports.up = async (db) => {
     await db.run(`CREATE INDEX IF NOT EXISTS idx_pledges_expires  ON pledges(expires_at)`);
 
     // ── campaigns ────────────────────────────────────────────────────────────
-    // Recreate with CHECK (goal_amount > 0) and CHECK (current_amount >= 0)
+    // Recreate with CHECK (goal_amount_stroops > 0) and
+    // CHECK (current_amount_stroops >= 0). Monetary values are INTEGER stroops
+    // per ADR-004; legacy REAL values are converted on copy.
     await db.run(`
       CREATE TABLE campaigns_new (
-        id             INTEGER PRIMARY KEY AUTOINCREMENT,
-        name           TEXT NOT NULL,
-        description    TEXT,
-        goal_amount    REAL NOT NULL CHECK(goal_amount > 0),
-        current_amount REAL DEFAULT 0 CHECK(current_amount >= 0),
-        start_date     DATETIME,
-        end_date       DATETIME,
-        status         TEXT DEFAULT 'active',
-        created_by     INTEGER,
-        createdAt      DATETIME DEFAULT CURRENT_TIMESTAMP,
-        updatedAt      DATETIME DEFAULT CURRENT_TIMESTAMP,
-        deleted_at     DATETIME DEFAULT NULL,
-        tenant_id      TEXT NOT NULL DEFAULT 'default',
+        id                     INTEGER PRIMARY KEY AUTOINCREMENT,
+        name                   TEXT NOT NULL,
+        description            TEXT,
+        goal_amount_stroops    INTEGER NOT NULL CHECK(goal_amount_stroops > 0),
+        current_amount_stroops INTEGER DEFAULT 0 CHECK(current_amount_stroops >= 0),
+        start_date             DATETIME,
+        end_date               DATETIME,
+        status                 TEXT DEFAULT 'active',
+        created_by             INTEGER,
+        createdAt              DATETIME DEFAULT CURRENT_TIMESTAMP,
+        updatedAt              DATETIME DEFAULT CURRENT_TIMESTAMP,
+        deleted_at             DATETIME DEFAULT NULL,
+        tenant_id              TEXT NOT NULL DEFAULT 'default',
         FOREIGN KEY (created_by) REFERENCES users(id)
       )
     `);
 
-    await db.run(`INSERT INTO campaigns_new SELECT * FROM campaigns`);
+    await db.run(`
+      INSERT INTO campaigns_new (
+        id, name, description, goal_amount_stroops, current_amount_stroops,
+        start_date, end_date, status, created_by, createdAt, updatedAt,
+        deleted_at, tenant_id
+      )
+      SELECT
+        id, name, description,
+        CAST(ROUND(goal_amount * ${STROOPS_PER_UNIT}) AS INTEGER),
+        CAST(ROUND(COALESCE(current_amount, 0) * ${STROOPS_PER_UNIT}) AS INTEGER),
+        start_date, end_date, status, created_by, createdAt, updatedAt,
+        deleted_at, tenant_id
+      FROM campaigns
+    `);
     await db.run(`DROP TABLE campaigns`);
     await db.run(`ALTER TABLE campaigns_new RENAME TO campaigns`);
 
@@ -99,21 +120,38 @@ exports.up = async (db) => {
     // Recreate with CHECK constraints on the three limit columns.
     // These columns are nullable (NULL = no limit), so the CHECK only fires
     // when a value is actually supplied — which is the desired semantics.
+    // Limits are stored as INTEGER stroops per ADR-004.
     await db.run(`
       CREATE TABLE users_new (
-        id                     INTEGER PRIMARY KEY AUTOINCREMENT,
-        publicKey              TEXT NOT NULL UNIQUE,
-        encryptedSecret        TEXT,
-        createdAt              DATETIME DEFAULT CURRENT_TIMESTAMP,
-        deleted_at             DATETIME DEFAULT NULL,
-        daily_limit            REAL DEFAULT NULL CHECK(daily_limit IS NULL OR daily_limit >= 0),
-        monthly_limit          REAL DEFAULT NULL CHECK(monthly_limit IS NULL OR monthly_limit >= 0),
-        per_transaction_limit  REAL DEFAULT NULL CHECK(per_transaction_limit IS NULL OR per_transaction_limit >= 0),
-        tenant_id              TEXT NOT NULL DEFAULT 'default'
+        id                           INTEGER PRIMARY KEY AUTOINCREMENT,
+        publicKey                    TEXT NOT NULL UNIQUE,
+        encryptedSecret              TEXT,
+        createdAt                    DATETIME DEFAULT CURRENT_TIMESTAMP,
+        deleted_at                   DATETIME DEFAULT NULL,
+        daily_limit_stroops          INTEGER DEFAULT NULL CHECK(daily_limit_stroops IS NULL OR daily_limit_stroops >= 0),
+        monthly_limit_stroops        INTEGER DEFAULT NULL CHECK(monthly_limit_stroops IS NULL OR monthly_limit_stroops >= 0),
+        per_transaction_limit_stroops INTEGER DEFAULT NULL CHECK(per_transaction_limit_stroops IS NULL OR per_transaction_limit_stroops >= 0),
+        tenant_id                    TEXT NOT NULL DEFAULT 'default'
       )
     `);
 
-    await db.run(`INSERT INTO users_new SELECT * FROM users`);
+    await db.run(`
+      INSERT INTO users_new (
+        id, publicKey, encryptedSecret, createdAt, deleted_at,
+        daily_limit_stroops, monthly_limit_stroops,
+        per_transaction_limit_stroops, tenant_id
+      )
+      SELECT
+        id, publicKey, encryptedSecret, createdAt, deleted_at,
+        CASE WHEN daily_limit IS NULL THEN NULL
+             ELSE CAST(ROUND(daily_limit * ${STROOPS_PER_UNIT}) AS INTEGER) END,
+        CASE WHEN monthly_limit IS NULL THEN NULL
+             ELSE CAST(ROUND(monthly_limit * ${STROOPS_PER_UNIT}) AS INTEGER) END,
+        CASE WHEN per_transaction_limit IS NULL THEN NULL
+             ELSE CAST(ROUND(per_transaction_limit * ${STROOPS_PER_UNIT}) AS INTEGER) END,
+        tenant_id
+      FROM users
+    `);
     await db.run(`DROP TABLE users`);
     await db.run(`ALTER TABLE users_new RENAME TO users`);
 
@@ -129,43 +167,67 @@ exports.down = async (db) => {
   await db.run('BEGIN');
   try {
     // ── users ─────────────────────────────────────────────────────────────────
+    // Recreate without CHECK constraints, keeping INTEGER stroops columns.
     await db.run(`
       CREATE TABLE users_old (
-        id                     INTEGER PRIMARY KEY AUTOINCREMENT,
-        publicKey              TEXT NOT NULL UNIQUE,
-        encryptedSecret        TEXT,
-        createdAt              DATETIME DEFAULT CURRENT_TIMESTAMP,
-        deleted_at             DATETIME DEFAULT NULL,
-        daily_limit            REAL DEFAULT NULL,
-        monthly_limit          REAL DEFAULT NULL,
-        per_transaction_limit  REAL DEFAULT NULL,
-        tenant_id              TEXT NOT NULL DEFAULT 'default'
+        id                           INTEGER PRIMARY KEY AUTOINCREMENT,
+        publicKey                    TEXT NOT NULL UNIQUE,
+        encryptedSecret              TEXT,
+        createdAt                    DATETIME DEFAULT CURRENT_TIMESTAMP,
+        deleted_at                   DATETIME DEFAULT NULL,
+        daily_limit_stroops          INTEGER DEFAULT NULL,
+        monthly_limit_stroops        INTEGER DEFAULT NULL,
+        per_transaction_limit_stroops INTEGER DEFAULT NULL,
+        tenant_id                    TEXT NOT NULL DEFAULT 'default'
       )
     `);
-    await db.run(`INSERT INTO users_old SELECT * FROM users`);
+    await db.run(`
+      INSERT INTO users_old (
+        id, publicKey, encryptedSecret, createdAt, deleted_at,
+        daily_limit_stroops, monthly_limit_stroops,
+        per_transaction_limit_stroops, tenant_id
+      )
+      SELECT
+        id, publicKey, encryptedSecret, createdAt, deleted_at,
+        daily_limit_stroops, monthly_limit_stroops,
+        per_transaction_limit_stroops, tenant_id
+      FROM users
+    `);
     await db.run(`DROP TABLE users`);
     await db.run(`ALTER TABLE users_old RENAME TO users`);
 
     // ── campaigns ────────────────────────────────────────────────────────────
+    // Recreate without CHECK constraints, keeping INTEGER stroops columns.
     await db.run(`
       CREATE TABLE campaigns_old (
-        id             INTEGER PRIMARY KEY AUTOINCREMENT,
-        name           TEXT NOT NULL,
-        description    TEXT,
-        goal_amount    REAL NOT NULL,
-        current_amount REAL DEFAULT 0,
-        start_date     DATETIME,
-        end_date       DATETIME,
-        status         TEXT DEFAULT 'active',
-        created_by     INTEGER,
-        createdAt      DATETIME DEFAULT CURRENT_TIMESTAMP,
-        updatedAt      DATETIME DEFAULT CURRENT_TIMESTAMP,
-        deleted_at     DATETIME DEFAULT NULL,
-        tenant_id      TEXT NOT NULL DEFAULT 'default',
+        id                     INTEGER PRIMARY KEY AUTOINCREMENT,
+        name                   TEXT NOT NULL,
+        description            TEXT,
+        goal_amount_stroops    INTEGER NOT NULL,
+        current_amount_stroops INTEGER DEFAULT 0,
+        start_date             DATETIME,
+        end_date               DATETIME,
+        status                 TEXT DEFAULT 'active',
+        created_by             INTEGER,
+        createdAt              DATETIME DEFAULT CURRENT_TIMESTAMP,
+        updatedAt              DATETIME DEFAULT CURRENT_TIMESTAMP,
+        deleted_at             DATETIME DEFAULT NULL,
+        tenant_id              TEXT NOT NULL DEFAULT 'default',
         FOREIGN KEY (created_by) REFERENCES users(id)
       )
     `);
-    await db.run(`INSERT INTO campaigns_old SELECT * FROM campaigns`);
+    await db.run(`
+      INSERT INTO campaigns_old (
+        id, name, description, goal_amount_stroops, current_amount_stroops,
+        start_date, end_date, status, created_by, createdAt, updatedAt,
+        deleted_at, tenant_id
+      )
+      SELECT
+        id, name, description, goal_amount_stroops, current_amount_stroops,
+        start_date, end_date, status, created_by, createdAt, updatedAt,
+        deleted_at, tenant_id
+      FROM campaigns
+    `);
     await db.run(`DROP TABLE campaigns`);
     await db.run(`ALTER TABLE campaigns_old RENAME TO campaigns`);
 

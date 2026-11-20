@@ -88,6 +88,7 @@ jobs:
       # ADR-004: no float arithmetic on money. Fails on findings beyond the
       # KNOWN_FLOAT_MONEY baseline in the script.
       - run: npm run check:no-float-money
+      # #2045: every package required from src/ must be declared in package.json.
       - run: npm run check:declared-deps
       # docs/test-naming-convention.md: no new issue-numbered test files.
       - run: npm run check:test-naming
@@ -108,10 +109,107 @@ jobs:
       - run: npm run check:docs
       # Quickstart files and commands exist. Run `bash scripts/validate-onboarding.sh --boot` to also boot the app.
       - run: bash scripts/validate-onboarding.sh
-      # Non-blocking until the JSDoc type errors on main are fixed; remove
-      # continue-on-error once `npm run typecheck` exits 0.
+      # Blocking: a typecheck failure must fail CI. Refs #2055.
       - run: npm run typecheck
-        continue-on-error: true
+
+  # Single required aggregate job (#2058): runs every guard script via
+  # `npm run verify` so a new guard cannot be added without being enforced.
+  # Make this the one required check in branch protection.
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: '24'
+          cache: 'npm'
+      - run: npm ci
+      - run: npm run verify
+        env:
+          NODE_ENV: test
+          API_KEYS: ci_key
+          ENCRYPTION_KEY: '0000000000000000000000000000000000000000000000000000000000000000'
+
+  # Scheduled-workflow failure notification (#2056). Runs only on the default
+  # branch, opens or updates a single tracking issue per workflow (deduplicated
+  # by workflow name, labelled `automated-report`), and closes it on the next
+  # successful run. Reusable via `workflow_call` from scheduled workflows.
+  notify-on-failure:
+    if: always() && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      issues: write
+    steps:
+      - name: Open, update, or close the tracking issue
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          script: |
+            const workflowName = '${{ github.workflow }}';
+            const succeeded = '${{ job.status }}' === 'success';
+            const runUrl = `${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`;
+            const marker = `<!-- scheduled-failure:${workflowName} -->`;
+            const label = 'automated-report';
+
+            const { data: issues } = await github.rest.issues.listForRepo({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              state: 'open',
+              labels: label,
+              per_page: 100
+            });
+            const existing = issues.find(i => i.body && i.body.includes(marker));
+
+            if (succeeded) {
+              if (existing) {
+                await github.rest.issues.createComment({
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  issue_number: existing.number,
+                  body: `Recovered: the next scheduled run succeeded.\n\nRun: ${runUrl}`
+                });
+                await github.rest.issues.update({
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  issue_number: existing.number,
+                  state: 'closed',
+                  state_reason: 'completed'
+                });
+                console.log(`Closed tracking issue #${existing.number}.`);
+              } else {
+                console.log('Run succeeded and no tracking issue is open.');
+              }
+              return;
+            }
+
+            const body = [
+              marker,
+              `Scheduled workflow **${workflowName}** is failing on \`main\`.`,
+              '',
+              `Latest failing run: ${runUrl}`,
+              '',
+              'This issue is updated on each failure and closes automatically after the next successful run.'
+            ].join('\n');
+
+            if (existing) {
+              await github.rest.issues.createComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: existing.number,
+                body: `Still failing.\n\nRun: ${runUrl}`
+              });
+              console.log(`Updated tracking issue #${existing.number}.`);
+            } else {
+              const { data: created } = await github.rest.issues.create({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                title: `[automated] Scheduled workflow failing: ${workflowName}`,
+                body,
+                labels: [label]
+              });
+              console.log(`Opened tracking issue #${created.number}.`);
+            }
 
   # Quarantined suites (tests/quarantine.js) run separately with retries and do
   # not block merge. See docs/testing/flaky-test-policy.md. Refs #1787.
@@ -144,6 +242,26 @@ jobs:
       - run: npm ci
       - run: ENCRYPTION_KEY=0000000000000000000000000000000000000000000000000000000000000000 API_KEYS=ci_key npm run predeploy:check
       - run: npm run test:coverage:ci
+      # #2046: fail loudly when Jest runs zero suites (e.g. globalSetup crash)
+      # instead of letting an empty run pass silently.
+      - name: Assert Jest executed at least one suite
+        if: always()
+        run: |
+          node -e '
+            const fs = require("fs");
+            const p = "coverage/jest-results.json";
+            if (!fs.existsSync(p)) {
+              console.error(`Jest JSON report not found at ${p} — no tests ran.`);
+              process.exit(1);
+            }
+            const report = JSON.parse(fs.readFileSync(p, "utf8"));
+            const suites = report.numTotalTestSuites || 0;
+            console.log(`numTotalTestSuites = ${suites}`);
+            if (suites <= 0) {
+              console.error("Jest executed zero test suites — see globalSetup error above.");
+              process.exit(1);
+            }
+          '
       - run: npm run check-coverage
       - run: npm run openapi:check
       # Generated docs must match the code they describe (#1957, #1958, #1960)
@@ -249,6 +367,7 @@ jobs:
         with:
           name: jest-results
           path: coverage/jest-results.json
+          if-no-files-found: warn
           retention-days: 30
 
       # Save LCOV as a base artifact so future PRs can diff against it.

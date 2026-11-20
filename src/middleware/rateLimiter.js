@@ -517,6 +517,69 @@ const liveHistoryRateLimiter = rateLimit({
   }
 });
 
+/**
+ * Decode Transaction Limiter (Strict)
+ * Intent: XDR decoding is CPU-bound and recursive, so the public
+ * POST /tools/decode-transaction endpoint must be tightly limited for
+ * anonymous callers to prevent a cheap application-level DoS.
+ * Scope: POST /tools/decode-transaction
+ *
+ * Flow & Configuration:
+ * 1. Window: 60-second sliding window.
+ * 2. Threshold: Max 5 requests per anonymous client (keyed by IP); authenticated
+ *    API keys get a more generous allowance.
+ * 3. Exhaustion: Responds with HTTP 429 and Retry-After header.
+ */
+const decodeTransactionRateLimiter = rateLimit({
+  storePrefix: 'decodeTransaction',
+  windowMs: 60 * 1000,
+  max: (req) => (req.apiKey?.id ? 30 : 5),
+  keyGenerator: (req) => {
+    if (req.apiKey && req.apiKey.id && !req.apiKey.isLegacy) {
+      return `key:${req.apiKey.id}`;
+    }
+    return `ip:${req.ip}`;
+  },
+  standardHeaders: true,
+  legacyHeaders: true,
+  validate: false,
+  skip: () => process.env.NODE_ENV === 'test',
+  handler: (req, res) => {
+    const isKeyBased = req.apiKey && req.apiKey.id && !req.apiKey.isLegacy;
+
+    AuditLogService.log({
+      category: AuditLogService.CATEGORY.RATE_LIMITING,
+      action: AuditLogService.ACTION.RATE_LIMIT_EXCEEDED,
+      severity: AuditLogService.SEVERITY.MEDIUM,
+      result: 'FAILURE',
+      requestId: req.id,
+      ipAddress: req.ip,
+      resource: req.path,
+      reason: 'Decode transaction rate limit exceeded',
+      details: {
+        limit: isKeyBased ? 30 : 5,
+        window: '60s',
+        limitedBy: isKeyBased ? 'api-key' : 'ip',
+        resetTime: req.rateLimit?.resetTime
+      }
+    }).catch(err => log.error('RATE_LIMITER', 'Audit log failed', { error: err.message || err }));
+
+    res.set('X-RateLimit-Identifier', isKeyBased ? 'api-key' : 'ip');
+    res.set('Retry-After', calculateRetryAfter(req.rateLimit?.resetTime));
+    res.status(429).json({
+      success: false,
+      error: {
+        code: 'RATE_LIMIT_EXCEEDED',
+        message: isKeyBased
+          ? 'Too many decode requests for this API key. Please try again later.'
+          : 'Too many decode requests from this IP. Please try again later.',
+        retryAfter: req.rateLimit?.resetTime,
+        limitedBy: isKeyBased ? 'api-key' : 'ip',
+      }
+    });
+  }
+});
+
 module.exports = {
   sharedRateLimit: rateLimit,
   donationRateLimiter,
@@ -529,6 +592,7 @@ module.exports = {
   authRefreshRateLimiter,
   healthCheckRateLimiter,
   liveHistoryRateLimiter,
+  decodeTransactionRateLimiter,
   createRateLimiter,
   friendbotRateLimiter: rateLimit({
     storePrefix: 'friendbot',

@@ -17,9 +17,10 @@ to go from a fresh clone to an open PR.
 8. [Branch & Commit Conventions](#8-branch--commit-conventions)
 9. [Pre-PR Checklist](#9-pre-pr-checklist)
 10. [Release Process](#10-release-process)
-11. [Implementation Notes & Work Tracking](#11-implementation-notes--work-tracking)
-12. [Security](#12-security)
-13. [Key Documentation](#13-key-documentation)
+11. [Dependency Updates & Dependabot Triage](#11-dependency-updates--dependabot-triage)
+12. [Implementation Notes & Work Tracking](#12-implementation-notes--work-tracking)
+13. [Security](#13-security)
+14. [Key Documentation](#14-key-documentation)
 
 ---
 
@@ -234,9 +235,17 @@ npm run openapi:check              # spec is up to date
 npm run migrate:status             # no pending unapplied migrations
 npm run check:parse                # every src/ and scripts/ file parses
 node scripts/check-test-naming.js  # no new legacy-named test files
+npm run verify                     # aggregate: runs every guard script above
 ```
 
 CI enforces all of the above and will block merge if any step fails.
+
+`npm run verify` is the single aggregate that runs all repository guard scripts
+(`check:*`, `validate:*`, `openapi:check`, `changelog:check`, `typecheck`,
+`boot-guard`, …). It is executed by one required CI job, so a new guard script
+added to `verify` is automatically enforced. If `npm run verify` fails locally,
+fix the failure rather than skipping the script — a guard that is always red
+provides no protection.
 
 ### Required status checks
 
@@ -249,6 +258,7 @@ A PR can merge to `main` only when these CI jobs pass (`.github/workflows/ci.yml
 | Tests | `test` | Full suite with coverage on Node 20.x and 22.x |
 | Smoke | `smoke` | `npm run test:smoke` in mock mode |
 | Onboarding | `onboarding` | Fresh install, migrate, boot, `/health`, `scripts/validate-onboarding.sh` |
+| Verify | `verify` | `npm run verify`: all guard scripts (`check:*`, `validate:*`, `openapi:check`, `changelog:check`, `typecheck`, `boot-guard`) |
 
 Branch protection on `main` that requires these checks, and requires branches to be up to date before merging, is set by a repository admin. See issue #1978.
 
@@ -257,7 +267,32 @@ When the PR is ready:
 - Fill in the PR template (summary, testing notes, breaking changes).
 - Request at least one review before merging.
 
+### Closing an issue: required evidence
+
+A PR that uses `Closes #<number>` (or any other closing keyword) must include
+evidence that the underlying problem is actually fixed. Closing an issue is a
+claim that the change works — back it up:
+
+1. **The relevant tests pass in CI.** Name the test file(s) or command that
+   cover the issue in the PR description, and confirm the `test` job is green
+   for the commit that closes the issue. A PR that only touches docs, README,
+   or comments cannot close a code or test issue.
+2. **Large deletions are explained.** If your diff removes a substantial amount
+   of code (roughly 50+ lines, or an entire file/endpoint), explain in the PR
+   description *why* the code was dead or wrong and what replaces it. Unexplained
+   deletions are treated as regressions until proven otherwise.
+3. **No tool markers or placeholders.** Do not append working markers such as
+   `<!-- handsoff-issue-NNNN -->` to files, and never commit a file that was
+   truncated with a tool placeholder (e.g. `... rest of file unchanged ...`).
+   CI rejects these: `npm run check:parse` (the `parse` job) fails on any
+   `src/` or `scripts/` file that does not parse, and the marker check fails on
+   leftover `handsoff-issue` markers anywhere outside `node_modules`.
+
+If a commit that closed an issue turns out to be wrong, reopen the issue and
+open a follow-up PR that reverts or repairs it — with the same evidence above.
+
 ---
+=======
 
 ## 10. Release Process
 
@@ -317,7 +352,50 @@ then, follow the manual steps above.
 
 ---
 
-## 11. Implementation Notes & Work Tracking
+## 11. Dependency Updates & Dependabot Triage
+
+Dependabot opens grouped `production-deps` and `dev-deps` PRs weekly (see
+`.github/dependabot.yml`). Major version bumps are **not** part of the weekly
+groups — they arrive as individual PRs so they can be reviewed and tested in
+isolation.
+
+### Weekly owner rotation
+
+One maintainer is on Dependabot triage duty each week. The rotation is tracked in
+the pinned triage issue and announced in the team channel at the start of each
+week. The owner is responsible for:
+
+1. **Triage every open Dependabot PR** — no Dependabot PR should be older than
+   two weeks without triage.
+2. **Confirm `main` is green** before evaluating any dependency PR. If `main`
+   itself cannot install or pass CI, fixing `main` takes priority over the
+   dependency PRs.
+3. **Rebase grouped PRs** once `main` is green:
+   ```bash
+   gh pr checkout <number>
+   git fetch origin main
+   git rebase origin/main
+   git push --force-with-lease
+   ```
+4. **Merge or split** the grouped PR:
+   - If CI is green and the diff is reviewable, merge it.
+   - If CI fails or the diff is too large to review, split it into smaller PRs
+     (e.g. one per package or per ecosystem) so the failing bump can be isolated
+     and reverted independently.
+5. **Handle major bumps individually** — review the changelog, run the full
+   suite (`npm run verify && npm test`), and merge or close with a note.
+6. **Escalate** any PR that cannot be merged within two weeks by commenting on
+   the triage issue with the blocker.
+
+### If a dependency bump breaks CI
+
+- Identify the offending package from the failing job's log.
+- Revert or pin that package in a separate PR so `main` returns to green.
+- Re-open the bump as an individual PR once the incompatibility is understood.
+
+---
+
+## 12. Implementation Notes & Work Tracking
 
 Branch-specific implementation notes, status files and progress tracking do not belong in the repository root.
 
@@ -338,7 +416,7 @@ This keeps documentation organized and prevents stale working notes from mislead
 
 ---
 
-## 12. Security
+## 13. Security
 
 **Do not open a public GitHub issue for security vulnerabilities.**
 
@@ -350,7 +428,7 @@ See **[SECURITY.md](SECURITY.md)** for:
 
 ---
 
-## 13. Key Documentation
+## 14. Key Documentation
 
 When working on a feature, these docs will save you time:
 

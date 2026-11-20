@@ -7,17 +7,10 @@
  * Must structurally conform to StellarServiceInterface (ADR-002).
  */
 
-const STELLAR_PRECISION = 7;
-
-function round7(value) {
-  return Number(Number(value).toFixed(STELLAR_PRECISION));
-}
-
 class MockStellarService {
   constructor(options = {}) {
     this.network = options.network || 'testnet';
     this.horizonUrl = options.horizonUrl || 'https://horizon-testnet.stellar.org';
-    this._orderBook = options.orderBook || null;
   }
 
   // ---------------------------------------------------------------------------
@@ -92,33 +85,12 @@ class MockStellarService {
   // ---------------------------------------------------------------------------
 
   async getOrderBook(sellingAsset, buyingAsset, options = {}) {
-    if (this._orderBook) {
-      return this._orderBook;
-    }
-
-    const limit = options.limit || 20;
-    const bids = [];
-    const asks = [];
-
-    for (let i = 0; i < limit; i += 1) {
-      const price = round7(1 + i * 0.01);
-      bids.push({
-        price_r: { n: Math.round(price * 10000000), d: 10000000 },
-        price: price.toFixed(STELLAR_PRECISION),
-        amount: round7(100 - i).toFixed(STELLAR_PRECISION),
-      });
-      asks.push({
-        price_r: { n: Math.round((price + 0.005) * 10000000), d: 10000000 },
-        price: (price + 0.005).toFixed(STELLAR_PRECISION),
-        amount: round7(100 - i).toFixed(STELLAR_PRECISION),
-      });
-    }
-
     return {
-      bids,
-      asks,
+      bids: [],
+      asks: [],
       base: sellingAsset || { asset_type: 'native' },
       counter: buyingAsset || { asset_type: 'native' },
+      limit: options.limit || 20,
     };
   }
 
@@ -155,54 +127,9 @@ class MockStellarService {
   // Liquidity pools
   // ---------------------------------------------------------------------------
 
-  async getLiquidityPools(options = {}) {
-    return {
-      records: [],
-      _links: { next: null, prev: null },
-      limit: options.limit || 10,
-    };
-  }
-
-  async getLiquidityPool(poolId) {
-    return {
-      id: poolId,
-      paging_token: poolId,
-      fee_bp: 30,
-      type: 'constant_product',
-      total_shares: '0.0000000',
-      total_trustlines: '0',
-      reserves: [],
-    };
-  }
-
   // ---------------------------------------------------------------------------
-  // Channels
+  // Network
   // ---------------------------------------------------------------------------
-
-  async getChannels() {
-    return [];
-  }
-
-  async getChannel(channelId) {
-    return {
-      id: channelId,
-      publicKey: null,
-      sequence: '0',
-      active: false,
-    };
-  }
-
-  // ---------------------------------------------------------------------------
-  // Assets / network
-  // ---------------------------------------------------------------------------
-
-  async getAssets(options = {}) {
-    return {
-      records: [],
-      _links: { next: null, prev: null },
-      limit: options.limit || 10,
-    };
-  }
 
   async getNetwork() {
     return {
@@ -213,20 +140,6 @@ class MockStellarService {
           ? 'Public Global Stellar Network ; September 2015'
           : 'Test SDF Network ; September 2015',
     };
-  }
-
-  async getLedger(sequence) {
-    return {
-      sequence: String(sequence),
-      hash: 'mock-ledger-hash',
-      closed_at: '2020-01-01T00:00:00Z',
-      successful_transaction_count: 0,
-      failed_transaction_count: 0,
-    };
-  }
-
-  async getLatestLedger() {
-    return this.getLedger(1);
   }
 
   async isHealthy() {

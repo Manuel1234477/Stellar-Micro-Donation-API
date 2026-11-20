@@ -232,6 +232,124 @@ function calcFee(amountStroops, bps, opts = {}) {
 }
 
 /**
+ * Validate and normalise a stroop amount for storage in an INTEGER column.
+ *
+ * Accepts BigInt, integer number, or integer string. Rejects non-integers,
+ * non-finite numbers, exponent notation, and values outside the int64 range
+ * (SQLite INTEGER is signed 64-bit). Returns a BigInt so callers can keep exact
+ * arithmetic; use `stroopsToDb` to get the value to bind to SQLite.
+ *
+ * @param {(bigint|number|string)} value - candidate stroop amount
+ * @returns {bigint} validated stroop amount
+ * @throws {Error} if the value is not an integer stroop amount or is out of range
+ */
+function validateStroops(value) {
+  let stroops;
+  if (typeof value === 'bigint') {
+    stroops = value;
+  } else if (typeof value === 'number') {
+    if (!Number.isFinite(value) || !Number.isInteger(value)) {
+      throw new Error(`Invalid stroop amount (must be an integer): ${value}`);
+    }
+    stroops = BigInt(value);
+  } else if (typeof value === 'string') {
+    const str = value.trim();
+    if (!/^-?\d+$/.test(str)) {
+      throw new Error(`Invalid stroop amount (must be an integer): ${value}`);
+    }
+    stroops = BigInt(str);
+  } else {
+    throw new Error(`Invalid stroop amount: ${value}`);
+  }
+
+  if (stroops > MAX_STROOPS || stroops < -MAX_STROOPS - 1n) {
+    throw new Error(`Stroop amount out of int64 range: ${stroops}`);
+  }
+
+  return stroops;
+}
+
+/**
+ * Convert a stroop amount to a value safe to bind to a SQLite INTEGER column.
+ *
+ * SQLite INTEGER is signed 64-bit, but better-sqlite3 cannot bind BigInt by
+ * default, so values within the JS safe-integer range are returned as `number`
+ * and larger values as a decimal `string` (which SQLite stores exactly as an
+ * INTEGER when the column has INTEGER affinity). Non-integer input is rejected.
+ *
+ * @param {(bigint|number|string)} value - stroop amount
+ * @returns {(number|string)} value to bind to an INTEGER column
+ * @throws {Error} if the value is not a valid integer stroop amount
+ */
+function stroopsToDb(value) {
+  const stroops = validateStroops(value);
+  const abs = stroops < 0n ? -stroops : stroops;
+  if (abs <= BigInt(Number.MAX_SAFE_INTEGER)) {
+    return Number(stroops);
+  }
+  return stroops.toString();
+}
+
+/**
+ * Read a stroop value from a database row (INTEGER column) as BigInt.
+ *
+ * Accepts the `number` or decimal `string` forms produced by `stroopsToDb`,
+ * as well as BigInt. `null`/`undefined` are rejected so callers must handle
+ * NULLable columns explicitly.
+ *
+ * @param {(bigint|number|string|null|undefined)} value - raw column value
+ * @returns {bigint} stroop amount
+ * @throws {Error} if the value is null, non-integer, or out of range
+ */
+function stroopsFromDb(value) {
+  if (value === null || value === undefined) {
+    throw new Error('Invalid stroop amount: value is null or undefined');
+  }
+  return validateStroops(value);
+}
+
+/**
+ * Convert a rational ratio (numerator/denominator) to basis points.
+ *
+ * Replaces REAL `match_ratio` arithmetic: ratios are stored as integer basis
+ * points (1 bps = 0.01%). Division floors, so the resulting bps never exceeds
+ * the true ratio (rounding in the platform's favor).
+ *
+ * @param {(bigint|number|string)} numerator - ratio numerator
+ * @param {(bigint|number|string)} denominator - ratio denominator (must be > 0)
+ * @returns {bigint} ratio in basis points
+ * @throws {Error} if denominator is zero/negative or inputs are not integers
+ */
+function ratioToBps(numerator, denominator) {
+  const num = validateStroops(numerator);
+  const den = validateStroops(denominator);
+  if (den <= 0n) {
+    throw new Error('ratioToBps: denominator must be greater than zero');
+  }
+  return num * BPS_DIVISOR / den;
+}
+
+/**
+ * Apply a basis-points ratio to a stroop amount.
+ *
+ * result = floor(amountStroops * bps / 10000). Used for corporate match caps and
+ * other percentage-of-amount computations without floating point.
+ *
+ * @param {(bigint|number|string)} amountStroops - amount in stroops
+ * @param {(bigint|number|string)} bps - ratio in basis points (must be >= 0)
+ * @returns {bigint} resulting amount in stroops
+ * @throws {Error} if bps is negative or inputs are not integers
+ */
+function applyRatioBps(amountStroops, bps) {
+  const amount = validateStroops(amountStroops);
+  const bpsBig = validateStroops(bps);
+  if (bpsBig < 0n) {
+    throw new Error('applyRatioBps: bps must be non-negative');
+  }
+  return amount * bpsBig / BPS_DIVISOR;
+}
+
+/**
  * Add two BigInt stroop values.
  * @param {(bigint|number|string)} a - first stroop amount
  * @param {(bigint|number|string)} b - second stroop amount
@@ -260,6 +378,11 @@ module.exports = {
   fromStroops,
   stroopsToString,
   calcFee,
+  validateStroops,
+  stroopsToDb,
+  stroopsFromDb,
+  ratioToBps,
+  applyRatioBps,
   addStroops,
   subtractStroops,
 };

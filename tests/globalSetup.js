@@ -16,6 +16,28 @@ const path = require('path');
 const ISOLATION_ROOT = path.join(os.tmpdir(), 'stellar-test-isolation');
 const TEMPLATE_DB = path.join(ISOLATION_ROOT, 'template.db');
 
+/**
+ * Require a module, rethrowing any import error with a clear message that
+ * names the module that failed to load. Without this, a crash during module
+ * evaluation surfaces as a bare TypeError and it is not obvious which file
+ * (or why) broke the whole test run.
+ */
+function requireOrFail(modulePath) {
+  try {
+    return require(modulePath);
+  } catch (err) {
+    const displayPath = modulePath.startsWith('.')
+      ? path.relative(path.join(__dirname, '..'), require.resolve(modulePath)).split(path.sep).join('/')
+      : modulePath;
+    const wrapped = new Error(
+      `globalSetup failed to import ${displayPath} — the app cannot load; see error below`
+    );
+    wrapped.cause = err;
+    wrapped.stack = `${wrapped.message}\n${err && err.stack ? err.stack : String(err)}`;
+    throw wrapped;
+  }
+}
+
 module.exports = async () => {
   // Start every run from a clean slate (also clears stale worker databases)
   fs.rmSync(ISOLATION_ROOT, { recursive: true, force: true });
@@ -25,8 +47,8 @@ module.exports = async () => {
   // it resolves DB_PATH at module load time.
   process.env.DB_PATH = TEMPLATE_DB;
 
-  const Database = require('../src/utils/database');
-  const { runMigrations } = require('../src/utils/migrationRunner');
+  const Database = requireOrFail('../src/utils/database');
+  const { runMigrations } = requireOrFail('../src/utils/migrationRunner');
   try {
     await runMigrations();
   } finally {

@@ -5,6 +5,7 @@
 const NetworkStatusService = require('../src/services/NetworkStatusService');
 const express = require('express');
 const { router: networkRoutes, setService } = require('../src/routes/network');
+const { normalizeWallets } = require('../src/utils/walletUtils');
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -36,6 +37,39 @@ function stubFetch(service, response) {
 function stubFetchError(service, message = 'Network error') {
   service._fetchHorizon = jest.fn().mockRejectedValue(new Error(message));
 }
+
+// ---------------------------------------------------------------------------
+// Regression: #1911 leaderboard "wallets.filter is not a function"
+// ---------------------------------------------------------------------------
+
+describe('normalizeWallets (#1911 regression)', () => {
+  test('returns an array when given an array', () => {
+    const wallets = [{ id: 'a' }, { id: 'b' }];
+    expect(normalizeWallets(wallets)).toEqual(wallets);
+  });
+
+  test('returns an empty array for null/undefined', () => {
+    expect(normalizeWallets(null)).toEqual([]);
+    expect(normalizeWallets(undefined)).toEqual([]);
+  });
+
+  test('returns an empty array for non-array values', () => {
+    expect(normalizeWallets('not-an-array')).toEqual([]);
+    expect(normalizeWallets(42)).toEqual([]);
+    expect(normalizeWallets({})).toEqual([]);
+  });
+
+  test('unwraps { wallets: [...] } envelopes', () => {
+    const wallets = [{ id: 'a' }];
+    expect(normalizeWallets({ wallets })).toEqual(wallets);
+  });
+
+  test('result always supports .filter()', () => {
+    for (const input of [null, undefined, {}, 'x', 0, { wallets: null }]) {
+      expect(() => normalizeWallets(input).filter(Boolean)).not.toThrow();
+    }
+  });
+});
 
 // ---------------------------------------------------------------------------
 // Unit: NetworkStatusService
@@ -217,6 +251,96 @@ describe('NetworkStatusService', () => {
     jest.useRealTimers();
   });
 
+  // --- recovery from degraded state ---
+  test('clears degraded flag after recovery', async () => {
+    stubFetch(svc, feeStatsResponse({ feeMode: '600' }));
+    await svc._poll();
+    expect(svc.getStatus().degraded).toBe(true);
+
+    stubFetch(svc, feeStatsResponse({ feeMode: '100' }));
+    await svc._poll();
+
+    const s = svc.getStatus();
+    expect(s.connected).toBe(true);
+    expect(s.degraded).toBe(false);
+    expect(s.feeLevel).toBe('normal');
+  });
+
+  test('emits network.recovered event when degradation clears', async () => {
+    const handler = jest.fn();
+    svc.on('network.recovered', handler);
+
+    stubFetch(svc, feeStatsResponse({ feeMode: '600' }));
+    await svc._poll();
+
+    stubFetch(svc, feeStatsResponse({ feeMode: '100' }));
+    await svc._poll();
+
+    expect(handler).toHaveBeenCalledTimes(1);
+    expect(handler.mock.calls[0][0].degraded).toBe(false);
+  });
+
+  test('does not emit network.recovered when never degraded', async () => {
+    const handler = jest.fn();
+    svc.on('network.recovered', handler);
+
+    stubFetch(svc, feeStatsResponse({ feeMode: '100' }));
+    await svc._poll();
+    await svc._poll();
+
+    expect(handler).not.toHaveBeenCalled();
+  });
+
+  // --- error rate window ---
+  test('error rate drops after successful polls', async () => {
+    stubFetchError(svc);
+    for (let i = 0; i < 3; i++) await svc._poll();
+    expect(svc.getStatus().errorRatePercent).toBeGreaterThan(0);
+
+    stubFetch(svc, feeStatsResponse());
+    for (let i = 0; i < 10; i++) await svc._poll();
+
+    expect(svc.getStatus().errorRatePercent).toBeLessThan(5);
+  });
+
+  // --- latency tracking ---
+  test('records latencyMs for successful polls', async () => {
+    stubFetch(svc, feeStatsResponse());
+    await svc._poll();
+    expect(typeof svc.getStatus().latencyMs).toBe('number');
+    expect(svc.getStatus().latencyMs).toBeGreaterThanOrEqual(0);
+  });
+
+  test('resets latencyMs to null on error poll', async () => {
+    stubFetch(svc, feeStatsResponse());
+    await svc._poll();
+
+    stubFetchError(svc);
+    await svc._poll();
+
+    expect(svc.getStatus().latencyMs).toBeNull();
+  });
+
+  // --- ledger tracking ---
+  test('tracks lastLedger from fee_stats', async () => {
+    stubFetch(svc, feeStatsResponse({ lastLedger: 4242 }));
+    await svc._poll();
+    expect(svc.getStatus().lastLedger).toBe(4242);
+  });
+
+  test('ledgerCloseTimeS is null before two polls', async () => {
+    stubFetch(svc, feeStatsResponse({ lastLedger: 1000 }));
+    await svc._poll();
+    expect(svc.getStatus().ledgerCloseTimeS).toBeNull();
+  });
+
+  // --- history cap ---
+  test('history is capped at a bounded size', async () => {
+    stubFetch(svc, feeStatsResponse());
+    for (let i = 0; i < 5; i++) await svc._poll();
+    expect(svc.getHistory().length).toBeLessThanOrEqual(5);
+  });
+
   // --- fee level labels ---
   test.each([
     ['100', 'normal'],
@@ -285,5 +409,41 @@ describe('GET /network/status', () => {
     expect(res.body.success).toBe(true);
     expect(Array.isArray(res.body.data.history)).toBe(true);
     expect(res.body.data.history.length).toBe(1);
+  });
+
+  test('history endpoint returns empty array before first poll', async () => {
+    const res = await request(app).get('/network/status/history');
+    expect(res.status).toBe(200);
+    expect(res.body.success).toBe(true);
+    expect(res.body.data.history).toEqual([]);
+  });
+
+  test('status endpoint reports error field on Horizon failure', async () => {
+    stubFetchError(svc, 'Horizon unreachable');
+    await svc._poll();
+
+    const res = await request(app).get('/network/status');
+    expect(res.status).toBe(200);
+    expect(res.body.data.status.connected).toBe(false);
+    expect(res.body.data.status.error).toBe('Horizon unreachable');
+  });
+
+  test('status endpoint includes feeLevel and feeSurgeMultiplier', async () => {
+    stubFetch(svc, feeStatsResponse({ feeMode: '600' }));
+    await svc._poll();
+
+    const res = await request(app).get('/network/status');
+    expect(res.status).toBe(200);
+    expect(res.body.data.status.feeLevel).toBe('surge');
+    expect(res.body.data.status.feeSurgeMultiplier).toBeGreaterThan(5);
+  });
+
+  test('status endpoint includes errorRatePercent', async () => {
+    stubFetchError(svc);
+    await svc._poll();
+
+    const res = await request(app).get('/network/status');
+    expect(res.status).toBe(200);
+    expect(typeof res.body.data.status.errorRatePercent).toBe('number');
   });
 });

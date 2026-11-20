@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.0.0] - 2025-01-01
+
 ### Removed
 - Deleted 14 orphaned `src/` modules that had no importers and were never wired into the application (#1933):
   - `src/services/BackupScheduler.js` — backup scheduling was never started at runtime; `BackupService` remains and is mounted under `/admin/backups`

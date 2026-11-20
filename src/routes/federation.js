@@ -20,7 +20,7 @@
 const { bestEffort } = require('../utils/bestEffort');
 
 const express = require('express');
-const StellarSdk = require('../services/stellar/sdk.js');
+const StellarSdk = require('@stellar/stellar-sdk');
 const router = express.Router();
 const log = require('../utils/log');
 const config = require('../config');

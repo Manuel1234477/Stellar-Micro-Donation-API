@@ -13,7 +13,7 @@
 const Database = require('../utils/database');
 const { ValidationError, NotFoundError, ERROR_CODES } = require('../utils/errors');
 const log = require('../utils/log');
-const { toStroops, fromStroops } = require('../utils/money');
+const { toStroops, fromStroops, applyBps } = require('../utils/money');
 
 class MatchingProgramService {
   /**
@@ -43,10 +43,15 @@ class MatchingProgramService {
       }
     }
 
+    // Store the ratio as integer basis points (1.0 => 10000 bps) and all
+    // monetary values as integer stroops per ADR-004.
+    const matchRatioBps = Math.round(match_ratio * 10000);
+    const maxMatchStroops = toStroops(String(max_match_amount));
+
     const result = await Database.run(
-      `INSERT INTO matching_programs (sponsor_wallet_id, match_ratio, max_match_amount, remaining_match_amount, campaign_id, status)
+      `INSERT INTO matching_programs (sponsor_wallet_id, match_ratio_bps, max_match_amount_stroops, remaining_match_amount_stroops, campaign_id, status)
        VALUES (?, ?, ?, ?, ?, 'active')`,
-      [sponsor_wallet_id, match_ratio, max_match_amount, max_match_amount, campaign_id || null]
+      [sponsor_wallet_id, matchRatioBps, maxMatchStroops, maxMatchStroops, campaign_id || null]
     );
 
     const program = await Database.get('SELECT * FROM matching_programs WHERE id = ?', [result.id]);
@@ -55,6 +60,7 @@ class MatchingProgramService {
       id: result.id,
       sponsor_wallet_id,
       match_ratio,
+      match_ratio_bps: matchRatioBps,
       max_match_amount,
       campaign_id
     });
@@ -114,7 +120,7 @@ class MatchingProgramService {
     if (!campaignId) return [];
     return Database.query(
       `SELECT * FROM matching_programs
-       WHERE status = 'active' AND remaining_match_amount > 0
+       WHERE status = 'active' AND remaining_match_amount_stroops > 0
          AND campaign_id = ?
        ORDER BY created_at ASC`,
       [campaignId]
@@ -128,7 +134,7 @@ class MatchingProgramService {
   static async getActiveGlobal() {
     return Database.query(
       `SELECT * FROM matching_programs
-       WHERE status = 'active' AND remaining_match_amount > 0
+       WHERE status = 'active' AND remaining_match_amount_stroops > 0
          AND campaign_id IS NULL
        ORDER BY created_at ASC`
     );
@@ -140,7 +146,7 @@ class MatchingProgramService {
    *
    * @param {Object} donation - The original donation
    * @param {number} donation.id - Donation ID
-  * @param {string|number} donation.amount - Donation amount in XLM
+   * @param {string|number} donation.amount - Donation amount in XLM
    * @param {number|null} donation.campaign_id - Campaign ID if applicable
    * @returns {Promise<Array>} Array of matching donation records created
    */
@@ -158,11 +164,12 @@ class MatchingProgramService {
     programs = programs.concat(globalPrograms);
 
     for (const program of programs) {
-      const remainingStroops = toStroops(String(program.remaining_match_amount));
+      const remainingStroops = BigInt(program.remaining_match_amount_stroops);
       if (remainingStroops <= 0n) continue;
 
-      const ratioStroops = toStroops(String(program.match_ratio));
-      const rawMatchStroops = donationStroops * ratioStroops / 10_000_000n;
+      // match_ratio_bps is an integer number of basis points (10000 = 1:1).
+      const ratioBps = BigInt(program.match_ratio_bps);
+      const rawMatchStroops = applyBps(donationStroops, ratioBps);
       const finalMatchStroops = rawMatchStroops < remainingStroops ? rawMatchStroops : remainingStroops;
       if (finalMatchStroops <= 0n) continue;
 
@@ -170,8 +177,8 @@ class MatchingProgramService {
       const newRemainingStroops = remainingStroops - finalMatchStroops;
       const newRemaining = fromStroops(newRemainingStroops);
       await Database.run(
-        `UPDATE matching_programs SET remaining_match_amount = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?`,
-        [newRemaining, program.id]
+        `UPDATE matching_programs SET remaining_match_amount_stroops = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?`,
+        [newRemainingStroops.toString(), program.id]
       );
 
       // Record the matching donation
@@ -225,7 +232,7 @@ class MatchingProgramService {
       await WebhookService.deliver('matching_program.exhausted', {
         program_id: programId,
         sponsor_wallet_id: program.sponsor_wallet_id,
-        max_match_amount: program.max_match_amount,
+        max_match_amount: fromStroops(BigInt(program.max_match_amount_stroops)),
         campaign_id: program.campaign_id,
         exhausted_at: new Date().toISOString()
       });
@@ -268,15 +275,22 @@ class MatchingProgramService {
       [id]
     );
 
-    const totalMatched = program.max_match_amount - program.remaining_match_amount;
+    const maxMatchStroops = BigInt(program.max_match_amount_stroops);
+    const remainingStroops = BigInt(program.remaining_match_amount_stroops);
+    const totalMatchedStroops = maxMatchStroops - remainingStroops;
+    const utilizationPercentage = maxMatchStroops > 0n
+      ? Number((totalMatchedStroops * 10000n) / maxMatchStroops) / 100
+      : 0;
+
     return {
       program_id: id,
       sponsor_wallet_id: program.sponsor_wallet_id,
-      match_ratio: program.match_ratio,
-      max_match_amount: program.max_match_amount,
-      total_matched: parseFloat(totalMatched.toFixed(7)),
-      remaining: program.remaining_match_amount,
-      utilization_percentage: parseFloat(((totalMatched / program.max_match_amount) * 100).toFixed(2)),
+      match_ratio: Number(program.match_ratio_bps) / 10000,
+      match_ratio_bps: program.match_ratio_bps,
+      max_match_amount: fromStroops(maxMatchStroops),
+      total_matched: fromStroops(totalMatchedStroops),
+      remaining: fromStroops(remainingStroops),
+      utilization_percentage: utilizationPercentage,
       matching_donations_count: donations.length,
       matching_donations: donations,
       status: program.status
