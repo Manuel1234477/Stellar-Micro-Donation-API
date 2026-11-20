@@ -51,6 +51,7 @@ const replayDetectionMiddleware = require('../middleware/replayDetection');
 const log = require('../utils/log');
 const state = require('./state');
 const timerRegistry = require('../utils/timerRegistry');
+const { withTimeout } = require('../utils/timeoutHandler');
 const { attachUnknownUpgradeFallback } = require('../utils/wsUpgrade');
 
 const PORT = config.server.port;
@@ -314,6 +315,18 @@ async function startServer(app, overrideServices = {}) {
       }, timeoutMs);
       // Unref so this timer alone does not keep the process alive
       if (forceExitTimer.unref) forceExitTimer.unref();
+
+      // Per-step timeout helper (#2072): bounds each remaining shutdown step so a
+      // hung service/DB close cannot stall shutdown past the force-exit timer.
+      const stepTimeoutMs = Math.max(1, Math.floor(timeoutMs / 4));
+      const runStep = async (name, fn) => {
+        try {
+          return await withTimeout(Promise.resolve().then(fn), stepTimeoutMs, `shutdown:${name}`);
+        } catch (err) {
+          log.error('SHUTDOWN', `Error during shutdown step '${name}'`, { error: err.message });
+          return undefined;
+        }
+      };
 
       // 1. Terminate all open SSE streams with a terminal event
       try {
