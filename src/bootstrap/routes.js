@@ -44,7 +44,6 @@ const totpRoutes = require('../routes/admin/totp');
 const changelogRoutes = require('../routes/changelog');
 const env = require('../config/env');
 const priceOracle = require('../services/PriceOracleService');
-=======
 
 // ── Versioned API v1 routes ────────────────────────────────────────────────────
 const V1_ROUTES = [
@@ -393,6 +392,9 @@ function mountRoutes(app, services = {}) {
   app.use('/api/v2', v2Routes);
 
   // Unversioned export endpoints (#1596); the versioned router is in V1_ROUTES.
+  // NOTE (#1936): this root-level mount is still present on main and is tracked
+  // by the re-verification issue #2051 — do not remove without updating the
+  // route-table snapshot test.
   app.use('/exports', exportsRoutes);
 
   // Stellar federation protocol server (SEP-0002).
