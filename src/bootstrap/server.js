@@ -21,9 +21,10 @@
  *      6. Flush webhooks
  *      7. Stop schedulers (stopGracefully — waits for in-progress ticks)
  *      8. Stop remaining background services
- *      9. WAL checkpoint + flush audit log
- *     10. Close DB pool
- *     11. process.exit(0)
+ *      9. Flush audit log buffer (all writers flushed)
+ *     10. WAL checkpoint
+ *     11. Close DB pool
+ *     12. process.exit(0)
  */
 
 'use strict';
@@ -50,6 +51,7 @@ const replayDetectionMiddleware = require('../middleware/replayDetection');
 const log = require('../utils/log');
 const state = require('./state');
 const timerRegistry = require('../utils/timerRegistry');
+const { withTimeout } = require('../utils/timeoutHandler');
 const { attachUnknownUpgradeFallback } = require('../utils/wsUpgrade');
 
 const PORT = config.server.port;
@@ -364,6 +366,18 @@ async function startServer(app, overrideServices = {}) {
       // Unref so this timer alone does not keep the process alive
       if (forceExitTimer.unref) forceExitTimer.unref();
 
+      // Per-step timeout helper (#2072): bounds each remaining shutdown step so a
+      // hung service/DB close cannot stall shutdown past the force-exit timer.
+      const stepTimeoutMs = Math.max(1, Math.floor(timeoutMs / 4));
+      const runStep = async (name, fn) => {
+        try {
+          return await withTimeout(Promise.resolve().then(fn), stepTimeoutMs, `shutdown:${name}`);
+        } catch (err) {
+          log.error('SHUTDOWN', `Error during shutdown step '${name}'`, { error: err.message });
+          return undefined;
+        }
+      };
+
       // 1. Terminate all open SSE streams with a terminal event
       try {
         const terminated = sseManager.terminateAll('server_shutdown');
@@ -465,21 +479,21 @@ async function startServer(app, overrideServices = {}) {
         // Close the shared rate limit store (Redis connection, if any)
         await require('../services/rateLimitStores').shutdownRateLimitStore();
 
-        // 8. Checkpoint SQLite WAL (must happen before DB close, after all writes)
-        try {
-          await Database.run('PRAGMA wal_checkpoint(TRUNCATE)');
-          log.info('SHUTDOWN', 'SQLite WAL checkpoint completed');
-        } catch (err) {
-          log.warn('SHUTDOWN', 'Error checkpointing WAL', { error: err.message });
-        }
-
-        // 9. Flush pending audit log entries (must be before DB close)
+        // 8. Flush pending audit log entries (must be before the WAL checkpoint)
         try {
           await AuditLogService.flush();
           AuditLogService.stopAutoFlush();
           log.info('SHUTDOWN', 'Audit log buffer flushed');
         } catch (err) {
           log.error('SHUTDOWN', 'Error flushing audit log buffer', { error: err.message });
+        }
+
+        // 9. Checkpoint SQLite WAL (after every writer has flushed, before DB close)
+        try {
+          await Database.run('PRAGMA wal_checkpoint(TRUNCATE)');
+          log.info('SHUTDOWN', 'SQLite WAL checkpoint completed');
+        } catch (err) {
+          log.warn('SHUTDOWN', 'Error checkpointing WAL', { error: err.message });
         }
 
         // Close the shared-state backend connection (no-op for the memory backend)

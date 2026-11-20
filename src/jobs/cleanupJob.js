@@ -1,8 +1,9 @@
 /**
  * Soft Delete Cleanup Job
- * RESPONSIBILITY: Permanently delete records older than the 30-day retention period.
+ * RESPONSIBILITY: Housekeeping of ephemeral data (refresh-token revocations,
+ * expired donation exports). Transaction and user retention is owned solely by
+ * RetentionService, driven by validated config (RETENTION_*_DAYS).
  */
-const Database = require('../utils/database');
 const AuditLogService = require('../services/AuditLogService');
 const DonationExportService = require('../services/DonationExportService');
 const log = require('../utils/log');
@@ -21,28 +22,17 @@ async function runCleanup() {
   log.info('CLEANUP_JOB', 'Starting soft delete cleanup job');
 
   try {
-    const retentionPeriod = "30 days";
+    // Transaction and user retention is owned by RetentionService (config-driven,
+    // bound parameters). This job no longer hard-deletes those rows.
 
-    // 1. Hard delete transactions older than 30 days
-    await Database.run(
-      `DELETE FROM transactions WHERE deleted_at < date('now', '-${retentionPeriod}')`
-    );
-
-    // 2. Hard delete users (wallets) older than 30 days
-    await Database.run(
-      `DELETE FROM users WHERE deleted_at < date('now', '-${retentionPeriod}')`
-    );
-
-    log.info('CLEANUP_JOB', 'Cleaned up expired transactions and wallets');
-
-    // 3. Clean up expired refresh token revocations (Issue #68)
+    // 1. Clean up expired refresh token revocations (Issue #68)
     try {
       const { cleanupExpiredRevocations } = require('../services/JwtService');
       const deleted = await cleanupExpiredRevocations();
       log.info('CLEANUP_JOB', 'Cleaned up expired refresh token revocations', { deleted });
     } catch (_) { /* table may not exist yet */ }
 
-    // 4. Clean up expired donation exports (Issue #123)
+    // 2. Clean up expired donation exports (Issue #123)
     try {
       const deletedExports = await DonationExportService.deleteExpiredExports();
       log.info('CLEANUP_JOB', 'Cleaned up expired donation exports', { deletedExports });
@@ -50,7 +40,7 @@ async function runCleanup() {
       log.error('CLEANUP_JOB', 'Failed to clean up donation exports', { error: err.message });
     }
 
-    // 5. Log the cleanup for audit purposes
+    // 3. Log the cleanup for audit purposes
     await AuditLogService.log({
       category: AuditLogService.CATEGORY.SYSTEM,
       action: 'SOFT_DELETE_CLEANUP',
