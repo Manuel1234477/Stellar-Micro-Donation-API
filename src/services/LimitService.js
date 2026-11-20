@@ -16,45 +16,60 @@ const { BusinessLogicError, ERROR_CODES } = require('../utils/errors');
 const { toStroops } = require('../utils/money');
 
 /**
+ * Convert a stored stroops value (INTEGER column) to BigInt.
+ * Accepts null/undefined (no limit) or a numeric/string value.
+ * @param {number|string|bigint|null|undefined} value - Limit in stroops
+ * @returns {bigint|null} Limit in stroops as BigInt, or null when unset
+ */
+function toStroopsBigInt(value) {
+  if (value === null || value === undefined) return null;
+  try {
+    return BigInt(value);
+  } catch (err) {
+    return null;
+  }
+}
+
+/**
  * Normalize a limit value to stroops.
  * Accepts null/undefined (no limit) or a numeric amount in XLM.
  * @param {number|null|undefined} value - Limit in XLM
- * @returns {number|null} Limit in stroops, or null when unset
+ * @returns {bigint|null} Limit in stroops, or null when unset
  */
 function normalizeLimit(value) {
   if (value === null || value === undefined) return null;
   const stroops = toStroops(value);
-  return Number.isFinite(stroops) ? stroops : null;
+  return Number.isFinite(stroops) ? BigInt(stroops) : null;
 }
 
 /**
  * Get the daily donation total for a user (UTC day), in stroops
  * @param {number} userId - User ID
- * @returns {Promise<number>} Total amount donated today in stroops
+ * @returns {Promise<bigint>} Total amount donated today in stroops
  */
 async function getDailyTotal(userId) {
   const row = await Database.get(
-    `SELECT COALESCE(SUM(amount), 0) as total
+    `SELECT COALESCE(SUM(amount_stroops), 0) as total
      FROM transactions
      WHERE senderId = ? AND date(timestamp) = date('now')`,
     [userId]
   );
-  return row ? toStroops(row.total) : 0;
+  return row ? toStroopsBigInt(row.total) || 0n : 0n;
 }
 
 /**
  * Get the monthly donation total for a user (UTC month), in stroops
  * @param {number} userId - User ID
- * @returns {Promise<number>} Total amount donated this month in stroops
+ * @returns {Promise<bigint>} Total amount donated this month in stroops
  */
 async function getMonthlyTotal(userId) {
   const row = await Database.get(
-    `SELECT COALESCE(SUM(amount), 0) as total
+    `SELECT COALESCE(SUM(amount_stroops), 0) as total
      FROM transactions
      WHERE senderId = ? AND strftime('%Y-%m', timestamp) = strftime('%Y-%m', 'now')`,
     [userId]
   );
-  return row ? toStroops(row.total) : 0;
+  return row ? toStroopsBigInt(row.total) || 0n : 0n;
 }
 
 /**
@@ -66,32 +81,34 @@ async function getMonthlyTotal(userId) {
  */
 async function checkLimits(userId, amount) {
   const user = await Database.get(
-    'SELECT daily_limit, monthly_limit, per_transaction_limit FROM users WHERE id = ?',
+    'SELECT daily_limit_stroops, monthly_limit_stroops, per_transaction_limit_stroops FROM users WHERE id = ?',
     [userId]
   );
 
   if (!user) return;
 
-  const amountStroops = toStroops(amount);
+  const amountStroops = BigInt(toStroops(amount));
 
   // Resolve effective limits: per-wallet overrides global when set
   const globalMax = config.donations.maxAmount;
   const globalDailyMax = config.donations.maxDailyPerDonor;
 
-  const perTxLimit = user.per_transaction_limit != null
-    ? normalizeLimit(user.per_transaction_limit)
+  const perTxLimit = user.per_transaction_limit_stroops != null
+    ? toStroopsBigInt(user.per_transaction_limit_stroops)
     : normalizeLimit(globalMax);
-  const dailyLimit = user.daily_limit != null
-    ? normalizeLimit(user.daily_limit)
+  const dailyLimit = user.daily_limit_stroops != null
+    ? toStroopsBigInt(user.daily_limit_stroops)
     : (globalDailyMax > 0 ? normalizeLimit(globalDailyMax) : null);
-  const monthlyLimit = user.monthly_limit != null ? normalizeLimit(user.monthly_limit) : null;
+  const monthlyLimit = user.monthly_limit_stroops != null
+    ? toStroopsBigInt(user.monthly_limit_stroops)
+    : null;
 
   // Per-transaction check
   if (perTxLimit != null && amountStroops > perTxLimit) {
     throw new BusinessLogicError(
       ERROR_CODES.DONATION_LIMIT_EXCEEDED,
       `Donation amount ${amount} exceeds per-transaction limit of ${perTxLimit} stroops`,
-      { limit: perTxLimit, amount: amountStroops, limitType: 'per_transaction' }
+      { limit: perTxLimit.toString(), amount: amountStroops.toString(), limitType: 'per_transaction' }
     );
   }
 
@@ -102,7 +119,13 @@ async function checkLimits(userId, amount) {
       throw new BusinessLogicError(
         ERROR_CODES.DONATION_LIMIT_EXCEEDED,
         `Donation would exceed daily limit of ${dailyLimit} stroops. Used: ${dailyTotal}, Requested: ${amountStroops}`,
-        { limit: dailyLimit, used: dailyTotal, amount: amountStroops, remaining: Math.max(0, dailyLimit - dailyTotal), limitType: 'daily' }
+        {
+          limit: dailyLimit.toString(),
+          used: dailyTotal.toString(),
+          amount: amountStroops.toString(),
+          remaining: (dailyLimit > dailyTotal ? dailyLimit - dailyTotal : 0n).toString(),
+          limitType: 'daily'
+        }
       );
     }
   }
@@ -114,7 +137,13 @@ async function checkLimits(userId, amount) {
       throw new BusinessLogicError(
         ERROR_CODES.DONATION_LIMIT_EXCEEDED,
         `Donation would exceed monthly limit of ${monthlyLimit} stroops. Used: ${monthlyTotal}, Requested: ${amountStroops}`,
-        { limit: monthlyLimit, used: monthlyTotal, amount: amountStroops, remaining: Math.max(0, monthlyLimit - monthlyTotal), limitType: 'monthly' }
+        {
+          limit: monthlyLimit.toString(),
+          used: monthlyTotal.toString(),
+          amount: amountStroops.toString(),
+          remaining: (monthlyLimit > monthlyTotal ? monthlyLimit - monthlyTotal : 0n).toString(),
+          limitType: 'monthly'
+        }
       );
     }
   }
@@ -127,29 +156,31 @@ async function checkLimits(userId, amount) {
  */
 async function getRemainingLimits(userId) {
   const user = await Database.get(
-    'SELECT daily_limit, monthly_limit FROM users WHERE id = ?',
+    'SELECT daily_limit_stroops, monthly_limit_stroops FROM users WHERE id = ?',
     [userId]
   );
 
   if (!user) return { dailyRemaining: null, monthlyRemaining: null };
 
   const globalDailyMax = config.donations.maxDailyPerDonor;
-  const dailyLimit = user.daily_limit != null
-    ? normalizeLimit(user.daily_limit)
+  const dailyLimit = user.daily_limit_stroops != null
+    ? toStroopsBigInt(user.daily_limit_stroops)
     : (globalDailyMax > 0 ? normalizeLimit(globalDailyMax) : null);
-  const monthlyLimit = user.monthly_limit != null ? normalizeLimit(user.monthly_limit) : null;
+  const monthlyLimit = user.monthly_limit_stroops != null
+    ? toStroopsBigInt(user.monthly_limit_stroops)
+    : null;
 
   let dailyRemaining = null;
   let monthlyRemaining = null;
 
   if (dailyLimit != null) {
     const dailyTotal = await getDailyTotal(userId);
-    dailyRemaining = Math.max(0, dailyLimit - dailyTotal);
+    dailyRemaining = dailyLimit > dailyTotal ? dailyLimit - dailyTotal : 0n;
   }
 
   if (monthlyLimit != null) {
     const monthlyTotal = await getMonthlyTotal(userId);
-    monthlyRemaining = Math.max(0, monthlyLimit - monthlyTotal);
+    monthlyRemaining = monthlyLimit > monthlyTotal ? monthlyLimit - monthlyTotal : 0n;
   }
 
   return { dailyRemaining, monthlyRemaining };
@@ -167,11 +198,11 @@ async function getRemainingLimits(userId) {
  */
 async function setWalletLimits(userId, { daily_limit, monthly_limit, per_transaction_limit }) {
   await Database.run(
-    `UPDATE users SET daily_limit = ?, monthly_limit = ?, per_transaction_limit = ? WHERE id = ?`,
+    `UPDATE users SET daily_limit_stroops = ?, monthly_limit_stroops = ?, per_transaction_limit_stroops = ? WHERE id = ?`,
     [
-      daily_limit !== undefined ? daily_limit : null,
-      monthly_limit !== undefined ? monthly_limit : null,
-      per_transaction_limit !== undefined ? per_transaction_limit : null,
+      daily_limit !== undefined ? normalizeLimit(daily_limit) : null,
+      monthly_limit !== undefined ? normalizeLimit(monthly_limit) : null,
+      per_transaction_limit !== undefined ? normalizeLimit(per_transaction_limit) : null,
       userId
     ]
   );

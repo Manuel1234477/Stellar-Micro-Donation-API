@@ -13,6 +13,8 @@ const log = require('../utils/log');
 const HealthCheckService = require('../services/HealthCheckService');
 const state = require('../bootstrap/state');
 const { getStellarMode } = require('../config/stellarMode');
+const stellarConfig = require('../config/stellar');
+const { getStoreStatus } = require('../models/transaction');
 
 /**
  * Build the health handlers for the given services.
@@ -57,8 +59,8 @@ function createHealthHandlers(services = {}) {
       }
 
       result.stellarMode = getStellarMode();
-      result.stellarEnvironment = require('../config/stellar').environment || 'testnet';
-      result.stellarNetwork = require('../config/stellar').network || 'testnet';
+      result.stellarEnvironment = stellarConfig.environment || 'testnet';
+      result.stellarNetwork = stellarConfig.network || 'testnet';
       result.requestId = req.id;
       if (transactionSyncScheduler) {
         result.transactionSync = transactionSyncScheduler.getSyncStatus();
@@ -91,7 +93,7 @@ function createHealthHandlers(services = {}) {
         reason: initErr ? `initialization failed: ${initErr}` : 'server still initializing',
       });
     }
-    const donationStore = require('../models/transaction').getStoreStatus();
+    const donationStore = getStoreStatus();
     if (!donationStore.loaded) {
       return res.status(503).json({
         status: 'not_ready',

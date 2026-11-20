@@ -7,6 +7,15 @@ const hasSecurityPlugin = (() => {
   }
 })();
 
+const hasNodePlugin = (() => {
+  try {
+    require.resolve('eslint-plugin-n');
+    return true;
+  } catch (error) {
+    return false;
+  }
+})();
+
 /**
  * Files grandfathered from the max-lines rule while they are being decomposed.
  * As decomposition PRs land, remove entries from this list one by one.
@@ -106,7 +115,12 @@ module.exports = {
     jest: true,
   },
   extends: ['eslint:recommended'],
-  plugins: ['no-secrets', ...(hasSecurityPlugin ? ['security'] : []), 'local'],
+  plugins: [
+    'no-secrets',
+    ...(hasSecurityPlugin ? ['security'] : []),
+    ...(hasNodePlugin ? ['n'] : []),
+    'local',
+  ],
   parserOptions: {
     ecmaVersion: 2022,
   },
@@ -172,6 +186,16 @@ module.exports = {
       'security/detect-non-literal-require': 'warn',
       'security/detect-possible-timing-attacks': 'warn',
       'security/detect-pseudoRandomBytes': 'error',
+    } : {}),
+
+    // Issue #1988: function-level require() calls hide missing modules until a
+    // request reaches that branch, defeat static analysis and mask circular
+    // dependencies. Requires belong at the top of the module. This is a warning
+    // while the remaining lazy loads are migrated; raise it to 'error' once the
+    // count is near zero. Any intentional lazy load must carry a comment
+    // explaining why (e.g. a documented cycle that cannot be extracted).
+    ...(hasNodePlugin ? {
+      'n/global-require': 'warn',
     } : {}),
 
     // Code quality rules that affect security

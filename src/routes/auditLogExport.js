@@ -8,7 +8,7 @@
  * Provides endpoints for exporting audit logs with date range filtering,
  * JSON/CSV format support, and async generation for large exports.
  *
- * The single route module for audit log export (#1778):
+ * The single route module for audit log export (#1778, #1987):
  *
  *   module.exports              mounted at /api/v1/api-keys
  *     Per-API-key export (admin, or self-service with audit:export)
@@ -19,6 +19,8 @@
  *     Global async export jobs (admin only)
  *     POST /, GET /:jobId/status, GET /:jobId/download
  *
+ * Both routers are thin: all validation schemas, redaction and export logic
+ * live here and delegate to AuditLogExportService / AuditLogService.
  * Replaces the former routes/admin/auditLogExport.js.
  */
 
@@ -143,6 +145,55 @@ const exportStatusSchema = validateSchema({
     fields: {
       id: { type: 'string', required: true, trim: true, minLength: 1 },
       exportId: { type: 'string', required: true, trim: true, minLength: 1 }
+    }
+  }
+});
+
+/**
+ * Schema for listing exports / stats of an API key's audit log
+ */
+const auditLogListSchema = validateSchema({
+  params: {
+    fields: {
+      id: { type: 'string', required: true, trim: true, minLength: 1 }
+    }
+  },
+  query: {
+    fields: {
+      limit: { type: 'integer', required: false, min: 1, max: 500, default: 50 },
+      offset: { type: 'integer', required: false, min: 0, default: 0 },
+      startDate: { type: 'string', required: false, nullable: true },
+      endDate: { type: 'string', required: false, nullable: true }
+    }
+  }
+});
+
+/**
+ * Schema for global async export job creation (/admin/audit-logs/export)
+ */
+const adminExportJobSchema = validateSchema({
+  body: {
+    fields: {
+      startDate: { type: 'string', required: false, nullable: true },
+      endDate: { type: 'string', required: false, nullable: true },
+      eventType: { type: 'string', required: false, nullable: true },
+      format: { type: 'string', required: false, enum: ['json', 'csv'], default: 'json' }
+    }
+  }
+});
+
+/**
+ * Schema for polling / downloading a global async export job
+ */
+const adminExportJobStatusSchema = validateSchema({
+  params: {
+    fields: {
+      jobId: { type: 'string', required: true, trim: true, minLength: 1 }
+    }
+  },
+  query: {
+    fields: {
+      format: { type: 'string', required: false, enum: ['json', 'csv'] }
     }
   }
 });
@@ -300,7 +351,7 @@ router.get('/:id/audit-log/export/:exportId/download', auditExportAccess(), expo
  * GET /api-keys/:id/audit-log/exports
  * List all exports for an API key
  */
-router.get('/:id/audit-log/exports', requireAdmin(), asyncHandler(async (req, res, next) => {
+router.get('/:id/audit-log/exports', requireAdmin(), auditLogListSchema, asyncHandler(async (req, res, next) => {
   try {
     const apiKeyId = req.params.id;
     const { limit = 50, offset = 0 } = req.query;
@@ -314,8 +365,8 @@ router.get('/:id/audit-log/exports', requireAdmin(), asyncHandler(async (req, re
 
     // Get exports
     const exports = await AuditLogExportService.getExports(apiKeyId, {
-      limit: parseInt(limit, 10),
-      offset: parseInt(offset, 10)
+      limit,
+      offset
     });
 
     res.json({
@@ -335,7 +386,7 @@ router.get('/:id/audit-log/exports', requireAdmin(), asyncHandler(async (req, re
  * GET /api-keys/:id/audit-log/stats
  * Get audit log statistics for an API key
  */
-router.get('/:id/audit-log/stats', requireAdmin(), asyncHandler(async (req, res, next) => {
+router.get('/:id/audit-log/stats', requireAdmin(), auditLogListSchema, asyncHandler(async (req, res, next) => {
   try {
     const apiKeyId = req.params.id;
     const { startDate, endDate } = req.query;
@@ -464,13 +515,9 @@ const adminRouter = express.Router();
  * POST /admin/audit-logs/export
  * Queue an async audit log export job with date range and event type filters.
  */
-adminRouter.post('/', requireAdmin(), payloadSizeLimiter(ENDPOINT_LIMITS.admin), asyncHandler(async (req, res, next) => {
+adminRouter.post('/', requireAdmin(), payloadSizeLimiter(ENDPOINT_LIMITS.admin), adminExportJobSchema, asyncHandler(async (req, res, next) => {
   try {
     const { startDate, endDate, eventType, format = 'json' } = req.body;
-
-    if (!['json', 'csv'].includes(format)) {
-      throw new ValidationError('format must be json or csv', null, ERROR_CODES.INVALID_REQUEST);
-    }
 
     if (startDate && endDate && new Date(startDate) > new Date(endDate)) {
       throw new ValidationError('startDate must be before endDate', null, ERROR_CODES.INVALID_REQUEST);
@@ -503,7 +550,7 @@ adminRouter.post('/', requireAdmin(), payloadSizeLimiter(ENDPOINT_LIMITS.admin),
  * GET /admin/audit-logs/export/:jobId/status
  * Poll the status of an async export job.
  */
-adminRouter.get('/:jobId/status', requireAdmin(), asyncHandler(async (req, res, next) => {
+adminRouter.get('/:jobId/status', requireAdmin(), adminExportJobStatusSchema, asyncHandler(async (req, res, next) => {
   try {
     const { jobId } = req.params;
     const status = await AuditLogExportService.getJobStatus(jobId);
@@ -518,7 +565,7 @@ adminRouter.get('/:jobId/status', requireAdmin(), asyncHandler(async (req, res, 
  * Return a signed URL for downloading a completed export.
  * Returns 202 if the job is not yet complete.
  */
-adminRouter.get('/:jobId/download', requireAdmin(), asyncHandler(async (req, res, next) => {
+adminRouter.get('/:jobId/download', requireAdmin(), adminExportJobStatusSchema, asyncHandler(async (req, res, next) => {
   try {
     const { jobId } = req.params;
     const { format } = req.query;

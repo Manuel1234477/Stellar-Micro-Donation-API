@@ -90,7 +90,7 @@ beforeEach(() => {
 // ── WebhookService unit tests ─────────────────────────────────────────────────
 
 describe('WebhookService.register()', () => {
-  it('registers a webhook and returns it with a secret', async () => {
+  it('registers a webhook and returns it with a server-generated secret', async () => {
     const wh = await WebhookService.register({
       url: 'https://example.com/hook',
       events: ['transaction.confirmed'],
@@ -104,13 +104,26 @@ describe('WebhookService.register()', () => {
     expect(wh.isActive).toBe(true);
   });
 
-  it('uses provided secret when given', async () => {
+  it('generates a secret server-side and ignores caller-supplied secrets (#1915)', async () => {
     const wh = await WebhookService.register({
       url: 'https://example.com/hook',
       events: ['transaction.confirmed'],
       secret: 'my-secret',
     });
-    expect(wh.secret).toBe('my-secret');
+
+    // The caller-supplied secret must not be used; a fresh secret is generated.
+    expect(wh.secret).not.toBe('my-secret');
+    expect(typeof wh.secret).toBe('string');
+    expect(wh.secret.length).toBeGreaterThan(0);
+
+    // The persisted secret matches the one returned to the caller.
+    expect(db._store.rows[0].secret).toBe(wh.secret);
+  });
+
+  it('generates a distinct secret for each registration', async () => {
+    const a = await WebhookService.register({ url: 'https://a.com/hook', events: ['*'] });
+    const b = await WebhookService.register({ url: 'https://b.com/hook', events: ['*'] });
+    expect(a.secret).not.toBe(b.secret);
   });
 
   it('throws 400 for missing url', async () => {
@@ -396,6 +409,28 @@ describe('Webhook HTTP endpoints', () => {
     expect(res.body.data.secret).toBeDefined();
   });
 
+  it('POST /webhooks generates the secret server-side and never echoes a caller-supplied secret (#1915)', async () => {
+    const res = await request(app)
+      .post('/webhooks')
+      .set('X-API-Key', 'test-key-1')
+      .send({
+        url: 'https://example.com/hook',
+        events: ['transaction.confirmed'],
+        secret: 'caller-supplied-secret',
+      });
+
+    expect(res.status).toBe(201);
+    expect(res.body.success).toBe(true);
+
+    // The server must not echo back the caller-supplied secret.
+    expect(res.body.data.secret).toBeDefined();
+    expect(res.body.data.secret).not.toBe('caller-supplied-secret');
+
+    // The persisted secret is the server-generated one, not the caller's.
+    expect(db._store.rows[0].secret).not.toBe('caller-supplied-secret');
+    expect(db._store.rows[0].secret).toBe(res.body.data.secret);
+  });
+
   it('POST /webhooks returns 400 for missing url', async () => {
     const res = await request(app)
       .post('/webhooks')
@@ -415,6 +450,18 @@ describe('Webhook HTTP endpoints', () => {
     expect(res.status).toBe(200);
     expect(res.body.success).toBe(true);
     expect(Array.isArray(res.body.data)).toBe(true);
+  });
+
+  it('GET /webhooks never exposes webhook secrets', async () => {
+    await WebhookService.register({ url: 'https://list-test.com/hook', events: ['*'] });
+
+    const res = await request(app)
+      .get('/webhooks')
+      .set('X-API-Key', 'test-key-1');
+
+    expect(res.status).toBe(200);
+    expect(res.body.data).toHaveLength(1);
+    expect(res.body.data[0].secret).toBeUndefined();
   });
 
   it('DELETE /webhooks/:id removes a webhook', async () => {

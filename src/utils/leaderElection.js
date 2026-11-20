@@ -23,22 +23,8 @@
 
 const os = require('os');
 const log = require('./log');
-
-function getDb() {
-  try {
-    return require('./database');
-  } catch (_) {
-    return null;
-  }
-}
-
-function getMetrics() {
-  try {
-    return require('./metrics');
-  } catch (_) {
-    return null;
-  }
-}
+const db = require('./database');
+const metrics = require('./metrics');
 
 /**
  * Record a scheduler-lock metric. Metrics are observability only, so any failure
@@ -49,7 +35,6 @@ function getMetrics() {
  */
 function recordLockMetric(method, ...args) {
   try {
-    const metrics = getMetrics();
     if (metrics && typeof metrics[method] === 'function') {
       metrics[method](...args);
     }
@@ -75,7 +60,6 @@ class LeaderElection {
    * @returns {Promise<boolean>} true if this instance holds the lease, false otherwise
    */
   async acquireLease(name, ttlMs) {
-    const db = getDb();
     if (!db) return true; // No DB available — fail-open (single-instance safe)
 
     const now = Date.now();
@@ -140,7 +124,6 @@ class LeaderElection {
    * @returns {Promise<void>}
    */
   async releaseLease(name) {
-    const db = getDb();
     if (!db) return;
     try {
       await db.run(

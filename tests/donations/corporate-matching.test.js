@@ -36,7 +36,6 @@ describe('CorporateMatchingService', () => {
 
   describe('create', () => {
     test('should create a corporate matching program', async () => {
-    try {
       const program = await CorporateMatchingService.create({
         sponsor_id: 1,
         match_ratio: 1.0,
@@ -51,10 +50,7 @@ describe('CorporateMatchingService', () => {
       expect(program.total_limit).toBe(1000.0);
       expect(program.remaining_total_limit).toBe(1000.0);
       expect(program.status).toBe('active');
-    } catch (error) {
-      console.error('Test error:', error);
-      throw error;
-    }
+    });
 
     test('should validate required fields', async () => {
       await expect(CorporateMatchingService.create({
