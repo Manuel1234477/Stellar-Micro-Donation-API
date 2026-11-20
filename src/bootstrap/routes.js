@@ -131,7 +131,7 @@ const UNVERSIONED_PATHS = [
   '/webhooks', '/campaigns', '/pledges', '/encryption', '/tiers', '/offers', '/orderbook',
   '/tags', '/leaderboard', '/federation', '/tools', '/auth', '/docs',
   '/transactions', '/claimable-balances', '/liquidity-pools', '/exchange-rates',
-  '/impact', '/feature-flags',
+  '/impact', '/feature-flags', '/exports',
   // Payment channels were introduced as an unversioned API (Issue #1803);
   // the legacy path now goes through the same deprecation treatment.
   '/channels',
@@ -382,20 +382,11 @@ function mountRoutes(app, services = {}) {
     }
   }));
 
-  // Donation and entity export endpoints (#1596)
-  apiV1.use('/exports', exportsRoutes);
-
   app.use('/api/v1', apiV1);
 
   // ── /api/v2 standardized response envelope (Issue #1553) ─────────────────
   // Additive: /api/v1 above is untouched for backward compatibility.
   app.use('/api/v2', v2Routes);
-
-  // Unversioned export endpoints (#1596); the versioned router is in V1_ROUTES.
-  // NOTE (#1936): this root-level mount is still present on main and is tracked
-  // by the re-verification issue #2051 — do not remove without updating the
-  // route-table snapshot test.
-  app.use('/exports', exportsRoutes);
 
   // Stellar federation protocol server (SEP-0002).
   // The versioned lookup router above is for consumers; this router serves
