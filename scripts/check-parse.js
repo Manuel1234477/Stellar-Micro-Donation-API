@@ -10,6 +10,9 @@
  * that do not parse) before a PR can merge. It does not execute any code, so it
  * needs no environment variables or database.
  *
+ * It also scans src/ and scripts/ for the AI-tool truncation placeholder
+ * (`truncated N chars`) so a file cut off mid-edit cannot be merged.
+ *
  * Usage:
  *   node scripts/check-parse.js
  */
@@ -20,6 +23,7 @@ const { spawnSync } = require('child_process');
 
 const ROOT = path.join(__dirname, '..');
 const DIRS = ['src', 'scripts'];
+const TRUNCATION_MARKER = /truncated \d+ chars/;
 
 function listJsFiles(dir) {
   const out = [];
@@ -51,6 +55,21 @@ function main() {
     for (const f of failures) console.error(`  ${f.file}\n${f.error}\n`);
     process.exit(1);
   }
+
+  const truncations = [];
+  for (const file of files) {
+    const contents = fs.readFileSync(file, 'utf8');
+    if (TRUNCATION_MARKER.test(contents)) {
+      truncations.push(path.relative(ROOT, file));
+    }
+  }
+
+  if (truncations.length > 0) {
+    console.error(`check-parse: ${truncations.length} file(s) contain a truncation placeholder:\n`);
+    for (const f of truncations) console.error(`  ${f}`);
+    process.exit(1);
+  }
+
   console.log(`check-parse: ${files.length} file(s) parse cleanly`);
 }
 

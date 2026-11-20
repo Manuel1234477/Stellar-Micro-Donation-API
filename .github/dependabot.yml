@@ -58,6 +58,10 @@ updates:
           - "patch"
         patterns:
           - "*"
+        exclude-patterns:
+          # Handled by the "babel" group above
+          - "@babel/*"
+          - "babel-jest"
 
   # ────────────────────────────────────────────────────────────────────────────
   # GitHub Actions

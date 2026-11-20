@@ -586,17 +586,27 @@ const buildConfig = (env, isProduction, isTest) => {
   return configObj;
 };
 
-// Load configuration once at module initialization
-let config;
-try {
-  config = loadConfig();
-} catch (error) {
-  if (error instanceof ConfigurationError) {
-    console.error('\n' + error.message + '\n');
-    process.exit(1);
+// Cached configuration object. Built lazily on first access so that callers
+// which mutate process.env before requiring this module (tests, scripts) see
+// their changes, while still returning a single stable object afterwards.
+let cachedConfig = null;
+
+/**
+ * Get the fully built configuration object.
+ * Builds (and caches) the config on first call.
+ */
+const getConfig = () => {
+  if (cachedConfig) return cachedConfig;
+
+  try {
+    cachedConfig = loadConfig();
+  } catch (error) {
+    if (error instanceof ConfigurationError) {
+      console.error('\n' + error.message + '\n');
+      process.exit(1);
+    }
+    throw error;
   }
-  throw error;
-}
 
 // Export configuration object.
 //

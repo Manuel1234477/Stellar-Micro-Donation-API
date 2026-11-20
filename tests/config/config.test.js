@@ -408,4 +408,81 @@ describe('Centralized Configuration Module', () => {
       expect(config.app.version).toBeDefined();
     });
   });
+
+  describe('Exported Config Shape (#2041)', () => {
+    const REQUIRED_SECTIONS = [
+      'server',
+      'logging',
+      'database',
+      'stellar',
+      'rateLimit',
+      'geoBlocking',
+      'app',
+      'retention'
+    ];
+
+    beforeEach(() => {
+      cleanup = createIsolatedEnvironment({
+        NODE_ENV: 'test',
+        API_KEYS: 'test-key'
+      });
+
+      delete require.cache[require.resolve('../../src/config')];
+      config = require('../../src/config');
+    });
+
+    it('exports a fully built config object (not just helpers)', () => {
+      expect(config).toBeDefined();
+      expect(typeof config).toBe('object');
+      expect(config.server).toBeDefined();
+    });
+
+    it.each(REQUIRED_SECTIONS)('exposes the "%s" top-level section', (section) => {
+      expect(config[section]).toBeDefined();
+      expect(config[section]).not.toBeNull();
+      expect(typeof config[section]).toBe('object');
+    });
+
+    it('resolves key nested fields used by callers', () => {
+      expect(config.server.port).toBeDefined();
+      expect(config.server.env).toBeDefined();
+      expect(config.logging.level).toBeDefined();
+      expect(config.logging.debugMode).toBeDefined();
+      expect(config.logging.toFile).toBeDefined();
+      expect(config.logging.directory).toBeDefined();
+      expect(config.database.path).toBeDefined();
+      expect(config.stellar.network).toBeDefined();
+      expect(config.stellar.mockEnabled).toBeDefined();
+      expect(config.rateLimit.maxRequests).toBeDefined();
+      expect(config.rateLimit.windowMs).toBeDefined();
+      expect(config.geoBlocking).toBeDefined();
+      expect(config.retention).toBeDefined();
+    });
+
+    it('keeps retention settings nested under the retention section (#1912)', () => {
+      expect(typeof config.retention).toBe('object');
+      expect(config.retention).not.toBeNull();
+    });
+  });
+
+  describe('Application Bootstrap Smoke Test (#2041)', () => {
+    it('loads src/app under NODE_ENV=test without throwing', () => {
+      cleanup = createIsolatedEnvironment({
+        NODE_ENV: 'test',
+        API_KEYS: 'test-key'
+      });
+
+      delete require.cache[require.resolve('../../src/config')];
+      delete require.cache[require.resolve('../../src/app')];
+
+      let appModule;
+      expect(() => {
+        appModule = require('../../src/app');
+      }).not.toThrow();
+
+      expect(appModule).toBeDefined();
+      expect(typeof appModule.createApp).toBe('function');
+      expect(() => appModule.createApp()).not.toThrow();
+    });
+  });
 });
