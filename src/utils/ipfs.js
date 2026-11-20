@@ -62,8 +62,10 @@ async function pinToIPFS(json) {
     throw new Error('Pinata credentials not configured');
   }
 
-  // SSRF: validate the Pinata endpoint (catches operator-supplied IPFS_GATEWAY_URL overrides)
-  await assertSafeOutboundUrl(`https://${PINATA_ENDPOINT}/pinning/pinJSONToIPFS`);
+  // SSRF: validate the Pinata endpoint and pin the connection to the validated IP
+  const { options: pinned } = await resolvePinnedRequestOptions(
+    `https://${PINATA_ENDPOINT}/pinning/pinJSONToIPFS`
+  );
 
   const body = JSON.stringify({
     pinataContent: json,
@@ -73,8 +75,7 @@ async function pinToIPFS(json) {
   return new Promise((resolve, reject) => {
     const req = https.request(
       {
-        hostname: PINATA_ENDPOINT,
-        path: '/pinning/pinJSONToIPFS',
+        ...pinned,
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',

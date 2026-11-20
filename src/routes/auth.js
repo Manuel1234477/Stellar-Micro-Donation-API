@@ -21,7 +21,11 @@ const { getStellarService } = require('../config/stellar');
 const log = require('../utils/log');
 const asyncHandler = require('../utils/asyncHandler');
 const { payloadSizeLimiter, ENDPOINT_LIMITS } = require('../middleware/payloadSizeLimiter');
-const { authTokenRateLimiter, authRefreshRateLimiter } = require('../middleware/rateLimiter');
+const {
+  authTokenRateLimiter,
+  authRefreshRateLimiter,
+  authChallengeRateLimiter,
+} = require('../middleware/rateLimiter');
 const bruteForce = require('../utils/bruteForceProtection');
 
 const stellarService = getStellarService();
@@ -42,7 +46,7 @@ const sep10Service = serverSigningKey
  * Exchange a valid API key for a JWT access token + refresh token pair.
  * Requires: X-API-Key header
  */
-router.post('/token/apikey', bruteForce.middleware(), requireApiKey, payloadSizeLimiter(ENDPOINT_LIMITS.auth), asyncHandler(async (req, res) => {
+router.post('/token/apikey', bruteForce.middleware(), authTokenRateLimiter, requireApiKey, payloadSizeLimiter(ENDPOINT_LIMITS.auth), asyncHandler(async (req, res) => {
   try {
     const apiKeyId = req.apiKey.id || 0;
     const claims = { role: req.apiKey.role || 'user' };
@@ -130,7 +134,7 @@ router.post('/refresh', bruteForce.middleware(), authRefreshRateLimiter, payload
  * Returns a SEP-0010 challenge transaction XDR that the client can sign.
  * Query params: account=<stellar_public_key>
  */
-router.get('/challenge', asyncHandler(async (req, res) => {
+router.get('/challenge', authChallengeRateLimiter, asyncHandler(async (req, res) => {
   if (!sep10Service) {
     // 503: the endpoint is defined but the feature is disabled on this instance
     // (missing SERVICE_SECRET_KEY). 501 would mean the server never intends to
@@ -154,7 +158,10 @@ router.get('/challenge', asyncHandler(async (req, res) => {
     return res.status(200).json({ success: true, data: { transaction: challengeXDR } });
   } catch (err) {
     log.error('AUTH', 'Challenge generation failed', { error: err.message });
-    return res.status(400).json({ success: false, error: { code: 'INVALID_CHALLENGE', message: err.message } });
+    return res.status(400).json({
+      success: false,
+      error: { code: 'INVALID_CHALLENGE', message: 'Unable to generate a challenge for the supplied account' },
+    });
   }
 }));
 
@@ -201,7 +208,10 @@ router.post('/token', bruteForce.middleware(), authTokenRateLimiter, payloadSize
   } catch (err) {
     bruteForce.recordFailure(req.ip || 'unknown');
     log.error('AUTH', 'Challenge verification failed', { error: err.message });
-    return res.status(401).json({ success: false, error: { code: 'INVALID_CHALLENGE', message: err.message } });
+    return res.status(401).json({
+      success: false,
+      error: { code: 'INVALID_CHALLENGE', message: 'Challenge verification failed' },
+    });
   }
 }));
 

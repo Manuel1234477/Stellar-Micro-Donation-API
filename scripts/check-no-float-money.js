@@ -37,8 +37,8 @@ const STRICT = process.argv.includes('--strict');
 // When you migrate a call site to money.js, lower or remove its entry.
 /* eslint-disable no-secrets/no-secrets -- keys are file paths and field names */
 const KNOWN_FLOAT_MONEY = new Map([
-  ['src/routes/transaction.js::amountMin', 1],
-  ['src/routes/transaction.js::amountMax', 1],
+  ['src/routes/transactions/core.js::amountMin', 1],
+  ['src/routes/transactions/core.js::amountMax', 1],
   ['src/services/DonationService.js::donation', 1],
   ['src/services/DonationService.js::amount', 4],
   ['src/services/DonationService.js::minAmount', 1],

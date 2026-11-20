@@ -80,6 +80,8 @@ const V1_ROUTES = [
   ['/exports',                        require('../routes/exports')],
   // Read-only client view of flags; management lives only in /admin/feature-flags (#1775)
   ['/feature-flags',                  require('../routes/feature-flags')],
+  // Stellar account monitors (#2087) — previously unmounted.
+  ['/monitors',                       require('../routes/monitors')],
 ];
 
 // ── Admin routes ──────────────────────────────────────────────────────────────

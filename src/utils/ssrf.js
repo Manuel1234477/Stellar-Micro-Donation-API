@@ -159,6 +159,82 @@ async function assertSafeHost(hostname) {
 }
 
 /**
+ * Resolve a hostname to a single validated IP address.
+ * @param {string} hostname
+ * @returns {Promise<{address: string, family: number}>}
+ */
+async function resolveSafeAddress(hostname) {
+  if (net.isIPv4(hostname)) {
+    if (isBlockedIPv4(hostname)) {
+      const msg = `SSRF: blocked IPv4 address: ${hostname}`;
+      logSsrfBlocked(hostname, msg);
+      throw new SsrfError(msg);
+    }
+    return { address: hostname, family: 4 };
+  }
+  if (net.isIPv6(hostname)) {
+    if (isBlockedIPv6(hostname)) {
+      const msg = `SSRF: blocked IPv6 address: ${hostname}`;
+      logSsrfBlocked(hostname, msg);
+      throw new SsrfError(msg);
+    }
+    return { address: hostname, family: 6 };
+  }
+
+  let addresses;
+  try {
+    addresses = await dns.lookup(hostname, { all: true });
+  } catch (err) {
+    const msg = `SSRF: DNS resolution failed for ${hostname}: ${err.message}`;
+    logSsrfBlocked(hostname, msg);
+    throw new SsrfError(msg);
+  }
+
+  for (const { address, family } of addresses) {
+    if (family === 4 && isBlockedIPv4(address)) {
+      const msg = `SSRF: hostname ${hostname} resolves to blocked IPv4 ${address}`;
+      logSsrfBlocked(hostname, msg);
+      throw new SsrfError(msg);
+    }
+    if (family === 6 && isBlockedIPv6(address)) {
+      const msg = `SSRF: hostname ${hostname} resolves to blocked IPv6 ${address}`;
+      logSsrfBlocked(hostname, msg);
+      throw new SsrfError(msg);
+    }
+  }
+
+  if (!addresses.length) {
+    const msg = `SSRF: hostname ${hostname} resolved to no addresses`;
+    logSsrfBlocked(hostname, msg);
+    throw new SsrfError(msg);
+  }
+
+  return { address: addresses[0].address, family: addresses[0].family };
+}
+
+/**
+ * Build a `lookup` function for http(s).request that pins the connection to a
+ * pre-validated IP, so a second DNS lookup cannot redirect it (DNS rebinding).
+ * TLS SNI/servername is preserved by the caller via `servername`.
+ *
+ * @param {string} address - Validated IP address
+ * @param {number} family - 4 or 6
+ * @returns {Function} lookup(hostname, options, callback)
+ */
+function pinnedLookup(address, family) {
+  return function lookup(_hostname, options, callback) {
+    if (typeof options === 'function') {
+      callback = options;
+      options = {};
+    }
+    if (options && options.all) {
+      return callback(null, [{ address, family }]);
+    }
+    return callback(null, address, family);
+  };
+}
+
+/**
  * Assert that a URL is safe for outbound requests.
  *
  * Enforces:
@@ -190,14 +266,44 @@ async function assertSafeOutboundUrl(urlStr) {
     }
   }
 
-  await assertSafeHost(parsed.hostname);
+  const { address, family } = await resolveSafeAddress(parsed.hostname);
+  parsed.safeAddress = address;
+  parsed.safeFamily = family;
 
   return parsed;
+}
+
+/**
+ * Validate a URL and return request options pinned to the validated IP.
+ * The returned `options` can be spread into http(s).request; `servername`
+ * keeps TLS SNI/certificate validation bound to the original hostname.
+ *
+ * @param {string} urlStr
+ * @returns {Promise<{url: URL, address: string, family: number, options: object}>}
+ */
+async function resolvePinnedRequestOptions(urlStr) {
+  const parsed = await assertSafeOutboundUrl(urlStr);
+  const address = parsed.safeAddress;
+  const family = parsed.safeFamily;
+  const isHttps = parsed.protocol === 'https:';
+  const options = {
+    hostname: parsed.hostname,
+    port: parsed.port || (isHttps ? 443 : 80),
+    path: parsed.pathname + parsed.search,
+    lookup: pinnedLookup(address, family),
+  };
+  if (isHttps) {
+    options.servername = parsed.hostname;
+  }
+  return { url: parsed, address, family, options };
 }
 
 module.exports = {
   assertSafeOutboundUrl,
   assertSafeHost,
+  resolveSafeAddress,
+  resolvePinnedRequestOptions,
+  pinnedLookup,
   isBlockedIPv4,
   isBlockedIPv6,
   SsrfError,

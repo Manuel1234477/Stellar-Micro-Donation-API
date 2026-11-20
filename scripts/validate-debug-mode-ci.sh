@@ -67,7 +67,7 @@ MODIFIED_FILES=(
   "src/app.js"
   "src/middleware/logger.js"
   "src/config/stellar.js"
-  "src/routes/donation.js"
+  "src/routes/donations.js"
 )
 
 LINT_ERRORS=0

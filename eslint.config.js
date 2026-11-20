@@ -184,6 +184,39 @@ if (localPlugin) {
 // ---------------------------------------------------------------------------
 
 module.exports = [
+  {
+    // Issue #2086: the legacy route shims are gone — import the canonical
+    // routers (routes/donations, routes/wallets, routes/transactions) instead.
+    files: ['**/*.js'],
+    rules: {
+      'no-restricted-imports': [
+        'error',
+        {
+          paths: [
+            {
+              name: './routes/donation',
+              message: 'Import src/routes/donations instead (issue #2086).',
+            },
+            {
+              name: './routes/wallet',
+              message: 'Import src/routes/wallets instead (issue #2086).',
+            },
+            {
+              name: './routes/transaction',
+              message: 'Import src/routes/transactions instead (issue #2086).',
+            },
+          ],
+          patterns: [
+            {
+              group: ['**/routes/donation', '**/routes/wallet', '**/routes/transaction'],
+              message:
+                'Import the canonical routers (routes/donations, routes/wallets, routes/transactions) instead (issue #2086).',
+            },
+          ],
+        },
+      ],
+    },
+  },
   // Top-level ignores (ported from .eslintignore)
   {
     ignores: [

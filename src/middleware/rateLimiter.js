@@ -454,6 +454,84 @@ const authRefreshRateLimiter = rateLimit({
 });
 
 /**
+ * Auth Challenge Limiter (Issue #2090)
+ * Intent: Prevent challenge-generation abuse on GET /auth/challenge
+ * Scope: GET /auth/challenge
+ *
+ * Flow & Configuration:
+ * 1. Window: 60-second sliding window
+ * 2. Threshold: Max 30 requests per IP (AUTH_CHALLENGE_RATE_LIMIT)
+ * 3. Per-account: Max 10 requests per `account` query param (AUTH_CHALLENGE_ACCOUNT_RATE_LIMIT)
+ * 4. Exhaustion: Responds with HTTP 429 and Retry-After header
+ */
+function buildAuthChallengeHandler(limit, scope) {
+  return (req, res) => {
+    const retryAfter = req.rateLimit?.resetTime
+      ? Math.ceil((new Date(req.rateLimit.resetTime) - Date.now()) / 1000)
+      : 60;
+
+    AuditLogService.log({
+      category: AuditLogService.CATEGORY.RATE_LIMITING,
+      action: AuditLogService.ACTION.RATE_LIMIT_EXCEEDED,
+      severity: AuditLogService.SEVERITY.HIGH,
+      result: 'FAILURE',
+      requestId: req.id,
+      ipAddress: req.ip,
+      resource: req.path,
+      reason: `Auth challenge rate limit exceeded (${scope})`,
+      details: { limit, window: '60s', scope, resetTime: req.rateLimit?.resetTime }
+    }).catch(err => log.error('RATE_LIMITER', 'Audit log failed', { error: err.message || err }));
+
+    res.set('Retry-After', String(retryAfter));
+    res.status(429).json({
+      success: false,
+      error: {
+        code: 'RATE_LIMIT_EXCEEDED',
+        message: scope === 'account'
+          ? 'Too many challenge requests for this account. Please try again later.'
+          : 'Too many challenge requests from this IP. Please try again later.',
+        retryAfter,
+        limitedBy: scope,
+      }
+    });
+  };
+}
+
+const authChallengeIpLimit = parseInt(process.env.AUTH_CHALLENGE_RATE_LIMIT || '30');
+const authChallengeAccountLimit = parseInt(process.env.AUTH_CHALLENGE_ACCOUNT_RATE_LIMIT || '10');
+
+const authChallengeIpRateLimiter = rateLimit({
+  storePrefix: 'authChallengeIp',
+  windowMs: 60 * 1000,
+  max: authChallengeIpLimit,
+  keyGenerator: (req) => req.ip,
+  standardHeaders: true,
+  legacyHeaders: true,
+  validate: false,
+  handler: buildAuthChallengeHandler(authChallengeIpLimit, 'ip'),
+});
+
+const authChallengeAccountRateLimiter = rateLimit({
+  storePrefix: 'authChallengeAccount',
+  windowMs: 60 * 1000,
+  max: authChallengeAccountLimit,
+  keyGenerator: (req) => {
+    const account = req.query?.account;
+    return typeof account === 'string' && account ? `account:${account}` : `ip:${req.ip}`;
+  },
+  standardHeaders: true,
+  legacyHeaders: true,
+  validate: false,
+  handler: buildAuthChallengeHandler(authChallengeAccountLimit, 'account'),
+});
+
+/**
+ * Auth Challenge Limiter (per IP, then per account)
+ * @type {Function[]}
+ */
+const authChallengeRateLimiter = [authChallengeIpRateLimiter, authChallengeAccountRateLimiter];
+
+/**
  * Health Check Limiter (Issue #889)
  * Intent: Prevent reconnaissance attacks via continuous health endpoint polling
  * Scope: GET /health, GET /api/v1/health
@@ -590,6 +668,9 @@ module.exports = {
   bulkImportRateLimiter,
   authTokenRateLimiter,
   authRefreshRateLimiter,
+  authChallengeRateLimiter,
+  authChallengeIpRateLimiter,
+  authChallengeAccountRateLimiter,
   healthCheckRateLimiter,
   liveHistoryRateLimiter,
   decodeTransactionRateLimiter,
