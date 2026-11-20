@@ -269,20 +269,20 @@ function buildEndpointTable(services = {}) {
     { method: 'get', path: '/api/v1/health/ready', middleware: [], handler: health.ready },
 
     // Observability admin endpoints
-    { method: 'get',    path: '/abuse-signals',         middleware: adminOnly(), handler: operations.abuseSignals },
     { method: 'get',    path: '/admin/blocked-ips',     middleware: adminOnly(), handler: operations.listBlockedIps },
     { method: 'delete', path: '/admin/blocked-ips/:ip', middleware: adminOnly(), handler: operations.unblockIp },
-    { method: 'get',    path: '/suspicious-patterns',   middleware: adminOnly(), handler: operations.suspiciousPatterns },
   ];
 
   const afterAdminGuard = [
     { method: 'get', path: '/admin/audit-logs', middleware: adminOnly(), handler: operations.auditLogs },
+    // Canonical admin paths (#2081): no admin-only endpoint lives outside /admin.
+    { method: 'get', path: '/admin/abuse-signals',       middleware: adminOnly(), handler: operations.abuseSignals },
+    { method: 'get', path: '/admin/suspicious-patterns', middleware: adminOnly(), handler: operations.suspiciousPatterns },
   ];
 
   if (reconciliationService) {
     const reconcile = operations.createReconcileHandler(reconciliationService);
     afterAdminGuard.push(
-      { method: 'post', path: '/reconcile',                    middleware: adminWrite(), handler: reconcile },
       { method: 'post', path: '/admin/reconcile',              middleware: adminWrite(), handler: reconcile },
       { method: 'get',  path: '/admin/orphaned-transactions',  middleware: adminOnly(),
         handler: operations.createOrphanedTransactionsHandler(reconciliationService) },
