@@ -50,7 +50,7 @@ const V1_ROUTES = [
   ['/fees',                           require('../routes/fees')],
   ['/wallets',                        require('../routes/wallets')],
   ['/wallets',                        require('../routes/signers').thresholdsRouter],
-  ['/',                               require('../routes/recovery')],
+  ['/recovery',                       require('../routes/recovery')],
   ['/donations',                      require('../routes/donations')],
   ['/donations',                      require('../routes/receipt')],
   ['/donations',                      require('../routes/disputes')],
@@ -342,7 +342,7 @@ function mountRoutes(app, services = {}) {
   apiV1.use('/network', networkRoutes);
 
   // Corporate matching member endpoints (admin + v2 routers live in the same module)
-  apiV1.use('/', corporateMatchingRoutes);
+  apiV1.use('/corporate-matching', corporateMatchingRoutes);
 
   // Federation lookup (has named export)
   apiV1.use('/federation', federationLookupRoutes);

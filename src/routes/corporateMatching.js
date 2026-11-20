@@ -4,11 +4,11 @@
  * RESPONSIBILITY: The single route module for corporate matching. Exports one
  *   router per audience so each mount point stays the same:
  *
- *   module.exports              (member router) mounted at /api/v1
- *     GET    /corporate-matching/programs
- *     POST   /corporate-matching/:id/enroll
- *     DELETE /corporate-matching/:id/enroll/:employeeWalletId
- *     GET    /corporate-matching/:id/my-matches
+ *   module.exports              (member router) mounted at /api/v1/corporate-matching
+ *     GET    /programs
+ *     POST   /:id/enroll
+ *     DELETE /:id/enroll/:employeeWalletId
+ *     GET    /:id/my-matches
  *
  *   module.exports.adminRouter  mounted at /admin/corporate-matching
  *     (program CRUD, enrolled employees, activity + export)
@@ -64,20 +64,20 @@ function serializeActivity(row) {
 }
 
 /**
- * GET /corporate-matching/programs
+ * GET /programs
  * List active corporate matching programs available for enrollment.
  */
-router.get('/corporate-matching/programs', requireApiKey, asyncHandler(async (req, res) => {
+router.get('/programs', requireApiKey, asyncHandler(async (req, res) => {
   const programs = await CorporateMatchingService.getAll({ status: 'active' });
   res.json({ success: true, data: programs.map(serializeProgram) });
 }));
 
 /**
- * POST /corporate-matching/:id/enroll
+ * POST /:id/enroll
  * Enroll an employee in a corporate matching program.
  * Body: { employeeWalletId }
  */
-router.post('/corporate-matching/:id/enroll', requireApiKey, payloadSizeLimiter(ENDPOINT_LIMITS.default), asyncHandler(async (req, res) => {
+router.post('/:id/enroll', requireApiKey, payloadSizeLimiter(ENDPOINT_LIMITS.default), asyncHandler(async (req, res) => {
   const programId = parseInt(req.params.id, 10);
   const employeeWalletId = parseInt(req.body.employeeWalletId, 10);
 
@@ -90,10 +90,10 @@ router.post('/corporate-matching/:id/enroll', requireApiKey, payloadSizeLimiter(
 }));
 
 /**
- * DELETE /corporate-matching/:id/enroll/:employeeWalletId
+ * DELETE /:id/enroll/:employeeWalletId
  * Remove an employee's enrollment from a program.
  */
-router.delete('/corporate-matching/:id/enroll/:employeeWalletId', requireApiKey, asyncHandler(async (req, res) => {
+router.delete('/:id/enroll/:employeeWalletId', requireApiKey, asyncHandler(async (req, res) => {
   const programId = parseInt(req.params.id, 10);
   const employeeWalletId = parseInt(req.params.employeeWalletId, 10);
 
@@ -110,7 +110,7 @@ router.delete('/corporate-matching/:id/enroll/:employeeWalletId', requireApiKey,
  * An employee's own matched donations for a given program.
  * Query: employeeWalletId (required — the caller's users.id)
  */
-router.get('/corporate-matching/:id/my-matches', requireApiKey, asyncHandler(async (req, res) => {
+router.get('/:id/my-matches', requireApiKey, asyncHandler(async (req, res) => {
   const programId = parseInt(req.params.id, 10);
   const employeeWalletId = parseInt(req.query.employeeWalletId, 10);
 
