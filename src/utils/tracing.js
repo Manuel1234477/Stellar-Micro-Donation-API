@@ -60,6 +60,11 @@ function _loadSdk(options = {}) {
   }
 
   try {
+    // Intentional lazy require: the OTel SDK packages are optional dependencies.
+    // Loading them at module top level would make tracing.js fail to load in
+    // environments where they are not installed, so they are resolved only when
+    // an explicit OTLP endpoint is configured. This is not a circular-dependency
+    // workaround.
     const { NodeSDK } = require('@opentelemetry/sdk-node');
     const { OTLPTraceExporter } = require('@opentelemetry/exporter-trace-otlp-http');
     const { Resource } = require('@opentelemetry/resources');

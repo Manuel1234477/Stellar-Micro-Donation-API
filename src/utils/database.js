@@ -23,6 +23,10 @@ const QueryMethods = require('./database/query');
 const TransactionMethods = require('./database/transaction');
 const HealthMethods = require('./database/health');
 const LifecycleMethods = require('./database/lifecycle');
+// Top-level require: the database.js <-> tracing.js cycle is broken by
+// src/utils/tracingHooks.js, which holds the shared tracer hooks and does not
+// depend on this module. See #1988.
+const tracingHooks = require('./tracingHooks');
 
 class Database {}
 
@@ -43,5 +47,9 @@ for (const part of PARTS) {
     Object.defineProperty(Database, key, Object.getOwnPropertyDescriptor(part, key));
   }
 }
+
+// Expose the shared tracing hooks on the facade so callers (and the tracing
+// module) can reach them without requiring tracing.js from inside functions.
+Database.tracingHooks = tracingHooks;
 
 module.exports = Database;
