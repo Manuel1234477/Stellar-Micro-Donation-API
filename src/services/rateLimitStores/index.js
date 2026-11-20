@@ -56,6 +56,42 @@ function createRedisClient(url) {
   }
 }
 
+/**
+ * Startup check (#2064): when a Redis backend is requested, verify the client
+ * package can actually be loaded. Reports a clear error and, in production,
+ * fails startup instead of silently degrading to per-process state.
+ *
+ * @returns {{ ok: boolean, error?: string }}
+ */
+function checkRedisClientAvailable() {
+  const storeType = (process.env.RATE_LIMIT_STORE || 'memory').toLowerCase();
+  const sharedState = (process.env.SHARED_STATE_BACKEND || 'memory').toLowerCase();
+  const pubsub = (process.env.PUBSUB_ADAPTER || 'memory').toLowerCase();
+  const requested = storeType === 'redis' || sharedState === 'redis' || pubsub === 'redis';
+  if (!requested) return { ok: true };
+
+  let loadError = null;
+  try {
+    require('ioredis');
+  } catch (err) {
+    loadError = err.message;
+  }
+
+  if (!loadError) return { ok: true };
+
+  const message = 'Redis backend requested (RATE_LIMIT_STORE/SHARED_STATE_BACKEND/PUBSUB_ADAPTER=redis) '
+    + 'but the "ioredis" client cannot be loaded. Install it with `npm install ioredis` '
+    + '(it is an optionalDependency and required for multi-replica deployments). '
+    + `Load error: ${loadError}`;
+
+  if (process.env.NODE_ENV === 'production') {
+    log.error('RATE_LIMIT', message);
+    throw new Error(message);
+  }
+  log.warn('RATE_LIMIT', message);
+  return { ok: false, error: message };
+}
+
 function createStore() {
   const storeType = (process.env.RATE_LIMIT_STORE || 'memory').toLowerCase();
 
@@ -95,6 +131,7 @@ function getRateLimitStore() {
  * @returns {Promise<RateLimitStore>}
  */
 async function initializeRateLimitStore() {
+  checkRedisClientAvailable();
   const store = getRateLimitStore();
   let healthy = false;
   try {
@@ -138,6 +175,7 @@ function resetStore(store = null) {
 module.exports = {
   getRateLimitStore,
   initializeRateLimitStore,
+  checkRedisClientAvailable,
   shutdownRateLimitStore,
   resetStore,
   RateLimitStore,

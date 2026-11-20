@@ -13,7 +13,6 @@
  */
 
 const crypto = require('crypto');
-const axios = require('axios');
 const log = require('../utils/log');
 const { toStroops } = require('../utils/money');
 
@@ -228,10 +227,15 @@ class AccountMonitorService {
 
     try {
       if (monitor.alertConfig.channel === 'webhook') {
-        await axios.post(monitor.alertConfig.webhookUrl, payload, {
+        const response = await fetch(monitor.alertConfig.webhookUrl, {
+          method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          timeout: 5000,
+          body: JSON.stringify(payload),
+          signal: AbortSignal.timeout(5000),
         });
+        if (!response.ok) {
+          throw new Error(`Webhook responded with status ${response.status}`);
+        }
       } else if (monitor.alertConfig.channel === 'email') {
         await this._sendEmailAlert(monitor.alertConfig.email, monitor, alert);
       }
