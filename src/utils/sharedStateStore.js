@@ -236,6 +236,18 @@ class RedisSharedStateStore extends SharedStateStore {
 let _instance = null;
 
 /**
+ * Backend actually in use, plus whether it is a fallback from a requested
+ * Redis backend. Exposed for metrics and /admin/system-info (#2065).
+ *
+ * @returns {{requested: string, active: string, fallback: boolean}}
+ */
+function getSharedStateBackendInfo() {
+  const requested = readEnv('SHARED_STATE_BACKEND') || 'memory';
+  const active = _instance && _instance.isDistributed ? 'redis' : 'memory';
+  return { requested, active, fallback: requested === 'redis' && active !== 'redis' };
+}
+
+/**
  * Return the process-wide store selected by SHARED_STATE_BACKEND.
  * Falls back to the memory backend (with a warning) when Redis is requested
  * but no client can be created.
