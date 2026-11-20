@@ -257,7 +257,32 @@ When the PR is ready:
 - Fill in the PR template (summary, testing notes, breaking changes).
 - Request at least one review before merging.
 
+### Closing an issue: required evidence
+
+A PR that uses `Closes #<number>` (or any other closing keyword) must include
+evidence that the underlying problem is actually fixed. Closing an issue is a
+claim that the change works — back it up:
+
+1. **The relevant tests pass in CI.** Name the test file(s) or command that
+   cover the issue in the PR description, and confirm the `test` job is green
+   for the commit that closes the issue. A PR that only touches docs, README,
+   or comments cannot close a code or test issue.
+2. **Large deletions are explained.** If your diff removes a substantial amount
+   of code (roughly 50+ lines, or an entire file/endpoint), explain in the PR
+   description *why* the code was dead or wrong and what replaces it. Unexplained
+   deletions are treated as regressions until proven otherwise.
+3. **No tool markers or placeholders.** Do not append working markers such as
+   `<!-- handsoff-issue-NNNN -->` to files, and never commit a file that was
+   truncated with a tool placeholder (e.g. `... rest of file unchanged ...`).
+   CI rejects these: `npm run check:parse` (the `parse` job) fails on any
+   `src/` or `scripts/` file that does not parse, and the marker check fails on
+   leftover `handsoff-issue` markers anywhere outside `node_modules`.
+
+If a commit that closed an issue turns out to be wrong, reopen the issue and
+open a follow-up PR that reverts or repairs it — with the same evidence above.
+
 ---
+=======
 
 ## 10. Release Process
 
