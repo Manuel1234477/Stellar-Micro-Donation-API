@@ -91,7 +91,7 @@ const ADMIN_ROUTES = [
   ['/admin/retention',                require('../routes/admin/retention')],
   ['/admin/scheduler',                require('../routes/admin/scheduler')],
   ['/admin/pledges',                  require('../routes/admin/pledges')],
-  ['/admin/disputes',                 require('../routes/disputes')],
+  ['/admin/disputes',                 require('../routes/disputes').adminRouter],
   ['/admin/geo-rules',                require('../routes/admin/geoRules')],
   ['/admin/federation',               require('../routes/admin/federation')],
   ['/admin/payment-channels',         require('../routes/admin/paymentChannels')],
