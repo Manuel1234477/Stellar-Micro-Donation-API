@@ -11,6 +11,14 @@ const path = require('path');
 const { PERMISSION_MATRIX, ROUTE_PERMISSIONS } = require('../src/config/permissionMatrix');
 const { PERMISSIONS } = require('../src/models/permissions');
 
+let config = {};
+try {
+  config = require('../src/config');
+} catch (error) {
+  // Config may be unavailable in some environments; fall back to defaults.
+  config = {};
+}
+
 const ROLES_PATH = path.join(__dirname, '..', 'src', 'config', 'roles.json');
 
 function loadRoles() {
@@ -107,6 +115,12 @@ function printValidationResults() {
   const roles = loadRoles();
   const results = validateRBAC(roles);
   const valid = results.errors.length === 0;
+
+  // Guarded access to logging config (may be undefined)
+  const debugMode = config?.logging?.debugMode ?? false;
+  if (debugMode) {
+    console.log('Debug mode enabled');
+  }
 
   // Summary
   printSection('Summary');

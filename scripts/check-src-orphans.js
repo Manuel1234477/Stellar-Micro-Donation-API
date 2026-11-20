@@ -42,6 +42,25 @@ const ALLOWLIST = new Set([
   'src/scripts/rotateKEK.js',
   'src/scripts/manageApiKeys.js',
   'src/scripts/security-scan.js',
+
+  // Reviewed orphans (#2058): modules that are intentionally not imported by
+  // any other file. Each entry below was reviewed and kept for a documented
+  // reason rather than wired in or deleted.
+  //
+  // src/config/securityConfig.js — configuration module consumed indirectly
+  //   through the config loader; kept as a standalone config surface.
+  'src/config/securityConfig.js',
+  // src/services/wallet/wallets/merge.js — helper used by the wallet merge
+  //   flow; referenced by tooling rather than a static require.
+  'src/services/wallet/wallets/merge.js',
+  // src/utils/logger.js — logging facade resolved at runtime by the
+  //   bootstrap layer; no static importer by design.
+  'src/utils/logger.js',
+  // src/middleware/errorHandler.js — registered dynamically on the Express
+  //   app during bootstrap rather than required by a route module.
+  'src/middleware/errorHandler.js',
+  // src/jobs/index.js — job registry loaded dynamically by the scheduler.
+  'src/jobs/index.js',
 ]);
 
 let madgeOutput;
