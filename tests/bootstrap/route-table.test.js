@@ -104,7 +104,7 @@ describe('bootstrap route table snapshot (#1780)', () => {
       '/webhooks', '/campaigns', '/pledges', '/encryption', '/tiers', '/offers', '/orderbook',
       '/tags', '/leaderboard', '/federation', '/tools', '/auth', '/docs',
       '/transactions', '/claimable-balances', '/liquidity-pools', '/exchange-rates',
-      '/impact', '/feature-flags', '/channels',
+      '/impact', '/feature-flags', '/exports', '/channels',
     ]);
   });
 

@@ -10,7 +10,10 @@ const { bestEffort } = require('../utils/bestEffort');
  */
 
 const express = require('express');
+// Donor-facing router: mounted only at /api/v1/donations (#2080).
 const router = express.Router();
+// Admin-facing router: mounted only at /admin/disputes (#2080).
+const adminRouter = express.Router();
 const { checkPermission } = require('../middleware/rbac');
 const { PERMISSIONS } = require('../utils/permissions');
 const Database = require('../utils/database');
@@ -204,7 +207,7 @@ router.post('/:id/dispute', checkPermission(PERMISSIONS.DONATIONS_WRITE), payloa
  * Update dispute status (admin only).
  * Allowed transitions: open -> under_review, under_review -> resolved_refund | resolved_no_action
  */
-router.patch('/:id', checkPermission(PERMISSIONS.ADMIN_ALL), payloadSizeLimiter(ENDPOINT_LIMITS.admin), asyncHandler(async (req, res, next) => {
+adminRouter.patch('/:id', checkPermission(PERMISSIONS.ADMIN_ALL), payloadSizeLimiter(ENDPOINT_LIMITS.admin), asyncHandler(async (req, res, next) => {
   try {
     const { id } = req.params;
     const { status, resolutionNotes } = req.body;
@@ -305,3 +308,4 @@ router.patch('/:id', checkPermission(PERMISSIONS.ADMIN_ALL), payloadSizeLimiter(
 }));
 
 module.exports = router;
+module.exports.adminRouter = adminRouter;

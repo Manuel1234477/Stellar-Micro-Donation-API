@@ -91,7 +91,7 @@ const ADMIN_ROUTES = [
   ['/admin/retention',                require('../routes/admin/retention')],
   ['/admin/scheduler',                require('../routes/admin/scheduler')],
   ['/admin/pledges',                  require('../routes/admin/pledges')],
-  ['/admin/disputes',                 require('../routes/disputes')],
+  ['/admin/disputes',                 require('../routes/disputes').adminRouter],
   ['/admin/geo-rules',                require('../routes/admin/geoRules')],
   ['/admin/federation',               require('../routes/admin/federation')],
   ['/admin/payment-channels',         require('../routes/admin/paymentChannels')],
@@ -131,7 +131,7 @@ const UNVERSIONED_PATHS = [
   '/webhooks', '/campaigns', '/pledges', '/encryption', '/tiers', '/offers', '/orderbook',
   '/tags', '/leaderboard', '/federation', '/tools', '/auth', '/docs',
   '/transactions', '/claimable-balances', '/liquidity-pools', '/exchange-rates',
-  '/impact', '/feature-flags',
+  '/impact', '/feature-flags', '/exports',
   // Payment channels were introduced as an unversioned API (Issue #1803);
   // the legacy path now goes through the same deprecation treatment.
   '/channels',
@@ -269,20 +269,20 @@ function buildEndpointTable(services = {}) {
     { method: 'get', path: '/api/v1/health/ready', middleware: [], handler: health.ready },
 
     // Observability admin endpoints
-    { method: 'get',    path: '/abuse-signals',         middleware: adminOnly(), handler: operations.abuseSignals },
     { method: 'get',    path: '/admin/blocked-ips',     middleware: adminOnly(), handler: operations.listBlockedIps },
     { method: 'delete', path: '/admin/blocked-ips/:ip', middleware: adminOnly(), handler: operations.unblockIp },
-    { method: 'get',    path: '/suspicious-patterns',   middleware: adminOnly(), handler: operations.suspiciousPatterns },
   ];
 
   const afterAdminGuard = [
     { method: 'get', path: '/admin/audit-logs', middleware: adminOnly(), handler: operations.auditLogs },
+    // Canonical admin paths (#2081): no admin-only endpoint lives outside /admin.
+    { method: 'get', path: '/admin/abuse-signals',       middleware: adminOnly(), handler: operations.abuseSignals },
+    { method: 'get', path: '/admin/suspicious-patterns', middleware: adminOnly(), handler: operations.suspiciousPatterns },
   ];
 
   if (reconciliationService) {
     const reconcile = operations.createReconcileHandler(reconciliationService);
     afterAdminGuard.push(
-      { method: 'post', path: '/reconcile',                    middleware: adminWrite(), handler: reconcile },
       { method: 'post', path: '/admin/reconcile',              middleware: adminWrite(), handler: reconcile },
       { method: 'get',  path: '/admin/orphaned-transactions',  middleware: adminOnly(),
         handler: operations.createOrphanedTransactionsHandler(reconciliationService) },
@@ -382,20 +382,11 @@ function mountRoutes(app, services = {}) {
     }
   }));
 
-  // Donation and entity export endpoints (#1596)
-  apiV1.use('/exports', exportsRoutes);
-
   app.use('/api/v1', apiV1);
 
   // ── /api/v2 standardized response envelope (Issue #1553) ─────────────────
   // Additive: /api/v1 above is untouched for backward compatibility.
   app.use('/api/v2', v2Routes);
-
-  // Unversioned export endpoints (#1596); the versioned router is in V1_ROUTES.
-  // NOTE (#1936): this root-level mount is still present on main and is tracked
-  // by the re-verification issue #2051 — do not remove without updating the
-  // route-table snapshot test.
-  app.use('/exports', exportsRoutes);
 
   // Stellar federation protocol server (SEP-0002).
   // The versioned lookup router above is for consumers; this router serves
