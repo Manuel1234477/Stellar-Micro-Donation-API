@@ -57,6 +57,36 @@ const PORT = config.server.port;
 // Pathnames that own a WebSocket upgrade listener (see attachSubscriptionServer / websocketService.attach).
 const WS_UPGRADE_PATHS = ['/graphql', '/ws/balances'];
 
+// Horizon startup retry backoff (#2074): 1s, 2s, 4s … capped at 60s.
+const HORIZON_RETRY_BASE_MS = 1000;
+const HORIZON_RETRY_MAX_MS = 60000;
+
+/**
+ * Retry the Horizon connectivity check in the background with exponential
+ * backoff until it succeeds. Never exits the process.
+ *
+ * @param {() => Promise<unknown>} checkHorizon
+ * @param {number} [attempt]
+ */
+function scheduleHorizonRetry(checkHorizon, attempt = 1) {
+  const delay = Math.min(HORIZON_RETRY_BASE_MS * 2 ** (attempt - 1), HORIZON_RETRY_MAX_MS);
+  const timer = timerRegistry.createTimeout(async () => {
+    if (state.isShuttingDown) return;
+    try {
+      await checkHorizon();
+      state.horizonReachable = true;
+      state.horizonError = null;
+      log.info('STARTUP', 'Horizon connectivity recovered', { attempts: attempt });
+    } catch (err) {
+      state.horizonReachable = false;
+      state.horizonError = err.message;
+      log.warn('STARTUP', 'Horizon still unreachable; retrying', { attempt, nextRetryMs: Math.min(delay * 2, HORIZON_RETRY_MAX_MS), error: err.message });
+      scheduleHorizonRetry(checkHorizon, attempt + 1);
+    }
+  }, delay, 'horizon-startup-retry');
+  if (timer && typeof timer.unref === 'function') timer.unref();
+}
+
 /**
  * Start the HTTP server, initialise all subsystems, and register shutdown handlers.
  *
@@ -135,16 +165,23 @@ async function startServer(app, overrideServices = {}) {
       socket.on('close', () => openSockets.delete(socket));
     });
 
-    // Mark sockets busy while a request is in-flight so we only destroy idle ones
-    app.use((req, res, next) => {
-      busySockets.add(req.socket);
-      const done = () => {
-        busySockets.delete(req.socket);
-        if (state.isShuttingDown) req.socket.destroy();
+    // Mark sockets busy while a request is in-flight so we only destroy idle ones.
+    // Tracked on the server (not via app.use) because middleware registered here
+    // would land after the 404/error handlers and never run (#2070).
+    server.on('request', (req, res) => {
+      const socket = req.socket;
+      busySockets.add(socket);
+      let done = false;
+      const release = () => {
+        if (done) return;
+        done = true;
+        busySockets.delete(socket);
+        // Shutdown started while this request was in flight: close the socket
+        // now that the response is complete so server.close() can resolve.
+        if (state.isShuttingDown) socket.destroy();
       };
-      res.on('finish', done);
-      res.on('close', done);
-      next();
+      res.on('finish', release);
+      res.on('close', release);
     });
 
 
@@ -183,24 +220,37 @@ async function startServer(app, overrideServices = {}) {
         await DonationExportService.initialize();
         AuditLogService.startAutoFlush();
 
-        // Verify Horizon connectivity before marking as ready
-        // This ensures the service doesn't accept traffic that depends on Horizon
+        // Verify Horizon connectivity before marking as ready (#2074).
+        // A Horizon outage must NOT crash the process: readiness reports
+        // horizon: unreachable and a background retry with backoff recovers
+        // automatically. Hard exits are reserved for fatal errors (migrations,
+        // invalid config) and for STARTUP_REQUIRE_HORIZON=true.
         const stellarModeHelper = require('../config/stellarMode');
         require('../utils/metrics').recordStellarMode(stellarModeHelper.getStellarMode());
         const isMockStellar = stellarModeHelper.isMockStellarEnabled();
         if (!isMockStellar && stellarService.server && typeof stellarService.server.root === 'function') {
+          const requireHorizon = String(process.env.STARTUP_REQUIRE_HORIZON || '').toLowerCase() === 'true';
+          const checkHorizon = () => Promise.race([
+            stellarService.server.root(),
+            new Promise((_, reject) =>
+              setTimeout(() => reject(new Error('Horizon root endpoint timed out')), 15000)
+            ),
+          ]);
           try {
-            await Promise.race([
-              stellarService.server.root(),
-              new Promise((_, reject) =>
-                setTimeout(() => reject(new Error('Horizon root endpoint timed out')), 15000)
-              ),
-            ]);
+            await checkHorizon();
+            state.horizonReachable = true;
+            state.horizonError = null;
             log.info('STARTUP', 'Horizon connectivity verified');
           } catch (horizonErr) {
-            log.error('STARTUP', 'Horizon connectivity check failed', { error: horizonErr.message });
-            state.initializationError = `Horizon unreachable: ${horizonErr.message}`;
-            process.exit(1);
+            state.horizonReachable = false;
+            state.horizonError = horizonErr.message;
+            if (requireHorizon) {
+              log.error('STARTUP', 'Horizon connectivity check failed (STARTUP_REQUIRE_HORIZON=true)', { error: horizonErr.message });
+              state.initializationError = `Horizon unreachable: ${horizonErr.message}`;
+              process.exit(1);
+            }
+            log.warn('STARTUP', 'Horizon unreachable at startup; continuing and retrying with backoff', { error: horizonErr.message });
+            scheduleHorizonRetry(checkHorizon);
           }
         }
 

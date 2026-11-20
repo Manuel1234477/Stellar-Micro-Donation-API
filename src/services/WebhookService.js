@@ -74,9 +74,16 @@ class WebhookService {
         attempt INTEGER NOT NULL DEFAULT 0,
         next_retry_at DATETIME NOT NULL,
         last_error TEXT,
+        delivery_id TEXT,
+        locked_until DATETIME,
+        locked_by TEXT,
         created_at DATETIME DEFAULT CURRENT_TIMESTAMP
       )
     `);
+    // Additive migration for pre-existing retry tables (issue #2069).
+    for (const column of ['delivery_id TEXT', 'locked_until DATETIME', 'locked_by TEXT']) {
+      await Database.run(`ALTER TABLE webhook_retries ADD COLUMN ${column}`).catch(bestEffort('src/services/WebhookService.js:initTable'));
+    }
     await Database.run(`
       CREATE TABLE IF NOT EXISTS webhook_dead_letters (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -325,42 +332,94 @@ class WebhookService {
   }
 
   /**
-   * Process all due retry entries. Called by the scheduler every 60 s.
-   * @returns {Promise<{ processed: number, succeeded: number, failed: number }>}
+   * Claim up to `limit` due retry rows atomically.
+   * Rows are marked with locked_until/locked_by so a concurrent worker (or a
+   * crash mid-batch) never loses them: the lock simply expires and the row is
+   * picked up again on a later tick.
+   * @private
    */
-  static async processRetryQueue() {
+  static async _claimDueRetries(limit, lockMs, lockedBy) {
     const Database = require('../utils/database');
     const now = new Date().toISOString();
+    const lockedUntil = new Date(Date.now() + lockMs).toISOString();
 
-    const due = await Database.all(
-      `SELECT * FROM webhook_retries WHERE next_retry_at <= ? ORDER BY next_retry_at ASC`,
-      [now]
+    const candidates = await Database.all(
+      `SELECT id FROM webhook_retries
+       WHERE next_retry_at <= ? AND (locked_until IS NULL OR locked_until <= ?)
+       ORDER BY next_retry_at ASC LIMIT ?`,
+      [now, now, limit]
     );
+    if (candidates.length === 0) return [];
+
+    const claimed = [];
+    for (const { id } of candidates) {
+      const result = await Database.run(
+        `UPDATE webhook_retries SET locked_until = ?, locked_by = ?
+         WHERE id = ? AND (locked_until IS NULL OR locked_until <= ?)`,
+        [lockedUntil, lockedBy, id, now]
+      );
+      if (result && result.changes > 0) claimed.push(id);
+    }
+    if (claimed.length === 0) return [];
+
+    const placeholders = claimed.map(() => '?').join(', ');
+    return Database.all(
+      `SELECT * FROM webhook_retries WHERE id IN (${placeholders}) ORDER BY next_retry_at ASC`,
+      claimed
+    );
+  }
+
+  /**
+   * Process due retry entries in a bounded batch. Called by the scheduler every 60 s.
+   * Rows are claimed atomically (locked_until/locked_by) and only deleted after a
+   * successful delivery, so a crash mid-batch never loses a retry entry.
+   * @param {{ limit?: number, lockMs?: number, lockedBy?: string }} [opts]
+   * @returns {Promise<{ processed: number, succeeded: number, failed: number }>}
+   */
+  static async processRetryQueue({ limit, lockMs, lockedBy } = {}) {
+    const Database = require('../utils/database');
+    const batchSize = Number.isInteger(limit) && limit > 0
+      ? limit
+      : parseInt(process.env.WEBHOOK_RETRY_BATCH_SIZE || '50', 10) || 50;
+    const lockDurationMs = Number.isInteger(lockMs) && lockMs > 0 ? lockMs : 5 * 60 * 1000;
+    const workerId = lockedBy || `${process.pid}-${crypto.randomBytes(4).toString('hex')}`;
+
+    const due = await WebhookService._claimDueRetries(batchSize, lockDurationMs, workerId);
 
     let succeeded = 0;
     let failed = 0;
 
     for (const entry of due) {
-      // Remove from queue before attempting (re-inserted on failure)
-      await Database.run(`DELETE FROM webhook_retries WHERE id = ?`, [entry.id]);
-
       const webhook = await Database.get(`SELECT * FROM webhooks WHERE id = ?`, [entry.webhook_id]);
-      if (!webhook || !webhook.is_active) continue;
+      if (!webhook || !webhook.is_active) {
+        // Nothing to deliver to: drop the claimed row.
+        await Database.run(`DELETE FROM webhook_retries WHERE id = ? AND locked_by = ?`, [entry.id, workerId]);
+        continue;
+      }
 
       const payload = (() => { try { return JSON.parse(entry.payload); } catch { return {}; } })();
 
       try {
-        await WebhookService._deliverWithRetry(webhook, entry.event, payload, 0);
+        await WebhookService._deliverWithRetry(webhook, entry.event, payload, 0, entry.delivery_id);
+        // Delete only after successful delivery.
+        await Database.run(`DELETE FROM webhook_retries WHERE id = ? AND locked_by = ?`, [entry.id, workerId]);
         succeeded++;
       } catch (err) {
         failed++;
+        // Release the claim and re-schedule with the next backoff step.
+        await Database.run(
+          `UPDATE webhook_retries SET locked_until = NULL, locked_by = NULL WHERE id = ? AND locked_by = ?`,
+          [entry.id, workerId]
+        );
         await WebhookService.scheduleRetry({
           webhookId: entry.webhook_id,
           event: entry.event,
           payload,
           attempt: entry.attempt + 1,
           lastError: err.message,
+          deliveryId: entry.delivery_id,
         });
+        await Database.run(`DELETE FROM webhook_retries WHERE id = ? AND locked_by = ?`, [entry.id, workerId]);
       }
     }
 
