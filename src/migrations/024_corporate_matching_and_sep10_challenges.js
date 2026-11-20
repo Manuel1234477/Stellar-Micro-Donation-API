@@ -12,8 +12,8 @@ exports.up = async (db) => {
     CREATE TABLE IF NOT EXISTS corporate_employers (
       id TEXT PRIMARY KEY,
       name TEXT NOT NULL,
-      matchRatio INTEGER NOT NULL,
-      annualCap REAL NOT NULL,
+      matchRatioBps INTEGER NOT NULL,
+      annualCap_stroops INTEGER NOT NULL,
       addedAt TEXT NOT NULL
     )
   `);
@@ -23,8 +23,8 @@ exports.up = async (db) => {
       id TEXT PRIMARY KEY,
       donorId TEXT NOT NULL,
       employerId TEXT NOT NULL,
-      donationAmount REAL NOT NULL,
-      matchAmount REAL NOT NULL,
+      donationAmount_stroops INTEGER NOT NULL,
+      matchAmount_stroops INTEGER NOT NULL,
       status TEXT NOT NULL DEFAULT 'pending',
       createdAt TEXT NOT NULL,
       reviewedAt TEXT,

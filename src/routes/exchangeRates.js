@@ -12,10 +12,10 @@ const express = require('express');
 const router = express.Router();
 const asyncHandler = require('../utils/asyncHandler');
 const log = require('../utils/log');
+const priceOracle = require('../services/PriceOracleService');
 
 router.get('/', asyncHandler(async (req, res) => {
   try {
-    const priceOracle = require('../services/PriceOracleService');
     const rates = await priceOracle.getRates();
     const priceSource = typeof priceOracle.getPriceSourceStatus === 'function'
       ? priceOracle.getPriceSourceStatus().source

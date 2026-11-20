@@ -33,8 +33,8 @@ updates:
           - "*"
 
       # Production dependencies — minor and patch bumps only.
-      # Major version updates will still be opened as individual PRs so
-      # breaking-change review is not skipped.
+      # Major version updates are intentionally excluded from this group so
+      # they open as individual PRs and get breaking-change review.
       production-deps:
         applies-to: version-updates
         dependency-type: "production"
@@ -47,19 +47,9 @@ updates:
           # Exclude dev-only scopes from this group
           - "@types/*"
 
-      # Babel toolchain — always updated together (all update types, including
-      # majors). @babel/preset-env 8 requires @babel/core 8, while babel-jest
-      # (via Jest 30) still pins @babel/core 7, so a lone major bump of one
-      # Babel package breaks `npm ci` with ERESOLVE. Grouping keeps the whole
-      # toolchain in a single PR that can be validated as a unit.
-      babel:
-        applies-to: version-updates
-        patterns:
-          - "@babel/*"
-          - "babel-jest"
-
-      # Dev / tooling dependencies — all minor and patch updates grouped.
-      # Major bumps (ESLint, TypeScript, Jest, ...) open as individual PRs.
+      # Dev / tooling dependencies — minor and patch updates grouped.
+      # Major bumps (ESLint, TypeScript, Jest, ...) are excluded so they open
+      # as individual PRs instead of breaking the grouped update.
       dev-deps:
         applies-to: version-updates
         dependency-type: "development"
@@ -92,8 +82,9 @@ updates:
       include: "scope"
     groups:
       # Minor/patch only; a major Action bump (e.g. actions/checkout v4 -> v5)
-      # opens as its own PR for manual review.
+      # is excluded from the group and opens as its own PR for manual review.
       actions-updates:
+        applies-to: version-updates
         update-types:
           - "minor"
           - "patch"

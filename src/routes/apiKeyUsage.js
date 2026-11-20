@@ -34,6 +34,54 @@ const router = express.Router();
 let _service = ApiKeyUsageService.instance;
 const setUsageService = (svc) => { _service = svc; };
 
+// ─── Shared validation ───────────────────────────────────────────────────────
+
+const GRANULARITIES = ['hour', 'day', 'week'];
+const PERIOD_MS = {
+  '24h': 24 * 60 * 60 * 1000,
+  '7d':  7  * 24 * 60 * 60 * 1000,
+  '30d': 30 * 24 * 60 * 60 * 1000,
+};
+const VALID_SORT_FIELDS = ['requestCount', 'errorRate', 'lastUsedAt'];
+const DEFAULT_PAGE_SIZE = 20;
+
+/**
+ * Parse an optional from/to date range from query params.
+ * Returns { valid: true, from, to } or { valid: false, error }.
+ */
+const parseDateRange = (query) => {
+  const from = query.from ? new Date(query.from).getTime() : undefined;
+  const to = query.to ? new Date(query.to).getTime() : undefined;
+  if ((query.from && isNaN(from)) || (query.to && isNaN(to))) {
+    return { valid: false, error: 'Invalid from/to date format' };
+  }
+  return { valid: true, from, to };
+};
+
+/**
+ * Validate the granularity query param.
+ */
+const parseGranularity = (granularity) => {
+  if (!granularity) {
+    return { valid: false, error: 'granularity query param is required (hour|day|week)' };
+  }
+  if (!GRANULARITIES.includes(granularity)) {
+    return { valid: false, error: `Invalid granularity. Must be one of: ${GRANULARITIES.join(', ')}` };
+  }
+  return { valid: true, granularity };
+};
+
+/**
+ * Validate the key id path param.
+ */
+const parseKeyId = (rawId) => {
+  const validation = validateInteger(rawId, { min: 1 });
+  if (!validation.valid) {
+    return { valid: false, error: validation.error };
+  }
+  return { valid: true, id: validation.value !== undefined ? validation.value : parseInt(rawId, 10) };
+};
+
 const requireApiKeyOwnerOrAdmin = (req, res, next) => {
   const keyId = String(req.params.id);
 
@@ -68,18 +116,17 @@ router.get('/:id/usage', (req, res) => {
 
 router.get('/:id/analytics', requireApiKey, requireApiKeyOwnerOrAdmin, (req, res) => {
   try {
-    const validation = validateInteger(req.params.id, { min: 1 });
-    if (!validation.valid) {
-      return res.status(400).json({ success: false, error: validation.error });
+    const idValidation = parseKeyId(req.params.id);
+    if (!idValidation.valid) {
+      return res.status(400).json({ success: false, error: idValidation.error });
     }
 
-    const from = req.query.from ? new Date(req.query.from).getTime() : undefined;
-    const to = req.query.to ? new Date(req.query.to).getTime() : undefined;
-    if ((req.query.from && isNaN(from)) || (req.query.to && isNaN(to))) {
-      return res.status(400).json({ success: false, error: 'Invalid from/to date format' });
+    const range = parseDateRange(req.query);
+    if (!range.valid) {
+      return res.status(400).json({ success: false, error: range.error });
     }
 
-    const analytics = _service.getAnalytics(req.params.id, { from, to });
+    const analytics = _service.getAnalytics(req.params.id, { from: range.from, to: range.to });
     return res.json({ success: true, data: analytics });
   } catch (err) {
     const status = err.message.includes('required') || err.message.includes('Invalid') ? 400 : 500;
@@ -89,18 +136,17 @@ router.get('/:id/analytics', requireApiKey, requireApiKeyOwnerOrAdmin, (req, res
 
 router.get('/:id/analytics/summary', requireApiKey, requireApiKeyOwnerOrAdmin, (req, res) => {
   try {
-    const validation = validateInteger(req.params.id, { min: 1 });
-    if (!validation.valid) {
-      return res.status(400).json({ success: false, error: validation.error });
+    const idValidation = parseKeyId(req.params.id);
+    if (!idValidation.valid) {
+      return res.status(400).json({ success: false, error: idValidation.error });
     }
 
-    const from = req.query.from ? new Date(req.query.from).getTime() : undefined;
-    const to = req.query.to ? new Date(req.query.to).getTime() : undefined;
-    if ((req.query.from && isNaN(from)) || (req.query.to && isNaN(to))) {
-      return res.status(400).json({ success: false, error: 'Invalid from/to date format' });
+    const range = parseDateRange(req.query);
+    if (!range.valid) {
+      return res.status(400).json({ success: false, error: range.error });
     }
 
-    const summary = _service.getAnalyticsSummary(req.params.id, { from, to });
+    const summary = _service.getAnalyticsSummary(req.params.id, { from: range.from, to: range.to });
     return res.json({ success: true, data: summary });
   } catch (err) {
     const status = err.message.includes('required') || err.message.includes('Invalid') ? 400 : 500;
@@ -115,13 +161,12 @@ router.get('/:id/analytics/summary', requireApiKey, requireApiKeyOwnerOrAdmin, (
  */
 router.get('/:id/analytics/dashboard', requireApiKey, requireApiKeyOwnerOrAdmin, (req, res) => {
   try {
-    const from = req.query.from ? new Date(req.query.from).getTime() : undefined;
-    const to = req.query.to ? new Date(req.query.to).getTime() : undefined;
-    if ((req.query.from && isNaN(from)) || (req.query.to && isNaN(to))) {
-      return res.status(400).json({ success: false, error: 'Invalid from/to date format' });
+    const range = parseDateRange(req.query);
+    if (!range.valid) {
+      return res.status(400).json({ success: false, error: range.error });
     }
 
-    const dashboard = _service.getDashboardAnalytics(req.params.id, { from, to });
+    const dashboard = _service.getDashboardAnalytics(req.params.id, { from: range.from, to: range.to });
     return res.json({ success: true, data: dashboard });
   } catch (err) {
     const status = err.message.includes('required') || err.message.includes('Invalid') ? 400 : 500;
@@ -137,21 +182,21 @@ router.get('/:id/analytics/dashboard', requireApiKey, requireApiKeyOwnerOrAdmin,
  *   to           - ISO date string or ms timestamp (optional)
  */
 router.get('/:id/usage/timeseries', (req, res) => {
-  const { granularity, from, to } = req.query;
-
-  if (!granularity) {
-    return res.status(400).json({ success: false, error: 'granularity query param is required (hour|day|week)' });
+  const granularity = parseGranularity(req.query.granularity);
+  if (!granularity.valid) {
+    return res.status(400).json({ success: false, error: granularity.error });
   }
 
-  const fromMs = from ? new Date(from).getTime() : 0;
-  const toMs   = to   ? new Date(to).getTime()   : Date.now();
-
-  if (isNaN(fromMs) || isNaN(toMs)) {
-    return res.status(400).json({ success: false, error: 'Invalid from/to date format' });
+  const range = parseDateRange(req.query);
+  if (!range.valid) {
+    return res.status(400).json({ success: false, error: range.error });
   }
+
+  const fromMs = range.from !== undefined ? range.from : 0;
+  const toMs = range.to !== undefined ? range.to : Date.now();
 
   try {
-    const series = _service.getTimeSeries(req.params.id, granularity, { from: fromMs, to: toMs });
+    const series = _service.getTimeSeries(req.params.id, granularity.granularity, { from: fromMs, to: toMs });
     return res.json({ success: true, data: series, count: series.length });
   } catch (err) {
     const status = err.message.includes('required') || err.message.includes('Invalid') ? 400 : 500;
@@ -167,22 +212,26 @@ router.get('/:id/usage/timeseries', (req, res) => {
  *   from / to    - date range (optional)
  */
 router.get('/:id/usage/anomalies', (req, res) => {
-  const { granularity, multiplier, from, to } = req.query;
-
-  if (!granularity) {
-    return res.status(400).json({ success: false, error: 'granularity query param is required (hour|day|week)' });
+  const granularity = parseGranularity(req.query.granularity);
+  if (!granularity.valid) {
+    return res.status(400).json({ success: false, error: granularity.error });
   }
 
-  const fromMs = from ? new Date(from).getTime() : 0;
-  const toMs   = to   ? new Date(to).getTime()   : Date.now();
-  const mult   = multiplier ? parseFloat(multiplier) : 2;
+  const range = parseDateRange(req.query);
+  if (!range.valid) {
+    return res.status(400).json({ success: false, error: range.error });
+  }
 
-  if (isNaN(fromMs) || isNaN(toMs)) {
-    return res.status(400).json({ success: false, error: 'Invalid from/to date format' });
+  const fromMs = range.from !== undefined ? range.from : 0;
+  const toMs = range.to !== undefined ? range.to : Date.now();
+  const mult = req.query.multiplier ? parseFloat(req.query.multiplier) : 2;
+
+  if (isNaN(mult)) {
+    return res.status(400).json({ success: false, error: 'Invalid multiplier' });
   }
 
   try {
-    const result = _service.detectAnomalies(req.params.id, granularity, { multiplier: mult, from: fromMs, to: toMs });
+    const result = _service.detectAnomalies(req.params.id, granularity.granularity, { multiplier: mult, from: fromMs, to: toMs });
     return res.json({ success: true, data: result });
   } catch (err) {
     const status = err.message.includes('required') || err.message.includes('Invalid') ? 400 : 500;
@@ -192,15 +241,6 @@ router.get('/:id/usage/anomalies', (req, res) => {
 
 // ─── Admin endpoints (/admin/api-keys) ────────────────────────────────────────
 const adminRouter = express.Router();
-
-const PERIOD_MS = {
-  '24h': 24 * 60 * 60 * 1000,
-  '7d':  7  * 24 * 60 * 60 * 1000,
-  '30d': 30 * 24 * 60 * 60 * 1000,
-};
-
-const VALID_SORT_FIELDS = ['requestCount', 'errorRate', 'lastUsedAt'];
-const DEFAULT_PAGE_SIZE = 20;
 
 /**
  * GET /admin/api-keys/usage
@@ -334,25 +374,25 @@ adminRouter.get('/usage', requireApiKey, requireAdmin(), asyncHandler(async (req
  * GET /admin/api-keys/:id/analytics
  */
 adminRouter.get('/:id/analytics', requireApiKey, requireAdmin(), asyncHandler(async (req, res) => {
-  const id = parseInt(req.params.id, 10);
-  if (isNaN(id)) {
+  const idValidation = parseKeyId(req.params.id);
+  if (!idValidation.valid) {
     throw new ValidationError('API key id must be an integer', null, ERROR_CODES.INVALID_REQUEST);
   }
+  const id = idValidation.id;
 
   const key = await getApiKeyById(id);
   if (!key) {
     throw new NotFoundError('API key not found', ERROR_CODES.NOT_FOUND);
   }
 
-  const from = req.query.from ? new Date(req.query.from).getTime() : undefined;
-  const to = req.query.to ? new Date(req.query.to).getTime() : undefined;
-  if ((req.query.from && isNaN(from)) || (req.query.to && isNaN(to))) {
+  const range = parseDateRange(req.query);
+  if (!range.valid) {
     throw new ValidationError('Invalid from/to date format', null, ERROR_CODES.INVALID_DATE_FORMAT);
   }
 
   const analytics = _service.getDashboardAnalyticsByPrefix(key.keyPrefix, {
-    from,
-    to,
+    from: range.from,
+    to: range.to,
     rateLimitPerMinute: key.rateLimitPerMinute ?? null,
   });
 

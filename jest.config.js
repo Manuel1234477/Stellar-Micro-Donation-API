@@ -12,20 +12,6 @@ module.exports = {
     // Quarantined suites run only via jest.config.quarantine.js (see
     // tests/quarantine.js and docs/testing/flaky-test-policy.md).
     '\\.quarantine\\.test\\.js$',
-    'tests/donation-routes-integration.test.js', // Temporarily disabled - pre-existing failures
-    'tests/services/scheduler-resilience.test.js',
-    'tests/integration/advanced-failure-scenarios.test.js',
-    'tests/integration/failure-scenarios.test.js',
-    'tests/transaction-sync-consistency.test.js',
-    'tests/network-timeout-scenarios.test.js',
-    'tests/recurring-donation-failures.test.js',
-    'tests/transaction-sync-failures.test.js',
-    'tests/account-funding.test.js',
-    'tests/wallet-analytics-integration.test.js',
-    'tests/validation-middleware.test.js',
-    'tests/permission-integration.test.js',
-    'tests/idempotency-integration.test.js',
-    'tests/idempotency.test.js',
   ],
   collectCoverageFrom: [
     'src/**/*.js',

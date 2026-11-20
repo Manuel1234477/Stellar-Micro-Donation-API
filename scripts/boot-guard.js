@@ -5,10 +5,12 @@
  * Fast, dependency-free CI guard (#1927) that catches boot blockers before
  * they reach main:
  *
- * 1. `node --check` on every .js file under src/ and scripts/ (syntax parse)
+ * 1. `node --check` on every .js file under src/, scripts/ and tests/ (syntax parse)
  * 2. `require()` every module under src/ (excludes src/scripts/) with a minimal
  *    test environment to catch undefined exports and missing dependencies
  * 3. Boot check: require('./src/app').createApp exists and returns an object
+ * 4. Placeholder-marker check: reject 'truncated' / 'handsoff-issue' markers in
+ *    tracked files (catches tool-truncated sources and README noise)
  *
  * This complements, not replaces, the lint / typecheck / test matrix.  The job
  * is designed to complete in under a minute.
@@ -21,14 +23,14 @@
 
 'use strict';
 
-const { execSync, spawnSync } = require('child_process');
+const { spawnSync } = require('child_process');
 const fs = require('fs');
 const path = require('path');
 
 const ROOT = path.join(__dirname, '..');
 const errors = [];
 
-// ── 1. node --check on every .js file in src/ and scripts/ ────────────────────
+// ── 1. node --check on every .js file in src/, scripts/ and tests/ ────────────
 
 function collectJsFiles(dir) {
   const results = [];
@@ -48,7 +50,8 @@ function collectJsFiles(dir) {
 
 const srcFiles = collectJsFiles(path.join(ROOT, 'src'));
 const scriptsFiles = collectJsFiles(path.join(ROOT, 'scripts'));
-const allFiles = [...srcFiles, ...scriptsFiles];
+const testsFiles = collectJsFiles(path.join(ROOT, 'tests'));
+const allFiles = [...srcFiles, ...scriptsFiles, ...testsFiles];
 
 let syntaxFailed = 0;
 for (const file of allFiles) {
@@ -95,9 +98,19 @@ if (requireAllResult.status !== 0) {
 
 // ── 3. Boot check: createApp is callable ─────────────────────────────────────
 
+const bootCheckScript = [
+  "const app = require('./src/app');",
+  "if (typeof app.createApp === 'function') {",
+  "  console.log('✅ boot-check: createApp() is callable.');",
+  '} else {',
+  "  console.error('❌ boot-check: createApp() missing or not callable.');",
+  '  process.exit(1);',
+  '}',
+].join('\n');
+
 const bootCheckResult = spawnSync(
   process.execPath,
-  ['-e', "require('./src/app').createApp ? console.log('✅ boot-check: createApp() is callable.') : (console.error('❌ boot-check: createApp() missing or not callable.'), process.exit(1))"],
+  ['-e', bootCheckScript],
   {
     encoding: 'utf8',
     cwd: ROOT,
@@ -119,6 +132,60 @@ if (bootCheckResult.status !== 0) {
     file: 'src/app.js',
     error: `boot-check exited with status ${bootCheckResult.status}`,
   });
+}
+
+// ── 4. Placeholder-marker check ──────────────────────────────────────────────
+
+const PLACEHOLDER_MARKERS = ['truncated', 'handsoff-issue'];
+const MARKER_SCAN_DIRS = ['src', 'scripts', 'tests'];
+const MARKER_SCAN_ROOT_FILES = ['README.md'];
+
+function collectMarkerScanFiles() {
+  const results = [];
+  for (const dir of MARKER_SCAN_DIRS) {
+    results.push(...collectJsFiles(path.join(ROOT, dir)));
+  }
+  for (const name of MARKER_SCAN_ROOT_FILES) {
+    const fullPath = path.join(ROOT, name);
+    if (fs.existsSync(fullPath)) results.push(fullPath);
+  }
+  return results;
+}
+
+let markerFailed = 0;
+for (const file of collectMarkerScanFiles()) {
+  let contents;
+  try {
+    contents = fs.readFileSync(file, 'utf8');
+  } catch (err) {
+    markerFailed++;
+    errors.push({
+      check: 'placeholder-marker',
+      file: path.relative(ROOT, file),
+      error: `could not read file: ${err.message}`,
+    });
+    continue;
+  }
+  const lines = contents.split('\n');
+  for (let i = 0; i < lines.length; i++) {
+    const lower = lines[i].toLowerCase();
+    for (const marker of PLACEHOLDER_MARKERS) {
+      if (lower.includes(marker)) {
+        markerFailed++;
+        errors.push({
+          check: 'placeholder-marker',
+          file: `${path.relative(ROOT, file)}:${i + 1}`,
+          error: `found placeholder marker "${marker}": ${lines[i].trim()}`,
+        });
+      }
+    }
+  }
+}
+
+if (markerFailed === 0) {
+  console.log('✅ placeholder-marker: no placeholder markers found.');
+} else {
+  console.error(`❌ placeholder-marker: ${markerFailed} placeholder marker(s) found.`);
 }
 
 // ── Summary ──────────────────────────────────────────────────────────────────

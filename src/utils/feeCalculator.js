@@ -63,8 +63,32 @@ function calculateAnalyticsFee(amount, feeBps = DEFAULT_FEE_BPS) {
   };
 }
 
+/**
+ * Compute the fee for a donation without the analytics wrapper.
+ * Kept for callers that only need the stroop-level result.
+ *
+ * @param {string|number} amount - Donation amount in XLM
+ * @param {bigint|number} [feeBps=DEFAULT_FEE_BPS] - Fee rate in basis points
+ * @returns {{ feeStroops: bigint, totalStroops: bigint }}
+ */
+function calculateFee(amount, feeBps = DEFAULT_FEE_BPS) {
+  const bps = BigInt(feeBps);
+  if (bps < 0n || bps > MAX_FEE_BPS) {
+    throw new Error(`Fee bps must be between 0 and ${MAX_FEE_BPS} (${Number(MAX_FEE_BPS) / 100}%)`);
+  }
+
+  const amountStroops = toStroops(amount);
+  if (amountStroops <= 0n) {
+    throw new Error('Amount must be a positive value');
+  }
+
+  const feeStroops = calcFee(amountStroops, bps, { minFeeStroops: MIN_FEE_STROOPS });
+  return { feeStroops, totalStroops: amountStroops + feeStroops };
+}
+
 module.exports = {
   calculateAnalyticsFee,
+  calculateFee,
   DEFAULT_FEE_BPS,
   MIN_FEE_STROOPS,
   MAX_FEE_BPS,

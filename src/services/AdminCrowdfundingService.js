@@ -18,6 +18,7 @@
 
 const Database = require('../utils/database');
 const { ValidationError, NotFoundError, ERROR_CODES } = require('../utils/errors');
+const { toStroops, fromStroops } = require('../utils/money');
 const log = require('../utils/log');
 
 class AdminCrowdfundingService {
@@ -47,9 +48,11 @@ class AdminCrowdfundingService {
 
     // Enrich each campaign with progress percentage and milestone counts
     return Promise.all(campaigns.map(async (c) => {
-      const goal = c.goal_amount || 0;
-      const raised = c.current_amount || 0;
-      const progressPercent = goal > 0 ? Math.min(100, parseFloat(((raised / goal) * 100).toFixed(2))) : 0;
+      const goalStroops = c.goal_amount_stroops || 0;
+      const raisedStroops = c.current_amount_stroops || 0;
+      const progressPercent = goalStroops > 0
+        ? Math.min(100, parseFloat(((raisedStroops / goalStroops) * 100).toFixed(2)))
+        : 0;
 
       const milestoneRow = await Database.get(
         `SELECT COUNT(*) AS total,
@@ -60,6 +63,8 @@ class AdminCrowdfundingService {
 
       return {
         ...c,
+        goal_amount: fromStroops(goalStroops),
+        current_amount: fromStroops(raisedStroops),
         progressPercent,
         milestones: {
           total: milestoneRow ? milestoneRow.total : 0,
@@ -107,14 +112,16 @@ class AdminCrowdfundingService {
       }
     }
 
+    const goalStroops = toStroops(goal);
+
     const result = await Database.run(
       `INSERT INTO campaigns
-         (name, description, goal_amount, current_amount, start_date, end_date, created_by, status, funding_model, recipient_public_key)
+         (name, description, goal_amount_stroops, current_amount_stroops, start_date, end_date, created_by, status, funding_model, recipient_public_key)
        VALUES (?, ?, ?, 0, datetime('now'), ?, ?, 'active', 'keep-what-you-raise', ?)`,
       [
         name.trim(),
         description || null,
-        goal,
+        goalStroops,
         new Date(deadline).toISOString(),
         createdBy ? String(createdBy) : null,
         recipientPublicKey.trim(),
@@ -139,7 +146,12 @@ class AdminCrowdfundingService {
 
     log.info('ADMIN_CROWDFUNDING', 'Campaign created', { campaignId, name, goal, milestoneCount: insertedMilestones.length });
 
-    return { ...campaign, milestones: insertedMilestones };
+    return {
+      ...campaign,
+      goal_amount: fromStroops(campaign.goal_amount_stroops || 0),
+      current_amount: fromStroops(campaign.current_amount_stroops || 0),
+      milestones: insertedMilestones,
+    };
   }
 
   /**
@@ -188,8 +200,8 @@ class AdminCrowdfundingService {
       if (typeof goal !== 'number' || goal <= 0) {
         throw new ValidationError('goal must be a positive number');
       }
-      updates.push('goal_amount = ?');
-      params.push(goal);
+      updates.push('goal_amount_stroops = ?');
+      params.push(toStroops(goal));
     }
 
     if (updates.length === 0) {
@@ -203,7 +215,11 @@ class AdminCrowdfundingService {
 
     const updated = await Database.get('SELECT * FROM campaigns WHERE id = ?', [id]);
     log.info('ADMIN_CROWDFUNDING', 'Campaign updated', { campaignId: id });
-    return updated;
+    return {
+      ...updated,
+      goal_amount: fromStroops(updated.goal_amount_stroops || 0),
+      current_amount: fromStroops(updated.current_amount_stroops || 0),
+    };
   }
 
   /**
@@ -228,7 +244,11 @@ class AdminCrowdfundingService {
         [id]
       );
       return {
-        campaign,
+        campaign: {
+          ...campaign,
+          goal_amount: fromStroops(campaign.goal_amount_stroops || 0),
+          current_amount: fromStroops(campaign.current_amount_stroops || 0),
+        },
         milestonesTriggered: 0,
         payouts: [],
         message: 'Campaign was already closed',
@@ -247,7 +267,7 @@ class AdminCrowdfundingService {
       [id]
     );
 
-    const raised = campaign.current_amount || 0;
+    const raised = campaign.current_amount_stroops || 0;
     const payouts = [];
 
     for (const milestone of milestones) {
@@ -286,7 +306,11 @@ class AdminCrowdfundingService {
     log.info('ADMIN_CROWDFUNDING', 'Campaign closed', { campaignId: id, milestonesTriggered: payouts.length });
 
     return {
-      campaign: closedCampaign,
+      campaign: {
+        ...closedCampaign,
+        goal_amount: fromStroops(closedCampaign.goal_amount_stroops || 0),
+        current_amount: fromStroops(closedCampaign.current_amount_stroops || 0),
+      },
       milestonesTriggered: payouts.length,
       payouts,
     };
@@ -310,14 +334,21 @@ class AdminCrowdfundingService {
       [id]
     );
 
-    const raised = campaign.current_amount || 0;
+    const raised = campaign.current_amount_stroops || 0;
 
     const annotated = milestones.map((m) => ({
       ...m,
       reached: raised >= m.target_amount,
     }));
 
-    return { campaign, milestones: annotated };
+    return {
+      campaign: {
+        ...campaign,
+        goal_amount: fromStroops(campaign.goal_amount_stroops || 0),
+        current_amount: fromStroops(campaign.current_amount_stroops || 0),
+      },
+      milestones: annotated,
+    };
   }
 }
 

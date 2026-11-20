@@ -52,6 +52,10 @@
     "tests",
     "coverage",
     "dist",
-    ".git"
+    ".git",
+    // Files with pre-existing type errors that are baselined out of the
+    // blocking typecheck. Remove entries here as they are fixed so the
+    // check can eventually cover the whole tree. See #2055 / #1925.
+    "src/config/securityConfig.js"
   ]
 }

@@ -17,7 +17,23 @@ const { validateSchema } = require('../middleware/schemaValidation');
 const { validateFloat } = require('../utils/validationHelpers');
 const { cacheMiddleware } = require('../middleware/caching');
 const { STROOPS_PER_XLM } = require('../constants');
+const { toStroops, fromStroops } = require('../utils/money');
 const { parseCursorPaginationQuery, buildCursorWhereClause, buildCursorMeta } = require('../utils/pagination');
+
+/**
+ * Serialize a campaign row for API responses: monetary columns are stored as
+ * integer stroops and exposed as XLM decimal strings/numbers.
+ */
+function serializeCampaign(campaign) {
+  if (!campaign) return campaign;
+  const goalStroops = Number(campaign.goal_amount_stroops) || 0;
+  const currentStroops = Number(campaign.current_amount_stroops) || 0;
+  return {
+    ...campaign,
+    goal_amount: fromStroops(goalStroops),
+    current_amount: fromStroops(currentStroops),
+  };
+}
 
 const createCampaignSchema = validateSchema({
   body: {
@@ -63,13 +79,15 @@ router.post('/', requireApiKey, checkPermission(PERMISSIONS.ADMIN), createCampai
 
     const model = funding_model || 'keep-what-you-raise';
 
+    const goalStroops = toStroops(goalValidation.value);
+
     const dbResult = await Database.run(
-      `INSERT INTO campaigns (name, description, goal_amount, current_amount, start_date, end_date, created_by, status, funding_model, sdg_tags)
+      `INSERT INTO campaigns (name, description, goal_amount_stroops, current_amount_stroops, start_date, end_date, created_by, status, funding_model, sdg_tags)
        VALUES (?, ?, ?, 0, ?, ?, ?, 'active', ?, ?)`,
       [
         name,
         description || null,
-        goalValidation.value,
+        goalStroops,
         start_date || new Date().toISOString(),
         end_date || null,
         req.user ? req.user.id : null,
@@ -79,7 +97,7 @@ router.post('/', requireApiKey, checkPermission(PERMISSIONS.ADMIN), createCampai
     );
 
     const campaign = await Database.get('SELECT * FROM campaigns WHERE id = ?', [dbResult.id]);
-    res.status(201).json({ success: true, data: campaign });
+    res.status(201).json({ success: true, data: serializeCampaign(campaign) });
   } catch (error) {
     next(error);
   }
@@ -186,7 +204,7 @@ router.get('/:id', cacheMiddleware('campaign', 'public'), asyncHandler(async (re
       return res.status(404).json({ success: false, error: 'Campaign not found' });
     }
 
-    res.status(200).json({ success: true, data: campaign });
+    res.status(200).json({ success: true, data: serializeCampaign(campaign) });
   } catch (error) {
     next(error);
   }
@@ -214,6 +232,15 @@ router.patch('/:id', requireApiKey, checkPermission(PERMISSIONS.ADMIN), updateCa
     let params = [];
 
     for (const [key, value] of Object.entries(updates)) {
+      if (key === 'goal_amount') {
+        const goalValidation = validateFloat(value);
+        if (!goalValidation.valid) {
+          return res.status(400).json({ success: false, error: 'Goal Amount must be a valid number' });
+        }
+        setClauses.push('goal_amount_stroops = ?');
+        params.push(toStroops(goalValidation.value));
+        continue;
+      }
       setClauses.push(`${key} = ?`);
       params.push(value);
     }
@@ -227,7 +254,7 @@ router.patch('/:id', requireApiKey, checkPermission(PERMISSIONS.ADMIN), updateCa
     );
 
     const updated = await Database.get('SELECT * FROM campaigns WHERE id = ?', [id]);
-    res.status(200).json({ success: true, data: updated });
+    res.status(200).json({ success: true, data: serializeCampaign(updated) });
   } catch (error) {
     next(error);
   }
@@ -354,15 +381,17 @@ router.get('/:id/progress/stream', requireApiKey, asyncHandler(async (req, res, 
   // Send initial state
   try {
     const campaign = await Database.get('SELECT * FROM campaigns WHERE id = ?', [campaignId]);
-    const progressPercentage = Math.round((campaign.current_amount / campaign.goal_amount) * 100);
+    const goalStroops = Number(campaign.goal_amount_stroops) || 0;
+    const currentStroops = Number(campaign.current_amount_stroops) || 0;
+    const progressPercentage = goalStroops > 0 ? Math.round((currentStroops / goalStroops) * 100) : 0;
     
     const initialData = {
       event: 'initial',
       data: {
         campaign_id: campaignId,
         campaign_name: campaign.name,
-        goal_amount: campaign.goal_amount,
-        current_amount: campaign.current_amount,
+        goal_amount: fromStroops(goalStroops),
+        current_amount: fromStroops(currentStroops),
         progress_percentage: progressPercentage,
         status: campaign.status,
         timestamp: new Date().toISOString()
@@ -390,13 +419,15 @@ router.get('/:id/progress/stream', requireApiKey, asyncHandler(async (req, res, 
       const campaign = await Database.get('SELECT * FROM campaigns WHERE id = ?', [campaignId]);
       if (!campaign) return;
 
-      const progressPercentage = Math.round((campaign.current_amount / campaign.goal_amount) * 100);
+      const goalStroops = Number(campaign.goal_amount_stroops) || 0;
+      const currentStroops = Number(campaign.current_amount_stroops) || 0;
+      const progressPercentage = goalStroops > 0 ? Math.round((currentStroops / goalStroops) * 100) : 0;
       
       const data = {
         campaign_id: campaignId,
         campaign_name: campaign.name,
-        goal_amount: campaign.goal_amount,
-        current_amount: campaign.current_amount,
+        goal_amount: fromStroops(goalStroops),
+        current_amount: fromStroops(currentStroops),
         progress_percentage: progressPercentage,
         status: campaign.status,
         timestamp: new Date().toISOString()
@@ -627,10 +658,11 @@ router.get('/:id/progress', requireApiKey, cacheMiddleware('campaign-progress', 
       return res.status(404).json({ success: false, error: 'Campaign not found' });
     }
 
-    // Raised comes from current_amount, which DonationService maintains as
-    // donations are recorded. (The transactions table has no status column —
+    // Raised comes from current_amount_stroops, which DonationService maintains
+    // as donations are recorded. (The transactions table has no status column —
     // every non-deleted row is a recorded donation.)
-    const raised = Number(campaign.current_amount) || 0;
+    const raisedStroops = Number(campaign.current_amount_stroops) || 0;
+    const raised = fromStroops(raisedStroops);
 
     const lastDonationRow = await Database.get(
       `SELECT MAX(timestamp) AS lastDonationAt
@@ -649,14 +681,15 @@ router.get('/:id/progress', requireApiKey, cacheMiddleware('campaign-progress', 
     );
     const donorCount = donorCountRow ? donorCountRow.donorCount : 0;
 
-    const goal = campaign.goal_amount;
-    const percentComplete = goal > 0
-      ? Math.min(100, parseFloat(((raised / goal) * 100).toFixed(4)))
+    const goalStroops = Number(campaign.goal_amount_stroops) || 0;
+    const goal = fromStroops(goalStroops);
+    const percentComplete = goalStroops > 0
+      ? Math.min(100, parseFloat(((raisedStroops / goalStroops) * 100).toFixed(4)))
       : 0;
 
     // Compute status: completed if raised >= goal; expired if past end date; else active
     let status;
-    if (raised >= goal) {
+    if (raisedStroops >= goalStroops) {
       status = 'completed';
     } else if (campaign.end_date && new Date(campaign.end_date) < new Date()) {
       status = 'expired';
@@ -712,7 +745,7 @@ router.get('/:id/progress', requireApiKey, cacheMiddleware('campaign-progress', 
         currentAmount: raised,
         percentage: Math.round(percentComplete),
         progressPercent: Math.round(percentComplete),
-        remaining: Math.max(0, goal - raised),
+        remaining: fromStroops(Math.max(0, goalStroops - raisedStroops)),
         milestones,
       },
     });
