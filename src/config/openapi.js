@@ -198,11 +198,9 @@ const options = {
   },
   apis: [
     // ── Core resources ────────────────────────────────────────────────────
-    path.join(__dirname, '../routes/donation.js'),
     path.join(__dirname, '../routes/donations/*.js'),
-    path.join(__dirname, '../routes/wallet.js'),
     path.join(__dirname, '../routes/wallets/*.js'),
-    path.join(__dirname, '../routes/transaction.js'),
+    path.join(__dirname, '../routes/transactions/*.js'),
     path.join(__dirname, '../routes/recurringDonation.js'),
     path.join(__dirname, '../routes/receipt.js'),
     path.join(__dirname, '../routes/receipts/*.js'),
