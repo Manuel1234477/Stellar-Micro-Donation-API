@@ -20,6 +20,7 @@ const WebhookService = require('../../services/WebhookService');
 const Database = require('../../utils/database');
 const { validateSchema } = require('../../middleware/schemaValidation');
 const { validateLimit } = require('../../utils/pagination');
+const { clientErrorMessage } = require('../../utils/clientErrorMessage');
 
 const updateWebhookStatusSchema = validateSchema({
   body: {
@@ -227,7 +228,7 @@ router.post('/dead-letter/:id/replay', requireApiKey, requireAdmin(), payloadSiz
     await WebhookService.replayDeadLetter(parseInt(req.params.id, 10));
     res.json({ success: true, data: { replayed: true, id: parseInt(req.params.id, 10) } });
   } catch (err) {
-    if (err.status === 404) return res.status(404).json({ success: false, error: { code: 'NOT_FOUND', message: err.message } });
+    if (err.status === 404) return res.status(404).json({ success: false, error: { code: 'NOT_FOUND', message: clientErrorMessage('WEBHOOKS', err, 404, 'Webhook dead-letter entry not found') } });
     next(err);
   }
 }));

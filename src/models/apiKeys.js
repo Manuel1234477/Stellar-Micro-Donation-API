@@ -5,15 +5,16 @@ const { API_KEY_STATUS } = require('../constants/index');
 let isInitialized = false;
 let initializationPromise = null;
 
-// TTL Cache for API key validation results
-// Configurable via API_KEY_CACHE_TTL_SECONDS (default: 60, max: 300)
-const API_KEY_CACHE_TTL_MS = (parseInt(process.env.API_KEY_CACHE_TTL_SECONDS, 10) || 60) * 1000;
-const MAX_CACHE_TTL_MS = 300 * 1000; // 5 minutes max
-
-// Validate cache TTL configuration
-if (API_KEY_CACHE_TTL_MS > MAX_CACHE_TTL_MS) {
-  throw new Error(`API_KEY_CACHE_TTL_SECONDS cannot exceed 300 seconds (5 minutes). Received: ${API_KEY_CACHE_TTL_MS / 1000}`);
-}
+// Single TTL cache for API key validation results (issue #2088).
+// This is the ONLY API-key cache in the codebase; the middleware delegates here.
+// Configurable via API_KEY_CACHE_TTL_SECONDS (default: 5, max: 5).
+// The TTL bounds cross-replica invalidation delay: a revocation performed on one
+// replica is observed by every other replica within API_KEY_CACHE_TTL_SECONDS.
+const MAX_CACHE_TTL_MS = 5 * 1000; // 5 seconds max (cross-replica bound)
+const API_KEY_CACHE_TTL_MS = Math.min(
+  (parseInt(process.env.API_KEY_CACHE_TTL_SECONDS, 10) || 5) * 1000,
+  MAX_CACHE_TTL_MS
+);
 
 // In-memory cache with TTL: Map<keyHash, { value, expiresAt }>
 const keyCache = new Map();
@@ -60,6 +61,25 @@ function invalidateCachedKey(keyHash) {
  */
 function invalidateAllCachedKeys() {
   keyCache.clear();
+}
+
+/**
+ * Hash a raw API key the same way validateApiKey does, so callers can
+ * invalidate by raw key without knowing the hash.
+ * @param {string} rawKey
+ * @returns {string} SHA256 hex digest
+ */
+function hashApiKey(rawKey) {
+  return crypto.createHash('sha256').update(rawKey).digest('hex');
+}
+
+/**
+ * Invalidate a cached entry by raw API key.
+ * @param {string} rawKey
+ */
+function invalidateCachedKeyByRawKey(rawKey) {
+  if (!rawKey) return;
+  invalidateCachedKey(hashApiKey(rawKey));
 }
 
 const CREATE_TABLE_SQL = `
@@ -197,7 +217,7 @@ async function createApiKey({
  */
 async function validateApiKey(rawKey) {
   await initializeApiKeysTable();
-  const keyHash = crypto.createHash('sha256').update(rawKey).digest('hex');
+  const keyHash = hashApiKey(rawKey);
   const now = Date.now();
 
   // Check cache first
@@ -400,6 +420,11 @@ async function updateApiKey(id, updates = {}) {
     return updates[f];
   });
   const result = await db.run(`UPDATE api_keys SET ${sets} WHERE id = ?`, [...values, id]);
+  if (result.changes > 0) {
+    // Invalidate so role/scope/IP changes take effect on the next request.
+    const row = await db.get('SELECT key_hash FROM api_keys WHERE id = ?', [id]);
+    if (row) invalidateCachedKey(row.key_hash);
+  }
   return result.changes > 0;
 }
 
@@ -451,6 +476,9 @@ async function rotateApiKey(oldKeyId, { gracePeriodDays = 30 } = {}) {
     [now, newKey.id, gracePeriodDays, oldKeyId]
   );
 
+  // Invalidate the old key so the deprecation headers are emitted immediately.
+  invalidateCachedKey(oldRow.key_hash);
+
   return {
     newKey,
     oldKeyId,
@@ -477,6 +505,10 @@ async function revokeExpiredDeprecatedKeys() {
        AND (deprecated_at + (grace_period_days * 86400000)) <= ?`,
     [now, now]
   );
+  if (result.changes > 0) {
+    // Revoked keys must stop working on the next request on this replica.
+    invalidateAllCachedKeys();
+  }
   return result.changes;
 }
 
@@ -739,9 +771,11 @@ module.exports = {
   getKeysExpiringWithin,
   markExpiryNotificationSent,
   getExpirationNotices,
-  // Cache management
+  // Cache management (single API-key cache, issue #2088)
+  hashApiKey,
   getCachedKey,
   setCachedKey,
   invalidateCachedKey,
+  invalidateCachedKeyByRawKey,
   invalidateAllCachedKeys,
 };

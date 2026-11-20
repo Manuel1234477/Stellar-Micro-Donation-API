@@ -337,6 +337,19 @@ async function rotateRefreshToken(rawRefreshToken, options = {}) {
 
   if (row.expires_at < Date.now()) return null;
 
+  // A refresh token is only as good as the API key that minted it: a revoked
+  // or deleted key must not be able to extend its session.
+  const parentKey = await db.get(
+    `SELECT id, revoked_at FROM api_keys WHERE id = ?`,
+    [row.api_key_id]
+  );
+  if (!parentKey || parentKey.revoked_at) {
+    await revokeTokenFamily(row.family_id, 'API_KEY_REVOKED');
+    const err = new Error('Parent API key is not active');
+    err.code = 'TOKEN_REVOKED';
+    throw err;
+  }
+
   // Insert consumed token's jti into revocations table
   if (row.jti) {
     const now = Date.now();
@@ -444,15 +457,29 @@ async function cleanupExpiredRevocations() {
 
 /**
  * Revokes all refresh tokens for a given API key (e.g. on key rotation).
+ * Every token family the key holds is revoked and its jtis are denylisted so
+ * in-flight refresh requests fail immediately.
  * @param {number} apiKeyId
- * @returns {Promise<void>}
+ * @param {string} [reason='API_KEY_REVOKED']
+ * @returns {Promise<number>} Number of token families revoked
  */
-async function revokeAllForApiKey(apiKeyId) {
+async function revokeAllForApiKey(apiKeyId, reason = 'API_KEY_REVOKED') {
   await initializeRefreshTokensTable();
-  await db.run(
-    `UPDATE refresh_tokens SET revoked = 1 WHERE api_key_id = ?`,
+  const rows = await db.query(
+    `SELECT DISTINCT family_id FROM refresh_tokens
+      WHERE api_key_id = ? AND revoked = 0`,
     [apiKeyId]
   );
+  for (const row of rows) {
+    await revokeTokenFamily(row.family_id, reason);
+  }
+  // Catch any remaining rows (e.g. already-revoked families with live jtis).
+  await db.run(
+    `UPDATE refresh_tokens SET revoked = 1, revoked_at = ?, revoke_reason = ?
+      WHERE api_key_id = ? AND revoked = 0`,
+    [Date.now(), reason, apiKeyId]
+  );
+  return rows.length;
 }
 
 /**
