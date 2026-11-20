@@ -38,50 +38,65 @@ function isValidAssetCode(code) {
   return typeof code === 'string' && /^[A-Za-z0-9]{1,12}$/.test(code);
 }
 
-/** Ensure asset metadata row exists, upsert totalIssued/totalBurned */
-async function upsertAssetRecord(assetCode, issuerPublic, issuedDelta = 0, burnedDelta = 0) {
-  const existing = await Database.get(
-    'SELECT id, totalIssued, totalBurned FROM issued_assets WHERE assetCode = ? AND issuerPublicKey = ?',
-    [assetCode, issuerPublic]
-  );
+const STROOPS_PER_UNIT = 10000000n;
 
-  if (existing) {
-    const newIssued = (parseFloat(existing.totalIssued) + issuedDelta).toFixed(7);
-    const newBurned = (parseFloat(existing.totalBurned) + burnedDelta).toFixed(7);
-    await Database.run(
-      'UPDATE issued_assets SET totalIssued = ?, totalBurned = ? WHERE id = ?',
-      [newIssued, newBurned, existing.id]
-    );
-  } else {
-    await Database.run(
-      `INSERT INTO issued_assets (assetCode, issuerPublicKey, totalIssued, totalBurned)
-       VALUES (?, ?, ?, ?)`,
-      [assetCode, issuerPublic, issuedDelta.toFixed(7), burnedDelta.toFixed(7)]
-    );
+/**
+ * Convert a decimal asset amount (string or number) to integer stroops.
+ * Uses string parsing only — no floating-point arithmetic (ADR 004).
+ */
+function toStroops(amount) {
+  const str = String(amount).trim();
+  if (!/^-?\d+(\.\d+)?$/.test(str)) {
+    throw new Error(`Invalid asset amount: ${amount}`);
   }
+  const negative = str.startsWith('-');
+  const [whole, frac = ''] = (negative ? str.slice(1) : str).split('.');
+  const fracPadded = (frac + '0000000').slice(0, 7);
+  const stroops = BigInt(whole) * STROOPS_PER_UNIT + BigInt(fracPadded);
+  return negative ? -stroops : stroops;
 }
 
-/** Upsert a holder balance row */
-async function upsertHolding(assetCode, issuerPublic, holderPublic, delta) {
-  const existing = await Database.get(
-    `SELECT id, balance FROM asset_holdings
-     WHERE assetCode = ? AND issuerPublicKey = ? AND holderPublicKey = ?`,
-    [assetCode, issuerPublic, holderPublic]
-  );
+/** Convert integer stroops back to a fixed 7-decimal string. */
+function fromStroops(stroops) {
+  const value = BigInt(stroops);
+  const negative = value < 0n;
+  const abs = negative ? -value : value;
+  const whole = abs / STROOPS_PER_UNIT;
+  const frac = (abs % STROOPS_PER_UNIT).toString().padStart(7, '0');
+  return `${negative ? '-' : ''}${whole}.${frac}`;
+}
 
-  if (existing) {
-    const newBal = (parseFloat(existing.balance) + delta).toFixed(7);
-    await Database.run(
-      'UPDATE asset_holdings SET balance = ?, updatedAt = ? WHERE id = ?',
-      [newBal, new Date().toISOString(), existing.id]
-    );
-  } else {
-    await Database.run(
-      `INSERT INTO asset_holdings (assetCode, issuerPublicKey, holderPublicKey, balance, updatedAt)
-       VALUES (?, ?, ?, ?, ?)`,
-      [assetCode, issuerPublic, holderPublic, delta.toFixed(7), new Date().toISOString()]
-    );
-  }
+/**
+ * Ensure asset metadata row exists, atomically add issued/burned deltas.
+ * Deltas are integer stroops; the UPDATE is a single atomic statement so
+ * concurrent writers cannot lose updates.
+ */
+async function upsertAssetRecord(assetCode, issuerPublic, issuedDelta = 0, burnedDelta = 0) {
+  const issuedStroops = BigInt(issuedDelta);
+  const burnedStroops = BigInt(burnedDelta);
+
+  await Database.run(
+    `INSERT INTO issued_assets (assetCode, issuerPublicKey, totalIssued, totalBurned)
+     VALUES (?, ?, ?, ?)
+     ON CONFLICT(assetCode, issuerPublicKey) DO UPDATE SET
+       totalIssued = totalIssued + excluded.totalIssued,
+       totalBurned = totalBurned + excluded.totalBurned`,
+    [assetCode, issuerPublic, Number(issuedStroops), Number(burnedStroops)]
+  );
+}
+
+/** Atomically add a stroop delta to a holder balance row. */
+async function upsertHolding(assetCode, issuerPublic, holderPublic, delta) {
+  const deltaStroops = BigInt(delta);
+
+  await Database.run(
+    `INSERT INTO asset_holdings (assetCode, issuerPublicKey, holderPublicKey, balance, updatedAt)
+     VALUES (?, ?, ?, ?, ?)
+     ON CONFLICT(assetCode, issuerPublicKey, holderPublicKey) DO UPDATE SET
+       balance = balance + excluded.balance,
+       updatedAt = excluded.updatedAt`,
+    [assetCode, issuerPublic, holderPublic, Number(deltaStroops), new Date().toISOString()]
+  );
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
