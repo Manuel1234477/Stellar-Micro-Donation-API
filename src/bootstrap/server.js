@@ -135,16 +135,23 @@ async function startServer(app, overrideServices = {}) {
       socket.on('close', () => openSockets.delete(socket));
     });
 
-    // Mark sockets busy while a request is in-flight so we only destroy idle ones
-    app.use((req, res, next) => {
-      busySockets.add(req.socket);
-      const done = () => {
-        busySockets.delete(req.socket);
-        if (state.isShuttingDown) req.socket.destroy();
+    // Mark sockets busy while a request is in-flight so we only destroy idle ones.
+    // Tracked on the server (not via app.use) because middleware registered here
+    // would land after the 404/error handlers and never run (#2070).
+    server.on('request', (req, res) => {
+      const socket = req.socket;
+      busySockets.add(socket);
+      let done = false;
+      const release = () => {
+        if (done) return;
+        done = true;
+        busySockets.delete(socket);
+        // Shutdown started while this request was in flight: close the socket
+        // now that the response is complete so server.close() can resolve.
+        if (state.isShuttingDown) socket.destroy();
       };
-      res.on('finish', done);
-      res.on('close', done);
-      next();
+      res.on('finish', release);
+      res.on('close', release);
     });
 
 
