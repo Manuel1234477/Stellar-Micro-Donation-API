@@ -29,6 +29,13 @@ const KNOWN_GAPS = new Set([]);
 
 const REQUIRE_RE = /require\(\s*['"]([^'"]+)['"]\s*\)/g;
 
+/**
+ * Packages that must never be required from src/ unless declared in
+ * "dependencies". They are commonly pulled in transitively, so a require
+ * would otherwise resolve locally while breaking on a clean install.
+ */
+const TRANSITIVE_ONLY = new Set(['axios', 'node-fetch', 'got', 'superagent', 'request']);
+
 function walk(dir) {
   return fs.readdirSync(dir, { withFileTypes: true }).flatMap((entry) => {
     const full = path.join(dir, entry.name);
@@ -65,6 +72,10 @@ for (const file of walk(SRC_DIR)) {
     for (const match of line.matchAll(REQUIRE_RE)) {
       const name = packageName(match[1]);
       if (!name || declared.has(name) || KNOWN_GAPS.has(name)) continue;
+      if (TRANSITIVE_ONLY.has(name)) {
+        violations.push({ name, location: `${path.relative(ROOT, file)}:${index + 1}` });
+        continue;
+      }
       if (optional.has(name) && isGuarded(lines, index)) continue;
       violations.push({ name, location: `${path.relative(ROOT, file)}:${index + 1}` });
     }
