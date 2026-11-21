@@ -29,6 +29,7 @@
     "test:coverage": "jest --coverage",
     "test:coverage:ci": "jest --coverage --ci --maxWorkers=2 --json --outputFile=coverage/jest-results.json",
     "check-coverage": "node scripts/check-coverage.js",
+    "check:test-count": "node scripts/check-test-count.js",
     "lint": "eslint . --cache --max-warnings=440",
     "lint:security": "eslint . --ext .js --format stylish",
     "typecheck": "tsc --noEmit",

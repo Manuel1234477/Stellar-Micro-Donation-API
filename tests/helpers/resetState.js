@@ -104,7 +104,7 @@ function resetInMemorySingletons() {
 
   // Abuse detector utility
   try {
-    const det = require('../../src/utils/abuseDetector');
+    const det = require('../../src/services/AbuseDetectionService');
     det.requestCounts = new Map();
     det.failureCounts = new Map();
     det.suspiciousIPs = new Set();

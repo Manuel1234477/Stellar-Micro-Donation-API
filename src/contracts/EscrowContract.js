@@ -9,7 +9,7 @@
  *   - No HTTP route imports this module. Production campaign escrow is
  *     CrowdfundingService: real Stellar payments to a service account, with
  *     state stored in the database.
- * Do not mount this module on a route. tests/issues/issue-1939-escrow-not-exposed.test.js
+ * Do not mount this module on a route. tests/contracts/escrow-not-exposed.test.js
  * fails if that happens.
  */
 
