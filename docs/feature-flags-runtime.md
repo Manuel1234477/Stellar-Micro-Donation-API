@@ -497,7 +497,7 @@ With 10-second TTL:
 ### Test Coverage
 
 All test files:
-- `tests/feature-flags-basic.test.js`: Cache and utility functions (24 tests)
+- `tests/utils/feature-flags-basic.test.js`: Cache and utility functions (24 tests)
 
 Test categories:
 1. **Cache behavior**: TTL, refresh, statistics
@@ -510,10 +510,10 @@ Test categories:
 
 ```bash
 # Run feature flags tests
-npm test -- tests/feature-flags-basic.test.js
+npm test -- tests/utils/feature-flags-basic.test.js
 
 # Run with coverage
-npm test -- tests/feature-flags-basic.test.js --coverage
+npm test -- tests/utils/feature-flags-basic.test.js --coverage
 
 # Expected: 28+ tests, all passing, >90% coverage
 ```
