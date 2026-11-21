@@ -317,7 +317,7 @@ class StellarPayments {
       const fee = await resolveFee(this.service);
       const builder = new StellarSdk.TransactionBuilder(sourceAccount, {
         fee,
-        networkPassphrase: this.service.network === 'public' ? StellarSdk.Networks.PUBLIC : StellarSdk.Networks.TESTNET,
+        networkPassphrase: this.service._getNetworkPassphrase(),
       }).setTimeout(30);
 
       for (const p of payments) {

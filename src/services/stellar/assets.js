@@ -229,10 +229,7 @@ class StellarAssets {
 
       const transaction = new StellarSdk.TransactionBuilder(holderAccount, {
         fee: await resolveFee(this.service),
-        networkPassphrase:
-          this.service.network === 'public'
-            ? StellarSdk.Networks.PUBLIC
-            : StellarSdk.Networks.TESTNET,
+        networkPassphrase: this.service._getNetworkPassphrase(),
       })
         .addOperation(StellarSdk.Operation.payment({
           destination: issuerPublic,

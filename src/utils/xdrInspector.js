@@ -1,6 +1,7 @@
 'use strict';
 
-const { TransactionBuilder, Networks, StrKey } = require('@stellar/stellar-sdk');
+const { TransactionBuilder, StrKey } = require('@stellar/stellar-sdk');
+const { getNetworkPassphrase } = require('../config/stellarEnvironments');
 
 let config;
 try {
@@ -29,21 +30,12 @@ function resolveDefaultNetworkPassphrase() {
     return config.networkPassphrase;
   }
   if (config && typeof config.stellarNetwork === 'string') {
-    const net = config.stellarNetwork.toLowerCase();
-    if (net === 'public' || net === 'mainnet') {
-      return Networks.PUBLIC;
-    }
-    if (net === 'futurenet') {
-      return Networks.FUTURENET;
-    }
-    if (net === 'testnet') {
-      return Networks.TESTNET;
-    }
+    return getNetworkPassphrase(config.stellarNetwork);
   }
   if (config && config.network && typeof config.network.passphrase === 'string') {
     return config.network.passphrase;
   }
-  return Networks.TESTNET;
+  return getNetworkPassphrase('testnet');
 }
 
 function getLimits(options) {

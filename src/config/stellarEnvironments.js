@@ -87,7 +87,23 @@ function getActiveEnvironment() {
   };
 }
 
+/**
+ * Resolves the network passphrase for a network name using the environment presets,
+ * so every signing path agrees with the configured network (testnet, futurenet, mainnet).
+ * 'public' is accepted as an alias for 'mainnet'. Unknown or missing names fall back to
+ * testnet, matching the previous behaviour of the service.
+ *
+ * @param {string} [network] - e.g. 'testnet' | 'futurenet' | 'mainnet' | 'public'
+ * @returns {string} Stellar network passphrase
+ */
+function getNetworkPassphrase(network) {
+  const key = String(network || '').toLowerCase();
+  const preset = environments[key === 'public' ? 'mainnet' : key] || environments.testnet;
+  return preset.networkPassphrase;
+}
+
 module.exports = {
   environments,
-  getActiveEnvironment
+  getActiveEnvironment,
+  getNetworkPassphrase
 };
