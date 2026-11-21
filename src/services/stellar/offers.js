@@ -1,3 +1,5 @@
+const { resolveFee } = require('./resolveFee');
+const { getTxTimeoutSeconds } = require('./timeBounds');
 const StellarSdk = require('./sdk.js');
 const StellarErrorHandler = require('../../utils/stellarErrorHandler');
 const log = require('../../utils/log');
@@ -22,9 +24,9 @@ class StellarOffers {
         offerId: offerId || 0,
       });
       const tx = new StellarSdk.TransactionBuilder(account, {
-        fee: this.service.baseFee,
+        fee: await resolveFee(this.service),
         networkPassphrase: this.service.networkPassphrase,
-      }).addOperation(op).setTimeout(30).build();
+      }).addOperation(op).setTimeout(getTxTimeoutSeconds()).build();
       tx.sign(keypair);
       const result = await this.service._submitTransactionWithNetworkSafety(tx);
       return { offerId: offerId || 0, transactionId: result.hash, ledger: result.ledger };

@@ -1,3 +1,5 @@
+const { resolveFee } = require('./resolveFee');
+const { getTxTimeoutSeconds } = require('./timeBounds');
 const StellarSdk = require('./sdk.js');
 const StellarErrorHandler = require('../../utils/stellarErrorHandler');
 const { toStellarSdkAsset } = require('../../utils/stellarAsset');
@@ -35,7 +37,7 @@ class StellarClaimableBalances {
       const sdkClaimants = claimants.map(c => new StellarSdk.Claimant(c.destination, c.predicate));
 
       const transaction = new StellarSdk.TransactionBuilder(sourceAccount, {
-        fee: this.service.baseFee,
+        fee: await resolveFee(this.service),
         networkPassphrase: this.service.networkPassphrase,
       })
         .addOperation(StellarSdk.Operation.createClaimableBalance({
@@ -43,7 +45,7 @@ class StellarClaimableBalances {
           amount: amount.toString(),
           claimants: sdkClaimants,
         }))
-        .setTimeout(30)
+        .setTimeout(getTxTimeoutSeconds())
         .build();
 
       transaction.sign(sourceKeypair);
@@ -71,13 +73,13 @@ class StellarClaimableBalances {
       );
 
       const transaction = new StellarSdk.TransactionBuilder(claimantAccount, {
-        fee: this.service.baseFee,
+        fee: await resolveFee(this.service),
         networkPassphrase: this.service.networkPassphrase,
       })
         .addOperation(StellarSdk.Operation.claimClaimableBalance({
           balanceId,
         }))
-        .setTimeout(30)
+        .setTimeout(getTxTimeoutSeconds())
         .build();
 
       transaction.sign(claimantKeypair);
