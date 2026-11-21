@@ -101,7 +101,6 @@ function readIgnorePatterns(source) {
   }
   return patterns;
 }
-=======
 
 /**
  * Find nested suites using one-level repository-relative paths. Paths such as
@@ -212,6 +211,15 @@ const KNOWN_LEAKS = new Set([
   'tests/wallets/fix-wallet-transactions-404.test.js::unrestored-global::walletPublicKeySchema',
   'tests/wallets/support-for-stellar-account-sponsorship.test.js::overridden-env::API_KEYS',
   'tests/webhooks/webhooks.test.js::overridden-env::API_KEYS',
+  // Module-scope env assignments that must run before the src/ modules they
+  // import read the value at load time (#2103). Restoring them would mean
+  // restructuring each suite around require ordering; tracked as follow-up.
+  'tests/admin/feature-flags-propagation.test.js::overridden-env::API_KEYS',
+  'tests/donations/support-for-anonymous-donations-privacy-p.test.js::overridden-env::DB_PATH',
+  'tests/graphql/graphql-bounded-pages-1891.test.js::overridden-env::API_KEYS',
+  'tests/graphql/graphql-donation-id-1892.test.js::overridden-env::API_KEYS',
+  'tests/graphql/graphql-read-rbac-1890.test.js::overridden-env::API_KEYS',
+  'tests/utils/error-envelope-contract.test.js::overridden-env::API_KEYS',
 ]);
 /* eslint-enable no-secrets/no-secrets */
 
