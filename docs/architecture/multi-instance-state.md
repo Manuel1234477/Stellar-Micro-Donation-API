@@ -81,7 +81,7 @@ client's traffic, so thresholds trip later.
 
 | State | Location |
 |---|---|
-| Abuse / suspicious-pattern detection | `src/utils/abuseDetector.js`, `src/utils/suspiciousPatternDetector.js`, `src/services/AbuseDetectionService.js` |
+| Abuse / suspicious-pattern detection | `src/utils/suspiciousPatternDetector.js`, `src/services/AbuseDetectionService.js` |
 | Request replay detection (fingerprint counts) | `src/utils/replayDetector.js` (`TrackingStore`) |
 | Brute-force login protection | `src/utils/bruteForceProtection.js` |
 | Memo collision detection | `src/utils/memoCollisionDetector.js` |

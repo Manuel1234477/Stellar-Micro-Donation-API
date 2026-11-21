@@ -44,7 +44,6 @@
 /src/middleware/csp.js                    @Manuel1234477
 /src/middleware/blockCheck.js             @Manuel1234477
 /src/middleware/suspiciousPatternDetection.js @Manuel1234477
-/src/utils/abuseDetector.js               @Manuel1234477
 /src/utils/bruteForceProtection.js        @Manuel1234477
 /src/utils/replayDetector.js              @Manuel1234477
 /src/utils/ssrf.js                        @Manuel1234477

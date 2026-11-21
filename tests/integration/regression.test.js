@@ -7,7 +7,7 @@
  */
 
 const log = require('../../src/utils/log');
-const abuseDetector = require('../../src/utils/abuseDetector');
+const abuseDetector = require('../../src/services/AbuseDetectionService');
 const { hasPermission } = require('../../src/models/permissions');
 const { PERMISSIONS } = require('../../src/utils/permissions');
 const { createIsolatedEnvironment } = require('../helpers/testIsolation');

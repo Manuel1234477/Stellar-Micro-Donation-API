@@ -81,7 +81,6 @@
   "src/services/rateLimitStores/index.js",
   "src/services/signing/index.js",
   "src/services/websocketService.js",
-  "src/utils/abuseDetector.js",
   "src/utils/anonymization.js",
   "src/utils/bruteForceProtection.js",
   "src/utils/cache.js",

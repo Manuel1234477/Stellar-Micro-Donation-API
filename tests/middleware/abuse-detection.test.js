@@ -1,4 +1,4 @@
-const abuseDetector = require('../../src/utils/abuseDetector');
+const abuseDetector = require('../../src/services/AbuseDetectionService');
 
 describe('Abuse Detection', () => {
   beforeEach(() => {

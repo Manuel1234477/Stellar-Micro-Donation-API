@@ -61,6 +61,13 @@ const ALLOWLIST = new Set([
   'src/middleware/errorHandler.js',
   // src/jobs/index.js — job registry loaded dynamically by the scheduler.
   'src/jobs/index.js',
+  // src/services/signing/index.js — signing provider entry point; required by
+  //   tests/security/hsm-signing-provider.test.js and intended as the single
+  //   place to select a provider (#2104).
+  'src/services/signing/index.js',
+  // src/workers/webhookRetryWorker.js — not started by the bootstrap yet; wiring
+  //   it up is tracked separately in docs/issues/2066 (#2104).
+  'src/workers/webhookRetryWorker.js',
 ]);
 
 let madgeOutput;
