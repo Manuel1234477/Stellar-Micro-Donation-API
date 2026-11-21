@@ -1,4 +1,5 @@
 const { resolveFee } = require('./resolveFee');
+const { getTxTimeoutSeconds } = require('./timeBounds');
 const StellarSdk = require('./sdk.js');
 const StellarErrorHandler = require('../../utils/stellarErrorHandler');
 const log = require('../../utils/log');
@@ -44,7 +45,7 @@ class StellarAssets {
         networkPassphrase: this.service._getNetworkPassphrase(),
       })
         .addOperation(StellarSdk.Operation.changeTrust(opParams))
-        .setTimeout(30)
+        .setTimeout(getTxTimeoutSeconds())
         .build();
 
       transaction.sign(keypair);
@@ -98,7 +99,7 @@ class StellarAssets {
           asset,
           limit: '0',
         }))
-        .setTimeout(30)
+        .setTimeout(getTxTimeoutSeconds())
         .build();
 
       transaction.sign(keypair);
@@ -194,7 +195,7 @@ class StellarAssets {
           asset,
           amount: issuedAmount,
         }))
-        .setTimeout(30)
+        .setTimeout(getTxTimeoutSeconds())
         .build();
 
       transaction.sign(issuerKeypair);
@@ -236,7 +237,7 @@ class StellarAssets {
           asset,
           amount: amount.toString(),
         }))
-        .setTimeout(30)
+        .setTimeout(getTxTimeoutSeconds())
         .build();
 
       transaction.sign(holderKeypair);
@@ -273,7 +274,7 @@ class StellarAssets {
         networkPassphrase: this.service.networkPassphrase,
       })
         .addOperation(StellarSdk.Operation.clawback({ asset, from, amount: amount.toString() }))
-        .setTimeout(30)
+        .setTimeout(getTxTimeoutSeconds())
         .build();
 
       transaction.sign(issuerKeypair);
@@ -315,7 +316,7 @@ class StellarAssets {
           asset,
           amount: amount.toString(),
         }))
-        .setTimeout(30)
+        .setTimeout(getTxTimeoutSeconds())
         .build();
 
       transaction.sign(distributorKeypair);

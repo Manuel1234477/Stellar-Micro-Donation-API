@@ -137,6 +137,7 @@ const ENV_VARS = [
   { group: G3, name: 'HORIZON_RETRY_MAX_DELAY_MS', type: 'integer', default: 2000, description: 'Maximum delay (ms) cap for Horizon retry back-off' },
   { group: G3, name: 'HORIZON_STREAM_TIMEOUT_MS', type: 'integer', default: 60000, description: 'Timeout (ms) for Horizon SSE stream connections' },
   { group: G3, name: 'HORIZON_SUBMIT_TIMEOUT_MS', type: 'integer', default: 30000, description: 'Timeout (ms) for transaction submission to Horizon' },
+  { group: G3, name: 'STELLAR_TX_TIMEOUT_SECONDS', type: 'integer', default: 30, min: 1, max: 3600, description: 'Validity window (seconds) for transactions built by the Stellar services. Sets the time bound `maxTime` on every transaction. Expired envelopes are never resubmitted and must be rebuilt' },
   { group: G3, name: 'HORIZON_URL', type: 'url', example: 'https://horizon-testnet.stellar.org', description: 'Override the Horizon endpoint URL. Defaults to the canonical URL for `STELLAR_NETWORK`' },
   { group: G3, name: 'MIN_RESERVE_XLM', type: 'number', default: 1, description: 'Minimum XLM balance (in XLM) required in a wallet for operations' },
   { group: G3, name: 'MOCK_STELLAR', type: 'boolean', default: false, example: 'true', description: 'When `true`, no outbound Stellar/Horizon calls are made. Required for local dev and CI' },

@@ -1,4 +1,5 @@
 const { resolveFee } = require('./resolveFee');
+const { getTxTimeoutSeconds } = require('./timeBounds');
 const StellarSdk = require('./sdk.js');
 const StellarErrorHandler = require('../../utils/stellarErrorHandler');
 
@@ -33,7 +34,7 @@ class StellarChannels {
       })
         .addOperation(createAccountOp)
         .addOperation(setOptionsOp)
-        .setTimeout(30)
+        .setTimeout(getTxTimeoutSeconds())
         .build();
 
       transaction.sign(sourceKeypair);
@@ -68,7 +69,7 @@ class StellarChannels {
         networkPassphrase: this.service.networkPassphrase,
       })
         .addOperation(paymentOp)
-        .setTimeout(30)
+        .setTimeout(getTxTimeoutSeconds())
         .build();
 
       transaction.sign(escrowKeypair);

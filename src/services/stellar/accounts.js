@@ -10,6 +10,7 @@
  */
 
 const { resolveFee } = require('./resolveFee');
+const { getTxTimeoutSeconds } = require('./timeBounds');
 const StellarSdk = require('./sdk.js');
 const log = require('../../utils/log');
 const { ValidationError } = require('../../utils/errors');
@@ -111,7 +112,7 @@ class StellarAccounts {
           inflationDest: destinationPublicKey,
         })
       )
-      .setTimeout(30)
+      .setTimeout(getTxTimeoutSeconds())
       .build();
 
     transaction.sign(sourceKeypair);
@@ -135,7 +136,7 @@ class StellarAccounts {
       networkPassphrase: this.stellarService.networkPassphrase,
     })
       .addOperation(StellarSdk.Operation.setOptions({ homeDomain }))
-      .setTimeout(30)
+      .setTimeout(getTxTimeoutSeconds())
       .build();
 
     transaction.sign(sourceKeypair);
@@ -165,7 +166,7 @@ class StellarAccounts {
           signer: { ed25519PublicKey: signerPublicKey, weight },
         })
       )
-      .setTimeout(30)
+      .setTimeout(getTxTimeoutSeconds())
       .build();
 
     transaction.sign(sourceKeypair);
@@ -202,7 +203,7 @@ class StellarAccounts {
           bumpTo: bumpTo.toString(),
         })
       )
-      .setTimeout(30)
+      .setTimeout(getTxTimeoutSeconds())
       .build();
 
     transaction.sign(keypair);
@@ -224,7 +225,7 @@ class StellarAccounts {
           destination: destinationPublic,
         })
       )
-      .setTimeout(30)
+      .setTimeout(getTxTimeoutSeconds())
       .build();
 
     transaction.sign(sourceKeypair);
@@ -308,7 +309,7 @@ class StellarAccounts {
           value: value,
         })
       )
-      .setTimeout(30)
+      .setTimeout(getTxTimeoutSeconds())
       .build();
 
     transaction.sign(sourceKeypair);
@@ -366,7 +367,7 @@ class StellarAccounts {
           value: null, // Setting to null removes the entry
         })
       )
-      .setTimeout(30)
+      .setTimeout(getTxTimeoutSeconds())
       .build();
 
     transaction.sign(sourceKeypair);

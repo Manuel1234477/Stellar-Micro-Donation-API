@@ -1,4 +1,5 @@
 const { resolveFee } = require('./resolveFee');
+const { getTxTimeoutSeconds, assertWithinTimeBounds } = require('./timeBounds');
 const StellarSdk = require('./sdk.js');
 const StellarErrorHandler = require('../../utils/stellarErrorHandler');
 const log = require('../../utils/log');
@@ -34,7 +35,7 @@ class StellarPayments {
         builder.addMemo(StellarSdk.Memo.text(options.memo));
       }
 
-      builder.setTimeout(options.timeout || 30);
+      builder.setTimeout(options.timeout || getTxTimeoutSeconds());
       return builder.build();
     }, 'buildTransaction');
   }
@@ -76,7 +77,12 @@ class StellarPayments {
       }
       const transaction = StellarSdk.TransactionBuilder.fromXDR(signedXDR, this.service.networkPassphrase);
       const response = await this.service._executeWithRetry(
-        () => this.service.server.submitTransaction(transaction),
+        () => {
+          // Checked on every attempt: once maxTime has passed the network will reject
+          // the envelope, so it must be rebuilt and re-signed instead of resubmitted.
+          assertWithinTimeBounds(transaction);
+          return this.service.server.submitTransaction(transaction);
+        },
         'submitSignedTransaction'
       );
       return {
@@ -117,7 +123,7 @@ class StellarPayments {
       // (validAfter/validBefore are set as strings in timebounds above)
       // We check if maxTime is non-zero (has explicit expiration)
       if (!validBefore || validBefore === '0' || validBefore === 0) {
-        transaction.setTimeout(30);
+        transaction.setTimeout(getTxTimeoutSeconds());
       }
 
       if (memo) {
@@ -289,7 +295,7 @@ class StellarPayments {
           destMin: destAmount.toString(),
           path: normalizedPath.map(toStellarSdkAsset),
         }))
-        .setTimeout(30);
+        .setTimeout(getTxTimeoutSeconds());
 
       if (memo) {
         transaction.addMemo(StellarSdk.Memo.text(memo));
@@ -318,7 +324,7 @@ class StellarPayments {
       const builder = new StellarSdk.TransactionBuilder(sourceAccount, {
         fee,
         networkPassphrase: this.service._getNetworkPassphrase(),
-      }).setTimeout(30);
+      }).setTimeout(getTxTimeoutSeconds());
 
       for (const p of payments) {
         builder.addOperation(StellarSdk.Operation.payment({
@@ -470,7 +476,7 @@ class StellarPayments {
           asset: StellarSdk.Asset.native(),
           amount: amount.toString(),
         }))
-        .setTimeout(30);
+        .setTimeout(getTxTimeoutSeconds());
 
       if (memo) {
         transaction.addMemo(StellarSdk.Memo.text(memo));
@@ -526,7 +532,7 @@ class StellarPayments {
         destAsset: toStellarSdkAsset(destAsset),
         destMin: minDestAmount.toString(),
         path: (route.path || []).map(a => toStellarSdkAsset(a)),
-      })).setTimeout(30);
+      })).setTimeout(getTxTimeoutSeconds());
 
       if (options.memo) builder.addMemo(StellarSdk.Memo.text(options.memo));
 
@@ -573,7 +579,7 @@ class StellarPayments {
         destAsset: toStellarSdkAsset(destAsset),
         destAmount: destAmount.toString(),
         path: (route.path || []).map(a => toStellarSdkAsset(a)),
-      })).setTimeout(30);
+      })).setTimeout(getTxTimeoutSeconds());
 
       if (options.memo) builder.addMemo(StellarSdk.Memo.text(options.memo));
 

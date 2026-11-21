@@ -58,6 +58,7 @@ const express = require('express');
 const router = express.Router();
 const requireApiKey = require('../../middleware/apiKey');
 const { checkPermission } = require('../../middleware/rbac');
+const { getTxTimeoutSeconds } = require('../../services/stellar/timeBounds');
 const { PERMISSIONS } = require('../../utils/permissions');
 const { getStellarService } = require('../../config/stellar');
 const asyncHandler = require('../../utils/asyncHandler');
@@ -104,7 +105,7 @@ router.post('/', requireApiKey, checkPermission(PERMISSIONS.ADMIN), payloadSizeL
       .addOperation(StellarSdk.Operation.bumpSequence({
         bumpTo: bumpTo.toString(),
       }))
-      .setTimeout(30)
+      .setTimeout(getTxTimeoutSeconds())
       .build();
 
     transaction.sign(keypair);

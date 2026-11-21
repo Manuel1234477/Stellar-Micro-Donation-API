@@ -1,3 +1,4 @@
+const { getTxTimeoutSeconds } = require('./stellar/timeBounds');
 /**
  * Liquidity Pool Service - Stellar AMM Integration
  * 
@@ -87,7 +88,7 @@ class LiquidityPoolService {
       networkPassphrase: this.stellarService.networkPassphrase,
     })
       .addOperation(StellarSdk.Operation.liquidityPoolDeposit(depositOp))
-      .setTimeout(30)
+      .setTimeout(getTxTimeoutSeconds())
       .build();
 
     transaction.sign(keypair);
@@ -151,7 +152,7 @@ class LiquidityPoolService {
       networkPassphrase: this.stellarService.networkPassphrase,
     })
       .addOperation(StellarSdk.Operation.liquidityPoolWithdraw(withdrawOp))
-      .setTimeout(30)
+      .setTimeout(getTxTimeoutSeconds())
       .build();
 
     transaction.sign(keypair);
