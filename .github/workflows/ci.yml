@@ -262,6 +262,8 @@ jobs:
               process.exit(1);
             }
           '
+      # Fail when Jest executes noticeably fewer suites than the committed baseline (#2105)
+      - run: npm run check:test-count
       - run: npm run check-coverage
       - run: npm run openapi:check
       # Generated docs must match the code they describe (#1957, #1958, #1960)
