@@ -9,6 +9,7 @@
  * - Inflation destination management
  */
 
+const { resolveFee } = require('./resolveFee');
 const StellarSdk = require('./sdk.js');
 const log = require('../../utils/log');
 const { ValidationError } = require('../../utils/errors');
@@ -102,7 +103,7 @@ class StellarAccounts {
     const account = await this.loadAccount(sourceKeypair.publicKey());
 
     const transaction = new StellarSdk.TransactionBuilder(account, {
-      fee: this.stellarService.baseFee,
+      fee: await resolveFee(this.stellarService),
       networkPassphrase: this.stellarService.networkPassphrase,
     })
       .addOperation(
@@ -130,7 +131,7 @@ class StellarAccounts {
     const sourceKeypair = StellarSdk.Keypair.fromSecret(sourceSecret);
     const account = await this.loadAccount(sourceKeypair.publicKey());
     const transaction = new StellarSdk.TransactionBuilder(account, {
-      fee: this.stellarService.baseFee,
+      fee: await resolveFee(this.stellarService),
       networkPassphrase: this.stellarService.networkPassphrase,
     })
       .addOperation(StellarSdk.Operation.setOptions({ homeDomain }))
@@ -156,7 +157,7 @@ class StellarAccounts {
     const account = await this.loadAccount(sourceKeypair.publicKey());
 
     const transaction = new StellarSdk.TransactionBuilder(account, {
-      fee: this.stellarService.baseFee,
+      fee: await resolveFee(this.stellarService),
       networkPassphrase: this.stellarService.networkPassphrase,
     })
       .addOperation(
@@ -193,7 +194,7 @@ class StellarAccounts {
     const account = await this.loadAccount(keypair.publicKey());
 
     const transaction = new StellarSdk.TransactionBuilder(account, {
-      fee: this.stellarService.baseFee,
+      fee: await resolveFee(this.stellarService),
       networkPassphrase: this.stellarService.networkPassphrase,
     })
       .addOperation(
@@ -215,7 +216,7 @@ class StellarAccounts {
     const account = await this.loadAccount(sourceKeypair.publicKey());
 
     const transaction = new StellarSdk.TransactionBuilder(account, {
-      fee: this.stellarService.baseFee,
+      fee: await resolveFee(this.stellarService),
       networkPassphrase: this.stellarService.networkPassphrase,
     })
       .addOperation(
@@ -298,7 +299,7 @@ class StellarAccounts {
     const account = await this.loadAccount(sourceKeypair.publicKey());
 
     const transaction = new StellarSdk.TransactionBuilder(account, {
-      fee: this.stellarService.baseFee,
+      fee: await resolveFee(this.stellarService),
       networkPassphrase: this.stellarService.networkPassphrase,
     })
       .addOperation(
@@ -356,7 +357,7 @@ class StellarAccounts {
     const account = await this.loadAccount(sourceKeypair.publicKey());
 
     const transaction = new StellarSdk.TransactionBuilder(account, {
-      fee: this.stellarService.baseFee,
+      fee: await resolveFee(this.stellarService),
       networkPassphrase: this.stellarService.networkPassphrase,
     })
       .addOperation(

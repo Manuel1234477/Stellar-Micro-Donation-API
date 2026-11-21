@@ -1,3 +1,4 @@
+const { resolveFee } = require('./resolveFee');
 const StellarSdk = require('./sdk.js');
 const StellarErrorHandler = require('../../utils/stellarErrorHandler');
 const log = require('../../utils/log');
@@ -39,7 +40,7 @@ class StellarAssets {
       }
 
       const transaction = new StellarSdk.TransactionBuilder(account, {
-        fee: StellarSdk.BASE_FEE,
+        fee: await resolveFee(this.service),
         networkPassphrase: this.service._getNetworkPassphrase(),
       })
         .addOperation(StellarSdk.Operation.changeTrust(opParams))
@@ -90,7 +91,7 @@ class StellarAssets {
       }
 
       const transaction = new StellarSdk.TransactionBuilder(account, {
-        fee: StellarSdk.BASE_FEE,
+        fee: await resolveFee(this.service),
         networkPassphrase: this.service._getNetworkPassphrase(),
       })
         .addOperation(StellarSdk.Operation.changeTrust({
@@ -175,7 +176,8 @@ class StellarAssets {
       const minimumReserve = this.service.accounts.calculateMinimumReserve
         ? this.service.accounts.calculateMinimumReserve(subentryCount)
         : 1 + (subentryCount * 0.5);
-      const feeXlm = parseInt(this.service.baseFee || StellarSdk.BASE_FEE, 10) / 10000000;
+      const fee = await resolveFee(this.service);
+      const feeXlm = parseInt(fee, 10) / 10000000;
       if (currentXlm - feeXlm < minimumReserve) {
         throw new BusinessLogicError(
           ERROR_CODES.INSUFFICIENT_BALANCE,
@@ -184,7 +186,7 @@ class StellarAssets {
       }
 
       const transaction = new StellarSdk.TransactionBuilder(issuerAccount, {
-        fee: this.service.baseFee || StellarSdk.BASE_FEE,
+        fee,
         networkPassphrase: this.service.networkPassphrase || this.service._getNetworkPassphrase(),
       })
         .addOperation(StellarSdk.Operation.payment({
@@ -226,7 +228,7 @@ class StellarAssets {
       );
 
       const transaction = new StellarSdk.TransactionBuilder(holderAccount, {
-        fee: StellarSdk.BASE_FEE,
+        fee: await resolveFee(this.service),
         networkPassphrase:
           this.service.network === 'public'
             ? StellarSdk.Networks.PUBLIC
@@ -270,7 +272,7 @@ class StellarAssets {
       );
 
       const transaction = new StellarSdk.TransactionBuilder(issuerAccount, {
-        fee: this.service.baseFee,
+        fee: await resolveFee(this.service),
         networkPassphrase: this.service.networkPassphrase,
       })
         .addOperation(StellarSdk.Operation.clawback({ asset, from, amount: amount.toString() }))
@@ -308,7 +310,7 @@ class StellarAssets {
       );
 
       const transaction = new StellarSdk.TransactionBuilder(distributorAccount, {
-        fee: StellarSdk.BASE_FEE,
+        fee: await resolveFee(this.service),
         networkPassphrase: this.service._getNetworkPassphrase(),
       })
         .addOperation(StellarSdk.Operation.payment({

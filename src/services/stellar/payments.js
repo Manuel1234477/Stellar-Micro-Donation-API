@@ -1,3 +1,4 @@
+const { resolveFee } = require('./resolveFee');
 const StellarSdk = require('./sdk.js');
 const StellarErrorHandler = require('../../utils/stellarErrorHandler');
 const log = require('../../utils/log');
@@ -13,7 +14,7 @@ class StellarPayments {
     return StellarErrorHandler.wrap(async () => {
       const account = await this.service.loadAccount(sourcePublicKey);
       const builder = new StellarSdk.TransactionBuilder(account, {
-        fee: options.fee || this.service.baseFee,
+        fee: options.fee || await resolveFee(this.service),
         networkPassphrase: this.service.networkPassphrase,
       });
 
@@ -100,8 +101,9 @@ class StellarPayments {
         maxTime: String(validBefore || '0')
       };
 
+      const fee = await resolveFee(this.service);
       const transaction = new StellarSdk.TransactionBuilder(sourceAccount, {
-        fee: this.service.baseFee,
+        fee,
         networkPassphrase: this.service.networkPassphrase,
         timebounds,
       })
@@ -152,7 +154,7 @@ class StellarPayments {
         transactionId: result.hash,
         ledger: result.ledger,
         envelopeXdr,
-        fee: parseInt(this.service.baseFee),
+        fee: parseInt(fee, 10),
       };
     }, 'sendDonation');
   }
@@ -276,7 +278,7 @@ class StellarPayments {
       );
 
       const transaction = new StellarSdk.TransactionBuilder(sourceAccount, {
-        fee: this.service.baseFee,
+        fee: await resolveFee(this.service),
         networkPassphrase: this.service.networkPassphrase,
       })
         .addOperation(StellarSdk.Operation.pathPaymentStrictSend({
@@ -312,8 +314,9 @@ class StellarPayments {
         'loadAccountForBatch'
       );
 
+      const fee = await resolveFee(this.service);
       const builder = new StellarSdk.TransactionBuilder(sourceAccount, {
-        fee: StellarSdk.BASE_FEE,
+        fee,
         networkPassphrase: this.service.network === 'public' ? StellarSdk.Networks.PUBLIC : StellarSdk.Networks.TESTNET,
       }).setTimeout(30);
 
@@ -334,7 +337,7 @@ class StellarPayments {
         transactionId: result.hash,
         ledger: result.ledger,
         envelopeXdr,
-        fee: parseInt(StellarSdk.BASE_FEE),
+        fee: parseInt(fee, 10),
       };
     }, 'sendBatchDonations');
   }
@@ -459,7 +462,7 @@ class StellarPayments {
       );
 
       const transaction = new StellarSdk.TransactionBuilder(sourceAccount, {
-        fee: this.service.baseFee,
+        fee: await resolveFee(this.service),
         networkPassphrase: this.service.networkPassphrase,
       })
         .addOperation(StellarSdk.Operation.payment({
@@ -514,7 +517,7 @@ class StellarPayments {
       );
 
       const builder = new StellarSdk.TransactionBuilder(account, {
-        fee: this.service.baseFee,
+        fee: await resolveFee(this.service),
         networkPassphrase: this.service.networkPassphrase,
       }).addOperation(StellarSdk.Operation.pathPaymentStrictSend({
         sendAsset: toStellarSdkAsset(sendAsset),
@@ -561,7 +564,7 @@ class StellarPayments {
       );
 
       const builder = new StellarSdk.TransactionBuilder(account, {
-        fee: this.service.baseFee,
+        fee: await resolveFee(this.service),
         networkPassphrase: this.service.networkPassphrase,
       }).addOperation(StellarSdk.Operation.pathPaymentStrictReceive({
         sendAsset: toStellarSdkAsset(sendAsset),

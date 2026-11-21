@@ -1,3 +1,4 @@
+const { resolveFee } = require('./resolveFee');
 const StellarSdk = require('./sdk.js');
 const StellarErrorHandler = require('../../utils/stellarErrorHandler');
 
@@ -27,7 +28,7 @@ class StellarChannels {
       const account = await this.service.server.loadAccount(sourceKeypair.publicKey());
 
       const transaction = new StellarSdk.TransactionBuilder(account, {
-        fee: this.service.baseFee,
+        fee: await resolveFee(this.service),
         networkPassphrase: this.service.networkPassphrase,
       })
         .addOperation(createAccountOp)
@@ -63,7 +64,7 @@ class StellarChannels {
       });
 
       const transaction = new StellarSdk.TransactionBuilder(account, {
-        fee: this.service.baseFee,
+        fee: await resolveFee(this.service),
         networkPassphrase: this.service.networkPassphrase,
       })
         .addOperation(paymentOp)

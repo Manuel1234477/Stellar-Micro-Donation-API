@@ -2,6 +2,7 @@ const StellarSdk = require('./sdk.js');
 const StellarErrorHandler = require('../../utils/stellarErrorHandler');
 const log = require('../../utils/log');
 const { withTimeout } = require('../../utils/timeoutHandler');
+const { getConfiguredBaseFee } = require('./resolveFee');
 
 class StellarFees {
   constructor(service) {
@@ -10,7 +11,7 @@ class StellarFees {
 
   async estimateFee(operationCount = 1) {
     return StellarErrorHandler.wrap(async () => {
-      const BASE_FEE_STROOPS = parseInt(StellarSdk.BASE_FEE, 10);
+      const BASE_FEE_STROOPS = getConfiguredBaseFee(this.service);
       let recommendedFee = BASE_FEE_STROOPS;
       let surgeMultiplier = 1;
 
