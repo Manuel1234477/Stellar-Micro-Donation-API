@@ -208,15 +208,16 @@ class CorporateMatchingService {
   }
 
   /**
-   * Read how much of an employee's annual per-employee cap has already been used.
+   * Resolve the matching year from the donation's own timestamp, in UTC, so a
+   * donation made just before midnight on Dec 31 is attributed to that year no
+   * matter when processing runs or what timezone the server is in (#2115).
+   * Falls back to the current UTC year when no valid timestamp is supplied.
    * @private
    */
-  static async _getEmployeeYearlyMatched(programId, employeeWalletId, year) {
-    const row = await Database.get(
-      'SELECT matched_amount_stroops FROM employee_matching_history WHERE corporate_matching_id = ? AND employee_wallet_id = ? AND year = ?',
-      [programId, employeeWalletId, year]
-    );
-    return row ? BigInt(row.matched_amount_stroops || 0) : 0n;
+  static _resolveMatchYear(timestamp) {
+    const parsed = timestamp ? new Date(timestamp) : null;
+    if (!parsed || Number.isNaN(parsed.getTime())) return new Date().getUTCFullYear();
+    return parsed.getUTCFullYear();
   }
 
   // ─── Automatic matching on employee donation ─────────────────────────────────
@@ -238,11 +239,13 @@ class CorporateMatchingService {
    * @param {string} donation.id - Original donation id (UUID from donations_store)
    * @param {number} donation.amount - Donation amount in XLM
    * @param {number} donation.senderId - users.id of the donor/employee
+   * @param {string} [donation.timestamp] - ISO timestamp of the donation; drives the matching year
    * @returns {Promise<Array<object>>} One entry per matching donation created
    */
   static async processCorporateMatching(donation) {
-    const { id: donationId, amount, senderId } = donation;
+    const { id: donationId, amount, senderId, timestamp } = donation;
     if (!donationId || !(amount > 0) || !senderId) return [];
+    const year = this._resolveMatchYear(timestamp);
 
     const programs = await Database.query(
       `SELECT cm.* FROM corporate_matching cm
@@ -255,7 +258,7 @@ class CorporateMatchingService {
     const results = [];
     for (const program of programs) {
       try {
-        const record = await this._matchSingleProgram(program, donationId, amount, senderId);
+        const record = await this._matchSingleProgram(program, donationId, amount, senderId, year);
         if (record) results.push(record);
       } catch (err) {
         log.error('CORPORATE_MATCHING', 'Failed to process match for program', {
@@ -267,21 +270,11 @@ class CorporateMatchingService {
   }
 
   /** @private */
-  static async _matchSingleProgram(program, donationId, amount, senderId) {
-    const year = new Date().getFullYear();
+  static async _matchSingleProgram(program, donationId, amount, senderId, year) {
     // match_ratio_bps is an integer: matched = amount * bps / 10000, all in stroops.
     const matchRatioBps = BigInt(program.match_ratio_bps);
     const rawMatchStroops = (toStroops(String(amount)) * matchRatioBps) / 10_000n;
-
-    const alreadyMatchedStroops = await this._getEmployeeYearlyMatched(program.id, senderId, year);
-    const employeeRemainingStroops = BigInt(program.per_employee_limit_stroops) - alreadyMatchedStroops;
-    const programRemainingStroops = BigInt(program.remaining_total_limit_stroops);
-    if (employeeRemainingStroops <= 0n) return null;
-
-    const matchStroops = [rawMatchStroops, employeeRemainingStroops, programRemainingStroops]
-      .reduce((minimum, value) => value < minimum ? value : minimum);
-    if (matchStroops <= 0n) return null;
-    const matchAmount = fromStroops(matchStroops);
+    if (rawMatchStroops <= 0n) return null;
 
     const [sponsor, employee] = await Promise.all([
       Database.get('SELECT id, publicKey, encryptedSecret FROM users WHERE id = ?', [program.sponsor_id]),
@@ -289,21 +282,45 @@ class CorporateMatchingService {
     ]);
     if (!sponsor || !employee) return null;
 
-    // Atomic cap enforcement + bookkeeping for this program.
+    // Atomic cap enforcement + bookkeeping for this program. The per-employee
+    // yearly total and the program's remaining total are both read here, inside
+    // the same BEGIN IMMEDIATE transaction that writes them, so concurrent
+    // donations from the same employee cannot each see the same allowance.
+    let matched = false;
+    let matchStroops = 0n;
     let linkRowId;
-    let newRemainingStroops;
     await Database.runTransaction(async (tx) => {
-      const fresh = await tx.get('SELECT remaining_total_limit_stroops FROM corporate_matching WHERE id = ?', [program.id]);
-      const freshRemainingStroops = fresh ? BigInt(fresh.remaining_total_limit_stroops || 0) : 0n;
-      if (!fresh || freshRemainingStroops < matchStroops) {
-        throw new ValidationError(`Per-program match cap exceeded for program ${program.id}`, null, ERROR_CODES.VALIDATION_ERROR);
-      }
-
-      newRemainingStroops = freshRemainingStroops - matchStroops;
-      await tx.run(
-        `UPDATE corporate_matching SET remaining_total_limit_stroops = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?`,
-        [Number(newRemainingStroops), program.id]
+      const fresh = await tx.get(
+        'SELECT per_employee_limit_stroops, remaining_total_limit_stroops FROM corporate_matching WHERE id = ?',
+        [program.id]
       );
+      if (!fresh) return;
+
+      const history = await tx.get(
+        'SELECT matched_amount_stroops FROM employee_matching_history WHERE corporate_matching_id = ? AND employee_wallet_id = ? AND year = ?',
+        [program.id, senderId, year]
+      );
+      const alreadyMatchedStroops = history ? BigInt(history.matched_amount_stroops || 0) : 0n;
+      const employeeRemainingStroops = BigInt(fresh.per_employee_limit_stroops) - alreadyMatchedStroops;
+      const programRemainingStroops = BigInt(fresh.remaining_total_limit_stroops || 0);
+      if (employeeRemainingStroops <= 0n) return;
+
+      matchStroops = [rawMatchStroops, employeeRemainingStroops, programRemainingStroops]
+        .reduce((minimum, value) => value < minimum ? value : minimum);
+      if (matchStroops <= 0n) return;
+
+      const newRemainingStroops = programRemainingStroops - matchStroops;
+      // Conditional debit as a second guard: only succeeds if the balance still covers it.
+      const debit = await tx.run(
+        `UPDATE corporate_matching SET remaining_total_limit_stroops = ?, updated_at = CURRENT_TIMESTAMP
+         WHERE id = ? AND remaining_total_limit_stroops >= ?`,
+        [Number(newRemainingStroops), program.id, Number(matchStroops)]
+      );
+      if (debit.changes !== 1) {
+        matchStroops = 0n;
+        return;
+      }
+      matched = true;
 
       /* eslint-disable no-secrets/no-secrets -- SQL conflict-target column list, not a credential */
       await tx.run(
@@ -327,6 +344,9 @@ class CorporateMatchingService {
         await tx.run(`UPDATE corporate_matching SET status = 'exhausted', updated_at = CURRENT_TIMESTAMP WHERE id = ?`, [program.id]);
       }
     });
+
+    if (!matched) return null;
+    const matchAmount = fromStroops(matchStroops);
 
     // Submit the Stellar payment for the matched amount, from sponsor to the
     // same recipient as the original donation.
