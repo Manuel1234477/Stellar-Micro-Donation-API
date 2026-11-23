@@ -80,7 +80,7 @@
     "check:orphans": "node scripts/check-src-orphans.js",
     "check:prometheus-rules": "node scripts/check-prometheus-rules.js",
     "boot-guard": "node scripts/boot-guard.js",
-    "verify": "npm run check:no-float-money && npm run check:declared-deps && npm run check:test-naming && npm run check:isolation && npm run check:i18n-orphans && npm run check:no-silent-catch && npm run check:no-tracked-artifacts && npm run validate:rbac && npm run check:orphans && npm run check:docs && npm run openapi:check && npm run changelog:check && npm run typecheck && npm run boot-guard",
+    "verify": "node scripts/verify.js",
     "test:ci": "npm run check:isolation && jest --ci --maxWorkers=2"
   },
   "dependencies": {

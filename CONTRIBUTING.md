@@ -224,7 +224,9 @@ Breaking changes must include a `BREAKING CHANGE:` footer in the commit body.
 
 ## 9. Pre-PR Checklist
 
-Before pushing and opening a PR, run through this list:
+Before pushing and opening a PR, run `npm run verify` first. It runs every guard
+script CI runs, in CI's order, and prints a summary table. Then run through the
+rest of this list:
 
 ```bash
 npm run lint                       # no ESLint errors
