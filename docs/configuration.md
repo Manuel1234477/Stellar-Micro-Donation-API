@@ -51,7 +51,7 @@ npm run config:check      # what CI runs: schema covers src/, generated files ar
 22. [Shared State (Multi-Instance)](#22-shared-state-multi-instance)
 23. [GraphQL](#23-graphql)
 
-279 variables are declared. Further topics follow the reference below.
+281 variables are declared. Further topics follow the reference below.
 
 ---
 
@@ -70,6 +70,7 @@ npm run config:check      # what CI runs: schema covers src/, generated files ar
 | `HSTS_MAX_AGE` | integer | `31536000` | no | Strict-Transport-Security `max-age` in seconds. Sent only when `NODE_ENV=production` Minimum: 0. |
 | `HSTS_INCLUDE_SUBDOMAINS` | boolean | `true` | no | Add `includeSubDomains` to Strict-Transport-Security. Sent only when `NODE_ENV=production` |
 | `HSTS_PRELOAD` | boolean | `false` | no | Add `preload` to Strict-Transport-Security. Only enable after the domain is submitted to the browser preload list; this applies to all subdomains. Sent only when `NODE_ENV=production` |
+| `API_DOCS_PUBLIC` | boolean | `false` | no | Serve Swagger UI and the OpenAPI spec (`/api/docs`, `/api/openapi.json`) when `NODE_ENV=production`. Off by default in production; when enabled there, both routes require a valid API key. Outside production they are always served |
 
 ---
 
@@ -153,6 +154,7 @@ npm run config:check      # what CI runs: schema covers src/, generated files ar
 | `HORIZON_RETRY_MAX_DELAY_MS` | integer | `2000` | no | Maximum delay (ms) cap for Horizon retry back-off |
 | `HORIZON_STREAM_TIMEOUT_MS` | integer | `60000` | no | Timeout (ms) for Horizon SSE stream connections |
 | `HORIZON_SUBMIT_TIMEOUT_MS` | integer | `30000` | no | Timeout (ms) for transaction submission to Horizon |
+| `STELLAR_TX_TIMEOUT_SECONDS` | integer | `30` | no | Validity window (seconds) for transactions built by the Stellar services. Sets the time bound `maxTime` on every transaction. Expired envelopes are never resubmitted and must be rebuilt Range: 1–3600. |
 | `HORIZON_URL` | url | — | no | Override the Horizon endpoint URL. Defaults to the canonical URL for `STELLAR_NETWORK` |
 | `MIN_RESERVE_XLM` | number | `1` | no | Minimum XLM balance (in XLM) required in a wallet for operations |
 | `MOCK_STELLAR` | boolean | `false` | no | When `true`, no outbound Stellar/Horizon calls are made. Required for local dev and CI |

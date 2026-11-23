@@ -70,6 +70,8 @@ const ENV_VARS = [
   { group: G0, name: 'HSTS_MAX_AGE', type: 'integer', default: 31536000, min: 0, description: 'Strict-Transport-Security `max-age` in seconds. Sent only when `NODE_ENV=production`' },
   { group: G0, name: 'HSTS_INCLUDE_SUBDOMAINS', type: 'boolean', default: true, description: 'Add `includeSubDomains` to Strict-Transport-Security. Sent only when `NODE_ENV=production`' },
   { group: G0, name: 'HSTS_PRELOAD', type: 'boolean', default: false, description: 'Add `preload` to Strict-Transport-Security. Only enable after the domain is submitted to the browser preload list; this applies to all subdomains. Sent only when `NODE_ENV=production`' },
+  // #2117: the spec documents the /admin surface, so production only serves it when opted in, and then behind an API key.
+  { group: G0, name: 'API_DOCS_PUBLIC', type: 'boolean', default: false, description: 'Serve Swagger UI and the OpenAPI spec (`/api/docs`, `/api/openapi.json`) when `NODE_ENV=production`. Off by default in production; when enabled there, both routes require a valid API key. Outside production they are always served' },
 
   // ── Authentication & API Keys ───────────────────────────────────
   { group: G1, name: 'API_KEY_EXPIRED_WINDOW_DAYS', type: 'integer', default: 1, min: 0, description: 'Notify owners of keys that expired within this many days' },
