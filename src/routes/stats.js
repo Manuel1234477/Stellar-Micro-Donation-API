@@ -82,6 +82,40 @@ const { isValidStellarPublicKey } = require('../utils/validators');
 const { statsRateLimiter } = require('../middleware/rateLimiter');
 const donationEvents = require('../events/donationEvents');
 const { deprecation } = require('../middleware/deprecation');
+const { validateLimit } = require('../utils/pagination');
+
+/** Default number of entries returned by limit-bearing stats routes. */
+const STATS_DEFAULT_LIMIT = 10;
+/** Maximum number of entries a stats route may return in one response. */
+const STATS_MAX_LIMIT = 100;
+
+/**
+ * Validate the `limit` query parameter for stats routes (#2110).
+ * Accepts integers in [1, STATS_MAX_LIMIT]; defaults to STATS_DEFAULT_LIMIT
+ * when omitted. Rejects 0, negatives, non-numeric and oversized values.
+ *
+ * @param {*} rawLimit - Raw `limit` query value.
+ * @returns {{valid: boolean, value?: number, error?: string}}
+ */
+function parseStatsLimit(rawLimit) {
+  return validateLimit(rawLimit, { defaultValue: STATS_DEFAULT_LIMIT, max: STATS_MAX_LIMIT });
+}
+
+/**
+ * Express middleware rejecting invalid `limit` values with 400 INVALID_LIMIT
+ * and storing the validated value on `req.statsLimit`.
+ */
+function validateStatsLimit(req, res, next) {
+  const result = parseStatsLimit(req.query.limit);
+  if (!result.valid) {
+    return res.status(400).json({
+      success: false,
+      error: { code: 'INVALID_LIMIT', message: `Invalid limit parameter: ${result.error}` },
+    });
+  }
+  req.statsLimit = result.value;
+  return next();
+}
 
 // Stats cache TTL in milliseconds — configurable via STATS_CACHE_TTL_SECONDS env var (default: 60s)
 const STATS_CACHE_TTL_MS = parseInt(process.env.STATS_CACHE_TTL_SECONDS || '60', 10) * 1000;
@@ -199,6 +233,23 @@ const optionalDateRangeQuerySchema = validateSchema({
       // normalised to `startDate`/`endDate` before the handler runs.
       from: { type: 'dateString', required: false },
       to: { type: 'dateString', required: false },
+    },
+  },
+});
+
+/**
+ * Query schema for limit-bearing stats routes: the optional date range plus
+ * `limit`. `limit` must be listed here or `validateSchema` strips it before
+ * `validateStatsLimit` can see it; range/type checks happen there (#2110).
+ */
+const leaderboardQuerySchema = validateSchema({
+  query: {
+    fields: {
+      startDate: { type: 'dateString', required: false },
+      endDate: { type: 'dateString', required: false },
+      from: { type: 'dateString', required: false },
+      to: { type: 'dateString', required: false },
+      limit: { type: 'string', required: false },
     },
   },
 });
@@ -418,14 +469,14 @@ router.get('/recipients', checkPermission(PERMISSIONS.STATS_READ), auditStatsAcc
 /**
  * GET /stats/leaderboard
  * Get donor leaderboard
- * Query params: startDate, endDate (ISO format, optional), limit
+ * Query params: startDate, endDate (ISO format, optional), limit (integer 1-100, default 10)
  */
-router.get('/leaderboard', checkPermission(PERMISSIONS.STATS_READ), auditStatsAccess, optionalDateRangeQuerySchema, normaliseDateAliases, validateDateRange, (req, res, next) => {
+router.get('/leaderboard', checkPermission(PERMISSIONS.STATS_READ), auditStatsAccess, leaderboardQuerySchema, normaliseDateAliases, validateDateRange, validateStatsLimit, (req, res, next) => {
   try {
     const { startDate, endDate } = req.query;
     const start = startDate ? new Date(startDate) : null;
     const end = endDate ? new Date(endDate) : null;
-    const limit = req.query.limit ? parseInt(req.query.limit, 10) : 10;
+    const limit = req.statsLimit;
 
     const access = getStatsAccessContext(req);
     const leaderboard = StatsService.getLeaderboard(start, end, limit, access);
@@ -708,3 +759,7 @@ router.post('/cache/invalidate', checkPermission(PERMISSIONS.STATS_READ), auditS
 });
 
 module.exports = router;
+module.exports.parseStatsLimit = parseStatsLimit;
+module.exports.validateStatsLimit = validateStatsLimit;
+module.exports.STATS_DEFAULT_LIMIT = STATS_DEFAULT_LIMIT;
+module.exports.STATS_MAX_LIMIT = STATS_MAX_LIMIT;
