@@ -40,22 +40,18 @@ function createHealthHandlers(services = {}) {
     try {
       const isAdmin = req.apiKey?.role === 'admin' || req.user?.role === 'admin';
       const verbose = req.query.verbose === 'true' && isAdmin;
-      const isProduction = process.env.NODE_ENV === 'production';
-      const shouldMinimize = isProduction && !isAdmin;
 
       const result = await HealthCheckService.getFullHealth(
         stellarService,
         networkStatusService,
         recurringDonationScheduler,
-        verbose && !shouldMinimize
+        verbose
       );
 
-      if (shouldMinimize) {
-        return res.status(result.status === 'healthy' ? 200 : 503).json({
-          status: result.status,
-          timestamp: result.timestamp,
-          stellarMode: getStellarMode(),
-        });
+      // #2118: anonymous callers only get status and per-dependency status.
+      if (!isAdmin) {
+        return res.status(result.status === 'healthy' ? 200 : 503)
+          .json(HealthCheckService.toPublicHealth(result));
       }
 
       result.stellarMode = getStellarMode();
