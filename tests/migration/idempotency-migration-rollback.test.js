@@ -1,7 +1,7 @@
 'use strict';
 
 const sqlite3 = require('sqlite3').verbose();
-const migration = require('../../src/scripts/migrations/001_add_idempotency_constraint');
+const migration = require('../../scripts/legacy/migrations/001_add_idempotency_constraint');
 
 function createDb() {
   const sqlite = new sqlite3.Database(':memory:');
