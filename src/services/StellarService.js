@@ -6,6 +6,7 @@ const StellarSdk = require('./stellar/sdk.js');
 const StellarServiceInterface = require('./interfaces/StellarServiceInterface');
 const { STELLAR_NETWORKS, HORIZON_URLS } = require('../constants');
 const { getNetworkPassphrase } = require('../config/stellarEnvironments');
+const { isMockStellarEnabled } = require('../config/stellarMode');
 const log = require('../utils/log');
 const { withTimeout, TIMEOUT_DEFAULTS, TimeoutError } = require('../utils/timeoutHandler');
 const { runWithAbortController, getCurrentAbortSignal } = require('../utils/abortContext');
@@ -106,7 +107,7 @@ class StellarService extends StellarServiceInterface {
     
     return {
       async request(method, url, data, headers = {}) {
-        if (process.env.MOCK_STELLAR !== 'true') {
+        if (!isMockStellarEnabled()) {
           await assertSafeOutboundUrl(url);
         }
         const correlationHeaders = generateCorrelationHeaders();

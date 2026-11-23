@@ -10,6 +10,7 @@
  */
 
 const log = require('../utils/log');
+const { readEnv } = require('../config/env');
 const { calculateRetryAfter } = require('./rateLimitHeaders');
 const { ExpressRateLimitStore } = require('../services/rateLimitStores');
 
@@ -301,7 +302,7 @@ const bulkImportRateLimiter = rateLimit({
  */
 const listDonationsRateLimiter = rateLimit({
   windowMs: 60 * 1000,
-  max: parseInt(process.env.LIST_DONATIONS_RATE_LIMIT || '300'),
+  max: readEnv('LIST_DONATIONS_RATE_LIMIT'),
   keyGenerator: cheapKeyGenerator,
   standardHeaders: true,
   legacyHeaders: true,
@@ -497,8 +498,8 @@ function buildAuthChallengeHandler(limit, scope) {
   };
 }
 
-const authChallengeIpLimit = parseInt(process.env.AUTH_CHALLENGE_RATE_LIMIT || '30');
-const authChallengeAccountLimit = parseInt(process.env.AUTH_CHALLENGE_ACCOUNT_RATE_LIMIT || '10');
+const authChallengeIpLimit = readEnv('AUTH_CHALLENGE_RATE_LIMIT');
+const authChallengeAccountLimit = readEnv('AUTH_CHALLENGE_ACCOUNT_RATE_LIMIT');
 
 const authChallengeIpRateLimiter = rateLimit({
   storePrefix: 'authChallengeIp',

@@ -20,6 +20,7 @@
 const fs = require('fs');
 const path = require('path');
 const config = require('../config');
+const { readEnv } = require('../config/env');
 const log = require('./log');
 const Database = require('./database');
 const { maskSensitiveData } = require('./dataMasker');
@@ -151,8 +152,8 @@ function getGeoDbPath() {
   const geoConfig = config.geoBlocking || config.geoBlock || {};
   return (
     geoConfig.dbPath ||
-    process.env.GEOIP_DB_PATH ||
-    process.env.MAXMIND_DB_PATH ||
+    // GEOIP_DB_PATH is a deprecated alias of MAXMIND_DB_PATH resolved by readEnv (#2111).
+    readEnv('MAXMIND_DB_PATH') ||
     null
   );
 }

@@ -68,6 +68,7 @@ const { bestEffort } = require('../utils/bestEffort');
  */
 
 const express = require('express');
+const { readEnv } = require('../config/env');
 const router = express.Router();
 const StatsService = require('../services/StatsService');
 const { validateDateRange } = require('../middleware/validation');
@@ -118,10 +119,10 @@ function validateStatsLimit(req, res, next) {
 }
 
 // Stats cache TTL in milliseconds — configurable via STATS_CACHE_TTL_SECONDS env var (default: 60s)
-const STATS_CACHE_TTL_MS = parseInt(process.env.STATS_CACHE_TTL_SECONDS || '60', 10) * 1000;
+const STATS_CACHE_TTL_MS = readEnv('STATS_CACHE_TTL_SECONDS') * 1000;
 
 // Summary cache TTL — configurable via STATS_SUMMARY_CACHE_TTL_SECONDS (default: 60s)
-const SUMMARY_CACHE_TTL_MS = parseInt(process.env.STATS_SUMMARY_CACHE_TTL_SECONDS || '60', 10) * 1000;
+const SUMMARY_CACHE_TTL_MS = readEnv('STATS_SUMMARY_CACHE_TTL_SECONDS') * 1000;
 const SUMMARY_CACHE_PREFIX = 'stats:summary:';
 
 // Invalidate all summary cache entries when a new donation is created

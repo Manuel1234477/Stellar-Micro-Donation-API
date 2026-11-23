@@ -33,7 +33,7 @@ const { validateKey } = require('../models/apiKeys');
 const { securityConfig } = require('../config/securityConfig');
 const donationEvents = require('../events/donationEvents');
 const log = require('../utils/log');
-const { env } = require('../config/env');
+const { env, readEnv } = require('../config/env');
 const { streamConnectionsActive, streamConnectionsRejectedTotal } = require('../utils/metrics');
 const { createTokenBucket } = require('../utils/tokenBucket');
 const { safeEqual } = require('../utils/safeEqual');
@@ -48,7 +48,7 @@ const BALANCE_SUBPROTOCOL = 'balances.v1';
 // Deprecation switch for the ?apiKey= query parameter (#1942). Defaults to
 // accepting it, with a warning, so existing clients keep working. Set to
 // "false" to reject query-string keys.
-const queryApiKeyAllowed = () => process.env.WS_ALLOW_QUERY_API_KEY !== 'false';
+const queryApiKeyAllowed = () => readEnv('WS_ALLOW_QUERY_API_KEY') !== false;
 
 const MAX_WALLETS = parseInt(process.env.WS_MAX_WALLETS || '50', 10);
 const HEARTBEAT_MS = parseInt(process.env.WS_HEARTBEAT_MS || '30000', 10);
