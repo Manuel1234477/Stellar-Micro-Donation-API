@@ -58,6 +58,7 @@
     "changelog:check": "node scripts/check-changelog-sync.js",
     "check:no-json-persistence": "node scripts/check-no-json-persistence.js",
     "check:no-tracked-artifacts": "node scripts/check-no-tracked-artifacts.js",
+    "check:no-placeholders": "node scripts/check-no-placeholders.js",
     "check:test-naming": "node scripts/check-test-naming.js",
     "check:docs": "node scripts/check-docs.js",
     "check:i18n-orphans": "node scripts/check-i18n-orphans.js",

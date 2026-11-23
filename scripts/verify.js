@@ -22,6 +22,7 @@ const STEPS = [
   'check:i18n-orphans',
   'check:no-silent-catch',
   'check:no-tracked-artifacts',
+  'check:no-placeholders',
   'validate:rbac',
   'check:orphans',
   'check:docs',

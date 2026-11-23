@@ -14,4 +14,6 @@ module.exports = {
     ...files.map((file) => `node --check ${quote(file)}`),
     `eslint --fix ${files.map(quote).join(' ')}`,
   ],
+  // Placeholder-marker check on every staged file (#2121).
+  '*': (files) => `node scripts/check-no-placeholders.js ${files.map(quote).join(' ')}`,
 };
