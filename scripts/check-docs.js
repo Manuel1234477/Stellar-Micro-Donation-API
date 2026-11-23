@@ -6,7 +6,7 @@
  *
  * Documentation integrity gate. Fails (exit 1) when:
  *  - README.md is longer than MAX_README_LINES
- *  - a relative Markdown link in README.md or docs/**\/*.md points to a missing file
+ *  - a relative Markdown link in README.md, CONTRIBUTING.md, SECURITY.md or docs/**\/*.md points to a missing file
  *  - README.md references a repository path (scripts/, src/, docs/, ...) that does not exist
  *  - README.md runs an `npm run <script>` that is not defined in package.json
  *  - README.md or docs/quickstart.md shows an unversioned API path (use /api/v1)
@@ -86,7 +86,11 @@ function checkUnversioned(file, content) {
 function main() {
   const readme = path.join(ROOT, 'README.md');
   const quickstart = path.join(ROOT, 'docs', 'quickstart.md');
-  const markdownFiles = [readme, ...walkMarkdown(path.join(ROOT, 'docs'))];
+  // Root-level docs are link-checked too (#2116); the docs/ tree is walked recursively.
+  const rootDocs = ['CONTRIBUTING.md', 'SECURITY.md']
+    .map((name) => path.join(ROOT, name))
+    .filter((file) => fs.existsSync(file));
+  const markdownFiles = [readme, ...rootDocs, ...walkMarkdown(path.join(ROOT, 'docs'))];
 
   for (const file of markdownFiles) {
     checkLinks(file, fs.readFileSync(file, 'utf8'));

@@ -88,7 +88,7 @@ npm run check-coverage
 ```
 
 All tests use an isolated per-worker SQLite database — you do not need to reset any
-state between runs. See [Test Isolation Guide](docs/TEST_ISOLATION.md) for details.
+state between runs. See [Test Suite Interference Guide](docs/testing/test-suite-interference.md) for details.
 
 ---
 
@@ -438,5 +438,5 @@ When working on a feature, these docs will save you time:
 | Database schema & ER diagram | [docs/database-schema.md](docs/database-schema.md) |
 | SEP-10 web auth & federation | [docs/sep-compliance.md](docs/sep-compliance.md) |
 | API endpoint examples | [docs/api-examples.md](docs/api-examples.md) |
-| Architecture overview | [docs/architecture.md](docs/architecture.md) |
+| Architecture overview | [docs/architecture/architecture.md](docs/architecture/architecture.md) |
 | Troubleshooting | [docs/developer-troubleshooting-guide.md](docs/developer-troubleshooting-guide.md) |
