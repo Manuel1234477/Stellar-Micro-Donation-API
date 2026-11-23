@@ -1,3 +1,5 @@
+const { resolveFee } = require('./resolveFee');
+const { getTxTimeoutSeconds } = require('./timeBounds');
 const StellarSdk = require('./sdk.js');
 const StellarErrorHandler = require('../../utils/stellarErrorHandler');
 const log = require('../../utils/log');
@@ -39,11 +41,11 @@ class StellarAssets {
       }
 
       const transaction = new StellarSdk.TransactionBuilder(account, {
-        fee: StellarSdk.BASE_FEE,
+        fee: await resolveFee(this.service),
         networkPassphrase: this.service._getNetworkPassphrase(),
       })
         .addOperation(StellarSdk.Operation.changeTrust(opParams))
-        .setTimeout(30)
+        .setTimeout(getTxTimeoutSeconds())
         .build();
 
       transaction.sign(keypair);
@@ -90,14 +92,14 @@ class StellarAssets {
       }
 
       const transaction = new StellarSdk.TransactionBuilder(account, {
-        fee: StellarSdk.BASE_FEE,
+        fee: await resolveFee(this.service),
         networkPassphrase: this.service._getNetworkPassphrase(),
       })
         .addOperation(StellarSdk.Operation.changeTrust({
           asset,
           limit: '0',
         }))
-        .setTimeout(30)
+        .setTimeout(getTxTimeoutSeconds())
         .build();
 
       transaction.sign(keypair);
@@ -175,7 +177,8 @@ class StellarAssets {
       const minimumReserve = this.service.accounts.calculateMinimumReserve
         ? this.service.accounts.calculateMinimumReserve(subentryCount)
         : 1 + (subentryCount * 0.5);
-      const feeXlm = parseInt(this.service.baseFee || StellarSdk.BASE_FEE, 10) / 10000000;
+      const fee = await resolveFee(this.service);
+      const feeXlm = parseInt(fee, 10) / 10000000;
       if (currentXlm - feeXlm < minimumReserve) {
         throw new BusinessLogicError(
           ERROR_CODES.INSUFFICIENT_BALANCE,
@@ -184,7 +187,7 @@ class StellarAssets {
       }
 
       const transaction = new StellarSdk.TransactionBuilder(issuerAccount, {
-        fee: this.service.baseFee || StellarSdk.BASE_FEE,
+        fee,
         networkPassphrase: this.service.networkPassphrase || this.service._getNetworkPassphrase(),
       })
         .addOperation(StellarSdk.Operation.payment({
@@ -192,7 +195,7 @@ class StellarAssets {
           asset,
           amount: issuedAmount,
         }))
-        .setTimeout(30)
+        .setTimeout(getTxTimeoutSeconds())
         .build();
 
       transaction.sign(issuerKeypair);
@@ -226,18 +229,15 @@ class StellarAssets {
       );
 
       const transaction = new StellarSdk.TransactionBuilder(holderAccount, {
-        fee: StellarSdk.BASE_FEE,
-        networkPassphrase:
-          this.service.network === 'public'
-            ? StellarSdk.Networks.PUBLIC
-            : StellarSdk.Networks.TESTNET,
+        fee: await resolveFee(this.service),
+        networkPassphrase: this.service._getNetworkPassphrase(),
       })
         .addOperation(StellarSdk.Operation.payment({
           destination: issuerPublic,
           asset,
           amount: amount.toString(),
         }))
-        .setTimeout(30)
+        .setTimeout(getTxTimeoutSeconds())
         .build();
 
       transaction.sign(holderKeypair);
@@ -270,11 +270,11 @@ class StellarAssets {
       );
 
       const transaction = new StellarSdk.TransactionBuilder(issuerAccount, {
-        fee: this.service.baseFee,
+        fee: await resolveFee(this.service),
         networkPassphrase: this.service.networkPassphrase,
       })
         .addOperation(StellarSdk.Operation.clawback({ asset, from, amount: amount.toString() }))
-        .setTimeout(30)
+        .setTimeout(getTxTimeoutSeconds())
         .build();
 
       transaction.sign(issuerKeypair);
@@ -308,7 +308,7 @@ class StellarAssets {
       );
 
       const transaction = new StellarSdk.TransactionBuilder(distributorAccount, {
-        fee: StellarSdk.BASE_FEE,
+        fee: await resolveFee(this.service),
         networkPassphrase: this.service._getNetworkPassphrase(),
       })
         .addOperation(StellarSdk.Operation.payment({
@@ -316,7 +316,7 @@ class StellarAssets {
           asset,
           amount: amount.toString(),
         }))
-        .setTimeout(30)
+        .setTimeout(getTxTimeoutSeconds())
         .build();
 
       transaction.sign(distributorKeypair);

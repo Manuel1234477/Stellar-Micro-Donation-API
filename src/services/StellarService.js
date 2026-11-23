@@ -5,6 +5,7 @@ const StellarSdk = require('./stellar/sdk.js');
 // Internal modules
 const StellarServiceInterface = require('./interfaces/StellarServiceInterface');
 const { STELLAR_NETWORKS, HORIZON_URLS } = require('../constants');
+const { getNetworkPassphrase } = require('../config/stellarEnvironments');
 const log = require('../utils/log');
 const { withTimeout, TIMEOUT_DEFAULTS, TimeoutError } = require('../utils/timeoutHandler');
 const { runWithAbortController, getCurrentAbortSignal } = require('../utils/abortContext');
@@ -37,9 +38,7 @@ class StellarService extends StellarServiceInterface {
     // Default to SDK definitions if environment config is missing
     this.baseFee = this.environment?.baseFee || StellarSdk.BASE_FEE;
     this.networkPassphrase = this.environment?.networkPassphrase ||
-      (this.network === 'mainnet' || this.network === 'public'
-        ? StellarSdk.Networks.PUBLIC
-        : StellarSdk.Networks.TESTNET);
+      getNetworkPassphrase(this.network);
 
     // Horizon connection pool — HORIZON_POOL_SIZE members, max 10, default 3
     const poolSize = Math.min(
@@ -143,7 +142,7 @@ class StellarService extends StellarServiceInterface {
   getEnvironment() { return this.environment || { name: this.network }; }
 
   _getNetworkPassphrase() {
-    return this.network === 'public' ? StellarSdk.Networks.PUBLIC : StellarSdk.Networks.TESTNET;
+    return this.networkPassphrase;
   }
 
   _isSamePath(left = [], right = []) {

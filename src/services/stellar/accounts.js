@@ -9,6 +9,8 @@
  * - Inflation destination management
  */
 
+const { resolveFee } = require('./resolveFee');
+const { getTxTimeoutSeconds } = require('./timeBounds');
 const StellarSdk = require('./sdk.js');
 const log = require('../../utils/log');
 const { ValidationError } = require('../../utils/errors');
@@ -102,7 +104,7 @@ class StellarAccounts {
     const account = await this.loadAccount(sourceKeypair.publicKey());
 
     const transaction = new StellarSdk.TransactionBuilder(account, {
-      fee: this.stellarService.baseFee,
+      fee: await resolveFee(this.stellarService),
       networkPassphrase: this.stellarService.networkPassphrase,
     })
       .addOperation(
@@ -110,7 +112,7 @@ class StellarAccounts {
           inflationDest: destinationPublicKey,
         })
       )
-      .setTimeout(30)
+      .setTimeout(getTxTimeoutSeconds())
       .build();
 
     transaction.sign(sourceKeypair);
@@ -130,11 +132,11 @@ class StellarAccounts {
     const sourceKeypair = StellarSdk.Keypair.fromSecret(sourceSecret);
     const account = await this.loadAccount(sourceKeypair.publicKey());
     const transaction = new StellarSdk.TransactionBuilder(account, {
-      fee: this.stellarService.baseFee,
+      fee: await resolveFee(this.stellarService),
       networkPassphrase: this.stellarService.networkPassphrase,
     })
       .addOperation(StellarSdk.Operation.setOptions({ homeDomain }))
-      .setTimeout(30)
+      .setTimeout(getTxTimeoutSeconds())
       .build();
 
     transaction.sign(sourceKeypair);
@@ -156,7 +158,7 @@ class StellarAccounts {
     const account = await this.loadAccount(sourceKeypair.publicKey());
 
     const transaction = new StellarSdk.TransactionBuilder(account, {
-      fee: this.stellarService.baseFee,
+      fee: await resolveFee(this.stellarService),
       networkPassphrase: this.stellarService.networkPassphrase,
     })
       .addOperation(
@@ -164,7 +166,7 @@ class StellarAccounts {
           signer: { ed25519PublicKey: signerPublicKey, weight },
         })
       )
-      .setTimeout(30)
+      .setTimeout(getTxTimeoutSeconds())
       .build();
 
     transaction.sign(sourceKeypair);
@@ -193,7 +195,7 @@ class StellarAccounts {
     const account = await this.loadAccount(keypair.publicKey());
 
     const transaction = new StellarSdk.TransactionBuilder(account, {
-      fee: this.stellarService.baseFee,
+      fee: await resolveFee(this.stellarService),
       networkPassphrase: this.stellarService.networkPassphrase,
     })
       .addOperation(
@@ -201,7 +203,7 @@ class StellarAccounts {
           bumpTo: bumpTo.toString(),
         })
       )
-      .setTimeout(30)
+      .setTimeout(getTxTimeoutSeconds())
       .build();
 
     transaction.sign(keypair);
@@ -215,7 +217,7 @@ class StellarAccounts {
     const account = await this.loadAccount(sourceKeypair.publicKey());
 
     const transaction = new StellarSdk.TransactionBuilder(account, {
-      fee: this.stellarService.baseFee,
+      fee: await resolveFee(this.stellarService),
       networkPassphrase: this.stellarService.networkPassphrase,
     })
       .addOperation(
@@ -223,7 +225,7 @@ class StellarAccounts {
           destination: destinationPublic,
         })
       )
-      .setTimeout(30)
+      .setTimeout(getTxTimeoutSeconds())
       .build();
 
     transaction.sign(sourceKeypair);
@@ -298,7 +300,7 @@ class StellarAccounts {
     const account = await this.loadAccount(sourceKeypair.publicKey());
 
     const transaction = new StellarSdk.TransactionBuilder(account, {
-      fee: this.stellarService.baseFee,
+      fee: await resolveFee(this.stellarService),
       networkPassphrase: this.stellarService.networkPassphrase,
     })
       .addOperation(
@@ -307,7 +309,7 @@ class StellarAccounts {
           value: value,
         })
       )
-      .setTimeout(30)
+      .setTimeout(getTxTimeoutSeconds())
       .build();
 
     transaction.sign(sourceKeypair);
@@ -356,7 +358,7 @@ class StellarAccounts {
     const account = await this.loadAccount(sourceKeypair.publicKey());
 
     const transaction = new StellarSdk.TransactionBuilder(account, {
-      fee: this.stellarService.baseFee,
+      fee: await resolveFee(this.stellarService),
       networkPassphrase: this.stellarService.networkPassphrase,
     })
       .addOperation(
@@ -365,7 +367,7 @@ class StellarAccounts {
           value: null, // Setting to null removes the entry
         })
       )
-      .setTimeout(30)
+      .setTimeout(getTxTimeoutSeconds())
       .build();
 
     transaction.sign(sourceKeypair);

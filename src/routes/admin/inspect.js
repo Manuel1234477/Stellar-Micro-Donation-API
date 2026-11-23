@@ -85,6 +85,7 @@ const StellarSdk = require('../../services/stellar/sdk.js');
 const Transaction = require('../../models/transaction');
 const { requireAdmin } = require('../../middleware/rbac');
 const { ValidationError, NotFoundError} = require('../../utils/errors');
+const { getNetworkPassphrase } = require('../../config/stellarEnvironments');
 const log = require('../../utils/log');
 const asyncHandler = require('../../utils/asyncHandler');
 const { payloadSizeLimiter, ENDPOINT_LIMITS } = require('../../middleware/payloadSizeLimiter');
@@ -99,9 +100,7 @@ const router = express.Router();
  * @returns {string} Stellar network passphrase
  */
 function resolveNetworkPassphrase(network) {
-  return network === 'public' || network === 'mainnet'
-    ? StellarSdk.Networks.PUBLIC
-    : StellarSdk.Networks.TESTNET;
+  return getNetworkPassphrase(network);
 }
 
 /**
@@ -155,7 +154,7 @@ router.post('/', requireAdmin(), (req, res, next) => {
       throw new ValidationError('XDR envelope is required');
     }
 
-    const networkPassphrase = StellarSdk.Networks[network.toUpperCase()] || StellarSdk.Networks.TESTNET;
+    const networkPassphrase = getNetworkPassphrase(network);
 
     let decoded;
     try {
@@ -223,7 +222,7 @@ router.get('/:id', requireAdmin(), (req, res, next) => {
     }
 
     // Default to TESTNET for decoded if not specified (could be improved by checking config)
-    const network = process.env.STELLAR_NETWORK === 'public' ? StellarSdk.Networks.PUBLIC : StellarSdk.Networks.TESTNET;
+    const network = getNetworkPassphrase(process.env.STELLAR_NETWORK);
 
     let decoded;
     try {
