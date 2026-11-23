@@ -10,6 +10,10 @@
  * - donations_store(donor_id, created_at DESC, id DESC) — donor-scoped lists
  * - donations_store(recipient_id, created_at DESC, id DESC) — recipient-scoped lists
  *
+ * Renamed from 045_add_list_donations_indexes.js to resolve the duplicate
+ * 045_ prefix (see #2100). exports.name keeps the original name so databases
+ * that already recorded it in schema_migrations do not re-run this migration.
+ *
  * Verify with:
  *   EXPLAIN QUERY PLAN
  *   SELECT * FROM donations_store
