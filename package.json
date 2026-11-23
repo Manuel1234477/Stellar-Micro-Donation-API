@@ -9,6 +9,7 @@
     "npm": ">=10.0.0"
   },
   "scripts": {
+    "prepare": "husky || true",
     "start": "npm run validate-env && node src/app.js",
     "dev": "nodemon src/app.js",
     "validate-env": "node src/utils/startupChecks.js",
@@ -124,8 +125,10 @@
     "eslint-plugin-no-secrets": "^2.3.3",
     "eslint-plugin-security": "^4.2.0",
     "fast-check": "^4.10.2",
+    "husky": "^9.1.7",
     "jest": "^30.5.2",
     "js-yaml": "^4.3.2",
+    "lint-staged": "^17.6.2",
     "madge": "^8.0.0",
     "nodemon": "^3.1.14",
     "sql.js": "^1.15.1",
