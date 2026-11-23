@@ -14,7 +14,7 @@
 
 'use strict';
 
-require('../src/config/loadEnv'); // single .env loader (#1943)
+require('../src/config/env'); // single .env loader (#1943, #2112)
 
 let errors = 0;
 let warnings = 0;

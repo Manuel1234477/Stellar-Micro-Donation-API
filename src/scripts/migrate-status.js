@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 'use strict';
 
-require('../config/loadEnv'); // single .env loader (#1943)
+require('../config/env'); // single .env loader (#1943, #2112)
 
 const { migrationStatus } = require('../utils/migrationRunner');
 

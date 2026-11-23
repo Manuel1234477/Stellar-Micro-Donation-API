@@ -9,7 +9,7 @@
  * Stellar service instances. Uses ServiceContainer for dependency injection.
  */
 
-require('./loadEnv');
+require('./env'); // loads the repository .env (#2112)
 const log = require('../utils/log');
 const { isMockStellarEnabled } = require('./stellarMode');
 

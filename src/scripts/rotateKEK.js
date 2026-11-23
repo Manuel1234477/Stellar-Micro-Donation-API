@@ -24,7 +24,7 @@
  *      ENCRYPTION_KEY=<old-key> node src/scripts/rotateKEK.js --verify
  */
 
-require('../config/loadEnv'); // single .env loader (#1943)
+require('../config/env'); // single .env loader (#1943, #2112)
 
 const crypto = require('crypto');
 const Database = require('../utils/database');

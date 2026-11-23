@@ -3,13 +3,13 @@
  * 
  * RESPONSIBILITY: Centralized environment variable management and configuration validation
  * OWNER: Platform Team
- * DEPENDENCIES: dotenv, constants
+ * DEPENDENCIES: ./env (loads .env), constants
  * 
  * Single source of truth for all environment variables and application configuration.
  * Loads, validates, and provides type-safe access to configuration with sensible defaults.
  */
 
-require('./loadEnv');
+require('./env'); // loads the repository .env (#2112)
 const path = require('path');
 const {
   VALID_STELLAR_NETWORKS,

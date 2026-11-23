@@ -19,11 +19,31 @@
  * rules and default.
  *
  * Direct `process.env` reads outside src/config are being phased out; see the
- * `no-restricted-properties` rule in .eslintrc.js.
+ * `no-restricted-syntax` rule in eslint.config.js.
  */
 
-// Same .env as src/config/index.js; dotenv never overrides variables that are already set.
-require('./loadEnv');
+const fs = require('fs');
+const path = require('path');
+
+// ── .env loading (#1943, #2112) ─────────────────────────────────────────────
+// This is the ONLY place the repository .env file is loaded. Every entry point
+// (server, scripts, config modules) requires this module instead of calling
+// dotenv itself. The path is absolute, so the result does not depend on the
+// current working directory. dotenv never overrides variables that are already
+// set in process.env, and Node's module cache makes this run once.
+const ROOT_ENV_PATH = path.join(__dirname, '..', '..', '.env');
+const LEGACY_SRC_ENV_PATH = path.join(__dirname, '..', '.env');
+
+require('dotenv').config({ path: ROOT_ENV_PATH, quiet: true });
+
+if (fs.existsSync(LEGACY_SRC_ENV_PATH)) {
+  // emitWarning rather than the logger: the logger depends on config (cycle).
+  process.emitWarning(
+    `Ignoring ${LEGACY_SRC_ENV_PATH}. Environment configuration is read only from the repository-root .env file; move any settings from src/.env into ${ROOT_ENV_PATH}.`,
+    { type: 'ConfigWarning', code: 'LEGACY_SRC_ENV_IGNORED' },
+  );
+}
+
 const Ajv = require('ajv');
 const { ENV_VARS, ENV_VAR_PATTERNS } = require('./envSchema');
 
@@ -262,5 +282,7 @@ module.exports = {
   readEnv,
   isDeclared,
   findDeprecatedEnv,
+  ROOT_ENV_PATH,
+  LEGACY_SRC_ENV_PATH,
   buildJsonSchema,
 };

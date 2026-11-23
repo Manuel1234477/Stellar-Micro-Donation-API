@@ -16,7 +16,7 @@
 
 const fs = require('fs');
 const path = require('path');
-require('../config/loadEnv'); // single .env loader (#1943)
+require('../config/env'); // single .env loader (#1943, #2112)
 
 const { runMigrations } = require('../utils/migrationRunner');
 
