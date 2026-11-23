@@ -250,6 +250,24 @@ async function getFullHealth(stellarService, networkStatusService, scheduler, ve
 }
 
 /**
+ * Reduce a full health result to the public shape (#2118).
+ *
+ * Anonymous callers get only the overall status, the timestamp and each
+ * dependency's status. Horizon URLs, network details, circuit-breaker state,
+ * pool metrics and raw error messages are admin-only.
+ *
+ * @param {{status: string, timestamp: string, dependencies: Object}} result
+ * @returns {{status: string, timestamp: string, dependencies: Object<string, {status: string}>}}
+ */
+function toPublicHealth(result) {
+  const dependencies = {};
+  for (const [name, dep] of Object.entries(result.dependencies || {})) {
+    dependencies[name] = { status: dep.status };
+  }
+  return { status: result.status, timestamp: result.timestamp, dependencies };
+}
+
+/**
  * Liveness check — confirms the process is alive.
  * Never checks external dependencies; always returns healthy.
  * Must stay synchronous and dependency-free so that a liveness probe
@@ -289,6 +307,7 @@ module.exports = {
   checkNetworkStatus,
   checkGeoBlocking,
   getFullHealth,
+  toPublicHealth,
   getLiveness,
   getReadiness,
 };
