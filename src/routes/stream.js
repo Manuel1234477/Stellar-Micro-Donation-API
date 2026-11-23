@@ -94,7 +94,8 @@ const crypto = require('crypto');
 const Database = require('../utils/database');
 const { checkPermission } = require('../middleware/rbac');
 const { PERMISSIONS } = require('../utils/permissions');
-const { VALID_FREQUENCIES, SCHEDULE_STATUS } = require('../constants');
+const { VALID_FREQUENCIES, SCHEDULE_STATUS, DONATION_FREQUENCIES } = require('../constants');
+const serviceContainer = require('../config/serviceContainer');
 const { validateRequiredFields, validateXLMAmount, validateEnum } = require('../utils/validationHelpers');
 const log = require('../utils/log');
 const timerRegistry = require('../utils/timerRegistry');
@@ -107,6 +108,12 @@ const { requestTimeout, TIMEOUTS } = require('../middleware/requestTimeout');
 const AuditLogService = require('../services/AuditLogService');
 const asyncHandler = require('../utils/asyncHandler');
 const { toStroops, fromStroops } = require('../utils/money');
+
+// Frequencies a schedule can be created with. 'custom' needs a customIntervalDays
+// value that this endpoint does not accept, so it is rejected here.
+const STREAM_CREATE_FREQUENCIES = Object.freeze(
+  VALID_FREQUENCIES.filter((f) => f !== DONATION_FREQUENCIES.CUSTOM)
+);
 
 const streamCreateSchema = validateSchema({
   body: {
@@ -139,9 +146,9 @@ const streamCreateSchema = validateSchema({
           if (typeof value !== 'string') {
             return 'frequency must be a string';
           }
-          return VALID_FREQUENCIES.includes(value.toLowerCase())
+          return STREAM_CREATE_FREQUENCIES.includes(value.toLowerCase())
             ? true
-            : `frequency must be one of: ${VALID_FREQUENCIES.join(', ')}`;
+            : `frequency must be one of: ${STREAM_CREATE_FREQUENCIES.join(', ')}`;
         },
       },
     },
@@ -196,7 +203,7 @@ router.post('/create', payloadSizeLimiter(ENDPOINT_LIMITS.stream), requestTimeou
     }
 
     // Validate frequency
-    const frequencyValidation = validateEnum(frequency, VALID_FREQUENCIES, { caseInsensitive: true });
+    const frequencyValidation = validateEnum(frequency, STREAM_CREATE_FREQUENCIES, { caseInsensitive: true });
     if (!frequencyValidation.valid) {
       return res.status(400).json({
         success: false,
@@ -248,21 +255,11 @@ router.post('/create', payloadSizeLimiter(ENDPOINT_LIMITS.stream), requestTimeou
       });
     }
 
-    // Calculate next execution date based on frequency
-    const now = new Date();
-    const nextExecutionDate = new Date(now);
-
-    switch (frequency.toLowerCase()) {
-      case 'daily':
-        nextExecutionDate.setDate(nextExecutionDate.getDate() + 1);
-        break;
-      case 'weekly':
-        nextExecutionDate.setDate(nextExecutionDate.getDate() + 7);
-        break;
-      case 'monthly':
-        nextExecutionDate.setMonth(nextExecutionDate.getMonth() + 1);
-        break;
-    }
+    // First execution is one period after now, computed in UTC with calendar-aware
+    // clamping (e.g. monthly from Jan 31 -> Feb 28/29) by the scheduler.
+    const normalizedFrequency = frequency.toLowerCase();
+    const scheduler = serviceContainer.getRecurringDonationScheduler();
+    const nextExecutionDate = scheduler.calculateNextExecutionDate(new Date(), normalizedFrequency);
 
     // Insert recurring donation schedule (ADR-004: amount stored as integer stroops)
     const amountStroops = toStroops(amountValidation.xlm);
@@ -270,7 +267,7 @@ router.post('/create', payloadSizeLimiter(ENDPOINT_LIMITS.stream), requestTimeou
       `INSERT INTO recurring_donations
        (donorId, recipientId, amount_stroops, frequency, nextExecutionDate, status)
        VALUES (?, ?, ?, ?, ?, ?)`,
-      [donor.id, recipient.id, amountStroops, frequency.toLowerCase(), nextExecutionDate.toISOString(), SCHEDULE_STATUS.ACTIVE]
+      [donor.id, recipient.id, amountStroops, normalizedFrequency, nextExecutionDate.toISOString(), SCHEDULE_STATUS.ACTIVE]
     );
 
     // Fetch the created schedule
