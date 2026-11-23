@@ -95,10 +95,117 @@ function validateDonationAmount(amount) {
   };
 }
 
+function isStrictIntegerString(value) {
+  if (typeof value !== 'string') return false;
+
+  const trimmed = value.trim();
+  if (trimmed.length === 0) return false;
+
+  let startIndex = 0;
+  if (trimmed[0] === '-') {
+    if (trimmed.length === 1) return false;
+    startIndex = 1;
+  }
+
+  for (let i = startIndex; i < trimmed.length; i += 1) {
+    const code = trimmed.charCodeAt(i);
+    if (code < 48 || code > 57) {
+      return false;
+    }
+  }
+
+  return true;
+}
+
+/**
+ * Validate and parse integer with range check
+ * @param {*} value - Value to parse
+ * @param {Object} options - Validation options
+ * @param {number} options.min - Minimum value (inclusive)
+ * @param {number} options.max - Maximum value (inclusive)
+ * @param {number} options.default - Default value if parsing fails
+ * @returns {{valid: boolean, value?: number, error?: string}}
+ */
+function validateInteger(value, options = {}) {
+  const { min, max, default: defaultValue } = options;
+
+  const isMissing = value === undefined || value === null || value === '';
+  if (isMissing && defaultValue !== undefined) {
+    return { valid: true, value: defaultValue };
+  }
+
+  let parsed;
+  if (typeof value === 'number') {
+    if (!Number.isInteger(value)) {
+      return { valid: false, error: 'Must be a valid integer' };
+    }
+    parsed = value;
+  } else if (typeof value === 'string') {
+    const trimmed = value.trim();
+    if (!isStrictIntegerString(trimmed)) {
+      return { valid: false, error: 'Must be a valid integer' };
+    }
+    parsed = Number(trimmed);
+  } else {
+    return { valid: false, error: 'Must be a valid integer' };
+  }
+
+  if (min !== undefined && parsed < min) {
+    return { valid: false, error: `Must be at least ${min}` };
+  }
+
+  if (max !== undefined && parsed > max) {
+    return { valid: false, error: `Must be at most ${max}` };
+  }
+
+  return { valid: true, value: parsed };
+}
+
+/**
+ * Validate value is in allowed list
+ * @param {*} value - Value to validate
+ * @param {Array} allowedValues - Array of allowed values
+ * @param {Object} options - Validation options
+ * @param {boolean} options.caseInsensitive - Perform case-insensitive comparison for strings
+ * @returns {{valid: boolean, value?: *, error?: string}}
+ */
+function validateEnum(value, allowedValues, options = {}) {
+  const { caseInsensitive = false } = options;
+
+  if (!value) {
+    return { valid: false, error: 'Value is required' };
+  }
+
+  let normalizedValue = value;
+  let normalizedAllowed = allowedValues;
+
+  if (caseInsensitive && typeof value === 'string') {
+    normalizedValue = value.toLowerCase();
+    normalizedAllowed = allowedValues.map(v =>
+      typeof v === 'string' ? v.toLowerCase() : v
+    );
+  }
+
+  if (!normalizedAllowed.includes(normalizedValue)) {
+    return {
+      valid: false,
+      error: `Must be one of: ${allowedValues.join(', ')}`
+    };
+  }
+
+  return {
+    valid: true,
+    value: caseInsensitive && typeof value === 'string' ? normalizedValue : value
+  };
+}
+
 module.exports = {
   MAX_STROOPS,
   STROOPS_PER_XLM,
   amountToStroops,
   isValidDonationAmount,
   validateDonationAmount,
+  isStrictIntegerString,
+  validateInteger,
+  validateEnum,
 };

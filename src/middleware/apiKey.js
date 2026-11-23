@@ -11,6 +11,7 @@ const { bestEffort } = require('../utils/bestEffort');
  */
 
 const { securityConfig } = require("../config/securityConfig");
+const { readEnv } = require('../config/env');
 const { validateKey} = require("../models/apiKeys");
 const { verifyAccessToken } = require("../services/JwtService");
 const log = require("../utils/log");
@@ -47,12 +48,8 @@ const legacyKeys = securityConfig.API_KEYS || [];
  * The cache stores the keyed hash of the raw key (never the raw key itself)
  * and is bounded in size to avoid unbounded memory growth.
  */
-const API_KEY_CACHE_TTL_MS = Number(
-  process.env.API_KEY_CACHE_TTL_MS || 30_000,
-);
-const API_KEY_CACHE_MAX_ENTRIES = Number(
-  process.env.API_KEY_CACHE_MAX_ENTRIES || 5_000,
-);
+const API_KEY_CACHE_TTL_MS = readEnv('API_KEY_CACHE_TTL_MS');
+const API_KEY_CACHE_MAX_ENTRIES = readEnv('API_KEY_CACHE_MAX_ENTRIES');
 
 const apiKeyCache = new Map();
 

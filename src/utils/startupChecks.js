@@ -20,6 +20,7 @@ const { isValidStellarSecretKey } = require('./validators');
 const { getLegacyKeySunsetDate } = require('./legacyApiKeySunset');
 const { findMissingSigningSecrets, isStrictEnvironment } = require('./signingSecrets');
 const { isMockStellarEnabled, isMockStellarAllowedInProduction } = require('../config/stellarMode');
+const { findDeprecatedEnv } = require('../config/env');
 
 const STELLAR_TIMEOUT_MS = 5000;
 
@@ -699,6 +700,13 @@ function checkCoRequiredFlags() {
     warn('USE_MOCK_STELLAR', 'is deprecated and ignored — set MOCK_STELLAR instead (the only variable that controls mock mode)');
   }
 
+  // Other deprecated variable names declared in the env schema (#2111).
+  for (const message of findDeprecatedEnv(process.env)) {
+    const name = message.split(' ')[0];
+    if (name === 'USE_MOCK_STELLAR') continue; // reported above with more detail
+    warn(name, message.slice(name.length + 1));
+  }
+
   // STELLAR_ENVIRONMENT and STELLAR_NETWORK disagreeing is confusing; STELLAR_NETWORK wins.
   if (process.env.STELLAR_ENVIRONMENT && process.env.STELLAR_NETWORK &&
       process.env.STELLAR_ENVIRONMENT.toLowerCase() !== process.env.STELLAR_NETWORK.toLowerCase()) {
@@ -973,7 +981,7 @@ module.exports = { run, results, checkMainnetProductionGuard, checkGeoBlocking, 
 // Allow running directly: `node src/utils/startupChecks.js`
 if (require.main === module) {
   // Load .env when run standalone
-  require('../config/loadEnv');
+  require('../config/env');
   run({ exitOnFailure: true }).catch((err) => {
     print('error', `Startup checks threw an unexpected error: ${err.message}`);
     process.exit(1);

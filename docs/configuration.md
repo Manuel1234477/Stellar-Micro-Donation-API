@@ -51,7 +51,7 @@ npm run config:check      # what CI runs: schema covers src/, generated files ar
 22. [Shared State (Multi-Instance)](#22-shared-state-multi-instance)
 23. [GraphQL](#23-graphql)
 
-281 variables are declared. Further topics follow the reference below.
+292 variables are declared. Further topics follow the reference below.
 
 ---
 
@@ -64,8 +64,9 @@ npm run config:check      # what CI runs: schema covers src/, generated files ar
 | `NODE_ENV` | string | `development` | no | Runtime environment: `development`, `test` or `production`. Controls logging verbosity, startup guards and unsafe-flag checks |
 | `PORT` | integer | `3000` | no | TCP port the HTTP server listens on |
 | `REQUEST_TIMEOUT_MS` | integer | `15000` | no | General per-request timeout in milliseconds for non-submission routes (default 15 s). Stellar submission routes always use 30 s; streaming endpoints are exempt |
-| `SHUTDOWN_TIMEOUT` | integer | `30000` | no | Alias for `SHUTDOWN_TIMEOUT_MS` (milliseconds). Time allowed for in-flight requests to drain before force-exit |
-| `SHUTDOWN_TIMEOUT_MS` | integer | `30000` | no | Milliseconds to wait for graceful shutdown before force-exit |
+| `SHUTDOWN_TIMEOUT` | integer | — | no | Deprecated alias for `SHUTDOWN_TIMEOUT_MS` (milliseconds). Read only when `SHUTDOWN_TIMEOUT_MS` is unset **Deprecated** — use `SHUTDOWN_TIMEOUT_MS`. |
+| `SHUTDOWN_TIMEOUT_MS` | integer | `30000` | no | Milliseconds to wait for graceful shutdown before force-exit Minimum: 1. |
+| `STARTUP_REQUIRE_HORIZON` | boolean | `false` | no | When `true`, startup fails if the Horizon connectivity check fails instead of only logging a warning |
 | `TRUSTED_PROXIES` | string | `loopback` | no | Comma-separated list of trusted proxy IPs/CIDRs. Passed to Express `trust proxy`. Set to the address of your load balancer in production |
 | `HSTS_MAX_AGE` | integer | `31536000` | no | Strict-Transport-Security `max-age` in seconds. Sent only when `NODE_ENV=production` Minimum: 0. |
 | `HSTS_INCLUDE_SUBDOMAINS` | boolean | `true` | no | Add `includeSubDomains` to Strict-Transport-Security. Sent only when `NODE_ENV=production` |
@@ -178,7 +179,7 @@ npm run config:check      # what CI runs: schema covers src/, generated files ar
 | `TX_SYNC_INTERVAL_MS` | integer | `900000` | no | Interval (ms) between automatic transaction reconciliation runs Minimum: 60000. |
 | `TX_SYNC_LEASE_MULTIPLIER` | integer | `2` | no | Sync lease length as a multiple of `TX_SYNC_INTERVAL_MS` Range: 1–10. |
 | `ALLOW_MOCK_STELLAR_IN_PRODUCTION` | boolean | `false` | no | Explicit override that lets `MOCK_STELLAR=true` start with `NODE_ENV=production`. Mock mode records transfers that never happen on-chain, so leave this unset in real deployments |
-| `USE_MOCK_STELLAR` | boolean | `false` | no | DEPRECATED and ignored. `MOCK_STELLAR` is the only variable that controls mock mode; startup logs a warning if this is set |
+| `USE_MOCK_STELLAR` | boolean | `false` | no | DEPRECATED and ignored. `MOCK_STELLAR` is the only variable that controls mock mode; startup logs a warning if this is set **Deprecated** — use `MOCK_STELLAR`. |
 
 ---
 
@@ -198,6 +199,7 @@ npm run config:check      # what CI runs: schema covers src/, generated files ar
 | `MIGRATION_LOCK_TIMEOUT_MS` | integer | `30000` | no | Milliseconds to wait for the advisory migration lock before failing |
 | `RETENTION_AUDIT_LOGS_DAYS` | integer | `365` | no | Days before audit-log rows are deleted by the retention job Minimum: 0. |
 | `RETENTION_DONATIONS_DAYS` | integer | `2555` | no | Days before donation rows are eligible for retention purge Minimum: 0. |
+| `RETENTION_TRANSACTION_DAYS` | integer | `2555` | no | Days to retain transaction memos/identifiers before the retention job anonymises them (amounts and hashes are kept) Minimum: 0. |
 | `RETENTION_DRY_RUN` | boolean | `false` | no | When `true`, the retention job logs what it would delete without removing records |
 | `RETENTION_IDEMPOTENCY_DAYS` | integer | `30` | no | Days before idempotency keys are purged Minimum: 0. |
 | `RETENTION_SCHEDULE_CRON` | string | `02:00` | no | Cron expression controlling when the data-retention cleanup job runs |
@@ -223,6 +225,7 @@ npm run config:check      # what CI runs: schema covers src/, generated files ar
 | Variable | Type | Default | Required? | Effect |
 |---|---|---|---|---|
 | `ACCESS_LOG_INCLUDE_HEALTH` | boolean | `false` | no | When `true`, health-check requests appear in the access log |
+| `AUDIT_LOG_HMAC_KEY` | string | — | no | HMAC key used to sign audit-log exports. Export signing fails when unset Secret. |
 | `AUDIT_LOG_FLUSH_INTERVAL_MS` | integer | `1000` | no | Interval (ms) at which buffered audit-log entries are flushed to the database Minimum: 1. |
 | `DEBUG_MODE` | boolean | `false` | no | Enable verbose debug logging. **Startup fails in production if `true`** |
 | `LOG_BODY` | boolean | `false` | no | Log raw request and response bodies |
@@ -244,6 +247,9 @@ npm run config:check      # what CI runs: schema covers src/, generated files ar
 
 | Variable | Type | Default | Required? | Effect |
 |---|---|---|---|---|
+| `AUTH_CHALLENGE_RATE_LIMIT` | integer | `30` | no | Maximum requests per IP per window on the SEP-10 auth challenge endpoint Minimum: 1. |
+| `AUTH_CHALLENGE_ACCOUNT_RATE_LIMIT` | integer | `10` | no | Maximum requests per `account` query value per window on the SEP-10 auth challenge endpoint Minimum: 1. |
+| `LIST_DONATIONS_RATE_LIMIT` | integer | `300` | no | Maximum requests per window on the donation list endpoints Minimum: 1. |
 | `AUTH_REFRESH_RATE_LIMIT` | integer | `20` | no | Maximum requests per minute per IP on `POST /auth/refresh` |
 | `AUTH_TOKEN_RATE_LIMIT` | integer | `10` | no | Maximum requests per minute per IP on `POST /auth/token` |
 | `DISABLE_RATE_LIMIT` | boolean | `false` | no | Disables rate limiting. **Unsafe — startup fails in production if `true`** |
@@ -295,6 +301,8 @@ npm run config:check      # what CI runs: schema covers src/, generated files ar
 
 | Variable | Type | Default | Required? | Effect |
 |---|---|---|---|---|
+| `API_KEY_CACHE_TTL_MS` | integer | `30000` | no | TTL (ms) for the API-key validation cache in the apiKey middleware. `0` disables the cache Minimum: 0. |
+| `API_KEY_CACHE_MAX_ENTRIES` | integer | `5000` | no | Maximum entries held in the API-key validation cache Minimum: 1. |
 | `API_KEY_CACHE_TTL_SECONDS` | integer | `60` | no | TTL (seconds) for the in-memory API key lookup cache |
 | `CACHE_CLEANUP_INTERVAL_MS` | integer | `60000` | no | Interval (ms) between cache eviction passes |
 | `CACHE_MAX_SIZE` | integer | `10000` | no | Maximum number of entries in the shared in-memory LRU cache |
@@ -343,6 +351,7 @@ npm run config:check      # what CI runs: schema covers src/, generated files ar
 | `GEO_ALLOWED_IPS` | list (comma-separated) | — | no | Comma-separated IPs or CIDR ranges that bypass geo-blocking |
 | `GEO_BLOCKED_COUNTRIES` | list (comma-separated) | — | no | Comma-separated ISO 3166-1 alpha-2 country codes whose requests are blocked (e.g. `RU,IR,KP`) |
 | `GEO_STRICT_MODE` | boolean | `true` | no | When the GeoIP database is unavailable or a lookup fails, block () or allow () the request |
+| `GEOIP_DB_PATH` | string | — | no | Deprecated alias for `MAXMIND_DB_PATH`. Read only when `MAXMIND_DB_PATH` is unset **Deprecated** — use `MAXMIND_DB_PATH`. |
 | `MAXMIND_DB_PATH` | string | `./data/GeoLite2-Country.mmdb` | no | Path to the MaxMind GeoLite2-Country binary database file |
 
 ---
@@ -402,6 +411,7 @@ npm run config:check      # what CI runs: schema covers src/, generated files ar
 | `PUBSUB_ADAPTER` | enum (memory \| redis) | `memory` | no | Pub/sub adapter: `memory` (in-process) or `redis` |
 | `SSE_EVENT_BUFFER_SIZE` | integer | `100` | no | Number of events buffered per SSE connection for reconnecting clients |
 | `SSE_MAX_CONNECTIONS_PER_KEY` | integer | `5` | no | Maximum concurrent SSE streams per API key. Enforced cluster-wide when `SHARED_STATE_BACKEND=redis` Minimum: 1. |
+| `WS_ALLOW_QUERY_API_KEY` | boolean | `true` | no | When `false`, WebSocket connections that pass the API key in the query string are rejected (use the header instead) |
 | `WS_HEARTBEAT_MS` | integer | `30000` | no | Interval (ms) between WebSocket ping frames |
 | `WS_MAX_WALLETS` | integer | `50` | no | Maximum number of wallet subscriptions per WebSocket connection |
 | `SSE_MAX_CONNECTIONS` | integer | `1000` | no | Global cap on concurrent SSE streams across all API keys on this instance. Excess connections receive 503 with `Retry-After` Minimum: 1. |
@@ -471,6 +481,7 @@ npm run config:check      # what CI runs: schema covers src/, generated files ar
 | `FEDERATION_DOMAIN` | string | — | no | Domain used for Stellar federation lookups |
 | `FEDERATION_RECORDS` | string | — | no | JSON-encoded static federation records for local development, bypassing live federation lookups |
 | `WEBHOOK_ALLOW_TLS_SKIP_VERIFY` | string | — | no | Set to `break-glass` to allow webhooks with TLS verification disabled in production. Any other value is ignored |
+| `WEBHOOK_RETRY_BATCH_SIZE` | integer | `50` | no | Maximum number of failed webhook deliveries retried per worker tick Minimum: 1. |
 | `WEBHOOK_RETRY_INTERVAL_MS` | integer | `30000` | no | Interval (ms) of the outgoing-webhook retry worker Minimum: 1. |
 | `XLM_USDC_ASSET` | string | — | no | `CODE:ISSUER` of the stablecoin used for the Stellar DEX price fallback. The XLM/USD rate is the mid-market price of this orderbook when CoinGecko is unavailable |
 

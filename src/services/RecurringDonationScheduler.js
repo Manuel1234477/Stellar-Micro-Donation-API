@@ -842,6 +842,20 @@ class RecurringDonationScheduler {
    * @throws {Error} for unknown frequency or missing customIntervalDays
    */
   calculateNextExecutionDate(currentDate, frequency, customIntervalDays) {
+    return RecurringDonationScheduler.calculateNextExecution(currentDate, frequency, customIntervalDays);
+  }
+
+  /**
+   * Static form of calculateNextExecutionDate — the single implementation of
+   * next-execution date maths used by the scheduler and by
+   * RecurringDonationService for both recurring APIs (#2113).
+   *
+   * @param {Date}   currentDate
+   * @param {string} frequency
+   * @param {number} [customIntervalDays]
+   * @returns {Date}
+   */
+  static calculateNextExecution(currentDate, frequency, customIntervalDays) {
     // Convert to UTC to avoid DST issues
     const utcDate = new Date(currentDate.toISOString());
     const year = utcDate.getUTCFullYear();

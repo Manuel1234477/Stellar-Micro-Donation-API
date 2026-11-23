@@ -19,11 +19,31 @@
  * rules and default.
  *
  * Direct `process.env` reads outside src/config are being phased out; see the
- * `no-restricted-properties` rule in .eslintrc.js.
+ * `no-restricted-syntax` rule in eslint.config.js.
  */
 
-// Same .env as src/config/index.js; dotenv never overrides variables that are already set.
-require('./loadEnv');
+const fs = require('fs');
+const path = require('path');
+
+// ── .env loading (#1943, #2112) ─────────────────────────────────────────────
+// This is the ONLY place the repository .env file is loaded. Every entry point
+// (server, scripts, config modules) requires this module instead of calling
+// dotenv itself. The path is absolute, so the result does not depend on the
+// current working directory. dotenv never overrides variables that are already
+// set in process.env, and Node's module cache makes this run once.
+const ROOT_ENV_PATH = path.join(__dirname, '..', '..', '.env');
+const LEGACY_SRC_ENV_PATH = path.join(__dirname, '..', '.env');
+
+require('dotenv').config({ path: ROOT_ENV_PATH, quiet: true });
+
+if (fs.existsSync(LEGACY_SRC_ENV_PATH)) {
+  // emitWarning rather than the logger: the logger depends on config (cycle).
+  process.emitWarning(
+    `Ignoring ${LEGACY_SRC_ENV_PATH}. Environment configuration is read only from the repository-root .env file; move any settings from src/.env into ${ROOT_ENV_PATH}.`,
+    { type: 'ConfigWarning', code: 'LEGACY_SRC_ENV_IGNORED' },
+  );
+}
+
 const Ajv = require('ajv');
 const { ENV_VARS, ENV_VAR_PATTERNS } = require('./envSchema');
 
@@ -141,7 +161,7 @@ function loadEnv(source = process.env) {
   const nodeEnv = String(source.NODE_ENV || 'development').toLowerCase();
 
   for (const def of ENV_VARS) {
-    const raw = source[def.name];
+    const raw = resolveRaw(def, source);
 
     if (isUnset(raw)) {
       if (def.required === 'always' || (def.required === 'production' && nodeEnv === 'production')) {
@@ -191,9 +211,56 @@ function readEnv(name, source = process.env) {
   if (!def) {
     throw new Error(`Environment variable ${name} is not declared in src/config/envSchema.js`);
   }
-  const parsed = coerce(def, source[name]);
+  const parsed = coerce(def, resolveRaw(def, source));
   if (parsed instanceof Invalid) return coerce(def, undefined);
   return parsed;
+}
+
+const warnedAliases = new Set();
+
+/**
+ * Emit a one-time deprecation warning for a variable read through an alias.
+ * Uses process.emitWarning because the logger depends on config (cycle).
+ */
+function warnDeprecatedAlias(alias, canonical) {
+  if (warnedAliases.has(alias)) return;
+  warnedAliases.add(alias);
+  process.emitWarning(
+    `Environment variable ${alias} is deprecated; set ${canonical} instead.`,
+    { type: 'DeprecationWarning', code: 'DEPRECATED_ENV_ALIAS' },
+  );
+}
+
+/**
+ * Raw value for `def`: the variable itself, or else the first set deprecated
+ * alias (with a one-time warning). The canonical name always wins (#2111).
+ */
+function resolveRaw(def, source) {
+  const raw = source[def.name];
+  if (!isUnset(raw) || !Array.isArray(def.deprecatedAliases)) return raw;
+  for (const alias of def.deprecatedAliases) {
+    if (!isUnset(source[alias])) {
+      warnDeprecatedAlias(alias, def.name);
+      return source[alias];
+    }
+  }
+  return raw;
+}
+
+/**
+ * Report every deprecated variable or alias that is set in `source`.
+ *
+ * @param {object} [source=process.env]
+ * @returns {string[]} Human-readable warnings.
+ */
+function findDeprecatedEnv(source = process.env) {
+  const warnings = [];
+  for (const def of ENV_VARS) {
+    if (def.deprecated && !isUnset(source[def.name])) {
+      warnings.push(`${def.name} is deprecated: ${def.deprecated}.`);
+    }
+  }
+  return warnings;
 }
 
 function matchPattern(name) {
@@ -214,5 +281,8 @@ module.exports = {
   validateEnv,
   readEnv,
   isDeclared,
+  findDeprecatedEnv,
+  ROOT_ENV_PATH,
+  LEGACY_SRC_ENV_PATH,
   buildJsonSchema,
 };

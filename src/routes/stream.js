@@ -94,9 +94,7 @@ const crypto = require('crypto');
 const Database = require('../utils/database');
 const { checkPermission } = require('../middleware/rbac');
 const { PERMISSIONS } = require('../utils/permissions');
-const { VALID_FREQUENCIES, SCHEDULE_STATUS, DONATION_FREQUENCIES } = require('../constants');
-const serviceContainer = require('../config/serviceContainer');
-const { validateRequiredFields, validateXLMAmount, validateEnum } = require('../utils/validationHelpers');
+const { VALID_FREQUENCIES, SCHEDULE_STATUS } = require('../constants');
 const log = require('../utils/log');
 const timerRegistry = require('../utils/timerRegistry');
 const { validateSchema } = require('../middleware/schemaValidation');
@@ -108,12 +106,58 @@ const { requestTimeout, TIMEOUTS } = require('../middleware/requestTimeout');
 const AuditLogService = require('../services/AuditLogService');
 const asyncHandler = require('../utils/asyncHandler');
 const { toStroops, fromStroops } = require('../utils/money');
+const RecurringDonationService = require('../services/RecurringDonationService');
+const { deprecated } = require('../middleware/deprecation');
 
-// Frequencies a schedule can be created with. 'custom' needs a customIntervalDays
-// value that this endpoint does not accept, so it is rejected here.
-const STREAM_CREATE_FREQUENCIES = Object.freeze(
-  VALID_FREQUENCIES.filter((f) => f !== DONATION_FREQUENCIES.CUSTOM)
-);
+const { RecurringScheduleError, CODES: SCHEDULE_CODES } = RecurringDonationService;
+
+/** Canonical successor for the deprecated schedule routes (#2113). */
+const RECURRING_BASE = '/api/v1/donations/recurring';
+
+/**
+ * Map the deprecated stream path to its /donations/recurring successor.
+ * Mounted under '/schedules', so req.path is e.g. '/5/history'.
+ */
+function recurringSuccessor(req) {
+  return req.path && req.path !== '/' ? `${RECURRING_BASE}${req.path}` : RECURRING_BASE;
+}
+
+/**
+ * Send a RecurringScheduleError using this router's legacy response shapes;
+ * other errors go to the error handler.
+ */
+function handleServiceError(error, res, next) {
+  if (!(error instanceof RecurringScheduleError)) return next(error);
+  switch (error.code) {
+    case SCHEDULE_CODES.DONOR_NOT_FOUND:
+    case SCHEDULE_CODES.RECIPIENT_NOT_FOUND:
+      return res.status(422).json({
+        success: false,
+        error: {
+          code: 'WALLET_NOT_FOUND',
+          message: `${error.message}. Register the wallet first via POST /wallets.`,
+          field: error.field,
+        },
+      });
+    case SCHEDULE_CODES.INVALID_FREQUENCY:
+      return res.status(400).json({ success: false, error: error.message, code: 'INVALID_FREQUENCY', errorCode: 1006 });
+    case SCHEDULE_CODES.INVALID_AMOUNT:
+      return res.status(422).json({ success: false, error: error.message });
+    case SCHEDULE_CODES.NO_CHANGES:
+      return res.status(400).json({ success: false, error: { code: 'INVALID_REQUEST', message: error.message } });
+    case SCHEDULE_CODES.NOT_FOUND:
+      return res.status(404).json({ success: false, error: error.message });
+    case SCHEDULE_CODES.FORBIDDEN:
+      return res.status(403).json({ success: false, error: { code: 'FORBIDDEN', message: error.message } });
+    case SCHEDULE_CODES.CONFLICT:
+      return res.status(409).json({
+        success: false,
+        error: error.message.startsWith('Cannot update') ? { code: 'CONFLICT', message: error.message } : error.message,
+      });
+    default:
+      return res.status(400).json({ success: false, error: error.message, code: error.code });
+  }
+}
 
 const streamCreateSchema = validateSchema({
   body: {
@@ -139,6 +183,11 @@ const streamCreateSchema = validateSchema({
           : 'recipientPublicKey must be a valid Stellar public key (56-character Ed25519 public key starting with G)',
       },
       amount: { type: 'number', required: true, min: 0.0000001 },
+      intervalDays: { type: 'integer', required: false, min: 1, max: 365 },
+      customIntervalDays: { type: 'integer', required: false, min: 1, max: 365 },
+      maxExecutions: { type: 'integer', required: false, min: 1 },
+      webhookUrl: { type: 'string', required: false },
+      startDate: { type: 'string', required: false },
       frequency: {
         type: 'string',
         required: true,
@@ -146,9 +195,11 @@ const streamCreateSchema = validateSchema({
           if (typeof value !== 'string') {
             return 'frequency must be a string';
           }
-          return STREAM_CREATE_FREQUENCIES.includes(value.toLowerCase())
+          // Same set as /donations/recurring; 'custom' needs intervalDays,
+          // which RecurringDonationService enforces (#2113).
+          return VALID_FREQUENCIES.includes(value.toLowerCase())
             ? true
-            : `frequency must be one of: ${STREAM_CREATE_FREQUENCIES.join(', ')}`;
+            : `frequency must be one of: ${VALID_FREQUENCIES.join(', ')}`;
         },
       },
     },
@@ -167,10 +218,20 @@ const updateScheduleSchema = validateSchema({
   body: {
     fields: {
       amount: { types: ['number', 'numberString'], required: false },
-      frequency: { type: 'string', required: false, enum: ['daily', 'weekly', 'monthly'] },
+      // Same frequency set as /donations/recurring; validated by RecurringDonationService (#2113).
+      frequency: { type: 'string', required: false },
+      intervalDays: { type: 'integer', required: false, min: 1, max: 365 },
+      customIntervalDays: { type: 'integer', required: false, min: 1, max: 365 },
     }
   }
 });
+
+// ── Deprecated surface (#2113) ──────────────────────────────────────────────
+// /donations/recurring is the canonical recurring-schedule API. The schedule
+// routes below keep working until the sunset date but advertise
+// Deprecation, Sunset and Link: rel="successor-version" headers.
+router.use('/create', deprecated(RECURRING_BASE));
+router.use('/schedules', deprecated(recurringSuccessor));
 
 /**
  * POST /stream/create
@@ -178,116 +239,8 @@ const updateScheduleSchema = validateSchema({
  */
 router.post('/create', payloadSizeLimiter(ENDPOINT_LIMITS.stream), requestTimeout(TIMEOUTS.stream), checkPermission(PERMISSIONS.STREAM_CREATE), streamCreateSchema, asyncHandler(async (req, res, next) => {
   try {
-    const { donorPublicKey, recipientPublicKey, amount, frequency } = req.body;
-
-    // Validate required fields
-    const requiredValidation = validateRequiredFields(
-      { donorPublicKey, recipientPublicKey, amount, frequency },
-      ['donorPublicKey', 'recipientPublicKey', 'amount', 'frequency']
-    );
-
-    if (!requiredValidation.valid) {
-      return res.status(400).json({
-        success: false,
-        error: `Missing required fields: ${requiredValidation.missing.join(', ')}`
-      });
-    }
-
-    // Validate amount
-    const amountValidation = validateXLMAmount(amount);
-    if (!amountValidation.valid) {
-      return res.status(422).json({
-        success: false,
-        error: `Invalid amount: ${amountValidation.error}`
-      });
-    }
-
-    // Validate frequency
-    const frequencyValidation = validateEnum(frequency, STREAM_CREATE_FREQUENCIES, { caseInsensitive: true });
-    if (!frequencyValidation.valid) {
-      return res.status(400).json({
-        success: false,
-        error: frequencyValidation.error,
-        code: 'INVALID_FREQUENCY',
-        errorCode: 1006
-      });
-    }
-
-    // Check if both donor and recipient exist in a single query
-    const wallets = await Database.all(
-      'SELECT id, publicKey FROM users WHERE publicKey IN (?, ?)',
-      [donorPublicKey, recipientPublicKey]
-    );
-
-    const donorWallet = wallets.find(w => w.publicKey === donorPublicKey);
-    const recipientWallet = wallets.find(w => w.publicKey === recipientPublicKey);
-
-    if (!donorWallet) {
-      return res.status(422).json({
-        success: false,
-        error: {
-          code: 'WALLET_NOT_FOUND',
-          message: 'Donor wallet not found. Register the wallet first via POST /wallets.',
-          field: 'donorPublicKey'
-        }
-      });
-    }
-
-    if (!recipientWallet) {
-      return res.status(422).json({
-        success: false,
-        error: {
-          code: 'WALLET_NOT_FOUND',
-          message: 'Recipient wallet not found. Register the wallet first via POST /wallets.',
-          field: 'recipientPublicKey'
-        }
-      });
-    }
-
-    const donor = donorWallet;
-    const recipient = recipientWallet;
-
-    // Prevent self-donations
-    if (donor.id === recipient.id) {
-      return res.status(400).json({
-        success: false,
-        error: 'Donor and recipient cannot be the same'
-      });
-    }
-
-    // First execution is one period after now, computed in UTC with calendar-aware
-    // clamping (e.g. monthly from Jan 31 -> Feb 28/29) by the scheduler.
-    const normalizedFrequency = frequency.toLowerCase();
-    const scheduler = serviceContainer.getRecurringDonationScheduler();
-    const nextExecutionDate = scheduler.calculateNextExecutionDate(new Date(), normalizedFrequency);
-
-    // Insert recurring donation schedule (ADR-004: amount stored as integer stroops)
-    const amountStroops = toStroops(amountValidation.xlm);
-    const result = await Database.run(
-      `INSERT INTO recurring_donations
-       (donorId, recipientId, amount_stroops, frequency, nextExecutionDate, status)
-       VALUES (?, ?, ?, ?, ?, ?)`,
-      [donor.id, recipient.id, amountStroops, normalizedFrequency, nextExecutionDate.toISOString(), SCHEDULE_STATUS.ACTIVE]
-    );
-
-    // Fetch the created schedule
-    const schedule = await Database.get(
-      `SELECT
-        rd.id,
-        rd.amount_stroops,
-        rd.frequency,
-        rd.startDate,
-        rd.nextExecutionDate,
-        rd.status,
-        rd.executionCount,
-        donor.publicKey as donorPublicKey,
-        recipient.publicKey as recipientPublicKey
-       FROM recurring_donations rd
-       JOIN users donor ON rd.donorId = donor.id
-       JOIN users recipient ON rd.recipientId = recipient.id
-       WHERE rd.id = ?`,
-      [result.id]
-    );
+    // Shared implementation with POST /donations/recurring (#2113).
+    const schedule = await RecurringDonationService.create(req.body || {});
 
     res.status(201).json({
       success: true,
@@ -296,16 +249,17 @@ router.post('/create', payloadSizeLimiter(ENDPOINT_LIMITS.stream), requestTimeou
         scheduleId: schedule.id,
         donor: schedule.donorPublicKey,
         recipient: schedule.recipientPublicKey,
-        amount: fromStroops(schedule.amount_stroops),
-        amountStroops: schedule.amount_stroops,
+        amount: schedule.amount,
+        amountStroops: schedule.amountStroops,
         frequency: schedule.frequency,
+        intervalDays: schedule.intervalDays,
         nextExecution: schedule.nextExecutionDate,
         status: schedule.status,
         executionCount: schedule.executionCount
       }
     });
   } catch (error) {
-    next(error);
+    handleServiceError(error, res, next);
   }
 }));
 
@@ -416,58 +370,10 @@ router.get('/schedules', checkPermission(PERMISSIONS.STREAM_READ), asyncHandler(
  */
 router.post('/schedules/:id/pause', checkPermission(PERMISSIONS.STREAM_UPDATE), streamScheduleIdSchema, payloadSizeLimiter(ENDPOINT_LIMITS.stream), asyncHandler(async (req, res, next) => {
   try {
-    const schedule = await Database.get(
-      `SELECT rd.id, rd.status, donor.publicKey as donorPublicKey
-       FROM recurring_donations rd
-       JOIN users donor ON rd.donorId = donor.id
-       WHERE rd.id = ?`,
-      [req.params.id]
-    );
-
-    if (!schedule) {
-      return res.status(404).json({ success: false, error: 'Schedule not found' });
-    }
-
-    // Authorization check: verify ownership or admin role
-    const isAdmin = (req.user && req.user.role === 'admin') || (req.apiKey && req.apiKey.role === 'admin');
-    const userPublicKey = (req.user && req.user.subject) || (req.apiKey && req.apiKey.subject);
-    // Legacy/system API keys (no subject) bypass ownership check — they are trusted callers
-    const isLegacyKey = (req.apiKey && req.apiKey.isLegacy) || (req.user && req.user.isLegacy);
-    
-    if (!isAdmin && !isLegacyKey && userPublicKey !== schedule.donorPublicKey) {
-      return res.status(403).json({
-        success: false,
-        error: {
-          code: 'FORBIDDEN',
-          message: 'You do not have permission to pause this schedule. Only the schedule owner or an admin can pause it.'
-        }
-      });
-    }
-
-    if (schedule.status === SCHEDULE_STATUS.PAUSED) {
-      return res.status(409).json({ success: false, error: 'Schedule is already paused' });
-    }
-
-    if (schedule.status !== SCHEDULE_STATUS.ACTIVE) {
-      return res.status(400).json({
-        success: false,
-        error: `Cannot pause a schedule with status: ${schedule.status}`
-      });
-    }
-
-    const now = new Date().toISOString();
-    await Database.run(
-      'UPDATE recurring_donations SET status = ?, pausedAt = ? WHERE id = ?',
-      [SCHEDULE_STATUS.PAUSED, now, req.params.id]
-    );
-
-    res.json({
-      success: true,
-      message: 'Recurring donation schedule paused successfully',
-      data: { id: schedule.id, status: SCHEDULE_STATUS.PAUSED, pausedAt: now }
-    });
+    const data = await RecurringDonationService.pause(req.params.id, { user: req.user, apiKey: req.apiKey });
+    res.json({ success: true, message: 'Recurring donation schedule paused successfully', data });
   } catch (error) {
-    next(error);
+    handleServiceError(error, res, next);
   }
 }));
 
@@ -479,69 +385,11 @@ router.post('/schedules/:id/pause', checkPermission(PERMISSIONS.STREAM_UPDATE), 
  */
 router.post('/schedules/:id/resume', checkPermission(PERMISSIONS.STREAM_UPDATE), streamScheduleIdSchema, payloadSizeLimiter(ENDPOINT_LIMITS.stream), asyncHandler(async (req, res, next) => {
   try {
-    const schedule = await Database.get(
-      `SELECT rd.id, rd.status, rd.frequency, donor.publicKey as donorPublicKey
-       FROM recurring_donations rd
-       JOIN users donor ON rd.donorId = donor.id
-       WHERE rd.id = ?`,
-      [req.params.id]
-    );
-
-    if (!schedule) {
-      return res.status(404).json({ success: false, error: 'Schedule not found' });
-    }
-
-    // Authorization check: verify ownership or admin role
-    const isAdmin = (req.user && req.user.role === 'admin') || (req.apiKey && req.apiKey.role === 'admin');
-    const userPublicKey = (req.user && req.user.subject) || (req.apiKey && req.apiKey.subject);
-    // Legacy/system API keys (no subject) bypass ownership check — they are trusted callers
-    const isLegacyKey = (req.apiKey && req.apiKey.isLegacy) || (req.user && req.user.isLegacy);
-    
-    if (!isAdmin && !isLegacyKey && userPublicKey !== schedule.donorPublicKey) {
-      return res.status(403).json({
-        success: false,
-        error: {
-          code: 'FORBIDDEN',
-          message: 'You do not have permission to resume this schedule. Only the schedule owner or an admin can resume it.'
-        }
-      });
-    }
-
-    if (schedule.status !== SCHEDULE_STATUS.PAUSED) {
-      return res.status(400).json({
-        success: false,
-        error: `Cannot resume a schedule with status: ${schedule.status}`
-      });
-    }
-
-    // Recalculate next execution date from now
-    const now = new Date();
-    const nextExecutionDate = new Date(now);
-    switch (schedule.frequency) {
-      case 'daily':  nextExecutionDate.setDate(nextExecutionDate.getDate() + 1); break;
-      case 'weekly': nextExecutionDate.setDate(nextExecutionDate.getDate() + 7); break;
-      case 'monthly': nextExecutionDate.setMonth(nextExecutionDate.getMonth() + 1); break;
-      default: nextExecutionDate.setDate(nextExecutionDate.getDate() + 1);
-    }
-
-    const resumedAt = now.toISOString();
-    await Database.run(
-      'UPDATE recurring_donations SET status = ?, resumedAt = ?, nextExecutionDate = ? WHERE id = ?',
-      [SCHEDULE_STATUS.ACTIVE, resumedAt, nextExecutionDate.toISOString(), req.params.id]
-    );
-
-    res.json({
-      success: true,
-      message: 'Recurring donation schedule resumed successfully',
-      data: {
-        id: schedule.id,
-        status: SCHEDULE_STATUS.ACTIVE,
-        resumedAt,
-        nextExecutionDate: nextExecutionDate.toISOString()
-      }
-    });
+    // nextExecutionDate comes from the shared scheduler maths (#2113).
+    const data = await RecurringDonationService.resume(req.params.id, { user: req.user, apiKey: req.apiKey });
+    res.json({ success: true, message: 'Recurring donation schedule resumed successfully', data });
   } catch (error) {
-    next(error);
+    handleServiceError(error, res, next);
   }
 }));
 
@@ -727,76 +575,13 @@ router.get('/schedules/:id/history', checkPermission(PERMISSIONS.STREAM_READ), s
  */
 router.patch('/schedules/:id', checkPermission(PERMISSIONS.STREAM_UPDATE), streamScheduleIdSchema, updateScheduleSchema, payloadSizeLimiter(ENDPOINT_LIMITS.stream), asyncHandler(async (req, res, next) => {
   try {
-    const { amount, frequency } = req.body;
-
-    if (amount === undefined && frequency === undefined) {
-      return res.status(400).json({
-        success: false,
-        error: { code: 'INVALID_REQUEST', message: 'At least one of amount or frequency must be provided' }
-      });
-    }
-
-    if (amount !== undefined) {
-      const amountValidation = validateXLMAmount(amount);
-      if (!amountValidation.valid) {
-        return res.status(422).json({ success: false, error: `Invalid amount: ${amountValidation.error}` });
-      }
-    }
-
-    if (frequency !== undefined) {
-      const freqValidation = validateEnum(frequency, VALID_FREQUENCIES, { caseInsensitive: true });
-      if (!freqValidation.valid) {
-        return res.status(400).json({ success: false, error: freqValidation.error, code: 'INVALID_FREQUENCY' });
-      }
-    }
-
-    const schedule = await Database.get(
-      `SELECT rd.id, rd.status, rd.amount_stroops, rd.frequency FROM recurring_donations rd WHERE rd.id = ?`,
-      [req.params.id]
+    // Shared implementation with PATCH /donations/recurring/:id (#2113).
+    const { schedule, oldValues, newValues } = await RecurringDonationService.update(
+      req.params.id,
+      req.body || {},
+      { user: req.user, apiKey: req.apiKey },
     );
 
-    if (!schedule) {
-      return res.status(404).json({ success: false, error: 'Schedule not found' });
-    }
-
-    if (schedule.status === SCHEDULE_STATUS.CANCELLED || schedule.status === 'suspended') {
-      return res.status(409).json({
-        success: false,
-        error: { code: 'CONFLICT', message: `Cannot update a schedule with status: ${schedule.status}` }
-      });
-    }
-
-    const oldValues = { amount: fromStroops(schedule.amount_stroops), frequency: schedule.frequency };
-    const newAmountStroops = amount !== undefined
-      ? toStroops(String(amount).trim())
-      : schedule.amount_stroops;
-    const newFrequency = frequency !== undefined ? frequency.toLowerCase() : schedule.frequency;
-
-    // Recalculate nextExecutionDate if frequency changed
-    let nextExecutionDate = null;
-    if (frequency !== undefined && frequency.toLowerCase() !== schedule.frequency) {
-      const now = new Date();
-      nextExecutionDate = new Date(now);
-      switch (newFrequency) {
-        case 'daily':   nextExecutionDate.setDate(nextExecutionDate.getDate() + 1); break;
-        case 'weekly':  nextExecutionDate.setDate(nextExecutionDate.getDate() + 7); break;
-        case 'monthly': nextExecutionDate.setMonth(nextExecutionDate.getMonth() + 1); break;
-      }
-    }
-
-    if (nextExecutionDate) {
-      await Database.run(
-        'UPDATE recurring_donations SET amount_stroops = ?, frequency = ?, nextExecutionDate = ? WHERE id = ?',
-        [newAmountStroops, newFrequency, nextExecutionDate.toISOString(), req.params.id]
-      );
-    } else {
-      await Database.run(
-        'UPDATE recurring_donations SET amount_stroops = ?, frequency = ? WHERE id = ?',
-        [newAmountStroops, newFrequency, req.params.id]
-      );
-    }
-
-    // Audit log
     await AuditLogService.log({
       category: AuditLogService.CATEGORY.FINANCIAL_OPERATION,
       action: 'SCHEDULE_UPDATED',
@@ -806,29 +591,25 @@ router.patch('/schedules/:id', checkPermission(PERMISSIONS.STREAM_UPDATE), strea
       requestId: req.id,
       ipAddress: req.ip,
       resource: `recurring_donation/${req.params.id}`,
-      details: {
-        scheduleId: req.params.id,
-        oldValues,
-        newValues: { amount: fromStroops(newAmountStroops), amountStroops: newAmountStroops, frequency: newFrequency },
-      },
+      details: { scheduleId: req.params.id, oldValues, newValues },
     });
-
-    const updated = await Database.get(
-      `SELECT rd.id, rd.amount_stroops, rd.frequency, rd.nextExecutionDate, rd.status FROM recurring_donations rd WHERE rd.id = ?`,
-      [req.params.id]
-    );
 
     res.json({
       success: true,
       message: 'Schedule updated successfully',
       data: {
-        ...updated,
-        amount: fromStroops(updated.amount_stroops),
-        amountStroops: updated.amount_stroops,
+        id: schedule.id,
+        amount_stroops: schedule.amountStroops,
+        frequency: schedule.frequency,
+        intervalDays: schedule.intervalDays,
+        nextExecutionDate: schedule.nextExecutionDate,
+        status: schedule.status,
+        amount: schedule.amount,
+        amountStroops: schedule.amountStroops,
       },
     });
   } catch (error) {
-    next(error);
+    handleServiceError(error, res, next);
   }
 }));
 

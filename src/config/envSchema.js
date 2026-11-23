@@ -28,6 +28,9 @@
  *   min / max   Inclusive bounds for numeric types.
  *   example     Value written (uncommented) into .env.example.
  *   deprecated  Replacement hint; the variable still works.
+ *   deprecatedAliases  Older names still accepted by readEnv() when this
+ *               variable is unset; reading through an alias logs a one-time
+ *               deprecation warning (#2111).
  *   description What the variable controls.
  */
 
@@ -62,8 +65,9 @@ const ENV_VARS = [
   { group: G0, name: 'NODE_ENV', type: 'string', default: 'development', example: 'development', description: 'Runtime environment: `development`, `test` or `production`. Controls logging verbosity, startup guards and unsafe-flag checks' },
   { group: G0, name: 'PORT', type: 'integer', default: 3000, example: '3000', description: 'TCP port the HTTP server listens on' },
   { group: G0, name: 'REQUEST_TIMEOUT_MS', type: 'integer', default: 15000, description: 'General per-request timeout in milliseconds for non-submission routes (default 15 s). Stellar submission routes always use 30 s; streaming endpoints are exempt' },
-  { group: G0, name: 'SHUTDOWN_TIMEOUT', type: 'integer', default: 30000, description: 'Alias for `SHUTDOWN_TIMEOUT_MS` (milliseconds). Time allowed for in-flight requests to drain before force-exit' },
-  { group: G0, name: 'SHUTDOWN_TIMEOUT_MS', type: 'integer', default: 30000, description: 'Milliseconds to wait for graceful shutdown before force-exit' },
+  { group: G0, name: 'SHUTDOWN_TIMEOUT', type: 'integer', deprecated: 'use `SHUTDOWN_TIMEOUT_MS`', description: 'Deprecated alias for `SHUTDOWN_TIMEOUT_MS` (milliseconds). Read only when `SHUTDOWN_TIMEOUT_MS` is unset' },
+  { group: G0, name: 'SHUTDOWN_TIMEOUT_MS', type: 'integer', default: 30000, min: 1, deprecatedAliases: ['SHUTDOWN_TIMEOUT'], description: 'Milliseconds to wait for graceful shutdown before force-exit' },
+  { group: G0, name: 'STARTUP_REQUIRE_HORIZON', type: 'boolean', default: false, description: 'When `true`, startup fails if the Horizon connectivity check fails instead of only logging a warning' },
   { group: G0, name: 'TRUSTED_PROXIES', type: 'string', default: 'loopback', description: 'Comma-separated list of trusted proxy IPs/CIDRs. Passed to Express `trust proxy`. Set to the address of your load balancer in production' },
   // HSTS is sent only when NODE_ENV=production (#1956). Preload is opt-in because
   // it asserts the whole registrable domain belongs to HTTPS-only hosts.
@@ -163,7 +167,7 @@ const ENV_VARS = [
   { group: G3, name: 'TX_SYNC_INTERVAL_MS', type: 'integer', default: 900000, min: 60000, example: '30000', description: 'Interval (ms) between automatic transaction reconciliation runs' },
   { group: G3, name: 'TX_SYNC_LEASE_MULTIPLIER', type: 'integer', default: 2, min: 1, max: 10, description: 'Sync lease length as a multiple of `TX_SYNC_INTERVAL_MS`' },
   { group: G3, name: 'ALLOW_MOCK_STELLAR_IN_PRODUCTION', type: 'boolean', default: false, description: 'Explicit override that lets `MOCK_STELLAR=true` start with `NODE_ENV=production`. Mock mode records transfers that never happen on-chain, so leave this unset in real deployments' },
-  { group: G3, name: 'USE_MOCK_STELLAR', type: 'boolean', default: false, description: 'DEPRECATED and ignored. `MOCK_STELLAR` is the only variable that controls mock mode; startup logs a warning if this is set' },
+  { group: G3, name: 'USE_MOCK_STELLAR', type: 'boolean', default: false, deprecated: 'use `MOCK_STELLAR`', description: 'DEPRECATED and ignored. `MOCK_STELLAR` is the only variable that controls mock mode; startup logs a warning if this is set' },
 
   // ── Database ────────────────────────────────────────────────────
   { group: G4, name: 'AUDIT_LOG_RETENTION_DAYS', type: 'integer', default: 90, description: 'Number of days to retain audit log entries before they are purged' },
@@ -178,6 +182,7 @@ const ENV_VARS = [
   { group: G4, name: 'MIGRATION_LOCK_TIMEOUT_MS', type: 'integer', default: 30000, description: 'Milliseconds to wait for the advisory migration lock before failing' },
   { group: G4, name: 'RETENTION_AUDIT_LOGS_DAYS', type: 'integer', default: 365, min: 0, description: 'Days before audit-log rows are deleted by the retention job' },
   { group: G4, name: 'RETENTION_DONATIONS_DAYS', type: 'integer', default: 2555, min: 0, description: 'Days before donation rows are eligible for retention purge' },
+  { group: G4, name: 'RETENTION_TRANSACTION_DAYS', type: 'integer', default: 2555, min: 0, description: 'Days to retain transaction memos/identifiers before the retention job anonymises them (amounts and hashes are kept)' },
   { group: G4, name: 'RETENTION_DRY_RUN', type: 'boolean', default: false, description: 'When `true`, the retention job logs what it would delete without removing records' },
   { group: G4, name: 'RETENTION_IDEMPOTENCY_DAYS', type: 'integer', default: 30, min: 0, description: 'Days before idempotency keys are purged' },
   { group: G4, name: 'RETENTION_SCHEDULE_CRON', type: 'string', default: '02:00', example: '0 2 * * *', description: 'Cron expression controlling when the data-retention cleanup job runs' },
@@ -193,6 +198,7 @@ const ENV_VARS = [
 
   // ── Logging ─────────────────────────────────────────────────────
   { group: G6, name: 'ACCESS_LOG_INCLUDE_HEALTH', type: 'boolean', default: false, description: 'When `true`, health-check requests appear in the access log' },
+  { group: G6, name: 'AUDIT_LOG_HMAC_KEY', type: 'string', secret: true, description: 'HMAC key used to sign audit-log exports. Export signing fails when unset' },
   { group: G6, name: 'AUDIT_LOG_FLUSH_INTERVAL_MS', type: 'integer', default: 1000, min: 1, description: 'Interval (ms) at which buffered audit-log entries are flushed to the database' },
   { group: G6, name: 'DEBUG_MODE', type: 'boolean', default: false, example: 'false', description: 'Enable verbose debug logging. **Startup fails in production if `true`**' },
   { group: G6, name: 'LOG_BODY', type: 'boolean', default: false, description: 'Log raw request and response bodies' },
@@ -209,6 +215,9 @@ const ENV_VARS = [
   { group: G6, name: 'LOG_VERBOSE', type: 'boolean', default: false, example: 'false', description: 'Include request/response bodies in console log output' },
 
   // ── Rate Limiting ───────────────────────────────────────────────
+  { group: G7, name: 'AUTH_CHALLENGE_RATE_LIMIT', type: 'integer', default: 30, min: 1, description: 'Maximum requests per IP per window on the SEP-10 auth challenge endpoint' },
+  { group: G7, name: 'AUTH_CHALLENGE_ACCOUNT_RATE_LIMIT', type: 'integer', default: 10, min: 1, description: 'Maximum requests per `account` query value per window on the SEP-10 auth challenge endpoint' },
+  { group: G7, name: 'LIST_DONATIONS_RATE_LIMIT', type: 'integer', default: 300, min: 1, description: 'Maximum requests per window on the donation list endpoints' },
   { group: G7, name: 'AUTH_REFRESH_RATE_LIMIT', type: 'integer', default: 20, example: '20', description: 'Maximum requests per minute per IP on `POST /auth/refresh`' },
   { group: G7, name: 'AUTH_TOKEN_RATE_LIMIT', type: 'integer', default: 10, example: '10', description: 'Maximum requests per minute per IP on `POST /auth/token`' },
   { group: G7, name: 'DISABLE_RATE_LIMIT', type: 'boolean', default: false, description: 'Disables rate limiting. **Unsafe — startup fails in production if `true`**' },
@@ -250,6 +259,8 @@ const ENV_VARS = [
   { group: G8, name: 'VELOCITY_WINDOW_SECONDS', type: 'integer', default: 3600, min: 1, description: 'Window (seconds) for donation velocity limits' },
 
   // ── Caching ─────────────────────────────────────────────────────
+  { group: G9, name: 'API_KEY_CACHE_TTL_MS', type: 'integer', default: 30000, min: 0, description: 'TTL (ms) for the API-key validation cache in the apiKey middleware. `0` disables the cache' },
+  { group: G9, name: 'API_KEY_CACHE_MAX_ENTRIES', type: 'integer', default: 5000, min: 1, description: 'Maximum entries held in the API-key validation cache' },
   { group: G9, name: 'API_KEY_CACHE_TTL_SECONDS', type: 'integer', default: 60, description: 'TTL (seconds) for the in-memory API key lookup cache' },
   { group: G9, name: 'CACHE_CLEANUP_INTERVAL_MS', type: 'integer', default: 60000, description: 'Interval (ms) between cache eviction passes' },
   { group: G9, name: 'CACHE_MAX_SIZE', type: 'integer', default: 10000, example: '1000', description: 'Maximum number of entries in the shared in-memory LRU cache' },
@@ -283,7 +294,8 @@ const ENV_VARS = [
   { group: G12, name: 'GEO_ALLOWED_IPS', type: 'list', description: 'Comma-separated IPs or CIDR ranges that bypass geo-blocking' },
   { group: G12, name: 'GEO_BLOCKED_COUNTRIES', type: 'list', description: 'Comma-separated ISO 3166-1 alpha-2 country codes whose requests are blocked (e.g. `RU,IR,KP`)' },
   { group: G12, name: 'GEO_STRICT_MODE', type: 'boolean', default: true, description: 'When the GeoIP database is unavailable or a lookup fails, block () or allow () the request' },
-  { group: G12, name: 'MAXMIND_DB_PATH', type: 'string', default: './data/GeoLite2-Country.mmdb', description: 'Path to the MaxMind GeoLite2-Country binary database file' },
+  { group: G12, name: 'GEOIP_DB_PATH', type: 'string', deprecated: 'use `MAXMIND_DB_PATH`', description: 'Deprecated alias for `MAXMIND_DB_PATH`. Read only when `MAXMIND_DB_PATH` is unset' },
+  { group: G12, name: 'MAXMIND_DB_PATH', type: 'string', default: './data/GeoLite2-Country.mmdb', deprecatedAliases: ['GEOIP_DB_PATH'], description: 'Path to the MaxMind GeoLite2-Country binary database file' },
 
   // ── Abuse Detection ─────────────────────────────────────────────
   { group: G13, name: 'ABUSE_ANOMALY_THRESHOLD', type: 'number', default: 0.8, min: 0, max: 1, description: 'Anomaly score (0–1) above which a request pattern is flagged as anomalous' },
@@ -322,6 +334,7 @@ const ENV_VARS = [
   { group: G16, name: 'PUBSUB_ADAPTER', type: 'enum', default: 'memory', enum: ['memory', 'redis'], description: 'Pub/sub adapter: `memory` (in-process) or `redis`' },
   { group: G16, name: 'SSE_EVENT_BUFFER_SIZE', type: 'integer', default: 100, description: 'Number of events buffered per SSE connection for reconnecting clients' },
   { group: G16, name: 'SSE_MAX_CONNECTIONS_PER_KEY', type: 'integer', default: 5, min: 1, example: '10', description: 'Maximum concurrent SSE streams per API key. Enforced cluster-wide when `SHARED_STATE_BACKEND=redis`' },
+  { group: G16, name: 'WS_ALLOW_QUERY_API_KEY', type: 'boolean', default: true, description: 'When `false`, WebSocket connections that pass the API key in the query string are rejected (use the header instead)' },
   { group: G16, name: 'WS_HEARTBEAT_MS', type: 'integer', default: 30000, description: 'Interval (ms) between WebSocket ping frames' },
   { group: G16, name: 'WS_MAX_WALLETS', type: 'integer', default: 50, description: 'Maximum number of wallet subscriptions per WebSocket connection' },
   { group: G16, name: 'SSE_MAX_CONNECTIONS', type: 'integer', default: 1000, min: 1, description: 'Global cap on concurrent SSE streams across all API keys on this instance. Excess connections receive 503 with `Retry-After`' },
@@ -371,6 +384,7 @@ const ENV_VARS = [
   { group: G20, name: 'FEDERATION_DOMAIN', type: 'string', description: 'Domain used for Stellar federation lookups' },
   { group: G20, name: 'FEDERATION_RECORDS', type: 'string', description: 'JSON-encoded static federation records for local development, bypassing live federation lookups' },
   { group: G20, name: 'WEBHOOK_ALLOW_TLS_SKIP_VERIFY', type: 'string', example: 'false', description: 'Set to `break-glass` to allow webhooks with TLS verification disabled in production. Any other value is ignored' },
+  { group: G20, name: 'WEBHOOK_RETRY_BATCH_SIZE', type: 'integer', default: 50, min: 1, description: 'Maximum number of failed webhook deliveries retried per worker tick' },
   { group: G20, name: 'WEBHOOK_RETRY_INTERVAL_MS', type: 'integer', default: 30000, min: 1, description: 'Interval (ms) of the outgoing-webhook retry worker' },
   { group: G20, name: 'XLM_USDC_ASSET', type: 'string', example: 'USDC:GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN', description: '`CODE:ISSUER` of the stablecoin used for the Stellar DEX price fallback. The XLM/USD rate is the mid-market price of this orderbook when CoinGecko is unavailable' },
 

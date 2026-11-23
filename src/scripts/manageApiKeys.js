@@ -11,7 +11,7 @@
  */
 
 // External modules
-require('../config/loadEnv'); // single .env loader (#1943)
+require('../config/env'); // single .env loader (#1943, #2112)
 
 // Internal modules
 const apiKeysModel = require('../models/apiKeys');

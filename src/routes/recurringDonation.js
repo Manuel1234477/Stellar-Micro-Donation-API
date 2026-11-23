@@ -3,10 +3,17 @@
  *
  * RESPONSIBILITY: HTTP request handling for recurring donation CRUD and history
  * OWNER: Backend Team
- * DEPENDENCIES: Database, RecurringDonationScheduler, middleware (auth, RBAC)
+ * DEPENDENCIES: RecurringDonationService, Database, middleware (auth, RBAC)
+ *
+ * Canonical API for recurring schedules (#2113). Create/update/pause/resume
+ * go through RecurringDonationService, shared with the deprecated
+ * /stream/create and /stream/schedules/* routes.
  *
  * Endpoints:
  *   POST   /donations/recurring              – create a schedule
+ *   PATCH  /donations/recurring/:id          – update amount/frequency/interval
+ *   POST   /donations/recurring/:id/pause    – pause a schedule
+ *   POST   /donations/recurring/:id/resume   – resume a schedule
  *   GET    /donations/recurring              – list all schedules
  *   GET    /donations/recurring/:id          – get one schedule
  *   DELETE /donations/recurring/:id          – cancel a schedule
@@ -18,18 +25,52 @@ const router = express.Router();
 const Database = require('../utils/database');
 const { checkPermission } = require('../middleware/rbac');
 const { PERMISSIONS } = require('../utils/permissions');
-const { VALID_FREQUENCIES, SCHEDULE_STATUS, DONATION_FREQUENCIES } = require('../constants');
-const {
-  validateRequiredFields,
-  validateXLMAmount,
-  validateEnum,
-  validateInteger,
-} = require('../utils/validationHelpers');
+const { SCHEDULE_STATUS } = require('../constants');
+const { validateInteger } = require('../utils/validationHelpers');
 const log = require('../utils/log');
-const serviceContainer = require('../config/serviceContainer');
 const asyncHandler = require('../utils/asyncHandler');
 const { payloadSizeLimiter, ENDPOINT_LIMITS } = require('../middleware/payloadSizeLimiter');
-const { toStroops, fromStroops } = require('../utils/money');
+const RecurringDonationService = require('../services/RecurringDonationService');
+const AuditLogService = require('../services/AuditLogService');
+
+const { RecurringScheduleError, CODES, formatSchedule } = RecurringDonationService;
+
+/** HTTP status for each RecurringDonationService error code on this router. */
+const STATUS_BY_CODE = {
+  [CODES.MISSING_FIELDS]: 400,
+  [CODES.INVALID_AMOUNT]: 422,
+  [CODES.INVALID_FREQUENCY]: 400,
+  [CODES.INVALID_INTERVAL]: 400,
+  [CODES.INVALID_MAX_EXECUTIONS]: 400,
+  [CODES.INVALID_START_DATE]: 400,
+  [CODES.DONOR_NOT_FOUND]: 404,
+  [CODES.RECIPIENT_NOT_FOUND]: 404,
+  [CODES.SELF_DONATION]: 400,
+  [CODES.NO_CHANGES]: 400,
+  [CODES.NOT_FOUND]: 404,
+  [CODES.FORBIDDEN]: 403,
+  [CODES.CONFLICT]: 409,
+  [CODES.INVALID_STATE]: 400,
+};
+
+/**
+ * Send a RecurringScheduleError using this router's response shape; other
+ * errors go to the error handler.
+ */
+function handleServiceError(error, res, next) {
+  if (error instanceof RecurringScheduleError) {
+    return res.status(STATUS_BY_CODE[error.code] || 400).json({
+      success: false,
+      error: error.message,
+      code: error.code,
+    });
+  }
+  return next(error);
+}
+
+function actorFrom(req) {
+  return { user: req.user, apiKey: req.apiKey };
+}
 
 // ─────────────────────────────────────────────────────────────────────────────
 // POST /donations/recurring
@@ -37,168 +78,103 @@ const { toStroops, fromStroops } = require('../utils/money');
 
 /**
  * @route   POST /donations/recurring
- * @desc    Create a new recurring donation schedule
+ * @desc    Create a new recurring donation schedule (canonical API, #2113)
  * @access  stream:create
  *
  * @body {string}  donorPublicKey      - Stellar public key of the donor
  * @body {string}  recipientPublicKey  - Stellar public key of the recipient
  * @body {number}  amount              - XLM amount per execution
- * @body {string}  frequency           - daily | weekly | monthly | custom
- * @body {number}  [customIntervalDays] - Required when frequency === 'custom'
+ * @body {string}  frequency           - daily | weekly | biweekly | monthly | quarterly | custom
+ * @body {number}  [intervalDays]      - Required when frequency === 'custom' (alias: customIntervalDays)
  * @body {number}  [maxExecutions]     - Stop after N executions (omit = unlimited)
  * @body {string}  [webhookUrl]        - URL to POST on persistent failure
  * @body {string}  [startDate]         - ISO date for first execution (default: now + 1 interval)
  */
 router.post('/', checkPermission(PERMISSIONS.STREAM_CREATE), payloadSizeLimiter(ENDPOINT_LIMITS.singleDonation), asyncHandler(async (req, res, next) => {
   try {
-    const {
-      donorPublicKey,
-      recipientPublicKey,
-      amount,
-      frequency,
-      customIntervalDays,
-      maxExecutions,
-      webhookUrl,
-      startDate,
-    } = req.body;
-
-    // ── Required fields ──────────────────────────────────────────────────────
-    const required = validateRequiredFields(
-      { donorPublicKey, recipientPublicKey, amount, frequency },
-      ['donorPublicKey', 'recipientPublicKey', 'amount', 'frequency']
-    );
-    if (!required.valid) {
-      return res.status(400).json({
-        success: false,
-        error: `Missing required fields: ${required.missing.join(', ')}`,
-      });
-    }
-
-    // ── Amount ───────────────────────────────────────────────────────────────
-    const amountResult = validateXLMAmount(amount);
-    if (!amountResult.valid) {
-      return res.status(422).json({ success: false, error: `Invalid amount: ${amountResult.error}` });
-    }
-
-    // ── Frequency ────────────────────────────────────────────────────────────
-    const freqResult = validateEnum(frequency, VALID_FREQUENCIES, { caseInsensitive: true });
-    if (!freqResult.valid) {
-      return res.status(400).json({ success: false, error: freqResult.error });
-    }
-    const normalizedFreq = freqResult.value;
-
-    // ── Custom interval ──────────────────────────────────────────────────────
-    const intervalDays = req.body.intervalDays !== undefined ? req.body.intervalDays : customIntervalDays;
-    if (normalizedFreq === DONATION_FREQUENCIES.CUSTOM) {
-      const intervalResult = validateInteger(intervalDays, { min: 1, max: 365 });
-      if (!intervalResult.valid) {
-        return res.status(400).json({
-          success: false,
-          error: `intervalDays (or customIntervalDays) is required and must be between 1 and 365 for custom frequency`,
-        });
-      }
-    }
-
-    // ── maxExecutions ────────────────────────────────────────────────────────
-    if (maxExecutions !== undefined && maxExecutions !== null) {
-      const maxResult = validateInteger(maxExecutions, { min: 1 });
-      if (!maxResult.valid) {
-        return res.status(400).json({
-          success: false,
-          error: `Invalid maxExecutions: ${maxResult.error}`,
-        });
-      }
-    }
-
-    // ── Donor exists ─────────────────────────────────────────────────────────
-    const donor = await Database.get(
-      'SELECT id, publicKey FROM users WHERE publicKey = ?',
-      [donorPublicKey]
-    );
-    if (!donor) {
-      return res.status(404).json({ success: false, error: 'Donor wallet not found' });
-    }
-
-    // ── Recipient exists ─────────────────────────────────────────────────────
-    const recipient = await Database.get(
-      'SELECT id, publicKey FROM users WHERE publicKey = ?',
-      [recipientPublicKey]
-    );
-    if (!recipient) {
-      return res.status(404).json({ success: false, error: 'Recipient wallet not found' });
-    }
-
-    // ── No self-donations ────────────────────────────────────────────────────
-    if (donor.id === recipient.id) {
-      return res.status(400).json({ success: false, error: 'Donor and recipient cannot be the same' });
-    }
-
-    // ── Calculate first execution date ───────────────────────────────────────
-    const scheduler = serviceContainer.getRecurringDonationScheduler();
-    let firstExecution;
-    if (startDate) {
-      firstExecution = new Date(startDate);
-      if (isNaN(firstExecution.getTime())) {
-        return res.status(400).json({ success: false, error: 'Invalid startDate format' });
-      }
-      if (firstExecution.getTime() < Date.now() + 60000) {
-        return res.status(400).json({ success: false, error: 'Start date must be in the future' });
-      }
-    } else {
-      firstExecution = scheduler.calculateNextExecutionDate(
-        new Date(),
-        normalizedFreq,
-        intervalDays ? parseInt(intervalDays, 10) : undefined
-      );
-    }
-
-    // ── Persist ──────────────────────────────────────────────────────────────
-    // Monetary values are stored as integer stroops (ADR-004).
-    const amountStroops = toStroops(amountResult.xlm);
-    const result = await Database.run(
-      `INSERT INTO recurring_donations
-         (donorId, recipientId, amount_stroops, frequency, customIntervalDays,
-          maxExecutions, webhookUrl, nextExecutionDate, status)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-      [
-        donor.id,
-        recipient.id,
-        amountStroops,
-        normalizedFreq,
-        intervalDays ? parseInt(intervalDays, 10) : null,
-        maxExecutions ? parseInt(maxExecutions, 10) : null,
-        webhookUrl || null,
-        firstExecution.toISOString(),
-        SCHEDULE_STATUS.ACTIVE,
-      ]
-    );
-
-    const schedule = await Database.get(
-      `SELECT rd.id, rd.amount_stroops, rd.frequency, rd.customIntervalDays,
-              rd.maxExecutions, rd.webhookUrl, rd.nextExecutionDate,
-              rd.status, rd.executionCount, rd.failureCount,
-              donor.publicKey AS donorPublicKey,
-              recipient.publicKey AS recipientPublicKey
-       FROM recurring_donations rd
-       JOIN users donor     ON rd.donorId    = donor.id
-       JOIN users recipient ON rd.recipientId = recipient.id
-       WHERE rd.id = ?`,
-      [result.id]
-    );
+    const schedule = await RecurringDonationService.create(req.body || {});
 
     log.info('RECURRING_DONATION_ROUTE', 'Schedule created', {
       scheduleId: schedule.id,
-      frequency: normalizedFreq,
-      amountStroops,
+      frequency: schedule.frequency,
+      amountStroops: schedule.amountStroops,
     });
 
     return res.status(201).json({
       success: true,
       message: 'Recurring donation schedule created successfully',
-      data: formatSchedule(schedule),
+      data: schedule,
     });
   } catch (error) {
-    next(error);
+    return handleServiceError(error, res, next);
+  }
+}));
+
+// ─────────────────────────────────────────────────────────────────────────────
+// PATCH /donations/recurring/:id
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * @route   PATCH /donations/recurring/:id
+ * @desc    Update amount, frequency and/or intervalDays. Changing the timing
+ *          recalculates nextExecutionDate from now.
+ * @access  stream:update
+ */
+router.patch('/:id', checkPermission(PERMISSIONS.STREAM_UPDATE), payloadSizeLimiter(ENDPOINT_LIMITS.stream), asyncHandler(async (req, res, next) => {
+  try {
+    const { schedule, oldValues, newValues } = await RecurringDonationService.update(
+      req.params.id,
+      req.body || {},
+      actorFrom(req),
+    );
+
+    await AuditLogService.log({
+      category: AuditLogService.CATEGORY.FINANCIAL_OPERATION,
+      action: 'SCHEDULE_UPDATED',
+      severity: AuditLogService.SEVERITY.MEDIUM,
+      result: 'SUCCESS',
+      userId: (req.apiKey && req.apiKey.id) || (req.user && req.user.id) || null,
+      requestId: req.id,
+      ipAddress: req.ip,
+      resource: `recurring_donation/${req.params.id}`,
+      details: { scheduleId: req.params.id, oldValues, newValues },
+    });
+
+    return res.json({ success: true, message: 'Schedule updated successfully', data: schedule });
+  } catch (error) {
+    return handleServiceError(error, res, next);
+  }
+}));
+
+// ─────────────────────────────────────────────────────────────────────────────
+// POST /donations/recurring/:id/pause and /resume
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * @route   POST /donations/recurring/:id/pause
+ * @desc    Pause an active schedule (owner or admin)
+ * @access  stream:update
+ */
+router.post('/:id/pause', checkPermission(PERMISSIONS.STREAM_UPDATE), asyncHandler(async (req, res, next) => {
+  try {
+    const data = await RecurringDonationService.pause(req.params.id, actorFrom(req));
+    return res.json({ success: true, message: 'Recurring donation schedule paused successfully', data });
+  } catch (error) {
+    return handleServiceError(error, res, next);
+  }
+}));
+
+/**
+ * @route   POST /donations/recurring/:id/resume
+ * @desc    Resume a paused schedule; nextExecutionDate is recalculated (owner or admin)
+ * @access  stream:update
+ */
+router.post('/:id/resume', checkPermission(PERMISSIONS.STREAM_UPDATE), asyncHandler(async (req, res, next) => {
+  try {
+    const data = await RecurringDonationService.resume(req.params.id, actorFrom(req));
+    return res.json({ success: true, message: 'Recurring donation schedule resumed successfully', data });
+  } catch (error) {
+    return handleServiceError(error, res, next);
   }
 }));
 
@@ -386,36 +362,5 @@ router.get('/:id/history', checkPermission(PERMISSIONS.STREAM_READ), asyncHandle
     next(error);
   }
 }));
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Helpers
-// ─────────────────────────────────────────────────────────────────────────────
-
-/**
- * Normalise a DB row into a consistent API response shape.
- * @param {Object} row
- * @returns {Object}
- */
-function formatSchedule(row) {
-  return {
-    id: row.id,
-    donorPublicKey: row.donorPublicKey,
-    recipientPublicKey: row.recipientPublicKey,
-    amount: fromStroops(row.amount_stroops),
-    amountStroops: row.amount_stroops,
-    frequency: row.frequency,
-    customIntervalDays: row.customIntervalDays || null,
-    intervalDays: row.customIntervalDays || null,
-    maxExecutions: row.maxExecutions || null,
-    webhookUrl: row.webhookUrl || null,
-    nextExecutionDate: row.nextExecutionDate,
-    lastExecutionDate: row.lastExecutionDate || null,
-    status: row.status,
-    executionCount: row.executionCount || 0,
-    failureCount: row.failureCount || 0,
-    lastFailureReason: row.lastFailureReason || null,
-    createdAt: row.createdAt || null,
-  };
-}
 
 module.exports = router;

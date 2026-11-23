@@ -13,6 +13,7 @@ const { bestEffort } = require('../utils/bestEffort');
 const db = require('../utils/database');
 const log = require('../utils/log');
 const crypto = require('crypto');
+const { readEnv } = require('../config/env');
 const { sanitizeForLogging } = require('../utils/sanitizer');
 const { maskSensitiveData } = require('../utils/dataMasker');
 const timerRegistry = require('../utils/timerRegistry');
@@ -437,11 +438,7 @@ class AuditLogService {
             ]
           );
         }
-        await db.run('COMMIT');
-      } catch (err) {
-        await db.run('ROLLBACK').catch(bestEffort('src/services/AuditLogService.js:423'));
-        throw err;
-      }
+      });
     };
 
     const FLUSH_TIMEOUT_MS = 5000;
@@ -492,7 +489,7 @@ class AuditLogService {
    * @returns {string} HMAC key
    */
   static getHmacKey() {
-    const key = process.env.AUDIT_LOG_HMAC_KEY;
+    const key = readEnv('AUDIT_LOG_HMAC_KEY');
     if (!key) {
       throw new Error('AUDIT_LOG_HMAC_KEY is not configured');
     }

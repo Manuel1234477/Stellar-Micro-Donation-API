@@ -30,6 +30,7 @@
 'use strict';
 
 const config = require('../config');
+const { readEnv } = require('../config/env');
 const stellarConfig = require('../config/stellar');
 const serviceContainer = require('../config/serviceContainer');
 const { attachSubscriptionServer } = require('../graphql');
@@ -210,8 +211,9 @@ async function startServer(app, overrideServices = {}) {
 
         const { initializeFeatureFlagsTable, loadFlagsFromEnv } = require('../utils/featureFlags');
         await initializeFeatureFlagsTable();
-        if (process.env.FEATURE_FLAGS) {
-          await loadFlagsFromEnv(process.env.FEATURE_FLAGS);
+        const featureFlagsEnv = readEnv('FEATURE_FLAGS');
+        if (featureFlagsEnv) {
+          await loadFlagsFromEnv(featureFlagsEnv);
         }
 
         // Verify the shared rate limit store; falls back to memory if Redis is down (#1777)
@@ -231,7 +233,7 @@ async function startServer(app, overrideServices = {}) {
         require('../utils/metrics').recordStellarMode(stellarModeHelper.getStellarMode());
         const isMockStellar = stellarModeHelper.isMockStellarEnabled();
         if (!isMockStellar && stellarService.server && typeof stellarService.server.root === 'function') {
-          const requireHorizon = String(process.env.STARTUP_REQUIRE_HORIZON || '').toLowerCase() === 'true';
+          const requireHorizon = readEnv('STARTUP_REQUIRE_HORIZON') === true;
           const checkHorizon = () => Promise.race([
             stellarService.server.root(),
             new Promise((_, reject) =>
@@ -348,10 +350,8 @@ async function startServer(app, overrideServices = {}) {
       // Clear all registered background timers (cleanupInterval, replay cleanup, service intervals)
       timerRegistry.clearAll();
 
-      const timeoutMs = parseInt(
-        process.env.SHUTDOWN_TIMEOUT_MS || process.env.SHUTDOWN_TIMEOUT || '30000',
-        10
-      );
+      // SHUTDOWN_TIMEOUT is a deprecated alias resolved (with a warning) by readEnv (#2111).
+      const timeoutMs = readEnv('SHUTDOWN_TIMEOUT_MS');
 
       let forcedExit = false;
       // eslint-disable-next-line local/no-bare-timers

@@ -416,7 +416,7 @@ function mountRoutes(app, services = {}) {
   // the spec describes the /admin surface and must not be readable anonymously.
   mountOptional('OpenAPI / Swagger UI', () => {
     const isProduction = process.env.NODE_ENV === 'production';
-    if (isProduction && String(process.env.API_DOCS_PUBLIC || '').toLowerCase() !== 'true') {
+    if (isProduction && env.readEnv('API_DOCS_PUBLIC') !== true) {
       log.info('ROUTES', 'OpenAPI / Swagger UI disabled in production (set API_DOCS_PUBLIC=true to serve it behind an API key)');
       return;
     }

@@ -13,6 +13,7 @@ const { bestEffort } = require('../utils/bestEffort');
 const https = require('https');
 const http = require('http');
 const crypto = require('crypto');
+const { readEnv } = require('../config/env');
 const { URL } = require('url');
 const log = require('../utils/log');
 const EncryptionService = require('./EncryptionService');
@@ -380,7 +381,7 @@ class WebhookService {
     const Database = require('../utils/database');
     const batchSize = Number.isInteger(limit) && limit > 0
       ? limit
-      : parseInt(process.env.WEBHOOK_RETRY_BATCH_SIZE || '50', 10) || 50;
+      : readEnv('WEBHOOK_RETRY_BATCH_SIZE');
     const lockDurationMs = Number.isInteger(lockMs) && lockMs > 0 ? lockMs : 5 * 60 * 1000;
     const workerId = lockedBy || `${process.pid}-${crypto.randomBytes(4).toString('hex')}`;
 

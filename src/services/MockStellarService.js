@@ -3,6 +3,7 @@ const crypto = require('crypto');
 const StellarServiceInterface = require('./interfaces/StellarServiceInterface');
 const { ValidationError, BusinessLogicError, ERROR_CODES } = require('../utils/errors');
 const log = require('../utils/log');
+const { readEnv } = require('../config/env');
 const { getAssetKey, isSameAsset } = require('../utils/stellarAsset');
 
 // Import decomposed modules
@@ -451,7 +452,7 @@ class MockStellarService extends StellarServiceInterface {
     if (MockStellarService._latencyMs !== undefined) {
       return MockStellarService._latencyMs;
     }
-    const envMs = parseInt(process.env.MOCK_STELLAR_LATENCY_MS, 10);
+    const envMs = readEnv('MOCK_STELLAR_LATENCY_MS');
     return Number.isFinite(envMs) && envMs > 0 ? envMs : 0;
   }
 

@@ -286,7 +286,7 @@ module.exports = [
   // Grandfathered export shapes: allow module.exports reassignment patterns
   {
     files: ['**/*.js'],
-    excludedFiles: GRANDFATHERED_EXPORT_SHAPES,
+    ignores: GRANDFATHERED_EXPORT_SHAPES,
     rules: {
       // Placeholder for export-shape rule; kept for parity with legacy config.
     },
@@ -311,28 +311,33 @@ module.exports = [
     },
   },
 
-  // no-restricted-properties for process.env, with grandfathered exemptions
+  // Direct process.env reads (#2111). Environment variables must be read
+  // through src/config (readEnv() / env from src/config/env.js) so they are
+  // declared in the schema, validated, documented in .env.example and coerced
+  // consistently. `no-restricted-syntax` is used instead of
+  // `no-restricted-properties` so that `process.env.NODE_ENV` can stay
+  // allowlisted during the migration. Files in eslint-rules/
+  // process-env-grandfathered.json are exempt until migrated; the overall
+  // count is ratcheted by scripts/check-process-env-count.js.
   {
-    files: ['**/*.js'],
-    excludedFiles: PROCESS_ENV_GRANDFATHERED,
+    files: ['src/**/*.js'],
+    ignores: ['src/config/**', ...PROCESS_ENV_GRANDFATHERED],
     rules: {
-      'no-restricted-properties': [
+      'no-restricted-syntax': [
         'warn',
         {
-          object: 'process',
-          property: 'env',
+          selector:
+            "MemberExpression[object.type='MemberExpression'][object.object.name='process'][object.property.name='env'][property.name!='NODE_ENV']",
           message:
-            'Access process.env through the central config module instead of directly.',
+            'Read environment variables through readEnv() from src/config/env.js (declare them in src/config/envSchema.js) instead of process.env (#2111).',
+        },
+        {
+          selector:
+            "MemberExpression[object.name='process'][property.name='env']:not(MemberExpression > .object)",
+          message:
+            'Do not pass process.env around or destructure it outside src/config; use readEnv() from src/config/env.js (#2111).',
         },
       ],
-    },
-  },
-
-  // PROCESS_ENV_GRANDFATHERED exemption: explicitly disable the rule
-  {
-    files: PROCESS_ENV_GRANDFATHERED,
-    rules: {
-      'no-restricted-properties': 'off',
     },
   },
 ];

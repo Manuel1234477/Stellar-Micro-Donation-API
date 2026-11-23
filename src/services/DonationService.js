@@ -11,6 +11,7 @@ const { bestEffort } = require('../utils/bestEffort');
  */
 
 const Database = require('../utils/database');
+const { isMockStellarEnabled } = require('../config/stellarMode');
 const Transaction = require('../models/transaction');
 const encryption = require('../utils/encryption');
 const { STROOPS_PER_XLM } = require('../constants');
@@ -92,7 +93,7 @@ class DonationService {
    * @throws {BusinessLogicError} When account does not exist on the network.
    */
   async checkRecipientAccountExists(publicKey) {
-    if (process.env.MOCK_STELLAR === 'true') {
+    if (isMockStellarEnabled()) {
       return;
     }
 
