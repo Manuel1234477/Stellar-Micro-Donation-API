@@ -37,7 +37,6 @@ const ALLOWLIST = new Set([
   'src/scripts/migrate-status.js',
   'src/scripts/addMemoColumn.js',
   'src/scripts/reencrypt-memos.js',
-  'src/scripts/migrations/addCurrencyColumns.js',
   'src/scripts/generateKey.js',
   'src/scripts/rotateKEK.js',
   'src/scripts/manageApiKeys.js',
