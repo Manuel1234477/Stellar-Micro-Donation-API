@@ -410,12 +410,21 @@ function mountRoutes(app, services = {}) {
     return legacyRedirect(req, res);
   });
 
-  // ── OpenAPI / Swagger UI (Issue #634, #740) ───────────────────────────────
+  // ── OpenAPI / Swagger UI (Issue #634, #740, #2117) ───────────────────────
+  // Outside production the docs are always served. In production they are off
+  // unless API_DOCS_PUBLIC=true, and then every docs route requires an API key:
+  // the spec describes the /admin surface and must not be readable anonymously.
   mountOptional('OpenAPI / Swagger UI', () => {
+    const isProduction = process.env.NODE_ENV === 'production';
+    if (isProduction && env.readEnv('API_DOCS_PUBLIC') !== true) {
+      log.info('ROUTES', 'OpenAPI / Swagger UI disabled in production (set API_DOCS_PUBLIC=true to serve it behind an API key)');
+      return;
+    }
+    const docsAuth = isProduction ? [requireApiKey] : [];
     const serveSpec = (req, res) => res.json(spec);
-    app.use('/api/docs', swaggerUiMiddleware, swaggerUiSetup);
-    app.get('/api/openapi.json', serveSpec);
-    if (process.env.NODE_ENV !== 'production') {
+    app.use('/api/docs', ...docsAuth, swaggerUiMiddleware, swaggerUiSetup);
+    app.get('/api/openapi.json', ...docsAuth, serveSpec);
+    if (!isProduction) {
       app.use('/docs', swaggerUiMiddleware, swaggerUiSetup);
       app.get('/openapi.json', serveSpec);
     }

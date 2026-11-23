@@ -195,6 +195,8 @@ const streamCreateSchema = validateSchema({
           if (typeof value !== 'string') {
             return 'frequency must be a string';
           }
+          // Same set as /donations/recurring; 'custom' needs intervalDays,
+          // which RecurringDonationService enforces (#2113).
           return VALID_FREQUENCIES.includes(value.toLowerCase())
             ? true
             : `frequency must be one of: ${VALID_FREQUENCIES.join(', ')}`;

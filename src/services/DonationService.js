@@ -1236,7 +1236,8 @@ class DonationService {
           const corporateMatchingResults = await CorporateMatchingService.processCorporateMatching({
             id: transaction.id,
             amount: xlmAmount,
-            senderId: senderUser.id
+            senderId: senderUser.id,
+            timestamp: transaction.timestamp
           });
           if (corporateMatchingResults.length > 0) {
             transaction.corporateMatchingDonations = corporateMatchingResults;
@@ -1687,7 +1688,8 @@ class DonationService {
         const corporateMatchingResults = await CorporateMatchingService.processCorporateMatching({
           id: transaction.id,
           amount: transaction.amount,
-          senderId: senderUser.id
+          senderId: senderUser.id,
+          timestamp: transaction.timestamp
         });
         if (corporateMatchingResults.length > 0) {
           transaction.corporateMatchingDonations = corporateMatchingResults;

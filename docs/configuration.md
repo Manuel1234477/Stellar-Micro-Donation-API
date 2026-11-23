@@ -51,7 +51,7 @@ npm run config:check      # what CI runs: schema covers src/, generated files ar
 22. [Shared State (Multi-Instance)](#22-shared-state-multi-instance)
 23. [GraphQL](#23-graphql)
 
-291 variables are declared. Further topics follow the reference below.
+292 variables are declared. Further topics follow the reference below.
 
 ---
 
@@ -71,6 +71,7 @@ npm run config:check      # what CI runs: schema covers src/, generated files ar
 | `HSTS_MAX_AGE` | integer | `31536000` | no | Strict-Transport-Security `max-age` in seconds. Sent only when `NODE_ENV=production` Minimum: 0. |
 | `HSTS_INCLUDE_SUBDOMAINS` | boolean | `true` | no | Add `includeSubDomains` to Strict-Transport-Security. Sent only when `NODE_ENV=production` |
 | `HSTS_PRELOAD` | boolean | `false` | no | Add `preload` to Strict-Transport-Security. Only enable after the domain is submitted to the browser preload list; this applies to all subdomains. Sent only when `NODE_ENV=production` |
+| `API_DOCS_PUBLIC` | boolean | `false` | no | Serve Swagger UI and the OpenAPI spec (`/api/docs`, `/api/openapi.json`) when `NODE_ENV=production`. Off by default in production; when enabled there, both routes require a valid API key. Outside production they are always served |
 
 ---
 

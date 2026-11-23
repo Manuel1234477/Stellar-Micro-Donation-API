@@ -9,10 +9,10 @@
 
 'use strict';
 
-require('../../config/env'); // single .env loader (#1943, #2112)
+require('../../../src/config/env'); // single .env loader (#1943, #2112)
 const path = require('path');
 const sqlite3 = require('sqlite3').verbose();
-const { encryptWithDEK, decrypt } = require('../../utils/encryption');
+const { encryptWithDEK, decrypt } = require('../../../src/utils/encryption');
 
 const DB_PATH = path.join(__dirname, '../../../../data/stellar_donations.db');
 

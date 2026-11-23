@@ -9,6 +9,7 @@
     "npm": ">=10.0.0"
   },
   "scripts": {
+    "prepare": "husky || true",
     "start": "npm run validate-env && node src/app.js",
     "dev": "nodemon src/app.js",
     "validate-env": "node src/utils/startupChecks.js",
@@ -22,7 +23,6 @@
     "test:migrations": "node scripts/test-migrations.js",
     "migrate:memo": "node src/scripts/addMemoColumn.js",
     "migrate:reencrypt": "node src/scripts/reencrypt-memos.js",
-    "migrate:currency": "node src/scripts/migrations/addCurrencyColumns.js",
     "test": "jest",
     "test:chaos": "jest tests/chaos --runInBand",
     "test:e2e": "jest --config jest.config.e2e.js",
@@ -57,6 +57,7 @@
     "changelog:check": "node scripts/check-changelog-sync.js",
     "check:no-json-persistence": "node scripts/check-no-json-persistence.js",
     "check:no-tracked-artifacts": "node scripts/check-no-tracked-artifacts.js",
+    "check:no-placeholders": "node scripts/check-no-placeholders.js",
     "check:test-naming": "node scripts/check-test-naming.js",
     "check:docs": "node scripts/check-docs.js",
     "check:i18n-orphans": "node scripts/check-i18n-orphans.js",
@@ -81,7 +82,7 @@
     "check:orphans": "node scripts/check-src-orphans.js",
     "check:prometheus-rules": "node scripts/check-prometheus-rules.js",
     "boot-guard": "node scripts/boot-guard.js",
-    "verify": "npm run check:no-float-money && npm run check:declared-deps && npm run check:test-naming && npm run check:isolation && npm run check:i18n-orphans && npm run check:no-silent-catch && npm run check:no-tracked-artifacts && npm run validate:rbac && npm run check:orphans && npm run check:docs && npm run openapi:check && npm run changelog:check && npm run typecheck && npm run boot-guard",
+    "verify": "node scripts/verify.js",
     "test:ci": "npm run check:isolation && jest --ci --maxWorkers=2"
   },
   "dependencies": {
@@ -125,8 +126,10 @@
     "eslint-plugin-no-secrets": "^2.3.3",
     "eslint-plugin-security": "^4.2.0",
     "fast-check": "^4.10.2",
+    "husky": "^9.1.7",
     "jest": "^30.5.2",
     "js-yaml": "^4.3.2",
+    "lint-staged": "^17.6.2",
     "madge": "^8.0.0",
     "nodemon": "^3.1.14",
     "sql.js": "^1.15.1",

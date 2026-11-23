@@ -555,9 +555,9 @@ tail -n 100 logs/app.log
 
 ### 2. Search Issues and Discussions
 
-- Check [GitHub Issues](../../issues) for similar problems
-- Search [Discussions](../../discussions) for community help
-- Look at [Pull Requests](../../pulls) for recent fixes
+- Check [GitHub Issues](https://github.com/Manuel1234477/Stellar-Micro-Donation-API/issues) for similar problems
+- Search [Discussions](https://github.com/Manuel1234477/Stellar-Micro-Donation-API/discussions) for community help
+- Look at [Pull Requests](https://github.com/Manuel1234477/Stellar-Micro-Donation-API/pulls) for recent fixes
 
 ### 3. Create a Good Issue Report
 
