@@ -148,4 +148,4 @@ Read [CONTRIBUTING.md](CONTRIBUTING.md) before opening a pull request. All CI ch
 
 This project is licensed under the MIT License. See [LICENSE](LICENSE).
 
-See [docs/DATABASE_SCHEMA.md](docs/DATABASE_SCHEMA.md) for the database schema (generated from the migrations).
+See [docs/database-schema.md](docs/database-schema.md) for the database schema (generated from the migrations).
